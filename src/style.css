@@ -1,0 +1,53 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --color-base: #fdfdfc;
+  --color-surface: #ffffff;
+  --color-border: #e6e6e6;
+  --color-muted: #8b8b8b;
+  --color-text: #1c1c1e;
+  --color-text-light: #52525b;
+  --color-primary: #000000;
+  
+  --color-base-dark: #121212;
+  --color-surface-dark: #1e1e1e;
+  --color-border-dark: #2c2c2c;
+  --color-muted-dark: #71717a;
+  --color-text-dark: #f4f4f5;
+  --color-text-light-dark: #a1a1aa;
+}
+
+/* Custom Scrollbar for sleek appearance */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-dark);
+  }
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-base);
+  color: var(--color-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden; /* Prevent body scroll, handle scroll in components */
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: var(--color-base-dark);
+    color: var(--color-text-dark);
+  }
+}
