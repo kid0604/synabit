@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -17,13 +17,25 @@ export interface QuickCapMetadata {
 
 const quickCaps = ref<QuickCapMetadata[]>([]);
 const newCapText = ref('');
-const inputRef = ref<HTMLTextAreaElement | null>(null);
 const isSubmitting = ref(false);
+const inputRef = ref<HTMLTextAreaElement | null>(null);
 const selectedCap = ref<QuickCapMetadata | null>(null);
 
 const taggingCapId = ref<string | null>(null);
+const colorPickerCapId = ref<string | null>(null);
 const tagInputText = ref('');
 const searchQuery = ref('');
+
+const PALETTE = [
+   { name: 'Default', value: '' },
+   { name: 'Red', value: 'bg-red-50 dark:bg-red-950/30' },
+   { name: 'Orange', value: 'bg-orange-50 dark:bg-orange-950/30' },
+   { name: 'Yellow', value: 'bg-yellow-50 dark:bg-yellow-950/30' },
+   { name: 'Green', value: 'bg-green-50 dark:bg-green-950/30' },
+   { name: 'Blue', value: 'bg-blue-50 dark:bg-blue-950/30' },
+   { name: 'Purple', value: 'bg-purple-50 dark:bg-purple-950/30' },
+   { name: 'Pink', value: 'bg-pink-50 dark:bg-pink-950/30' },
+];
 
 const filteredCaps = computed(() => {
     const q = searchQuery.value.trim().toLowerCase();
@@ -69,6 +81,36 @@ const saveInlineTag = async (cap: QuickCapMetadata) => {
     } catch(e) {
         console.error("Failed to update note", e);
     }
+};
+
+const getCapColor = (content: string) => {
+    const match = content.match(/<!--color:(.*?)-->/);
+    if (match) return match[1];
+    return '';
+};
+
+const toggleColorPicker = (capId: string) => {
+    if (colorPickerCapId.value === capId) {
+        colorPickerCapId.value = null;
+    } else {
+        colorPickerCapId.value = capId;
+    }
+};
+
+const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
+    let rawContent = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    let updatedContent = rawContent;
+    if (colorValue) {
+        updatedContent = `<!--color:${colorValue}-->\n${rawContent}`;
+    }
+    
+    try {
+        await invoke('update_note', { path: cap.path, content: updatedContent });
+        cap.content = updatedContent;
+    } catch(e) {
+        console.error("Failed to update color", e);
+    }
+    colorPickerCapId.value = null;
 };
 
 const loadCaps = async () => {
@@ -150,6 +192,96 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
    }
 };
 
+const pickImageForNewCap = async () => {
+    try {
+        const selected = await openDialog({
+            multiple: false,
+            filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+        });
+        if (selected && typeof selected === 'string') {
+            const relPath = await invoke<string>('copy_asset_to_vault', { 
+                vaultPath: props.vaultPath, 
+                sourcePath: selected 
+            });
+            const imgMd = `![Image](${relPath})`;
+            newCapText.value += (newCapText.value && !newCapText.value.endsWith('\n') ? '\n\n' : '') + imgMd;
+            inputRef.value?.focus();
+        }
+    } catch(e) {
+        console.error("Failed to pick image", e);
+    }
+};
+
+const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
+    try {
+        const selected = await openDialog({
+            multiple: false,
+            filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+        });
+        if (selected && typeof selected === 'string') {
+            const relPath = await invoke<string>('copy_asset_to_vault', { 
+                vaultPath: props.vaultPath, 
+                sourcePath: selected 
+            });
+            const imgMd = `\n\n![Image](${relPath})`;
+            const updatedContent = cap.content + imgMd;
+            await invoke('update_note', { path: cap.path, content: updatedContent });
+            cap.content = updatedContent;
+        }
+    } catch(e) {
+        console.error("Failed to pick image", e);
+    }
+};
+
+const convertingTaskCap = ref<QuickCapMetadata | null>(null);
+const convertingTaskParams = ref({
+    title: '',
+    content: ''
+});
+
+const openConvertTaskModal = (cap: QuickCapMetadata) => {
+    convertingTaskCap.value = cap;
+    const cleanContent = cap.content.replace(/<!--color:.*?-->/g, '').trim();
+    const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
+    convertingTaskParams.value.title = displayLines.length > 0 ? displayLines[0].substring(0, 50) + (displayLines[0].length > 50 ? '...' : '') : 'QuickCap Task';
+    convertingTaskParams.value.content = cleanContent;
+};
+
+const closeTaskModal = () => {
+    convertingTaskCap.value = null;
+};
+
+const confirmTurnIntoTask = async () => {
+    const cap = convertingTaskCap.value;
+    if (!cap) return;
+    try {
+        await invoke('create_task', {
+            vaultPath: props.vaultPath,
+            metadata: {
+                title: convertingTaskParams.value.title,
+                status: 'todo',
+                start_date: '',
+                due_date: '',
+                comment: '',
+                source_link: cap.path,
+                tags: extractTags(cap.content)
+            },
+            content: convertingTaskParams.value.content
+        });
+        
+        const index = quickCaps.value.findIndex(c => c.id === cap.id);
+        if (index !== -1) {
+            await invoke('delete_note', { path: cap.path });
+            quickCaps.value.splice(index, 1);
+        }
+        
+        closeTaskModal();
+    } catch(e) {
+        console.error("Failed to create task", e);
+        await message('Lỗi khi tạo Task.', { title: 'Synabit', kind: 'error' });
+    }
+};
+
 onMounted(() => {
     loadCaps();
     window.addEventListener('paste', handleGlobalPaste);
@@ -212,6 +344,7 @@ const renderPreview = (content: string) => {
     
     // Remove tags from the main text body so they are only displayed as bottom chips
     let textBody = content.trim();
+    textBody = textBody.replace(/<!--color:.*?-->\n?/g, ''); // hide color code
     textBody = textBody.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
     textBody = textBody.replace(/(?:^|\s)#[a-zA-Z0-9_\-\u00C0-\u024F\u1E00-\u1EFF]+(?=\s|$)/g, ' ').trim();
 
@@ -266,7 +399,7 @@ const deleteCap = async (path: string, index: number) => {
               <button title="Lists coming soon" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <CheckSquare class="w-4 h-4"/>
               </button>
-              <button title="Paste image to upload" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="pickImageForNewCap" title="Pick an image to upload" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <ImageIcon class="w-4 h-4"/>
               </button>
               <button @click="appendTagToInput" title="Add Tag" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
@@ -300,13 +433,10 @@ const deleteCap = async (path: string, index: number) => {
     <!-- Masonry Grid -->
     <div class="w-full max-w-7xl px-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 mx-auto">
         <div v-for="(cap, i) in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
-            <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all overflow-hidden relative flex flex-col" style="max-height: 320px;">
+            <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="getCapColor(cap.content) || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
                <!-- Text Content Wrapper -->
-               <div class="p-5 pb-0 flex-1 overflow-hidden relative">
+               <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
                    <div class="whitespace-pre-wrap text-[15px] font-medium leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(cap.content)"></div>
-                   
-                   <!-- Fade out overlay if content is long (inside text wrapper) -->
-                   <div v-if="cap.content.length > 250 || cap.content.split('\n').length > 6" class="absolute bottom-0 left-0 w-full h-16 bg-gradient-to-t from-white dark:from-[#1e1e1e] to-transparent pointer-events-none"></div>
                </div>
                
                <!-- Tags Wrapper (Always visible) -->
@@ -322,7 +452,7 @@ const deleteCap = async (path: string, index: number) => {
                </div>
 
                <!-- Bottom Actions Bar (Fixed at bottom of card) -->
-               <div class="absolute bottom-0 left-0 w-full px-4 py-2 bg-white dark:bg-[#1e1e1e] border-t border-transparent group-hover:border-gray-100 dark:group-hover:border-[#2a2a2a] flex items-center justify-between z-10 transition-colors">
+               <div class="absolute bottom-0 left-0 w-full px-4 py-2 border-t border-transparent group-hover:border-black/5 dark:group-hover:border-white/5 flex items-center justify-between z-10 transition-colors">
                    <!-- Date (visible by default, hidden on hover) -->
                   <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none">{{ cap.date }}</span>
                   
@@ -341,20 +471,35 @@ const deleteCap = async (path: string, index: number) => {
                           <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
                       </div>
                       <template v-else>
-                          <div class="flex items-center gap-0.5">
-                              <button title="Change Color" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] p-1.5 rounded-full transition-colors cursor-pointer">
-                                  <Palette class="w-3.5 h-3.5"/>
-                              </button>
-                              <button title="Add Image" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] p-1.5 rounded-full transition-colors cursor-pointer">
-                                  <ImageIcon class="w-3.5 h-3.5"/>
-                              </button>
-                              <button @click="openTagInput(cap)" title="Add Tag" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] p-1.5 rounded-full transition-colors cursor-pointer">
-                                  <Tag class="w-3.5 h-3.5"/>
-                              </button>
-                          </div>
                           <button @click.stop="deleteCap(cap.path, quickCaps.findIndex(c => c.id === cap.id))" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
                               <Trash2 class="w-3.5 h-3.5"/>
                           </button>
+                          <div class="flex items-center gap-0.5 relative">
+                              <div class="relative">
+                                  <button @click.stop="toggleColorPicker(cap.id)" title="Change Color" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                      <Palette class="w-3.5 h-3.5"/>
+                                  </button>
+                                  
+                                  <!-- Color Picker Popup -->
+                                  <div v-if="colorPickerCapId === cap.id" class="absolute bottom-[calc(100%+8px)] right-0 p-2 bg-white dark:bg-[#2a2a2a] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-50 w-[140px]" @click.stop>
+                                      <button v-for="color in PALETTE" :key="color.name" 
+                                          @click="changeCapColor(cap, color.value)"
+                                          class="w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110 cursor-pointer"
+                                          :class="color.value || 'bg-[#fdfdfc] dark:bg-[#1e1e1e]'"
+                                          :title="color.name"
+                                      ></button>
+                                  </div>
+                              </div>
+                              <button @click.stop="openConvertTaskModal(cap)" title="Capture to Task" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <CheckSquare class="w-3.5 h-3.5"/>
+                              </button>
+                              <button @click.stop="pickImageForExistingCap(cap)" title="Add Image" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <ImageIcon class="w-3.5 h-3.5"/>
+                              </button>
+                              <button @click="openTagInput(cap)" title="Add Tag" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <Tag class="w-3.5 h-3.5"/>
+                              </button>
+                          </div>
                       </template>
                   </div>
                </div>
@@ -370,7 +515,7 @@ const deleteCap = async (path: string, index: number) => {
 
     <!-- Full View Modal -->
     <div v-if="selectedCap" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
-        <div class="bg-white dark:bg-[#1e1e1e] w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" @click.stop>
+        <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
             <div class="p-8 overflow-y-auto flex-1">
                 <div class="whitespace-pre-wrap text-[16px] leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(selectedCap.content)"></div>
                 
@@ -388,6 +533,45 @@ const deleteCap = async (path: string, index: number) => {
                 <span class="text-xs text-gray-500 font-mono tracking-tight">{{ selectedCap.date }}</span>
                 <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer">
                     Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Convert to Task Modal -->
+    <div v-if="convertingTaskCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeTaskModal">
+        <div class="w-full max-w-lg rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] bg-white dark:bg-[#1e1e1e] overflow-hidden" @click.stop>
+            <div class="p-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
+                <h3 class="text-xl font-bold flex items-center gap-2 text-[#1c1c1e] dark:text-[#f4f4f5]">
+                    <CheckSquare class="w-6 h-6 text-black dark:text-white" />
+                    Conver to Task
+                </h3>
+                <p class="text-sm text-gray-500 mt-1">Sắp xếp lại suy nghĩ trước khi chốt thành Action.</p>
+            </div>
+            <div class="p-6 flex flex-col gap-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Task Title <span class="text-red-500">*</span></label>
+                    <input 
+                        v-model="convertingTaskParams.title" 
+                        class="w-full bg-gray-50 dark:bg-[#191919] border border-gray-200 dark:border-gray-700 rounded-lg p-3 outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-all text-[#1c1c1e] dark:text-[#f4f4f5]"
+                        placeholder="Task Name"
+                    />
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Description</label>
+                    <textarea 
+                        v-model="convertingTaskParams.content" 
+                        class="w-full bg-gray-50 dark:bg-[#191919] border border-gray-200 dark:border-gray-700 rounded-lg p-3 min-h-[120px] outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-all text-[#1c1c1e] dark:text-[#f4f4f5]"
+                        placeholder="Task Details..."
+                    ></textarea>
+                </div>
+            </div>
+            <div class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-end gap-3 rounded-b-2xl">
+                <button @click="closeTaskModal" class="px-5 py-2 hover:bg-gray-200 dark:hover:bg-[#2c2c2c] text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-all cursor-pointer">
+                    Cancel
+                </button>
+                <button @click="confirmTurnIntoTask" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer flex items-center gap-1.5">
+                    <CheckSquare class="w-4 h-4" /> Create Task
                 </button>
             </div>
         </div>

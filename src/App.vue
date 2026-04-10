@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { Tag, FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronRight, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap } from 'lucide-vue-next';
+import { Tag, FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronRight, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap, Globe } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import TiptapEditor from './components/TiptapEditor.vue';
 import QuickCap from './components/QuickCap.vue';
+import Tasks from './components/Tasks.vue';
+import Nexus from './components/Nexus.vue';
 
 // --- Vault & Data State ---
 const vaultPath = ref<string>(localStorage.getItem('synabitVaultPath') || '');
@@ -23,7 +25,7 @@ const notes = ref<NoteMetadata[]>([]);
 const currentNoteId = ref<string | null>(null);
 
 // --- App View State ---
-const activeTool = ref<'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'settings'>('note');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'settings'>('nexus');
 
 const themeMode = ref<'light' | 'dark' | 'system'>(localStorage.getItem('synabitThemeMode') as 'light' | 'dark' | 'system' || 'system');
 
@@ -411,6 +413,11 @@ const filteredNotes = computed(() => {
       <!-- GLOBAL NAVIGATION SIDEBAR 1 -->
       <nav class="w-16 flex-shrink-0 bg-[#fbfbfc] dark:bg-[#191919] border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col items-center py-4 z-20" data-tauri-drag-region>
          <div class="flex-1 flex flex-col items-center gap-3 mt-4 w-full" @mousedown.stop>
+            <button @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <Globe class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
+            </button>
+            <div class="w-8 h-px bg-[#e6e6e6] dark:bg-[#2c2c2c] my-1 rounded"></div>
             <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                <Zap class="w-5 h-5" />
                <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
@@ -649,15 +656,18 @@ const filteredNotes = computed(() => {
        </main>
     </template>
 
-    <!-- TASK TOOL PLACEHOLDER -->
+    <!-- NEXUS TOOL -->
+    <template v-else-if="activeTool === 'nexus'">
+       <main class="flex-1 overflow-hidden relative">
+          <Nexus :vaultPath="vaultPath" />
+       </main>
+    </template>
+
+    <!-- TASK TOOL -->
     <template v-else-if="activeTool === 'task'">
-      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#121212]">
-         <div class="text-center opacity-40">
-           <CheckSquare class="w-16 h-16 mx-auto mb-4" />
-           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">Tasks Tool</h2>
-           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
-         </div>
-      </main>
+       <main class="flex-1 overflow-hidden relative">
+          <Tasks :vaultPath="vaultPath" />
+       </main>
     </template>
     
     <!-- CALENDAR TOOL PLACEHOLDER -->
