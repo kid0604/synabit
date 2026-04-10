@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:is(.dark, .dark *));
 @plugin "@tailwindcss/typography";
 
 @theme {
@@ -30,10 +31,8 @@
   background: var(--color-border);
   border-radius: 4px;
 }
-@media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-thumb {
-    background: var(--color-border-dark);
-  }
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-border-dark);
 }
 
 body {
@@ -45,9 +44,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: var(--color-base-dark);
-    color: var(--color-text-dark);
-  }
+.dark body {
+  background-color: var(--color-base-dark);
+  color: var(--color-text-dark);
 }

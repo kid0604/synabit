@@ -13,6 +13,8 @@ import Highlight from '@tiptap/extension-highlight';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
 import TextAlign from '@tiptap/extension-text-align';
+import { TextStyle } from '@tiptap/extension-text-style';
+import { Color } from '@tiptap/extension-color';
 import { common, createLowlight } from 'lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
@@ -41,7 +43,8 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  AlignJustify
+  AlignJustify,
+  Palette
 } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
@@ -478,6 +481,8 @@ const editor = useEditor({
     TextAlign.configure({
       types: ['heading', 'paragraph'],
     }),
+    TextStyle,
+    Color,
     Placeholder.configure({
       placeholder: 'Type / for commands...',
     }),
@@ -749,6 +754,19 @@ onBeforeUnmount(() => {
         >
           <AlignJustify class="w-4 h-4" />
         </button>
+        <div class="bubble-divider" />
+        <label
+          title="Text Color"
+          class="relative flex items-center justify-center p-1.5 rounded-sm hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-300 transition-colors tooltip-wrapper"
+        >
+          <Palette class="w-4 h-4" />
+          <input 
+            type="color" 
+            @input="(e) => editor!.chain().focus().setColor((e.target as HTMLInputElement).value).run()" 
+            :value="editor!.getAttributes('textStyle').color || '#000000'"
+            class="absolute opacity-0 inset-0 w-full h-full cursor-pointer"
+          />
+        </label>
       </div>
     </Transition>
 

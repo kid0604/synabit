@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { Tag, FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronRight, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X } from 'lucide-vue-next';
+import { Tag, FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronRight, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import TiptapEditor from './components/TiptapEditor.vue';
+import QuickCap from './components/QuickCap.vue';
 
 // --- Vault & Data State ---
 const vaultPath = ref<string>(localStorage.getItem('synabitVaultPath') || '');
@@ -21,31 +22,43 @@ interface NoteMetadata {
 const notes = ref<NoteMetadata[]>([]);
 const currentNoteId = ref<string | null>(null);
 
+// --- App View State ---
+const activeTool = ref<'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'settings'>('note');
+
+const themeMode = ref<'light' | 'dark' | 'system'>(localStorage.getItem('synabitThemeMode') as 'light' | 'dark' | 'system' || 'system');
+
+const applyTheme = () => {
+  const isDark = themeMode.value === 'dark' || (themeMode.value === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (isDark) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+};
+
+watch(themeMode, (newMode) => {
+  localStorage.setItem('synabitThemeMode', newMode);
+  applyTheme();
+});
+
 // --- Size & Toggle State ---
-const wSidebar1 = ref(240);
-const wSidebar2 = ref(280);
-const showSidebar1 = ref(true);
-const showSidebar2 = ref(true);
+const wNoteSidebar = ref(300);
+const showNoteSidebar = ref(true);
 
 // --- Drag Logic ---
-const isDragging1 = ref(false);
-const isDragging2 = ref(false);
-const startDrag1 = () => { isDragging1.value = true; };
-const startDrag2 = () => { isDragging2.value = true; };
+const isDraggingNoteSidebar = ref(false);
+const startDragNoteSidebar = () => { isDraggingNoteSidebar.value = true; };
 
 const onMouseMove = (e: MouseEvent) => {
-  if (isDragging1.value) {
-    wSidebar1.value = Math.max(150, Math.min(e.clientX, 400));
-  } else if (isDragging2.value) {
-    const leftOffset = showSidebar1.value ? wSidebar1.value : 0;
-    wSidebar2.value = Math.max(200, Math.min(e.clientX - leftOffset, 600));
+  if (isDraggingNoteSidebar.value) {
+    // 64 is the width of the fixed global navigation sidebar
+    wNoteSidebar.value = Math.max(220, Math.min(e.clientX - 64, 600));
   }
 };
 
 const onMouseUp = () => {
-  if (isDragging1.value || isDragging2.value) {
-    isDragging1.value = false;
-    isDragging2.value = false;
+  if (isDraggingNoteSidebar.value) {
+    isDraggingNoteSidebar.value = false;
   }
 };
 
@@ -53,6 +66,9 @@ onMounted(() => {
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
   document.addEventListener('click', () => { activeContextMenu.value = null; });
+  applyTheme();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  
   if (vaultPath.value) {
      scanVault();
   }
@@ -60,6 +76,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove);
   window.removeEventListener('mouseup', onMouseUp);
+  window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
 });
 
 // --- Context Menu & Action Logic ---
@@ -365,13 +382,12 @@ const filteredNotes = computed(() => {
   });
 });
 
-const toggleSidebar1 = () => showSidebar1.value = !showSidebar1.value;
-const toggleSidebar2 = () => showSidebar2.value = !showSidebar2.value;
+
 </script>
 
 <template>
   <div class="flex h-screen w-full bg-[#fdfdfc] text-[#1c1c1e] dark:bg-[#121212] dark:text-[#f4f4f5] font-sans overflow-hidden select-none"
-       :class="{'cursor-col-resize': isDragging1 || isDragging2}">
+       :class="{'cursor-col-resize': isDraggingNoteSidebar}">
        
     <!-- Application State 1: No Vault Selected -->
     <div v-if="!vaultPath" class="flex-1 flex flex-col items-center justify-center p-8 bg-[#fdfdfc] dark:bg-[#121212]" data-tauri-drag-region>
@@ -392,27 +408,66 @@ const toggleSidebar2 = () => showSidebar2.value = !showSidebar2.value;
 
     <!-- Application State 2: Vault Selected -->
     <template v-else>
-      <!-- Sidebar 1: Tags -->
-      <aside 
-        v-show="showSidebar1" 
-        class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-white dark:bg-[#1e1e1e] flex flex-col relative shrink-0"
-        :style="{ width: wSidebar1 + 'px' }"
-        data-tauri-drag-region>
-        
-        <!-- Drag Handle 1 -->
-        <div 
-          class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity"
-          @mousedown.stop="startDrag1"
-        ></div>
+      <!-- GLOBAL NAVIGATION SIDEBAR 1 -->
+      <nav class="w-16 flex-shrink-0 bg-[#fbfbfc] dark:bg-[#191919] border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col items-center py-4 z-20" data-tauri-drag-region>
+         <div class="flex-1 flex flex-col items-center gap-3 mt-4 w-full" @mousedown.stop>
+            <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <Zap class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
+            </button>
+            <button @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <FileText class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Notes</span>
+            </button>
+            <button @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <CheckSquare class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Tasks</span>
+            </button>
+            <button @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <Calendar class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Calendar</span>
+            </button>
+            <button @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <FolderOpen class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
+            </button>
+         </div>
+         <div class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
+            <button @click="activeTool = 'settings'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'settings' ? 'bg-black text-white dark:bg-white dark:text-black shadow-md' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+               <Settings class="w-5 h-5" />
+               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
+            </button>
+         </div>
+      </nav>
 
-        <!-- Header -->
-        <div class="h-10 flex flex-shrink-0 items-center px-4 pointer-events-none" data-tauri-drag-region>
-        </div>
-        
-        <!-- Tags List -->
-        <div class="flex-1 overflow-y-auto p-3" @mousedown.stop>
-          <div class="mb-4">
-            <p class="text-xs font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-2 px-3">Tags & Library</p>
+      <!-- NOTE TOOL -->
+      <template v-if="activeTool === 'note'">
+        <!-- Note Sidebar -->
+        <aside 
+          v-show="showNoteSidebar" 
+          class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0"
+          :style="{ width: wNoteSidebar + 'px' }"
+        >
+          <!-- Drag Handle -->
+          <div 
+            class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity"
+            @mousedown.stop="startDragNoteSidebar"
+          ></div>
+
+          <!-- Tool Header -->
+          <div class="h-10 flex-shrink-0 flex items-center justify-between px-4" data-tauri-drag-region>
+             <span class="font-semibold text-sm">Notes & Tags</span>
+             <div class="flex gap-1" @mousedown.stop>
+               <button @click="scanVault" class="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Rescan Vault">
+                 <Search class="w-3.5 h-3.5" />
+               </button>
+             </div>
+          </div>
+
+          <div class="flex-1 overflow-y-auto" @mousedown.stop>
+            <!-- Tags Section -->
+            <div class="mb-2 pt-1 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">
+              <p class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-2 px-3">Tags & Library</p>
             <div class="space-y-1">
               <template v-for="tag in tagTree" :key="tag.name">
                 <div 
@@ -453,50 +508,26 @@ const toggleSidebar2 = () => showSidebar2.value = !showSidebar2.value;
                   No tags found in vault.
               </div>
             </div>
+            <!-- End Tags Section -->
           </div>
-        </div>
 
-        <!-- Footer/Settings -->
-        <div class="flex-shrink-0 p-3 border-t border-[#e6e6e6] dark:border-[#2c2c2c]" @mousedown.stop>
-          <button @click="scanVault" class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a] text-[#52525b] dark:text-[#a1a1aa] transition-colors mb-1">
-            <Search class="w-4 h-4 opacity-70" />
-            <span>Rescan Vault</span>
-          </button>
-          <button @click="vaultPath = ''; localStorage.removeItem('synabitVaultPath')" class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a] text-[#52525b] dark:text-[#a1a1aa] transition-colors">
-            <Settings class="w-4 h-4 opacity-70" />
-            <span>Switch Vault</span>
-          </button>
-        </div>
-      </aside>
+            <!-- Notes List Section -->
+            <div>
+              <div class="px-3 pb-2 sticky top-0 bg-[#fbfbfc] dark:bg-[#191919] z-10 pt-2 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
+                <div class="relative w-full">
+                  <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b8b] dark:text-[#71717a]" />
+                  <input 
+                    v-model="searchQuery"
+                    type="text" 
+                    placeholder="Search notes..." 
+                    class="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                  >
+                </div>
+              </div>
+              
+              <div class="pt-1">
+                <div 
 
-      <!-- Sidebar 2: Notes List -->
-      <aside 
-        v-show="showSidebar2" 
-        class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0"
-        :style="{ width: wSidebar2 + 'px' }">
-        
-        <!-- Drag Handle 2 -->
-        <div 
-          class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity"
-          @mousedown.stop="startDrag2"
-        ></div>
-
-        <!-- Header / Search -->
-        <div class="h-14 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
-          <div class="relative w-full" @mousedown.stop>
-            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b8b] dark:text-[#71717a]" />
-            <input 
-              v-model="searchQuery"
-              type="text" 
-              placeholder="Search notes..." 
-              class="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500"
-            >
-          </div>
-        </div>
-
-        <!-- Notes List -->
-        <div class="flex-1 overflow-y-auto" @mousedown.stop>
-          <div 
             v-for="note in filteredNotes" 
             :key="note.id"
             @click="currentNoteId = note.id"
@@ -543,20 +574,18 @@ const toggleSidebar2 = () => showSidebar2.value = !showSidebar2.value;
             No notes match.
           </div>
         </div>
-      </aside>
+      </div>
+    </div>
+  </aside>
 
       <!-- Main Area: Editor -->
       <main class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#121212] min-w-[300px]" @mousedown.stop>
         <!-- Controls Header Area -->
         <div class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
           <div class="flex gap-2">
-            <button @click="toggleSidebar1" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Tags">
-              <PanelLeftClose v-if="showSidebar1" class="w-4 h-4" />
+            <button @click="showNoteSidebar = !showNoteSidebar" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Sidebar">
+              <PanelLeftClose v-if="showNoteSidebar" class="w-4 h-4" />
               <PanelLeft v-else class="w-4 h-4" />
-            </button>
-            <button @click="toggleSidebar2" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Notes">
-              <PanelRightClose v-if="showSidebar2" class="w-4 h-4" />
-              <PanelRight v-else class="w-4 h-4" />
             </button>
           </div>
           
@@ -611,6 +640,104 @@ const toggleSidebar2 = () => showSidebar2.value = !showSidebar2.value;
           </div>
         </div>
       </main>
+    </template>
+
+    <!-- QUICKCAP TOOL VIEW -->
+    <template v-else-if="activeTool === 'quickcap'">
+       <main class="flex-1 overflow-hidden relative">
+          <QuickCap :vaultPath="vaultPath" />
+       </main>
+    </template>
+
+    <!-- TASK TOOL PLACEHOLDER -->
+    <template v-else-if="activeTool === 'task'">
+      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#121212]">
+         <div class="text-center opacity-40">
+           <CheckSquare class="w-16 h-16 mx-auto mb-4" />
+           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">Tasks Tool</h2>
+           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
+         </div>
+      </main>
+    </template>
+    
+    <!-- CALENDAR TOOL PLACEHOLDER -->
+    <template v-else-if="activeTool === 'calendar'">
+      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#121212]">
+         <div class="text-center opacity-40">
+           <Calendar class="w-16 h-16 mx-auto mb-4" />
+           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">Calendar Tool</h2>
+           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
+         </div>
+      </main>
+    </template>
+    
+    <!-- FILE TOOL PLACEHOLDER -->
+    <template v-else-if="activeTool === 'file'">
+      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#121212]">
+         <div class="text-center opacity-40">
+           <FolderOpen class="w-16 h-16 mx-auto mb-4" />
+           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">File Manager</h2>
+           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
+         </div>
+      </main>
+    </template>
+
+    <!-- SETTINGS VIEW -->
+    <template v-else-if="activeTool === 'settings'">
+      <main class="flex-1 overflow-y-auto bg-[#fdfdfc] dark:bg-[#121212] flex justify-center text-[#1c1c1e] dark:text-[#f4f4f5]">
+         <div class="max-w-2xl w-full py-16 px-8">
+            <h1 class="text-3xl font-bold mb-8">Settings</h1>
+            
+            <div class="space-y-8">
+               <!-- Vault Management -->
+               <section>
+                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">Vault Management</h2>
+                  <div class="bg-gray-50 dark:bg-[#1e1e1e] p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                     <div class="mb-4">
+                       <p class="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Current Vault Location</p>
+                       <p class="font-mono text-sm break-all text-black dark:text-white bg-white dark:bg-[#2a2a2a] p-2 rounded-md border border-gray-200 dark:border-transparent">{{ vaultPath }}</p>
+                     </div>
+                     <button @click="vaultPath = ''; localStorage.removeItem('synabitVaultPath'); activeTool = 'note';" class="px-5 py-2.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-sm font-medium transition-all shadow-md mt-2 flex items-center gap-2">
+                        <FolderOpen class="w-4 h-4" /> Switch Vault Folder
+                     </button>
+                  </div>
+               </section>
+               
+               <!-- Appearance -->
+               <section>
+                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">Appearance</h2>
+                  <div class="p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50 dark:bg-[#1e1e1e]">
+                      <h3 class="text-sm font-medium mb-3">Theme Preference</h3>
+                      <div class="flex items-center gap-6">
+                         <label class="flex items-center gap-2 cursor-pointer group">
+                            <input type="radio" value="light" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
+                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">Light</span>
+                         </label>
+                         <label class="flex items-center gap-2 cursor-pointer group">
+                            <input type="radio" value="dark" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
+                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">Dark</span>
+                         </label>
+                         <label class="flex items-center gap-2 cursor-pointer group">
+                            <input type="radio" value="system" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
+                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">System</span>
+                         </label>
+                      </div>
+                  </div>
+               </section>
+               
+               <!-- About -->
+               <section>
+                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">About Synabit</h2>
+                  <div class="p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50 dark:bg-[#1e1e1e]">
+                      <p class="text-sm font-medium">Synabit v1.0.0-alpha</p>
+                      <p class="text-xs text-gray-500 mt-1">A unified productivity workspace.</p>
+                  </div>
+               </section>
+            </div>
+         </div>
+      </main>
+    </template>
+    
     </template>
   </div>
 </template>

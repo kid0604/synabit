@@ -25,12 +25,44 @@ pub struct NoteMetadata {
     pinned: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct QuickCapMetadata {
+    id: String,
+    date: String,
+    content: String,
+    path: String,
+}
+
 #[tauri::command]
 fn scan_vault_path(vault_path: String) -> Result<Vec<NoteMetadata>, String> {
     let mut notes = Vec::new();
     let matter = Matter::<YAML>::new();
+    
+    let notes_dir = std::path::Path::new(&vault_path).join("Notes");
+    if !notes_dir.exists() {
+        if let Err(e) = fs::create_dir_all(&notes_dir) {
+            return Err(e.to_string());
+        }
+    }
+    
+    // Auto-migrate existing loose .md files from root vault to Notes folder
+    if let Ok(entries) = fs::read_dir(&vault_path) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_file() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                        if let Some(file_name) = path.file_name() {
+                            let target = notes_dir.join(file_name);
+                            let _ = fs::rename(&path, &target);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    for entry in WalkDir::new(&vault_path).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension() {
                 if ext == "md" {
@@ -82,12 +114,17 @@ fn create_new_note(vault_path: String) -> Result<String, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::path::Path;
     
+    let notes_dir = Path::new(&vault_path).join("Notes");
+    if !notes_dir.exists() {
+        fs::create_dir_all(&notes_dir).map_err(|e| e.to_string())?;
+    }
+    
     let start = SystemTime::now();
     let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
     let timestamp = since_the_epoch.as_millis();
     
     let filename = format!("Untitled-{}.md", timestamp);
-    let path = Path::new(&vault_path).join(&filename);
+    let path = notes_dir.join(&filename);
     
     let content = "---\ntitle: Untitled Note\ntags: []\n---\n\n";
     fs::write(&path, content).map_err(|e| e.to_string())?;
@@ -138,7 +175,9 @@ fn rename_note(vault_path: String, old_path: String, new_name: String) -> Result
         final_name = format!("{}.md", final_name);
     }
     
-    let new_path = Path::new(&vault_path).join(&final_name);
+    // Rename in the same directory as the original file
+    let parent_dir = old.parent().unwrap_or_else(|| Path::new(&vault_path));
+    let new_path = parent_dir.join(&final_name);
     
     if new_path.exists() && new_path != old {
         return Err("A file with this name already exists.".to_string());
@@ -146,6 +185,70 @@ fn rename_note(vault_path: String, old_path: String, new_name: String) -> Result
     
     fs::rename(old, &new_path).map_err(|e| e.to_string())?;
     Ok(new_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn scan_quick_caps(vault_path: String) -> Result<Vec<QuickCapMetadata>, String> {
+    use std::path::Path;
+    let mut caps = Vec::new();
+    let qc_dir = Path::new(&vault_path).join("QuickCaps");
+    
+    if !qc_dir.exists() {
+        return Ok(caps);
+    }
+
+    for entry in fs::read_dir(&qc_dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()) {
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("md") {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+                    let date: chrono::DateTime<chrono::Local> = created.into();
+                    
+                    caps.push(QuickCapMetadata {
+                        id: entry.path().to_string_lossy().to_string(),
+                        date: date.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        content,
+                        path: entry.path().to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+    }
+    
+    // Sort logic to have newest quickcaps first. 
+    caps.sort_by(|a, b| b.date.cmp(&a.date));
+    Ok(caps)
+}
+
+#[tauri::command]
+fn create_quick_cap(vault_path: String, content: String) -> Result<QuickCapMetadata, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::Path;
+    
+    let qc_dir = Path::new(&vault_path).join("QuickCaps");
+    if !qc_dir.exists() {
+        fs::create_dir_all(&qc_dir).map_err(|e| e.to_string())?;
+    }
+    
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time back").as_millis();
+    let filename = format!("qc-{}.md", timestamp);
+    let path = qc_dir.join(&filename);
+    
+    fs::write(&path, &content).map_err(|e| e.to_string())?;
+    
+    let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
+    
+    Ok(QuickCapMetadata {
+        id: path.to_string_lossy().to_string(),
+        date: date.format("%Y-%m-%d %H:%M:%S").to_string(),
+        content,
+        path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+fn update_quick_cap(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -161,7 +264,10 @@ pub fn run() {
             update_note,
             save_asset,
             delete_note,
-            rename_note
+            rename_note,
+            scan_quick_caps,
+            create_quick_cap,
+            update_quick_cap
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
