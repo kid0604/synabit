@@ -633,15 +633,13 @@ async fn get_note_backlinks(vault_path: String, target_id: String) -> Result<Vec
     }
     let active_dir = if notes_dir.exists() { notes_dir } else { Path::new(&vault_path).join("Notes") };
 
-    let search_string = format!("synabit://note/{}", target_id);
-
     for entry in WalkDir::new(&active_dir).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "md") {
             if entry.path().file_name().unwrap_or_default() == target_id.as_str() {
                 continue; 
             }
             if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                if content.contains(&search_string) {
+                if content.contains("synabit://note/") && content.contains(&target_id) {
                     let mut title = String::from("Untitled");
                     let mut date = String::new();
                     let mut tags = Vec::new();

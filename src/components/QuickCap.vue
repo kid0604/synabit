@@ -21,6 +21,9 @@ const isSubmitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const selectedCap = ref<QuickCapMetadata | null>(null);
 
+const editingContent = ref('');
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
 const taggingCapId = ref<string | null>(null);
 const colorPickerCapId = ref<string | null>(null);
 const tagInputText = ref('');
@@ -122,11 +125,42 @@ const loadCaps = async () => {
     }
 };
 
-const openFullView = (cap: QuickCapMetadata) => {
-    selectedCap.value = cap;
+const saveSelectedCap = async () => {
+    if (!selectedCap.value) return;
+    
+    let oldStripped = selectedCap.value.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    let currentStripped = editingContent.value.trim();
+    if (currentStripped === oldStripped) return;
+    
+    let finalPayload = editingContent.value;
+    const colorMatch = selectedCap.value.content.match(/<!--color:(.*?)-->/);
+    if (colorMatch) {
+       finalPayload = `<!--color:${colorMatch[1]}-->\n${finalPayload}`;
+    }
+    
+    try {
+        await invoke('update_note', { path: selectedCap.value.path, content: finalPayload });
+        selectedCap.value.content = finalPayload;
+    } catch(e) {
+        console.error("Failed to update note", e);
+    }
 };
 
-const closeFullView = () => {
+const handleEditInput = () => {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+        saveSelectedCap();
+    }, 1000);
+};
+
+const openFullView = (cap: QuickCapMetadata) => {
+    selectedCap.value = cap;
+    editingContent.value = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+};
+
+const closeFullView = async () => {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    await saveSelectedCap();
     selectedCap.value = null;
 };
 
@@ -436,7 +470,7 @@ const deleteCap = async (path: string, index: number) => {
             <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="getCapColor(cap.content) || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
                <!-- Text Content Wrapper -->
                <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
-                   <div class="whitespace-pre-wrap text-[15px] font-medium leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(cap.content)"></div>
+                   <div class="whitespace-pre-wrap text-[15px] font-medium leading-normal text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(cap.content)"></div>
                </div>
                
                <!-- Tags Wrapper (Always visible) -->
@@ -516,20 +550,23 @@ const deleteCap = async (path: string, index: number) => {
     <!-- Full View Modal -->
     <div v-if="selectedCap" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
         <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
-            <div class="p-8 overflow-y-auto flex-1">
-                <div class="whitespace-pre-wrap text-[16px] leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(selectedCap.content)"></div>
+            <div class="p-8 overflow-y-auto flex-1 h-full flex flex-col min-h-0 bg-transparent">
+                <textarea 
+                    v-model="editingContent"
+                    @input="handleEditInput"
+                    class="w-full flex-1 bg-transparent resize-none outline-none text-[16px] leading-normal text-[#1c1c1e] dark:text-[#f4f4f5] border-none focus:ring-0 appearance-none m-0 p-0"
+                    placeholder="Note content..."
+                    autofocus
+                ></textarea>
                 
-                <!-- Render tags as chips in modal -->
-                <div v-if="extractTags(selectedCap.content).length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full">
-                   <span v-for="tag in extractTags(selectedCap.content)" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
+                <!-- Render tags as chips in modal (Read-only as it updates via raw text editing) -->
+                <div v-if="extractTags(editingContent).length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0">
+                   <span v-for="tag in extractTags(editingContent)" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent cursor-default">
                        {{ tag }}
-                       <button @click.stop="removeTag(selectedCap, tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer">
-                           <X class="w-3 h-3" />
-                       </button>
                    </span>
                 </div>
             </div>
-            <div class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-between mt-auto">
+            <div class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-between mt-auto shrink-0">
                 <span class="text-xs text-gray-500 font-mono tracking-tight">{{ selectedCap.date }}</span>
                 <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer">
                     Close

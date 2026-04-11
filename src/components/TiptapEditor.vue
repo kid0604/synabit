@@ -17,6 +17,8 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import { common, createLowlight } from 'lowlight';
 import { Markdown } from 'tiptap-markdown';
+import { EquationExtension } from './EquationExtension';
+import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
@@ -29,7 +31,7 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
   Quote, Code2, Minus, Type, Table2,
-  Image as ImageIcon
+  Image as ImageIcon, Sigma
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -428,6 +430,14 @@ const slashCommandItems = (): SlashCommandItem[] => [
         .run();
     },
   },
+  {
+    title: 'Equation',
+    description: 'LaTeX/KaTeX Math formula',
+    icon: Sigma,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).insertContent({ type: 'equation', attrs: { latex: '' } }).run();
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -477,6 +487,7 @@ const editor = useEditor({
     CodeBlockLowlight.configure({
       lowlight,
     }),
+    EquationExtension,
     Table.configure({
       resizable: true,
     }),
@@ -554,6 +565,7 @@ const editor = useEditor({
             pluginKey: new PluginKey('noteMentionSuggestion'),
             char: '@',
             command: ({ editor, range, props }) => {
+              const basename = props.id.split('/').pop().split('\\').pop();
               editor
                 .chain()
                 .focus()
@@ -563,7 +575,7 @@ const editor = useEditor({
                   marks: [
                     {
                       type: 'link',
-                      attrs: { href: `synabit://note/${props.id}` }
+                      attrs: { href: `synabit://note/${basename}` }
                     }
                   ],
                   text: props.title
@@ -1195,7 +1207,7 @@ onBeforeUnmount(() => {
 
 /* === Code Block (Syntax Highlighting) === */
 .tiptap pre {
-  background: #fafafa;
+  background: #f8f9fa !important;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 16px 20px;
@@ -1204,8 +1216,9 @@ onBeforeUnmount(() => {
   line-height: 1.6;
   overflow-x: auto;
   position: relative;
+  color: #24292e !important;
 }
-.tiptap pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.tiptap pre code { background: none !important; padding: 0; font-size: inherit; color: inherit !important; }
 
 /* Light theme syntax colors */
 .tiptap pre .hljs-comment,
@@ -1234,8 +1247,9 @@ onBeforeUnmount(() => {
 
 @media (prefers-color-scheme: dark) {
   .tiptap pre {
-    background: #161618;
+    background: #161618 !important;
     border-color: #2c2c2e;
+    color: #e4e4e7 !important;
   }
   .tiptap pre code { color: #e4e4e7; }
   .tiptap pre .hljs-comment,
@@ -1491,6 +1505,27 @@ onBeforeUnmount(() => {
   }
 }
 
+/* === Global Dark Theme Overrides for Text === */
+.dark .prose.dark\:prose-invert {
+  --tw-prose-body: #e4e4e7 !important;
+  --tw-prose-headings: #f4f4f5 !important;
+  --tw-prose-lead: #d4d4d8 !important;
+  --tw-prose-bold: #ffffff !important;
+  --tw-prose-counters: #a1a1aa !important;
+  --tw-prose-bullets: #71717a !important;
+  --tw-prose-hr: #3f3f46 !important;
+  --tw-prose-quotes: #e4e4e7 !important;
+  --tw-prose-quote-borders: #52525b !important;
+  --tw-prose-captions: #a1a1aa !important;
+  --tw-prose-th-borders: #52525b !important;
+  --tw-prose-td-borders: #3f3f46 !important;
+  color: #e4e4e7 !important;
+}
+.dark .prose.dark\:prose-invert p,
+.dark .prose.dark\:prose-invert li {
+  color: #e4e4e7 !important;
+}
+
 .prose a[href^="synabit://note/"] {
   background-color: rgba(168, 85, 247, 0.1);
   color: #a855f7;
@@ -1513,5 +1548,24 @@ onBeforeUnmount(() => {
 
 .dark .prose a[href^="synabit://note/"]:hover {
   background-color: rgba(168, 85, 247, 0.3);
+}
+
+/* === Notion/Obsidian Style Spacing for Prose === */
+.prose p {
+  margin-top: 0.25em !important;
+  margin-bottom: 0.25em !important;
+  line-height: 1.5 !important;
+}
+.prose ul, .prose ol {
+  margin-top: 0.25em !important;
+  margin-bottom: 0.25em !important;
+}
+.prose li {
+  margin-top: 0.1em !important;
+  margin-bottom: 0.1em !important;
+}
+.prose li p {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 </style>

@@ -48,20 +48,31 @@ watch(themeMode, (newMode) => {
 const wNoteSidebar = ref(300);
 const showNoteSidebar = ref(true);
 
+const wRightSidebar = ref(288);
+const showRightSidebar = ref(true);
+
 // --- Drag Logic ---
 const isDraggingNoteSidebar = ref(false);
 const startDragNoteSidebar = () => { isDraggingNoteSidebar.value = true; };
+
+const isDraggingRightSidebar = ref(false);
+const startDragRightSidebar = () => { isDraggingRightSidebar.value = true; };
 
 const onMouseMove = (e: MouseEvent) => {
   if (isDraggingNoteSidebar.value) {
     // 64 is the width of the fixed global navigation sidebar
     wNoteSidebar.value = Math.max(220, Math.min(e.clientX - 64, 600));
+  } else if (isDraggingRightSidebar.value) {
+    wRightSidebar.value = Math.max(200, Math.min(window.innerWidth - e.clientX, 600));
   }
 };
 
 const onMouseUp = () => {
   if (isDraggingNoteSidebar.value) {
     isDraggingNoteSidebar.value = false;
+  }
+  if (isDraggingRightSidebar.value) {
+    isDraggingRightSidebar.value = false;
   }
 };
 
@@ -414,7 +425,7 @@ const filteredNotes = computed(() => {
 
 <template>
   <div class="flex h-screen w-full bg-[#fdfdfc] text-[#1c1c1e] dark:bg-[#121212] dark:text-[#f4f4f5] font-sans overflow-hidden select-none"
-       :class="{'cursor-col-resize': isDraggingNoteSidebar}">
+       :class="{'cursor-col-resize': isDraggingNoteSidebar || isDraggingRightSidebar}">
        
     <!-- Application State 1: No Vault Selected -->
     <div v-if="!vaultPath" class="flex-1 flex flex-col items-center justify-center p-8 bg-[#fdfdfc] dark:bg-[#121212]" data-tauri-drag-region>
@@ -621,14 +632,19 @@ const filteredNotes = computed(() => {
             </button>
           </div>
           
-          <div>
+          <div class="flex gap-2">
             <button @click="createNewNote" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="New Note">
                <Plus class="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            </button>
+            <button v-if="currentBacklinks.length > 0" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Backlinks">
+              <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
+              <PanelRight v-else class="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        <div v-if="currentNoteId" class="flex-1 px-12 pb-12 max-w-4xl mx-auto w-full overflow-y-auto cursor-text">
+        <div v-if="currentNoteId" class="flex-1 overflow-y-auto w-full">
+          <div class="px-12 pb-12 max-w-4xl mx-auto w-full cursor-text">
           <div class="mb-4 pt-4">
              <div class="flex gap-2 mb-4 flex-wrap items-center">
                 <span v-for="tag in notes.find(n => n.id === currentNoteId)?.tags" :key="tag" class="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 group/tag">
@@ -666,26 +682,8 @@ const filteredNotes = computed(() => {
                 @update:model-value="onEditorUpdate" 
                 @open-internal-note="handleOpenInternalNote"
              />
-             <!-- Linked Mentions / Backlinks -->
-             <div v-if="currentBacklinks.length > 0" class="mt-16 pt-8 border-t border-gray-200 dark:border-[#333]">
-                <h4 class="text-sm font-semibold text-gray-500 mb-6 flex items-center gap-2 select-none">
-                   <Globe class="w-4 h-4" /> Linked Mentions ({{ currentBacklinks.length }})
-                </h4>
-                <div class="flex flex-col gap-4">
-                   <div 
-                      v-for="bl in currentBacklinks" 
-                      :key="bl.id" 
-                      @click="handleOpenInternalNote(bl.id)"
-                      class="p-5 rounded-2xl border border-gray-100 dark:border-[#222] bg-gray-50/50 dark:bg-[#1a1a1a]/50 cursor-pointer hover:bg-white dark:hover:bg-[#252525] hover:border-purple-500/30 dark:hover:border-purple-500/30 transition-all shadow-sm group"
-                   >
-                      <h5 class="text-[14.5px] font-bold text-purple-600 dark:text-purple-400 mb-2 flex items-center gap-2">
-                          <FileText class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity"/> 
-                          {{ bl.title }}
-                      </h5>
-                      <p class="text-[13px] text-gray-500 dark:text-gray-400 leading-relaxed max-w-3xl line-clamp-3">{{ bl.summary || 'No text content available.' }}</p>
-                   </div>
-                </div>
-             </div>
+             <!-- Backlinks UI moved to Right Sidebar -->
+          </div>
           </div>
         </div>
         <div v-else class="flex-1 flex items-center justify-center text-[#52525b] dark:text-[#a1a1aa]">
@@ -695,6 +693,36 @@ const filteredNotes = computed(() => {
           </div>
         </div>
       </main>
+
+      <!-- Right Sidebar: Backlinks -->
+      <aside v-if="currentNoteId && currentBacklinks.length > 0" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden" :style="{ width: wRightSidebar + 'px' }">
+        <!-- Drag Handle -->
+        <div 
+          class="absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity"
+          @mousedown.stop="startDragRightSidebar"
+        ></div>
+        <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
+            <Globe class="w-4 h-4 text-gray-500 mr-2" />
+            <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">Linked Mentions ({{ currentBacklinks.length }})</span>
+            <button @click="showRightSidebar = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors">
+               <X class="w-3.5 h-3.5" />
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#fdfdfc] dark:bg-[#121212]">
+            <div 
+              v-for="bl in currentBacklinks" 
+              :key="bl.id" 
+              @click="handleOpenInternalNote(bl.id)"
+              class="p-3.5 rounded-xl border border-gray-100 dark:border-[#2c2c2c] bg-white dark:bg-[#1a1a1a] cursor-pointer hover:border-purple-500/50 dark:hover:border-purple-500/50 hover:shadow-md transition-all group"
+            >
+              <h5 class="text-sm font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-1.5 flex items-center gap-2">
+                  <FileText class="w-3.5 h-3.5 opacity-40 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/> 
+                  <span class="truncate">{{ bl.title }}</span>
+              </h5>
+              <p class="text-[11px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-3 leading-relaxed opacity-80 group-hover:opacity-100 transition-opacity">{{ bl.summary || 'No text content available.' }}</p>
+            </div>
+        </div>
+      </aside>
     </template>
 
     <!-- QUICKCAP TOOL VIEW -->
