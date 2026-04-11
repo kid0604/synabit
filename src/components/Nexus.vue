@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Search, FileText, CheckSquare, Zap, Clock, X, ChevronRight, Globe, Tag } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, Clock, X, ChevronRight, Globe, Tag, File } from 'lucide-vue-next';
 
 const props = defineProps<{
     vaultPath: string;
@@ -78,6 +78,7 @@ const getTypeIcon = (type: string) => {
     if (type === 'note') return FileText;
     if (type === 'task') return CheckSquare;
     if (type === 'quickcap') return Zap;
+    if (type === 'file') return File;
     return FileText;
 };
 
@@ -85,10 +86,19 @@ const getTypeColor = (type: string) => {
     if (type === 'note') return 'text-blue-600 bg-blue-100 dark:bg-blue-500/20 dark:text-blue-400';
     if (type === 'task') return 'text-emerald-600 bg-emerald-100 dark:bg-emerald-500/20 dark:text-emerald-400';
     if (type === 'quickcap') return 'text-amber-600 bg-amber-100 dark:bg-amber-500/20 dark:text-amber-400';
+    if (type === 'file') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
-const openPreview = (item: NexusItem) => {
+const openPreview = async (item: NexusItem) => {
+    if (item.item_type === 'file') {
+        try {
+            await invoke('open_local_file', { path: item.path });
+        } catch(e) {
+            console.error("Failed to open file", e);
+        }
+        return;
+    }
     selectedItem.value = item;
 };
 
@@ -131,8 +141,8 @@ const renderMarkdownPreview = (text: string, type: string) => {
          :class="{'mr-[400px]': selectedItem}">
         
         <!-- Header / Search -->
-        <div class="w-full max-w-3xl mx-auto pt-16 px-8 pb-8 flex-shrink-0">
-            <div class="text-center mb-10">
+        <div class="relative w-full max-w-3xl mx-auto pt-16 px-8 pb-8 flex-shrink-0">
+            <div class="text-center mb-10 mt-6">
                 <div class="w-16 h-16 bg-white dark:bg-[#1a1a1a] shadow-sm border border-gray-200 dark:border-[#2c2c2c] rounded-2xl flex items-center justify-center mx-auto mb-6 transform -rotate-6">
                     <Globe class="w-8 h-8 text-black dark:text-white" />
                 </div>
@@ -241,7 +251,8 @@ const renderMarkdownPreview = (text: string, type: string) => {
                                 </span>
                             </div>
                             
-                            <p class="text-[14px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="renderMarkdownPreview(item.preview, item.item_type)"></p>
+                            <p v-if="item.item_type !== 'file'" class="text-[14px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="renderMarkdownPreview(item.preview, item.item_type)"></p>
+                            <p v-else class="text-[14px] text-purple-600/70 dark:text-purple-400/70 font-mono">{{ item.preview }}</p>
                             
                             <div class="flex items-center gap-2 mt-4" v-if="item.tags.length > 0">
                                 <span v-for="tag in item.tags" :key="tag" class="text-[11px] font-medium px-2.5 py-1 rounded-md bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-400 flex items-center gap-1">

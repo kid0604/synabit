@@ -3,6 +3,25 @@ use walkdir::WalkDir;
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
 use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FileItem {
+    pub id: String,
+    pub name: String,
+    pub extension: String,
+    pub size_mb: f64,
+    pub source_folder: String,
+    pub date_modified: String,
+    pub absolute_path: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct FileManagerSettings {
+    pub tracked_sources: Vec<String>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct FrontMatter {
@@ -598,6 +617,233 @@ fn delete_task(path: String) -> Result<(), String> {
 }
 
 
+#[tauri::command]
+async fn get_note_backlinks(vault_path: String, target_id: String) -> Result<Vec<NoteMetadata>, String> {
+    use std::path::Path;
+    use walkdir::WalkDir;
+
+    let notes_dir = Path::new(&vault_path).join("notes");
+    let mut backlinks = Vec::new();
+    
+    if !notes_dir.exists() {
+        let notes_dir_cap = Path::new(&vault_path).join("Notes");
+        if !notes_dir_cap.exists() {
+            return Ok(backlinks);
+        }
+    }
+    let active_dir = if notes_dir.exists() { notes_dir } else { Path::new(&vault_path).join("Notes") };
+
+    let search_string = format!("synabit://note/{}", target_id);
+
+    for entry in WalkDir::new(&active_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "md") {
+            if entry.path().file_name().unwrap_or_default() == target_id.as_str() {
+                continue; 
+            }
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                if content.contains(&search_string) {
+                    let mut title = String::from("Untitled");
+                    let mut date = String::new();
+                    let mut tags = Vec::new();
+                    let mut pinned = false;
+                    let mut summary = String::new();
+                    
+                    if content.starts_with("---\n") {
+                        if let Some(end_idx) = content[4..].find("\n---\n") {
+                            let frontmatter = &content[4..4+end_idx];
+                            for line in frontmatter.lines() {
+                                if line.starts_with("title: ") {
+                                    title = line[7..].trim().trim_matches('"').to_string();
+                                } else if line.starts_with("date: ") {
+                                    date = line[6..].trim().trim_matches('"').to_string();
+                                } else if line.starts_with("pinned: ") {
+                                    pinned = line[8..].trim() == "true";
+                                } else if line.starts_with("tags: ") {
+                                    let tags_str = line[6..].trim().trim_matches(|c| c == '[' || c == ']');
+                                    if !tags_str.is_empty() {
+                                        for tag in tags_str.split(',') {
+                                            tags.push(tag.trim().trim_matches(|c| c == '"' || c == '\'').to_string());
+                                        }
+                                    }
+                                }
+                            }
+                            let body = &content[4+end_idx+5..];
+                            let summary_text: String = body.chars().take(120).collect();
+                            summary = summary_text.replace('\n', " ");
+                        }
+                    }
+                    
+                    backlinks.push(NoteMetadata {
+                        id: entry.path().file_name().unwrap().to_string_lossy().to_string(),
+                        path: entry.path().to_string_lossy().to_string(),
+                        title,
+                        date,
+                        tags,
+                        pinned,
+                        summary
+                    });
+                }
+            }
+        }
+    }
+    Ok(backlinks)
+}
+
+#[tauri::command]
+fn get_settings(vault_path: String) -> Result<FileManagerSettings, String> {
+    let settings_path = Path::new(&vault_path).join(".synabit_fm_settings.json");
+    if let Ok(content) = fs::read_to_string(settings_path) {
+        if let Ok(settings) = serde_json::from_str(&content) {
+            return Ok(settings);
+        }
+    }
+    Ok(FileManagerSettings::default())
+}
+
+#[tauri::command]
+fn save_settings(vault_path: String, settings: FileManagerSettings) -> Result<(), String> {
+    let settings_path = Path::new(&vault_path).join(".synabit_fm_settings.json");
+    let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
+    fs::write(settings_path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_local_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+use std::collections::HashMap;
+
+fn get_file_meta(vault_path: &str) -> HashMap<String, Vec<String>> {
+    let meta_path = Path::new(vault_path).join(".synabit_fm_meta.json");
+    if let Ok(content) = fs::read_to_string(meta_path) {
+        if let Ok(meta) = serde_json::from_str(&content) {
+            return meta;
+        }
+    }
+    HashMap::new()
+}
+
+fn save_file_meta(vault_path: &str, meta: &HashMap<String, Vec<String>>) -> Result<(), String> {
+    let meta_path = Path::new(vault_path).join(".synabit_fm_meta.json");
+    let content = serde_json::to_string(meta).unwrap_or_default();
+    fs::write(meta_path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_file_metadata(vault_path: String, absolute_path: String, new_filename: String, new_tags: Vec<String>) -> Result<String, String> {
+    let mut meta = get_file_meta(&vault_path);
+    let original_path = Path::new(&absolute_path);
+    
+    let current_filename = original_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let mut final_path_str = absolute_path.clone();
+    
+    if current_filename != new_filename {
+        if let Some(parent) = original_path.parent() {
+            if parent.ends_with("assets") {
+                return Err("Cannot rename files inside the 'assets' directory. You can only edit tags.".to_string());
+            } else {
+                let new_path = parent.join(&new_filename);
+                if new_path.exists() {
+                     return Err(format!("File '{}' already exists.", new_filename));
+                }
+                match fs::rename(&original_path, &new_path) {
+                    Ok(_) => {
+                        final_path_str = new_path.to_string_lossy().to_string();
+                        meta.remove(&absolute_path);
+                    },
+                    Err(e) => return Err(e.to_string())
+                }
+            }
+        }
+    }
+    
+    meta.insert(final_path_str.clone(), new_tags);
+    save_file_meta(&vault_path, &meta)?;
+    
+    Ok(final_path_str)
+}
+
+#[tauri::command]
+fn reindex_sources(_vault_path: String) -> Result<(), String> {
+    // Basic placeholder
+    Ok(())
+}
+
+#[tauri::command]
+fn get_file_items(vault_path: String) -> Result<Vec<FileItem>, String> {
+    use walkdir::WalkDir;
+    let mut items = Vec::new();
+    let file_meta = get_file_meta(&vault_path);
+    let folders_to_scan = ["assets", "files"];
+    
+    for folder_name in folders_to_scan.iter() {
+        let dir_path = Path::new(&vault_path).join(folder_name);
+        if dir_path.exists() {
+            for entry in WalkDir::new(&dir_path).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
+                    let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let absolute = entry.path().to_string_lossy().to_string();
+                    let date = "Unknown".to_string();
+                    let tags = file_meta.get(&absolute).cloned().unwrap_or_default();
+                    
+                    items.push(FileItem {
+                        id: absolute.clone(),
+                        name: name.clone(),
+                        extension: ext,
+                        size_mb: size,
+                        source_folder: folder_name.to_string(),
+                        date_modified: date,
+                        absolute_path: absolute.clone(),
+                        tags
+                    });
+                }
+            }
+        }
+    }
+    if let Ok(settings) = get_settings(vault_path.clone()) {
+        for source in settings.tracked_sources {
+            if Path::new(&source).exists() {
+                for entry in WalkDir::new(&source).into_iter().filter_map(|e| e.ok()) {
+                    if entry.file_type().is_file() {
+                        let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
+                        let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let absolute = entry.path().to_string_lossy().to_string();
+                        let tags = file_meta.get(&absolute).cloned().unwrap_or_default();
+                        
+                        items.push(FileItem {
+                            id: absolute.clone(),
+                            name: name.clone(),
+                            extension: ext,
+                            size_mb: size,
+                            source_folder: source.clone(),
+                            date_modified: "Unknown".to_string(),
+                            absolute_path: absolute.clone(),
+                            tags
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(items)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -622,7 +868,14 @@ pub fn run() {
             delete_task,
             get_nexus_items,
             search_nexus,
-            get_nexus_stats
+            get_nexus_stats,
+            get_note_backlinks,
+            get_file_items,
+            get_settings,
+            save_settings,
+            open_local_file,
+            update_file_metadata,
+            reindex_sources
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

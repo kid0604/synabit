@@ -7,6 +7,7 @@ import TiptapEditor from './components/TiptapEditor.vue';
 import QuickCap from './components/QuickCap.vue';
 import Tasks from './components/Tasks.vue';
 import Nexus from './components/Nexus.vue';
+import FileManager from './components/FileManager.vue';
 
 // --- Vault & Data State ---
 const vaultPath = ref<string>(localStorage.getItem('synabitVaultPath') || '');
@@ -324,6 +325,9 @@ const loadNoteFile = async (id: string) => {
             }
         }
         currentContent.value = body;
+        if (editorRef.value) {
+            editorRef.value.loadContent(body);
+        }
     } catch(e) {
         console.error("Failed to read note:", e);
     }
@@ -346,18 +350,39 @@ const saveNoteFile = () => {
     }, 600);
 }
 
+const currentBacklinks = ref<NoteMetadata[]>([]);
+const editorRef = ref<any>(null);
+
 const onEditorUpdate = (newMd: string) => {
     currentContent.value = newMd;
     saveNoteFile();
 };
 
-watch(currentNoteId, (newId) => {
+watch(currentNoteId, async (newId) => {
     if (newId) {
-        loadNoteFile(newId);
+        await loadNoteFile(newId);
+        try {
+            currentBacklinks.value = await invoke('get_note_backlinks', { vaultPath: vaultPath.value, targetId: newId.split(/[\\/]/).pop() || newId });
+        } catch (e) {
+            console.error(e);
+            currentBacklinks.value = [];
+        }
     } else {
         currentContent.value = '';
+        currentBacklinks.value = [];
+        if (editorRef.value) editorRef.value.loadContent('');
     }
 });
+
+const handleOpenInternalNote = (noteId: string) => {
+    const exists = notes.value.find(n => n.id === noteId);
+    if (exists) {
+        currentNoteId.value = noteId;
+    } else {
+        const existsByName = notes.value.find(n => n.id.endsWith(noteId));
+        if (existsByName) currentNoteId.value = existsByName.id;
+    }
+};
 
 // --- Derived State ---
 const filteredNotes = computed(() => {
@@ -634,10 +659,33 @@ const filteredNotes = computed(() => {
           </div>
           <div class="mt-4 pb-20 w-full text-text dark:text-text-dark">
              <TiptapEditor 
+                ref="editorRef"
                 :model-value="currentContent" 
                 :vault-path="vaultPath"
+                :notes="notes"
                 @update:model-value="onEditorUpdate" 
+                @open-internal-note="handleOpenInternalNote"
              />
+             <!-- Linked Mentions / Backlinks -->
+             <div v-if="currentBacklinks.length > 0" class="mt-16 pt-8 border-t border-gray-200 dark:border-[#333]">
+                <h4 class="text-sm font-semibold text-gray-500 mb-6 flex items-center gap-2 select-none">
+                   <Globe class="w-4 h-4" /> Linked Mentions ({{ currentBacklinks.length }})
+                </h4>
+                <div class="flex flex-col gap-4">
+                   <div 
+                      v-for="bl in currentBacklinks" 
+                      :key="bl.id" 
+                      @click="handleOpenInternalNote(bl.id)"
+                      class="p-5 rounded-2xl border border-gray-100 dark:border-[#222] bg-gray-50/50 dark:bg-[#1a1a1a]/50 cursor-pointer hover:bg-white dark:hover:bg-[#252525] hover:border-purple-500/30 dark:hover:border-purple-500/30 transition-all shadow-sm group"
+                   >
+                      <h5 class="text-[14.5px] font-bold text-purple-600 dark:text-purple-400 mb-2 flex items-center gap-2">
+                          <FileText class="w-4 h-4 opacity-70 group-hover:opacity-100 transition-opacity"/> 
+                          {{ bl.title }}
+                      </h5>
+                      <p class="text-[13px] text-gray-500 dark:text-gray-400 leading-relaxed max-w-3xl line-clamp-3">{{ bl.summary || 'No text content available.' }}</p>
+                   </div>
+                </div>
+             </div>
           </div>
         </div>
         <div v-else class="flex-1 flex items-center justify-center text-[#52525b] dark:text-[#a1a1aa]">
@@ -681,15 +729,10 @@ const filteredNotes = computed(() => {
       </main>
     </template>
     
-    <!-- FILE TOOL PLACEHOLDER -->
     <template v-else-if="activeTool === 'file'">
-      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#121212]">
-         <div class="text-center opacity-40">
-           <FolderOpen class="w-16 h-16 mx-auto mb-4" />
-           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">File Manager</h2>
-           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
-         </div>
-      </main>
+       <main class="flex-1 overflow-hidden relative">
+          <FileManager :vaultPath="vaultPath" />
+       </main>
     </template>
 
     <!-- SETTINGS VIEW -->

@@ -19,10 +19,12 @@ import { common, createLowlight } from 'lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension } from '@tiptap/core';
+import { PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import SlashCommandMenu from './SlashCommandMenu.vue';
 import type { SlashCommandItem } from './SlashCommandMenu.vue';
+import NoteMentionMenu from './NoteMentionMenu.vue';
 import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
@@ -54,10 +56,12 @@ const lowlight = createLowlight(common);
 const props = defineProps<{
   modelValue: string;
   vaultPath: string;
+  notes?: any[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void
+  (e: 'update:modelValue', value: string): void;
+  (e: 'open-internal-note', noteId: string): void;
 }>();
 
 // --- Asset path helpers ---
@@ -466,6 +470,7 @@ const editor = useEditor({
       openOnClick: false,
       autolink: true,
       linkOnPaste: true,
+      protocols: ['http', 'https', 'ftp', 'mailto', 'synabit'],
     }),
     Underline,
     Highlight.configure({ multicolor: false }),
@@ -540,6 +545,92 @@ const editor = useEditor({
         },
       },
     }),
+    Extension.create({
+      name: 'noteMentionExtension',
+      addProseMirrorPlugins() {
+        return [
+          Suggestion({
+            editor: this.editor,
+            pluginKey: new PluginKey('noteMentionSuggestion'),
+            char: '@',
+            command: ({ editor, range, props }) => {
+              editor
+                .chain()
+                .focus()
+                .deleteRange(range)
+                .insertContent({
+                  type: 'text',
+                  marks: [
+                    {
+                      type: 'link',
+                      attrs: { href: `synabit://note/${props.id}` }
+                    }
+                  ],
+                  text: props.title
+                })
+                .insertContent(' ')
+                .run();
+            },
+            items: ({ query }) => {
+              if (!props.notes || props.notes.length === 0) return [];
+              const lowerQuery = query.toLowerCase();
+              return props.notes
+                .filter(n => n.title.toLowerCase().includes(lowerQuery) || n.summary.toLowerCase().includes(lowerQuery))
+                .slice(0, 5)
+                .map(n => ({
+                  id: n.id,
+                  title: n.title,
+                  summary: n.summary
+                }));
+            },
+            render: () => {
+              let component: any;
+              let popup: TippyInstance | undefined;
+
+              return {
+                onStart: (suggestionProps: any) => {
+                  component = new VueRenderer(NoteMentionMenu, {
+                    props: suggestionProps,
+                    editor: suggestionProps.editor,
+                  });
+
+                  if (!suggestionProps.clientRect) return;
+
+                  popup = tippy(document.body, {
+                    getReferenceClientRect: suggestionProps.clientRect,
+                    appendTo: () => document.body,
+                    content: component.element as Element,
+                    showOnCreate: true,
+                    interactive: true,
+                    trigger: 'manual',
+                    placement: 'bottom-start',
+                  });
+                },
+                onUpdate: (suggestionProps: any) => {
+                  component?.updateProps(suggestionProps);
+                  if (suggestionProps.clientRect) {
+                    popup?.setProps({
+                      getReferenceClientRect: suggestionProps.clientRect,
+                    });
+                  }
+                },
+                onKeyDown: (suggestionProps: any) => {
+                  if (suggestionProps.event.key === 'Escape') {
+                    popup?.hide();
+                    return true;
+                  }
+                  return component?.ref?.onKeyDown(suggestionProps.event);
+                },
+                onExit: () => {
+                  popup?.destroy();
+                  component?.destroy();
+                },
+              };
+            },
+          }),
+        ];
+      },
+    }),
   ],
   onUpdate: ({ editor: ed }) => {
     const md = (ed.storage as any).markdown.getMarkdown();
@@ -557,6 +648,21 @@ const editor = useEditor({
   editorProps: {
     attributes: {
       class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px]',
+    },
+    handleClick: (view, pos, event) => {
+      if (event.target instanceof HTMLElement) {
+          const anchor = event.target.closest('a');
+          if (anchor) {
+              const href = anchor.getAttribute('href');
+              if (href?.startsWith('synabit://note/')) {
+                  const noteId = href.replace('synabit://note/', '');
+                  emit('open-internal-note', noteId);
+                  event.preventDefault();
+                  return true;
+              }
+          }
+      }
+      return false;
     },
     handleDrop: function(view, event, _slice, moved) {
       if (!moved && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length > 0) {
@@ -623,12 +729,14 @@ const editor = useEditor({
   },
 });
 
-watch(() => props.modelValue, (value) => {
-  if (!editor.value) return;
-  const currentMd = (editor.value.storage as any).markdown.getMarkdown();
-  if (stripLocalAssets(currentMd) !== stripLocalAssets(value)) {
-    editor.value.commands.setContent(injectLocalAssets(value));
+const loadContent = (markdown: string) => {
+  if (editor.value) {
+    editor.value.commands.setContent(injectLocalAssets(markdown));
   }
+};
+
+defineExpose({
+  loadContent
 });
 
 // Close context menu on click outside
@@ -1381,5 +1489,29 @@ onBeforeUnmount(() => {
   .ctx-sep {
     background: #333;
   }
+}
+
+.prose a[href^="synabit://note/"] {
+  background-color: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.prose a[href^="synabit://note/"]:hover {
+  background-color: rgba(168, 85, 247, 0.2);
+}
+
+.dark .prose a[href^="synabit://note/"] {
+  background-color: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+}
+
+.dark .prose a[href^="synabit://note/"]:hover {
+  background-color: rgba(168, 85, 247, 0.3);
 }
 </style>
