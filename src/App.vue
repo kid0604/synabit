@@ -420,6 +420,24 @@ const filteredNotes = computed(() => {
   });
 });
 
+const handleEditFromNexus = (id: string, type: string) => {
+    if (type === 'note') {
+        activeTool.value = 'note';
+        handleOpenInternalNote(id);
+    } else if (type === 'quickcap') {
+        activeTool.value = 'quickcap';
+        localStorage.setItem('synabit_edit_target_id', id);
+    } else if (type === 'task') {
+        activeTool.value = 'task';
+        localStorage.setItem('synabit_edit_target_id', id);
+    }
+};
+
+const clearVault = () => {
+    localStorage.removeItem('synabitVaultPath');
+    vaultPath.value = '';
+    activeTool.value = 'note';
+};
 
 </script>
 
@@ -735,7 +753,7 @@ const filteredNotes = computed(() => {
     <!-- NEXUS TOOL -->
     <template v-else-if="activeTool === 'nexus'">
        <main class="flex-1 overflow-hidden relative">
-          <Nexus :vaultPath="vaultPath" />
+          <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
        </main>
     </template>
 
@@ -778,7 +796,7 @@ const filteredNotes = computed(() => {
                        <p class="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Current Vault Location</p>
                        <p class="font-mono text-sm break-all text-black dark:text-white bg-white dark:bg-[#2a2a2a] p-2 rounded-md border border-gray-200 dark:border-transparent">{{ vaultPath }}</p>
                      </div>
-                     <button @click="vaultPath = ''; localStorage.removeItem('synabitVaultPath'); activeTool = 'note';" class="px-5 py-2.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-sm font-medium transition-all shadow-md mt-2 flex items-center gap-2">
+                     <button @click="clearVault" class="px-5 py-2.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-sm font-medium transition-all shadow-md mt-2 flex items-center gap-2">
                         <FolderOpen class="w-4 h-4" /> Switch Vault Folder
                      </button>
                   </div>
