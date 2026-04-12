@@ -22,7 +22,9 @@ const inputRef = ref<HTMLTextAreaElement | null>(null);
 const selectedCap = ref<QuickCapMetadata | null>(null);
 
 const editingContent = ref('');
+const editInputRef = ref<HTMLTextAreaElement | null>(null);
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+const currentTags = ref<string[]>([]);
 
 const taggingCapId = ref<string | null>(null);
 const colorPickerCapId = ref<string | null>(null);
@@ -55,6 +57,11 @@ const filteredCaps = computed(() => {
             return cap.content.toLowerCase().includes(q);
         }
     });
+});
+
+const activeTags = computed(() => {
+    const newlyTyped = extractTags(editingContent.value);
+    return Array.from(new Set([...currentTags.value, ...newlyTyped]));
 });
 
 const appendTagToInput = () => {
@@ -128,15 +135,25 @@ const loadCaps = async () => {
 const saveSelectedCap = async () => {
     if (!selectedCap.value) return;
     
-    let oldStripped = selectedCap.value.content.replace(/<!--color:.*?-->\n?/g, '').trim();
-    let currentStripped = editingContent.value.trim();
-    if (currentStripped === oldStripped) return;
+    let textOnly = editingContent.value;
+    textOnly = textOnly.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
+    textOnly = textOnly.replace(/(?:^|\s)#[a-zA-Z0-9_\-\u00C0-\u024F\u1E00-\u1EFF]+(?=\s|$)/g, ' ');
+    textOnly = textOnly.replace(/\n{3,}/g, '\n\n').trim();
     
-    let finalPayload = editingContent.value;
+    let finalPayload = textOnly;
+    const allTags = activeTags.value;
+    
+    if (allTags.length > 0) {
+        const formattedTags = allTags.map(t => t.includes(' ') ? `#${t}#` : `#${t}`).join(' ');
+        finalPayload += (finalPayload ? `\n\n${formattedTags}` : formattedTags);
+    }
+    
     const colorMatch = selectedCap.value.content.match(/<!--color:(.*?)-->/);
     if (colorMatch) {
        finalPayload = `<!--color:${colorMatch[1]}-->\n${finalPayload}`;
     }
+    
+    if (selectedCap.value.content === finalPayload) return;
     
     try {
         await invoke('update_note', { path: selectedCap.value.path, content: finalPayload });
@@ -146,7 +163,15 @@ const saveSelectedCap = async () => {
     }
 };
 
+const resizeEditingTextarea = () => {
+    if (editInputRef.value) {
+        editInputRef.value.style.height = 'auto';
+        editInputRef.value.style.height = editInputRef.value.scrollHeight + 'px';
+    }
+};
+
 const handleEditInput = () => {
+    resizeEditingTextarea();
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => {
         saveSelectedCap();
@@ -155,7 +180,20 @@ const handleEditInput = () => {
 
 const openFullView = (cap: QuickCapMetadata) => {
     selectedCap.value = cap;
-    editingContent.value = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    let rawStr = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    
+    currentTags.value = extractTags(rawStr);
+    
+    let textOnly = rawStr;
+    textOnly = textOnly.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
+    textOnly = textOnly.replace(/(?:^|\s)#[a-zA-Z0-9_\-\u00C0-\u024F\u1E00-\u1EFF]+(?=\s|$)/g, ' ');
+    textOnly = textOnly.replace(/\n{3,}/g, '\n\n').trim();
+    
+    editingContent.value = textOnly;
+    
+    setTimeout(() => {
+        resizeEditingTextarea();
+    }, 50);
 };
 
 const closeFullView = async () => {
@@ -373,6 +411,21 @@ const removeTag = async (cap: QuickCapMetadata, tag: string) => {
     }
 };
 
+const removeActiveTag = (tag: string) => {
+    currentTags.value = currentTags.value.filter(t => t !== tag);
+    
+    const safeTag = tag.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+    let regexWrapped = new RegExp(`(?:^|\\s)#${safeTag}#(?=\\s|$)`, 'g');
+    let regexTrad = new RegExp(`(?:^|\\s)#${safeTag}(?=\\s|$)`, 'g');
+    
+    let updatedContent = editingContent.value.replace(regexWrapped, ' ');
+    updatedContent = updatedContent.replace(regexTrad, ' ').trim();
+    updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
+    
+    editingContent.value = updatedContent;
+    handleEditInput();
+};
+
 const renderPreview = (content: string) => {
     if (!content) return '';
     
@@ -415,9 +468,9 @@ const deleteCap = async (path: string, index: number) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col items-center bg-[#fdfdfc] dark:bg-[#121212] overflow-y-auto w-full pt-12 pb-16 px-4">
+  <div class="h-full bg-[#fdfdfc] dark:bg-[#121212] overflow-y-auto w-full pt-12 pb-16 px-4">
     <!-- Input Bar -->
-    <div class="w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all relative mb-12">
+    <div class="mx-auto w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all relative mb-12">
         <textarea
            ref="inputRef"
            v-model="newCapText"
@@ -550,19 +603,23 @@ const deleteCap = async (path: string, index: number) => {
     <!-- Full View Modal -->
     <div v-if="selectedCap" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
         <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
-            <div class="p-8 overflow-y-auto flex-1 h-full flex flex-col min-h-0 bg-transparent">
+            <div class="p-8 overflow-y-auto flex-1 flex flex-col min-h-0 bg-transparent">
                 <textarea 
+                    ref="editInputRef"
                     v-model="editingContent"
                     @input="handleEditInput"
-                    class="w-full flex-1 bg-transparent resize-none outline-none text-[16px] leading-normal text-[#1c1c1e] dark:text-[#f4f4f5] border-none focus:ring-0 appearance-none m-0 p-0"
+                    class="w-full shrink-0 bg-transparent resize-none outline-none text-[16px] leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] border-none focus:ring-0 appearance-none m-0 p-0 overflow-hidden min-h-[100px]"
                     placeholder="Note content..."
                     autofocus
                 ></textarea>
                 
-                <!-- Render tags as chips in modal (Read-only as it updates via raw text editing) -->
-                <div v-if="extractTags(editingContent).length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0">
-                   <span v-for="tag in extractTags(editingContent)" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent cursor-default">
+                <!-- Render tags as chips in modal -->
+                <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0">
+                   <span v-for="tag in activeTags" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                        {{ tag }}
+                       <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer">
+                           <X class="w-3 h-3" />
+                       </button>
                    </span>
                 </div>
             </div>
