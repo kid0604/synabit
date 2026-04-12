@@ -29,4 +29,5 @@ walkdir = "2.5.0"
 chrono = "0.4.44"
 serde_yaml = "0.9.34"
 opener = "0.8.4"
+urlencoding = "2.1.3"
 

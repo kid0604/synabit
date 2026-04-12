@@ -468,7 +468,7 @@ const deleteCap = async (path: string, index: number) => {
 </script>
 
 <template>
-  <div class="h-full bg-[#fdfdfc] dark:bg-[#121212] overflow-y-auto w-full pt-12 pb-16 px-4">
+  <div class="h-full bg-[#fdfdfc] dark:bg-[#242424] overflow-y-auto w-full pt-12 pb-16 px-4">
     <!-- Input Bar -->
     <div class="mx-auto w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all relative mb-12">
         <textarea

@@ -308,7 +308,7 @@ watch(() => props.vaultPath, () => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col bg-[#fdfdfc] dark:bg-[#121212] w-full overflow-hidden">
+  <div class="h-full flex flex-col bg-[#fdfdfc] dark:bg-[#242424] w-full overflow-hidden">
       <!-- Header -->
       <div class="px-8 pt-10 pb-4 shrink-0 border-b border-transparent">
           <div class="flex items-center justify-between mb-6">

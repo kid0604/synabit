@@ -240,7 +240,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full w-full flex flex-col bg-[#fdfdfc] dark:bg-[#121212] font-sans relative overflow-hidden">
+  <div class="h-full w-full flex flex-col bg-[#fdfdfc] dark:bg-[#242424] font-sans relative overflow-hidden">
     
     <!-- Header -->
     <div class="w-full flex-shrink-0 border-b border-gray-200 dark:border-[#2c2c2c] bg-white/80 dark:bg-[#1e1e1e]/80 backdrop-blur-md sticky top-0 z-10 px-8 py-5 flex items-center justify-between">

@@ -147,10 +147,10 @@ const renderMarkdownPreview = (text: string, type: string) => {
 </script>
 
 <template>
-  <div class="h-full w-full flex relative overflow-hidden bg-[#fdfdfc] dark:bg-[#121212] font-sans">
+  <div class="h-full w-full flex relative overflow-hidden bg-[#fdfdfc] dark:bg-[#242424] font-sans">
     
     <!-- Main UI -->
-    <div v-show="!selectedItem" class="flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-50/40 to-[#fdfdfc] dark:from-indigo-900/10 dark:to-[#121212] transition-all">
+    <div v-show="!selectedItem" class="flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-50/40 to-[#fdfdfc] dark:from-indigo-900/10 dark:to-[#242424] transition-all">
         
         <!-- Header / Search -->
         <div class="relative w-full max-w-3xl mx-auto pt-16 px-8 pb-8 flex-shrink-0">
@@ -279,7 +279,7 @@ const renderMarkdownPreview = (text: string, type: string) => {
     </div>
 
     <!-- Full-page Preview Panel -->
-    <div v-if="selectedItem" class="absolute inset-0 bg-[#fdfdfc] dark:bg-[#121212] flex flex-col z-30 animate-in fade-in zoom-in-95 duration-200">
+    <div v-if="selectedItem" class="absolute inset-0 bg-[#fdfdfc] dark:bg-[#242424] flex flex-col z-30 animate-in fade-in zoom-in-95 duration-200">
         
         <!-- Header -->
         <div class="h-16 border-b border-gray-200 dark:border-[#2c2c2c] flex items-center justify-between px-6 flex-shrink-0 bg-white/80 dark:bg-[#1a1a1a]/80 backdrop-blur-md">

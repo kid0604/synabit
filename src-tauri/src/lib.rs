@@ -430,6 +430,27 @@ fn update_note(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn spawn_note_window(app_handle: tauri::AppHandle, note_id: String) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    let encoded_note_id = urlencoding::encode(&note_id);
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
+    let window_label = format!("note_{}", timestamp);
+    
+    let url = WebviewUrl::App(format!("index.html?floatingNote={}", encoded_note_id).into());
+
+    let _ = WebviewWindowBuilder::new(&app_handle, window_label, url)
+        .title("Note View")
+        .inner_size(600.0, 700.0)
+        .minimizable(true)
+        .maximizable(true)
+        .closable(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> Result<String, String> {
     use std::path::Path;
     let assets_dir = Path::new(&vault_path).join("assets");
@@ -931,6 +952,7 @@ pub fn run() {
             update_note,
             save_asset,
             delete_note,
+            spawn_note_window,
             rename_note,
             scan_quick_caps,
             create_quick_cap,

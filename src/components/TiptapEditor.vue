@@ -773,6 +773,15 @@ onMounted(() => {
   wrapper?.addEventListener('scroll', onEditorScroll);
 });
 
+watch(() => props.modelValue, (newVal) => {
+  if (editor.value) {
+    const currentMd = (editor.value.storage as any).markdown.getMarkdown();
+    if (stripLocalAssets(currentMd) !== newVal) {
+       editor.value.commands.setContent(injectLocalAssets(newVal));
+    }
+  }
+});
+
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick);
   const wrapper = document.querySelector('.tiptap-wrapper')?.closest('.overflow-y-auto');
@@ -1245,53 +1254,49 @@ onBeforeUnmount(() => {
 .tiptap pre .hljs-tag { color: #22863a; }
 .tiptap pre .hljs-meta { color: #6a737d; }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap pre {
-    background: #161618 !important;
-    border-color: #2c2c2e;
-    color: #e4e4e7 !important;
-  }
-  .tiptap pre code { color: #e4e4e7; }
-  .tiptap pre .hljs-comment,
-  .tiptap pre .hljs-quote { color: #636366; }
-  .tiptap pre .hljs-keyword,
-  .tiptap pre .hljs-selector-tag,
-  .tiptap pre .hljs-addition { color: #ff7b72; }
-  .tiptap pre .hljs-number,
-  .tiptap pre .hljs-literal,
-  .tiptap pre .hljs-symbol,
-  .tiptap pre .hljs-bullet { color: #79c0ff; }
-  .tiptap pre .hljs-string,
-  .tiptap pre .hljs-doctag,
-  .tiptap pre .hljs-regexp { color: #a5d6ff; }
-  .tiptap pre .hljs-title,
-  .tiptap pre .hljs-section,
-  .tiptap pre .hljs-built_in { color: #d2a8ff; }
-  .tiptap pre .hljs-attr,
-  .tiptap pre .hljs-attribute { color: #79c0ff; }
-  .tiptap pre .hljs-variable,
-  .tiptap pre .hljs-template-variable { color: #ffa657; }
-  .tiptap pre .hljs-type,
-  .tiptap pre .hljs-name { color: #7ee787; }
-  .tiptap pre .hljs-tag { color: #7ee787; }
-  .tiptap pre .hljs-meta { color: #636366; }
+.dark .tiptap pre {
+  background: #1e1e1e !important;
+  border-color: #2c2c2e;
+  color: #e4e4e7 !important;
 }
+.dark .tiptap pre code { color: #e4e4e7; }
+.dark .tiptap pre .hljs-comment,
+.dark .tiptap pre .hljs-quote { color: #636366; }
+.dark .tiptap pre .hljs-keyword,
+.dark .tiptap pre .hljs-selector-tag,
+.dark .tiptap pre .hljs-addition { color: #ff7b72; }
+.dark .tiptap pre .hljs-number,
+.dark .tiptap pre .hljs-literal,
+.dark .tiptap pre .hljs-symbol,
+.dark .tiptap pre .hljs-bullet { color: #79c0ff; }
+.dark .tiptap pre .hljs-string,
+.dark .tiptap pre .hljs-doctag,
+.dark .tiptap pre .hljs-regexp { color: #a5d6ff; }
+.dark .tiptap pre .hljs-title,
+.dark .tiptap pre .hljs-section,
+.dark .tiptap pre .hljs-built_in { color: #d2a8ff; }
+.dark .tiptap pre .hljs-attr,
+.dark .tiptap pre .hljs-attribute { color: #79c0ff; }
+.dark .tiptap pre .hljs-variable,
+.dark .tiptap pre .hljs-template-variable { color: #ffa657; }
+.dark .tiptap pre .hljs-type,
+.dark .tiptap pre .hljs-name { color: #7ee787; }
+.dark .tiptap pre .hljs-tag { color: #7ee787; }
+.dark .tiptap pre .hljs-meta { color: #636366; }
 
 /* === Table === */
 .tiptap table {
-  border-collapse: collapse;
+  border-collapse: collapse !important;
   width: 100%;
   margin: 1em 0;
-  overflow: hidden;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb !important;
 }
 
 .tiptap table td,
 .tiptap table th {
   min-width: 80px;
-  padding: 8px 12px;
-  border: 1px solid #e5e7eb;
+  padding: 8px 12px !important;
+  border: 1px solid #e5e7eb !important;
   vertical-align: top;
   position: relative;
   text-align: left;
@@ -1338,21 +1343,19 @@ onBeforeUnmount(() => {
   cursor: col-resize;
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap table {
-    border-color: #333;
-  }
-  .tiptap table td,
-  .tiptap table th {
-    border-color: #333;
-  }
-  .tiptap table th {
-    background: #1e1e1e;
-    color: #a1a1aa;
-  }
-  .tiptap table .selectedCell {
-    background: rgba(96, 165, 250, 0.1);
-  }
+.dark .tiptap table {
+  border-color: #333 !important;
+}
+.dark .tiptap table td,
+.dark .tiptap table th {
+  border-color: #333 !important;
+}
+.dark .tiptap table th {
+  background: #1e1e1e !important;
+  color: #a1a1aa !important;
+}
+.dark .tiptap table .selectedCell {
+  background: rgba(96, 165, 250, 0.1);
 }
 
 /* === Blockquote === */
@@ -1505,6 +1508,10 @@ onBeforeUnmount(() => {
   }
 }
 
+.prose blockquote {
+  border-left-color: #9ca3af !important;
+}
+
 /* === Global Dark Theme Overrides for Text === */
 .dark .prose.dark\:prose-invert {
   --tw-prose-body: #e4e4e7 !important;
@@ -1551,6 +1558,27 @@ onBeforeUnmount(() => {
 }
 
 /* === Notion/Obsidian Style Spacing for Prose === */
+.prose h1 {
+  font-size: 1.875rem !important; /* Tailwind text-3xl */
+  margin-top: 1.5em !important;
+  margin-bottom: 0.5em !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+}
+.prose h2 {
+  font-size: 1.5rem !important; /* Tailwind text-2xl */
+  margin-top: 1.25em !important;
+  margin-bottom: 0.5em !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+}
+.prose h3 {
+  font-size: 1.25rem !important; /* Tailwind text-xl */
+  margin-top: 1em !important;
+  margin-bottom: 0.25em !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+}
 .prose p {
   margin-top: 0.25em !important;
   margin-bottom: 0.25em !important;
@@ -1567,5 +1595,9 @@ onBeforeUnmount(() => {
 .prose li p {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
+}
+.prose blockquote p:first-of-type::before,
+.prose blockquote p:last-of-type::after {
+  content: none !important;
 }
 </style>
