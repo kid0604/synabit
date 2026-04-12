@@ -8,6 +8,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import TiptapEditor from './components/TiptapEditor.vue';
 import QuickCap from './components/QuickCap.vue';
 import Tasks from './components/Tasks.vue';
+import CalendarApp from './components/CalendarApp.vue';
 import Nexus from './components/Nexus.vue';
 import FileManager from './components/FileManager.vue';
 
@@ -1027,14 +1028,10 @@ const clearVault = () => {
        </main>
     </template>
     
-    <!-- CALENDAR TOOL PLACEHOLDER -->
+    <!-- CALENDAR TOOL -->
     <template v-else-if="activeTool === 'calendar'">
-      <main class="flex-1 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#242424]">
-         <div class="text-center opacity-40">
-           <Calendar class="w-16 h-16 mx-auto mb-4" />
-           <h2 class="text-2xl text-[#1c1c1e] dark:text-white">Calendar Tool</h2>
-           <p class="mt-2 text-[#52525b] dark:text-[#a1a1aa]">Coming soon...</p>
-         </div>
+      <main class="flex-1 overflow-hidden relative">
+         <CalendarApp :vaultPath="vaultPath" />
       </main>
     </template>
     

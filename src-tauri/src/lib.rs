@@ -89,6 +89,32 @@ pub struct TaskMetadata {
     custom_fields: std::collections::HashMap<String, serde_json::Value>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+struct EventFrontMatter {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    event_date: String,
+    #[serde(default)]
+    event_time: String,
+    #[serde(default)]
+    location: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EventMetadata {
+    id: String,
+    title: String,
+    event_date: String,
+    event_time: String,
+    location: String,
+    tags: Vec<String>,
+    content: String,
+    path: String,
+    created_at: String,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NexusItem {
@@ -939,6 +965,119 @@ fn get_file_items(vault_path: String) -> Result<Vec<FileItem>, String> {
     Ok(items)
 }
 
+#[tauri::command]
+fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
+    use std::path::Path;
+    let mut events = Vec::new();
+    let matter = Matter::<YAML>::new();
+    
+    let events_dir = Path::new(&vault_path).join("Events");
+    if !events_dir.exists() {
+        if let Err(e) = fs::create_dir_all(&events_dir) {
+            return Err(e.to_string());
+        }
+    }
+
+    for entry in WalkDir::new(&events_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Some(ext) = entry.path().extension() {
+                if ext == "md" {
+                    if let Ok(content) = fs::read_to_string(entry.path()) {
+                        let mut title = String::new();
+                        let mut event_date = String::new();
+                        let mut event_time = String::new();
+                        let mut location = String::new();
+                        let mut tags = Vec::new();
+                        let mut event_content = content.clone();
+
+                        if let Ok(parsed) = matter.parse::<EventFrontMatter>(&content) {
+                            if let Some(frontmatter) = parsed.data {
+                                title = frontmatter.title;
+                                event_date = frontmatter.event_date;
+                                event_time = frontmatter.event_time;
+                                location = frontmatter.location;
+                                tags = frontmatter.tags;
+                            }
+                            event_content = parsed.content;
+                        }
+                        
+                        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+                        let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+                        let created_date: chrono::DateTime<chrono::Local> = created.into();
+
+                        events.push(EventMetadata {
+                            id: entry.path().to_string_lossy().to_string(),
+                            title,
+                            event_date,
+                            event_time,
+                            location,
+                            tags,
+                            content: event_content,
+                            path: entry.path().to_string_lossy().to_string(),
+                            created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    events.sort_by(|a, b| b.event_date.cmp(&a.event_date));
+    Ok(events)
+}
+
+#[tauri::command]
+fn create_event(
+    vault_path: String, metadata: EventFrontMatter, content: String
+) -> Result<EventMetadata, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::Path;
+    
+    let events_dir = Path::new(&vault_path).join("Events");
+    if !events_dir.exists() {
+        fs::create_dir_all(&events_dir).map_err(|e| e.to_string())?;
+    }
+    
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time back").as_millis();
+    let filename = format!("event-{}.md", timestamp);
+    let path = events_dir.join(&filename);
+    
+    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
+    let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
+        
+    fs::write(&path, &full_content).map_err(|e| e.to_string())?;
+    
+    let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
+    let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
+    
+    Ok(EventMetadata {
+        id: path.to_string_lossy().to_string(),
+        title: metadata.title,
+        event_date: metadata.event_date,
+        event_time: metadata.event_time,
+        location: metadata.location,
+        tags: metadata.tags,
+        content,
+        path: path.to_string_lossy().to_string(),
+        created_at: date_str,
+    })
+}
+
+#[tauri::command]
+fn update_event(
+    path: String, metadata: EventFrontMatter, content: String
+) -> Result<(), String> {
+    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
+    let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
+        
+    fs::write(&path, full_content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_event(path: String) -> Result<(), String> {
+    std::fs::remove_file(&path).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -971,7 +1110,11 @@ pub fn run() {
             save_settings,
             open_local_file,
             update_file_metadata,
-            reindex_sources
+            reindex_sources,
+            scan_events,
+            create_event,
+            update_event,
+            delete_event
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
