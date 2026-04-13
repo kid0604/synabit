@@ -107,6 +107,13 @@ const BOARD_COLUMNS = [
   { id: 'done', name: 'DONE', class: 'border-t-2 border-green-400 dark:border-green-500' }
 ];
 
+const getOrderValueForDrop = (t: TaskMetadata) => {
+    if (t.custom_fields && t.custom_fields['order'] !== undefined) {
+        return Number(t.custom_fields['order']);
+    }
+    return -new Date(t.created_at).getTime();
+};
+
 const tasksByStatus = computed(() => {
     const sorted: Record<string, TaskMetadata[]> = { todo: [], in_progress: [], done: [] };
     filteredTasks.value.forEach(t => {
@@ -116,6 +123,10 @@ const tasksByStatus = computed(() => {
             sorted.todo.push(t);
         }
     });
+
+    for (const key in sorted) {
+        sorted[key].sort((a, b) => getOrderValueForDrop(a) - getOrderValueForDrop(b));
+    }
     return sorted;
 });
 
@@ -131,7 +142,53 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     if (!taskId) return;
     
     const task = tasks.value.find(t => t.id === taskId);
-    if (!task || task.status === newStatus) return;
+    if (!task) return;
+    
+    const columnElement = (e.currentTarget as HTMLElement);
+    const columnContent = columnElement.querySelector('.column-content');
+    let insertAfterTaskIdx = -1;
+    
+    if (columnContent) {
+        const cards = Array.from(columnContent.querySelectorAll('.task-card'));
+        let filteredCardIndex = -1;
+        for (let i = 0; i < cards.length; i++) {
+            const card = cards[i] as HTMLElement;
+            if (card.getAttribute('data-task-id') === taskId) continue;
+            
+            filteredCardIndex++;
+            const rect = card.getBoundingClientRect();
+            const cardMiddleY = rect.top + rect.height / 2;
+            if (e.clientY > cardMiddleY) {
+                insertAfterTaskIdx = filteredCardIndex;
+            } else {
+                break;
+            }
+        }
+    }
+    
+    const tasksInCol = tasksByStatus.value[newStatus].filter(t => t.id !== taskId);
+    let newOrder = 0;
+    
+    if (tasksInCol.length === 0) {
+        newOrder = new Date().getTime();
+    } else if (insertAfterTaskIdx === -1) {
+        newOrder = getOrderValueForDrop(tasksInCol[0]) - 100000;
+    } else if (insertAfterTaskIdx >= tasksInCol.length - 1) {
+        newOrder = getOrderValueForDrop(tasksInCol[tasksInCol.length - 1]) + 100000;
+    } else {
+        const prevOrder = getOrderValueForDrop(tasksInCol[insertAfterTaskIdx]);
+        const nextOrder = getOrderValueForDrop(tasksInCol[insertAfterTaskIdx + 1]);
+        newOrder = (prevOrder + nextOrder) / 2;
+    }
+    
+    const prevStatus = task.status;
+    const prevOrderFromCustomFields = task.custom_fields?.['order'];
+    // Avoid API call if no change in status and order position (virtually)
+    if (prevStatus === newStatus && Number(prevOrderFromCustomFields) === newOrder) return;
+    
+    if (!task.custom_fields) task.custom_fields = {};
+    task.custom_fields['order'] = newOrder;
+    task.status = newStatus;
     
     try {
         await invoke('update_task', {
@@ -148,7 +205,6 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
             },
             content: task.content
         });
-        task.status = newStatus;
     } catch (err) {
         console.error("Drag update failed", err);
     }
@@ -442,12 +498,13 @@ watch(() => props.vaultPath, () => {
                           <h3 class="text-xs font-bold text-gray-500 pt-3">{{ col.name }} <span class="bg-gray-200 dark:bg-[#2a2a2a] text-gray-600 dark:text-gray-300 ml-2 px-2 py-0.5 rounded-full">{{ tasksByStatus[col.id].length }}</span></h3>
                           <button class="text-gray-400 hover:text-black dark:hover:text-white pt-3"><Plus class="w-4 h-4"/></button>
                       </div>
-                      <div class="flex-1 overflow-y-auto space-y-3 pb-4">
+                      <div class="flex-1 overflow-y-auto space-y-3 pb-4 column-content">
                           <div v-for="task in tasksByStatus[col.id]" :key="task.id"
                                draggable="true"
                                @dragstart="onDragStart($event, task)"
                                @click="openEditModal(task)"
-                               class="bg-white dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group"
+                               :data-task-id="task.id"
+                               class="task-card bg-white dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group relative"
                           >
                              <p class="text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] leading-snug mb-3">{{ task.title }}</p>
                              <div class="flex items-center justify-between mt-auto pt-2 border-t border-gray-50 dark:border-[#2c2c2c]">
