@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Synabit",
-  "version": "0.0.4",
-  "identifier": "com.synabit.app",
+  "version": "0.0.5",
+  "identifier": "com.synabit.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

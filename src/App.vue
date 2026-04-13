@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { Tag, FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, ChevronDown, ChevronRight, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap, Globe, ArrowLeft, ExternalLink } from 'lucide-vue-next';
+import { FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap, Globe, ArrowLeft, ExternalLink } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -116,7 +116,7 @@ onMounted(() => {
       }
   });
   
-  getCurrentWindow().onCloseRequested(async (event) => {
+  getCurrentWindow().onCloseRequested(async () => {
       if (currentNoteId.value) {
           const note = notes.value.find(n => n.id === currentNoteId.value);
           if (note && currentContent.value) {

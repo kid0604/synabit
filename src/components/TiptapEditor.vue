@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onBeforeUnmount, onMounted, ref, computed } from 'vue';
+import { watch, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import { VueRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
@@ -42,7 +42,6 @@ import {
   Code,
   Link as LinkIcon,
   Plus,
-  Trash2,
   GripVertical,
   AlignLeft,
   AlignCenter,
@@ -239,7 +238,7 @@ const ctxAction = (action: string) => {
 };
 
 // Focus a specific cell to position cursor there before operations
-const focusCellAt = (rowIdx: number, colIdx: number) => {
+const _focusCellAt = (rowIdx: number, colIdx: number) => {
   if (!activeTableEl.value || !editor.value) return;
   const row = activeTableEl.value.querySelectorAll('tr')[rowIdx];
   if (!row) return;
@@ -661,7 +660,7 @@ const editor = useEditor({
     attributes: {
       class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px]',
     },
-    handleClick: (view, pos, event) => {
+    handleClick: (_view, _pos, event) => {
       if (event.target instanceof HTMLElement) {
           const anchor = event.target.closest('a');
           if (anchor) {

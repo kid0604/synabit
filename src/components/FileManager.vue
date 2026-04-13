@@ -370,7 +370,7 @@ onMounted(() => {
                         <input 
                             v-model="editFileName" 
                             @blur="saveFileMetadata"
-                            @keydown.enter="$event.target.blur()"
+                            @keydown.enter="($event.target as any).blur()"
                             :disabled="isSavingMeta"
                             class="bg-transparent border-none outline-none text-3xl font-extrabold text-[#1c1c1e] dark:text-white leading-tight tracking-tight focus:ring-0 p-0 min-w-0 flex-shrink"
                             placeholder="File Name"

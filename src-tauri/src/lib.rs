@@ -53,11 +53,23 @@ pub struct QuickCapMetadata {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct ChecklistItem {
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub completed: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct TaskFrontMatter {
     #[serde(default)]
     title: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    is_transferred: bool,
+    #[serde(default)]
+    priority: String,
     #[serde(default)]
     start_date: String,
     #[serde(default)]
@@ -68,6 +80,8 @@ struct TaskFrontMatter {
     source_link: String,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    checklist: Vec<ChecklistItem>,
     #[serde(flatten)]
     custom_fields: std::collections::HashMap<String, serde_json::Value>,
 }
@@ -77,11 +91,14 @@ pub struct TaskMetadata {
     id: String,
     title: String,
     status: String,
+    is_transferred: bool,
+    priority: String,
     start_date: String,
     due_date: String,
     comment: String,
     source_link: String,
     tags: Vec<String>,
+    checklist: Vec<ChecklistItem>,
     content: String,
     path: String,
     created_at: String,
@@ -628,6 +645,8 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                     if let Ok(content) = fs::read_to_string(entry.path()) {
                         let mut title = String::new();
                         let mut status = "todo".to_string();
+                        let mut is_transferred = false;
+                        let mut priority = String::new();
                         let mut start_date = String::new();
                         let mut due_date = String::new();
                         let mut comment = String::new();
@@ -640,6 +659,8 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                             if let Some(frontmatter) = parsed.data {
                                 title = frontmatter.title;
                                 status = frontmatter.status;
+                                is_transferred = frontmatter.is_transferred;
+                                priority = frontmatter.priority;
                                 start_date = frontmatter.start_date;
                                 due_date = frontmatter.due_date;
                                 comment = frontmatter.comment;
@@ -661,11 +682,14 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                             id: entry.path().to_string_lossy().to_string(),
                             title,
                             status,
+                            is_transferred,
+                            priority,
                             start_date,
                             due_date,
                             comment,
                             source_link,
                             tags,
+                            checklist: std::vec::Vec::new(),
                             content: task_content,
                             path: entry.path().to_string_lossy().to_string(),
                             created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -711,11 +735,14 @@ fn create_task(
         id: path.to_string_lossy().to_string(),
         title: metadata.title,
         status: metadata.status,
+        is_transferred: metadata.is_transferred,
+        priority: metadata.priority,
         start_date: metadata.start_date,
         due_date: metadata.due_date,
         comment: metadata.comment,
         source_link: metadata.source_link,
         tags: metadata.tags,
+        checklist: metadata.checklist,
         custom_fields: metadata.custom_fields,
         content,
         path: path.to_string_lossy().to_string(),

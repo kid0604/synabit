@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search } from 'lucide-vue-next';
+import TaskEditModal from './TaskEditModal.vue';
 
 const props = defineProps<{
   vaultPath: string;
@@ -308,37 +309,60 @@ const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
 const convertingTaskCap = ref<QuickCapMetadata | null>(null);
 const convertingTaskParams = ref({
     title: '',
-    content: ''
+    content: '',
+    status: 'todo',
+    start_date: '',
+    due_date: '',
+    priority: '',
+    tags: '',
+    checklist: [] as {content: string, completed: boolean}[],
+    is_transferred: false,
+    comment: ''
 });
 
 const openConvertTaskModal = (cap: QuickCapMetadata) => {
     convertingTaskCap.value = cap;
     const cleanContent = cap.content.replace(/<!--color:.*?-->/g, '').trim();
     const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
-    convertingTaskParams.value.title = displayLines.length > 0 ? displayLines[0].substring(0, 50) + (displayLines[0].length > 50 ? '...' : '') : 'QuickCap Task';
-    convertingTaskParams.value.content = cleanContent;
+    convertingTaskParams.value = {
+        title: displayLines.length > 0 ? displayLines[0].substring(0, 50) + (displayLines[0].length > 50 ? '...' : '') : 'QuickCap Task',
+        content: cleanContent,
+        status: 'todo',
+        start_date: '',
+        due_date: '',
+        priority: '',
+        tags: extractTags(cap.content).join(', '),
+        checklist: [],
+        is_transferred: false,
+        comment: ''
+    };
 };
 
 const closeTaskModal = () => {
     convertingTaskCap.value = null;
 };
 
-const confirmTurnIntoTask = async () => {
+const confirmTurnIntoTask = async (payload: any) => {
     const cap = convertingTaskCap.value;
     if (!cap) return;
     try {
+        const tagArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
+        
         await invoke('create_task', {
             vaultPath: props.vaultPath,
             metadata: {
-                title: convertingTaskParams.value.title,
-                status: 'todo',
-                start_date: '',
-                due_date: '',
-                comment: '',
+                title: payload.title || 'Untitled',
+                status: payload.status,
+                is_transferred: payload.is_transferred,
+                priority: payload.priority,
+                start_date: payload.start_date,
+                due_date: payload.due_date,
+                comment: payload.comment,
                 source_link: cap.path,
-                tags: extractTags(cap.content)
+                tags: tagArray,
+                checklist: payload.checklist
             },
-            content: convertingTaskParams.value.content
+            content: payload.content
         });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
@@ -442,7 +466,7 @@ const renderPreview = (content: string) => {
         .replace(/>/g, "&gt;");
         
     // Process markdown images: ![alt](url)
-    html = html.replace(/!\[.*?\]\((.*?)\)/g, (match, path) => {
+    html = html.replace(/!\\[.*?\\]\\((.*?)\\)/g, (_match, path) => {
         let absPath = path;
         if (path.startsWith('assets/')) {
             absPath = `${props.vaultPath}/${path}`;
@@ -519,7 +543,7 @@ const deleteCap = async (path: string, index: number) => {
 
     <!-- Masonry Grid -->
     <div class="w-full max-w-7xl px-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 mx-auto">
-        <div v-for="(cap, i) in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
+        <div v-for="cap in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
             <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="getCapColor(cap.content) || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
                <!-- Text Content Wrapper -->
                <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
@@ -633,42 +657,12 @@ const deleteCap = async (path: string, index: number) => {
     </div>
 
     <!-- Convert to Task Modal -->
-    <div v-if="convertingTaskCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeTaskModal">
-        <div class="w-full max-w-lg rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] bg-white dark:bg-[#1e1e1e] overflow-hidden" @click.stop>
-            <div class="p-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
-                <h3 class="text-xl font-bold flex items-center gap-2 text-[#1c1c1e] dark:text-[#f4f4f5]">
-                    <CheckSquare class="w-6 h-6 text-black dark:text-white" />
-                    Conver to Task
-                </h3>
-                <p class="text-sm text-gray-500 mt-1">Sắp xếp lại suy nghĩ trước khi chốt thành Action.</p>
-            </div>
-            <div class="p-6 flex flex-col gap-4">
-                <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Task Title <span class="text-red-500">*</span></label>
-                    <input 
-                        v-model="convertingTaskParams.title" 
-                        class="w-full bg-gray-50 dark:bg-[#191919] border border-gray-200 dark:border-gray-700 rounded-lg p-3 outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-all text-[#1c1c1e] dark:text-[#f4f4f5]"
-                        placeholder="Task Name"
-                    />
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Description</label>
-                    <textarea 
-                        v-model="convertingTaskParams.content" 
-                        class="w-full bg-gray-50 dark:bg-[#191919] border border-gray-200 dark:border-gray-700 rounded-lg p-3 min-h-[120px] outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-all text-[#1c1c1e] dark:text-[#f4f4f5]"
-                        placeholder="Task Details..."
-                    ></textarea>
-                </div>
-            </div>
-            <div class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-end gap-3 rounded-b-2xl">
-                <button @click="closeTaskModal" class="px-5 py-2 hover:bg-gray-200 dark:hover:bg-[#2c2c2c] text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-all cursor-pointer">
-                    Cancel
-                </button>
-                <button @click="confirmTurnIntoTask" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer flex items-center gap-1.5">
-                    <CheckSquare class="w-4 h-4" /> Create Task
-                </button>
-            </div>
-        </div>
-    </div>
+    <TaskEditModal 
+        v-if="convertingTaskCap" 
+        :task="convertingTaskParams" 
+        :showActions="true"
+        @save="confirmTurnIntoTask" 
+        @close="closeTaskModal" 
+    />
   </div>
 </template>
