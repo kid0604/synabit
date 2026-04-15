@@ -1044,15 +1044,14 @@ onBeforeUnmount(() => {
   border-color: #111;
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+
+ .dark .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] { 
     border-color: #52525b;
   }
-  .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+ .dark .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked { 
     background: #f4f4f5;
     border-color: #f4f4f5;
   }
-}
 
 .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
   content: '';
@@ -1066,11 +1065,10 @@ onBeforeUnmount(() => {
   transform: rotate(45deg);
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+
+ .dark .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after { 
     border-color: #111;
   }
-}
 
 .tiptap ul[data-type="taskList"] li > div {
   flex: 1;
@@ -1100,14 +1098,13 @@ onBeforeUnmount(() => {
   color: #1d4ed8;
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap a {
+
+ .dark .tiptap a { 
     color: #60a5fa;
   }
-  .tiptap a:hover {
+ .dark .tiptap a:hover { 
     color: #93bbfd;
   }
-}
 
 /* === Highlight === */
 .tiptap mark {
@@ -1116,12 +1113,11 @@ onBeforeUnmount(() => {
   padding: 1px 2px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap mark {
+
+ .dark .tiptap mark { 
     background-color: #854d0e;
     color: #fef9c3;
   }
-}
 
 /* === Bubble Menu === */
 .bubble-menu {
@@ -1139,13 +1135,12 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-@media (prefers-color-scheme: dark) {
-  .bubble-menu {
+
+ .dark .bubble-menu { 
     background: #1e1e1e;
     border-color: #333;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
-}
 
 .bubble-menu button {
   display: flex;
@@ -1171,19 +1166,18 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
-@media (prefers-color-scheme: dark) {
-  .bubble-menu button {
+
+ .dark .bubble-menu button { 
     color: #a1a1aa;
   }
-  .bubble-menu button:hover {
+ .dark .bubble-menu button:hover { 
     background: #2a2a2a;
     color: #f4f4f5;
   }
-  .bubble-menu button.is-active {
+ .dark .bubble-menu button.is-active { 
     background: #f4f4f5;
     color: #111;
   }
-}
 
 .bubble-divider {
   width: 1px;
@@ -1192,11 +1186,10 @@ onBeforeUnmount(() => {
   margin: 0 3px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .bubble-divider {
+
+ .dark .bubble-divider { 
     background: #3a3a3a;
   }
-}
 
 /* Bubble transition */
 .bubble-enter-active {
@@ -1365,12 +1358,11 @@ onBeforeUnmount(() => {
   font-style: italic;
 }
 
-@media (prefers-color-scheme: dark) {
-  .tiptap blockquote {
+
+ .dark .tiptap blockquote { 
     border-left-color: #4a4a4a;
     color: #a1a1aa;
   }
-}
 
 /* === Table Controls (Confluence-style) === */
 .tc-col-handle, .tc-row-handle, .tc-corner-handle {
@@ -1395,18 +1387,17 @@ onBeforeUnmount(() => {
   color: #fff;
   opacity: 1;
 }
-@media (prefers-color-scheme: dark) {
-  .tc-col-handle, .tc-row-handle, .tc-corner-handle {
+
+ .dark .tc-col-handle, .dark .tc-row-handle, .dark .tc-corner-handle { 
     background: #252525;
     border-color: #3a3a3a;
     color: #666;
   }
-  .tc-col-handle:hover, .tc-row-handle:hover, .tc-corner-handle:hover {
+ .dark .tc-col-handle:hover, .dark .tc-row-handle:hover, .dark .tc-corner-handle:hover { 
     background: #3b82f6;
     border-color: #3b82f6;
     color: #fff;
   }
-}
 
 /* Add buttons */
 .tc-add-btn {
@@ -1429,17 +1420,16 @@ onBeforeUnmount(() => {
   color: #3b82f6;
   background: rgba(59,130,246,0.05);
 }
-@media (prefers-color-scheme: dark) {
-  .tc-add-btn {
+
+ .dark .tc-add-btn { 
     border-color: #3a3a3a;
     color: #636366;
   }
-  .tc-add-btn:hover {
+ .dark .tc-add-btn:hover { 
     border-color: #60a5fa;
     color: #60a5fa;
     background: rgba(96,165,250,0.08);
   }
-}
 
 /* Context Menu */
 .tc-ctx-menu {
@@ -1453,13 +1443,12 @@ onBeforeUnmount(() => {
   padding: 4px;
   overflow: hidden;
 }
-@media (prefers-color-scheme: dark) {
-  .tc-ctx-menu {
+
+ .dark .tc-ctx-menu { 
     background: #1e1e1e;
     border-color: #333;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
-}
 .tc-ctx-menu button {
   display: block;
   width: 100%;
@@ -1482,30 +1471,28 @@ onBeforeUnmount(() => {
 .tc-ctx-menu button.ctx-danger:hover {
   background: #fee2e2;
 }
-@media (prefers-color-scheme: dark) {
-  .tc-ctx-menu button {
+
+ .dark .tc-ctx-menu button { 
     color: #d4d4d8;
   }
-  .tc-ctx-menu button:hover {
+ .dark .tc-ctx-menu button:hover { 
     background: #2a2a2a;
   }
-  .tc-ctx-menu button.ctx-danger {
+ .dark .tc-ctx-menu button.ctx-danger { 
     color: #f87171;
   }
-  .tc-ctx-menu button.ctx-danger:hover {
+ .dark .tc-ctx-menu button.ctx-danger:hover { 
     background: #450a0a;
   }
-}
 .ctx-sep {
   height: 1px;
   background: #e5e7eb;
   margin: 3px 8px;
 }
-@media (prefers-color-scheme: dark) {
-  .ctx-sep {
+
+ .dark .ctx-sep { 
     background: #333;
   }
-}
 
 .prose blockquote {
   border-left-color: #9ca3af !important;

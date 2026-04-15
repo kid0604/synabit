@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue';
-import { CheckCircle2, Circle, ListTodo, Calendar, Tag, Flag, X } from 'lucide-vue-next';
+import { CheckCircle2, Circle, ListTodo, Calendar, Tag, Flag, X, Send, Eye, EyeOff } from 'lucide-vue-next';
 
 const props = defineProps<{
     task: any;
@@ -14,6 +14,8 @@ const editingTaskParams = ref({
     title: props.task?.title || '',
     content: props.task?.content || '',
     is_transferred: props.task?.is_transferred || false,
+    transferred_to: props.task?.transferred_to || '',
+    track_progress: props.task?.track_progress || false,
     priority: props.task?.priority || '',
     start_date: props.task?.start_date || '',
     due_date: props.task?.due_date || '',
@@ -46,6 +48,11 @@ const removeChecklistItem = (index: number) => {
 };
 
 const save = () => {
+    if (editingTaskParams.value.is_transferred && !editingTaskParams.value.transferred_to.trim()) {
+        editingTaskParams.value.is_transferred = false;
+        editingTaskParams.value.track_progress = false;
+        editingTaskParams.value.transferred_to = '';
+    }
     emit('save', editingTaskParams.value);
 };
 
@@ -177,6 +184,40 @@ const handleBackgroundClick = () => {
                       <option value="P3">P3</option>
                       <option value="P4">P4</option>
                   </select>
+              </div>
+
+              <!-- Transfer -->
+              <div class="relative flex items-center group">
+                  <button 
+                      @click="editingTaskParams.is_transferred = !editingTaskParams.is_transferred"
+                      class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer flex items-center transition-colors" 
+                      :class="editingTaskParams.is_transferred ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" 
+                      title="Transfer Task"
+                  >
+                      <Send class="w-[18px] h-[18px]" :class="editingTaskParams.is_transferred ? 'text-purple-500 mr-2' : ''" />
+                      <span v-if="editingTaskParams.is_transferred && editingTaskParams.transferred_to" class="text-xs font-semibold max-w-[120px] truncate text-purple-600 dark:text-purple-400">
+                          {{ editingTaskParams.transferred_to }}
+                      </span>
+                  </button>
+                  
+                  <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                      <div class="w-52 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
+                          <label class="block text-[10px] font-semibold text-gray-400 mb-1 w-full text-left ml-1">Transfer to:</label>
+                          <div class="flex items-center gap-1.5 w-full">
+                              <input v-model="editingTaskParams.transferred_to" placeholder="Name..." class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                              
+                              <button 
+                                  @click.stop="editingTaskParams.track_progress = !editingTaskParams.track_progress"
+                                  class="p-1.5 rounded-md hover:opacity-80 transition-opacity shrink-0 flex items-center justify-center border"
+                                  :title="editingTaskParams.track_progress ? 'Tracking Progress' : 'Not Tracking'"
+                                  :class="editingTaskParams.track_progress ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-500 border-blue-200 dark:border-blue-800' : 'text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-[#2a2a2a] border-gray-200 dark:border-[#2c2c2c]'"
+                              >
+                                  <Eye v-if="editingTaskParams.track_progress" class="w-4 h-4" />
+                                  <EyeOff v-else class="w-4 h-4" />
+                              </button>
+                          </div>
+                      </div>
+                  </div>
               </div>
           </div>
 

@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
-import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search } from 'lucide-vue-next';
+import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText } from 'lucide-vue-next';
+import { useEditor, EditorContent } from '@tiptap/vue-3';
+import StarterKit from '@tiptap/starter-kit';
+import { Markdown } from 'tiptap-markdown';
+import TiptapImage from '@tiptap/extension-image';
+import Placeholder from '@tiptap/extension-placeholder';
 import TaskEditModal from './TaskEditModal.vue';
+import NoteEditModal from './NoteEditModal.vue';
 
 const props = defineProps<{
   vaultPath: string;
@@ -23,7 +30,6 @@ const inputRef = ref<HTMLTextAreaElement | null>(null);
 const selectedCap = ref<QuickCapMetadata | null>(null);
 
 const editingContent = ref('');
-const editInputRef = ref<HTMLTextAreaElement | null>(null);
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 const currentTags = ref<string[]>([]);
 
@@ -137,6 +143,7 @@ const saveSelectedCap = async () => {
     if (!selectedCap.value) return;
     
     let textOnly = editingContent.value;
+    // Strip inline tags cleanly before appending them at bottom
     textOnly = textOnly.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
     textOnly = textOnly.replace(/(?:^|\s)#[a-zA-Z0-9_\-\u00C0-\u024F\u1E00-\u1EFF]+(?=\s|$)/g, ' ');
     textOnly = textOnly.replace(/\n{3,}/g, '\n\n').trim();
@@ -164,20 +171,88 @@ const saveSelectedCap = async () => {
     }
 };
 
-const resizeEditingTextarea = () => {
-    if (editInputRef.value) {
-        editInputRef.value.style.height = 'auto';
-        editInputRef.value.style.height = editInputRef.value.scrollHeight + 'px';
-    }
+const injectLocalAssets = (md: string) => {
+   if (!props.vaultPath) return md;
+   let result = md.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const absPath = `${props.vaultPath}${sep}assets${sep}${filename}`;
+      const assetUrl = convertFileSrc(absPath); 
+      return `](${assetUrl})`;
+   });
+   result = result.replace(/src="(?:[^"]*(?:\/|%2F))?assets(?:\/|%2F)([^"]+)"/g, (_m: string, filename: string) => {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const absPath = `${props.vaultPath}${sep}assets${sep}${filename}`;
+      const assetUrl = convertFileSrc(absPath); 
+      return `src="${assetUrl}"`;
+   });
+   return result;
 };
 
-const handleEditInput = () => {
-    resizeEditingTextarea();
+const stripLocalAssets = (md: string) => {
+   let result = md.replace(/\]\(asset:\/\/[^\)]+(?:\/|%2F)assets(?:\/|%2F)([^\)]+)\)/g, (_m: string, filename: string) => {
+      return `](assets/${decodeURIComponent(filename)})`;
+   });
+   result = result.replace(/src="asset:\/\/[^"]+(?:\/|%2F)assets(?:\/|%2F)([^"]+)"/g, (_m: string, filename: string) => {
+      return `src="assets/${decodeURIComponent(filename)}"`;
+   });
+   return result;
+};
+
+const editor = useEditor({
+  content: '',
+  extensions: [
+    StarterKit.configure({ codeBlock: false }),
+    Markdown,
+    TiptapImage,
+    Placeholder.configure({ placeholder: 'Note content...' }),
+  ],
+  onUpdate: ({ editor: ed }) => {
+    let md = (ed.storage as any).markdown.getMarkdown();
+    editingContent.value = stripLocalAssets(md);
+    
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => {
         saveSelectedCap();
     }, 1000);
-};
+  },
+  editorProps: {
+    attributes: {
+      class: 'prose prose-sm sm:prose dark:prose-invert focus:outline-none max-w-none w-full min-h-[100px]',
+    },
+    handlePaste: function(_view, event, _slice) {
+      if (event.clipboardData && event.clipboardData.items) {
+        let imageHandled = false;
+        for (const item of event.clipboardData.items) {
+          if (item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file && props.vaultPath) {
+              imageHandled = true;
+              event.preventDefault();
+              
+              file.arrayBuffer().then(async (buffer) => {
+                 try {
+                     const filename = file.name ? `${Date.now()}-${file.name}` : `pasted-image-${Date.now()}.png`;
+                     const relativePath = await invoke<string>('save_asset', {
+                         vaultPath: props.vaultPath,
+                         filename: filename,
+                         bytes: Array.from(new Uint8Array(buffer))
+                     });
+                     const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+                     const absPath = `${props.vaultPath}${sep}${relativePath}`;
+                     const renderUrl = convertFileSrc(absPath);
+                     
+                     editor.value?.commands.insertContent(`\n![Image](${renderUrl})\n`);
+                 } catch(e) { console.error("Paste image failed", e); }
+              });
+            }
+          }
+        }
+        if (imageHandled) return true;
+      }
+      return false;
+    }
+  }
+});
 
 const openFullView = (cap: QuickCapMetadata) => {
     selectedCap.value = cap;
@@ -192,15 +267,18 @@ const openFullView = (cap: QuickCapMetadata) => {
     
     editingContent.value = textOnly;
     
-    setTimeout(() => {
-        resizeEditingTextarea();
-    }, 50);
+    if (editor.value) {
+       editor.value.commands.setContent(injectLocalAssets(textOnly));
+    }
 };
 
 const closeFullView = async () => {
     if (saveTimeout) clearTimeout(saveTimeout);
     await saveSelectedCap();
     selectedCap.value = null;
+    if (editor.value) {
+       editor.value.commands.clearContent();
+    }
 };
 
 const handleInput = () => {
@@ -239,10 +317,11 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
           e.preventDefault();
           const arrayBuffer = await file.arrayBuffer();
           const bytes = Array.from(new Uint8Array(arrayBuffer));
-          const filename = file.name || 'pasted-image.png';
+          const filename = file.name ? `${Date.now()}-${file.name}` : `pasted-image-${Date.now()}.png`;
           
-          const oldPlaceholder = inputRef.value?.placeholder;
-          if (inputRef.value) inputRef.value.placeholder = "Uploading image...";
+          const targetRef = inputRef.value;
+          const oldPlaceholder = targetRef?.placeholder;
+          if (targetRef) targetRef.placeholder = "Uploading image...";
           isSubmitting.value = true;
           try {
              const assetPath = await invoke<string>('save_asset', {
@@ -250,16 +329,16 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
                 filename,
                 bytes
              });
-             // Replace absolute path marker with safe tauri URL mapping if needed, but for now just text
              const imgMd = `![Image](${assetPath})`;
-             const start = inputRef.value?.selectionStart || newCapText.value.length;
-             const end = inputRef.value?.selectionEnd || newCapText.value.length;
+             const start = targetRef?.selectionStart || newCapText.value.length;
+             const end = targetRef?.selectionEnd || newCapText.value.length;
+             
              newCapText.value = newCapText.value.substring(0, start) + "\n" + imgMd + "\n" + newCapText.value.substring(end);
           } catch(err) {
-             console.error(err);
+             console.error("Paste image save error:", err);
           } finally {
              isSubmitting.value = false;
-             if (inputRef.value) inputRef.value.placeholder = oldPlaceholder || "Take a quick note...";
+             if (targetRef) targetRef.placeholder = oldPlaceholder || "Take a quick note...";
           }
       }
    }
@@ -317,6 +396,8 @@ const convertingTaskParams = ref({
     tags: '',
     checklist: [] as {content: string, completed: boolean}[],
     is_transferred: false,
+    transferred_to: '',
+    track_progress: false,
     comment: ''
 });
 
@@ -334,12 +415,68 @@ const openConvertTaskModal = (cap: QuickCapMetadata) => {
         tags: extractTags(cap.content).join(', '),
         checklist: [],
         is_transferred: false,
+        transferred_to: '',
+        track_progress: false,
         comment: ''
     };
 };
 
 const closeTaskModal = () => {
     convertingTaskCap.value = null;
+};
+
+const convertingNoteCap = ref<QuickCapMetadata | null>(null);
+const convertingNoteParams = ref({
+    title: '',
+    content: '',
+    tags: ''
+});
+
+const openConvertNoteModal = (cap: QuickCapMetadata) => {
+    convertingNoteCap.value = cap;
+    const cleanContent = cap.content.replace(/<!--color:.*?-->/g, '').trim();
+    const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
+    const titleLine = displayLines.length > 0 ? displayLines[0] : 'QuickCap Note';
+    const defaultTitle = titleLine.substring(0, 50) + (titleLine.length > 50 ? '...' : '');
+    
+    convertingNoteParams.value = {
+        title: defaultTitle,
+        content: cleanContent,
+        tags: extractTags(cap.content).join(', ')
+    };
+};
+
+const closeNoteModal = () => {
+    convertingNoteCap.value = null;
+};
+
+const confirmTurnIntoNote = async (payload: any) => {
+    const cap = convertingNoteCap.value;
+    if (!cap) return;
+    
+    try {
+        const path = await invoke<string>('create_new_note', { vaultPath: props.vaultPath });
+        
+        let tagsArray: string[] = [];
+        if (payload.tags) {
+            tagsArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
+        }
+        
+        const frontmatter = `---\ntitle: "${payload.title.replace(/"/g, '\\"')}"\ntags: [${tagsArray.map(t => `"${t}"`).join(', ')}]\n---\n\n`;
+        await invoke('update_note', { path, content: frontmatter + payload.content });
+        
+        const index = quickCaps.value.findIndex(c => c.id === cap.id);
+        if (index !== -1) {
+            await invoke('delete_note', { path: cap.path });
+            quickCaps.value.splice(index, 1);
+        }
+        
+        await emitTauri('vault-changed');
+        closeNoteModal();
+    } catch(e) {
+        console.error("Failed to convert to note", e);
+        await message('Lỗi khi chuyển thành Note.', { title: 'Synabit', kind: 'error' });
+    }
 };
 
 const confirmTurnIntoTask = async (payload: any) => {
@@ -354,6 +491,8 @@ const confirmTurnIntoTask = async (payload: any) => {
                 title: payload.title || 'Untitled',
                 status: payload.status,
                 is_transferred: payload.is_transferred,
+                transferred_to: payload.transferred_to,
+                track_progress: payload.track_progress,
                 priority: payload.priority,
                 start_date: payload.start_date,
                 due_date: payload.due_date,
@@ -385,6 +524,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('paste', handleGlobalPaste);
+    if (editor.value) editor.value.destroy();
 });
 
 watch(() => props.vaultPath, () => {
@@ -447,7 +587,12 @@ const removeActiveTag = (tag: string) => {
     updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
     
     editingContent.value = updatedContent;
-    handleEditInput();
+    if (editor.value) {
+       editor.value.commands.setContent(injectLocalAssets(updatedContent));
+    }
+    
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(saveSelectedCap, 1000);
 };
 
 const renderPreview = (content: string) => {
@@ -465,10 +610,29 @@ const renderPreview = (content: string) => {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
         
+    // Process auto-links: <http...>
+    html = html.replace(/&lt;(https?:\/\/[^\s"'<]+)&gt;/g, '<a href="$1" target="_blank" class="text-blue-500 hover:underline break-all" @click.stop>$1</a>');
+    
+    // Process standard markdown links: [text](http...)
+    html = html.replace(/(^|[^!])\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1<a href="$3" target="_blank" class="text-blue-500 hover:underline break-all" @click.stop>$2</a>');
+        
     // Process markdown images: ![alt](url)
-    html = html.replace(/!\\[.*?\\]\\((.*?)\\)/g, (_match, path) => {
+    html = html.replace(/!\[.*?\]\((.*?)\)/g, (_match, path) => {
         let absPath = path;
         if (path.startsWith('assets/')) {
+            absPath = `${props.vaultPath}/${path}`;
+        }
+        const src = convertFileSrc(absPath);
+        return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
+    });
+    
+    // Process HTML images exported by raw Markdown serializers
+    html = html.replace(/&lt;img.*?src=["'](.*?)["'].*?&gt;/g, (_match, path) => {
+        let absPath = path;
+        const assetMatch = path.match(/assets(%2F|\/)([^?&'"]+)/);
+        if (assetMatch) {
+            absPath = `${props.vaultPath}/assets/${decodeURIComponent(assetMatch[2])}`;
+        } else if (path.startsWith('assets/')) {
             absPath = `${props.vaultPath}/${path}`;
         }
         const src = convertFileSrc(absPath);
@@ -601,6 +765,9 @@ const deleteCap = async (path: string, index: number) => {
                                       ></button>
                                   </div>
                               </div>
+                              <button @click.stop="openConvertNoteModal(cap)" title="Convert to Note" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <FileText class="w-3.5 h-3.5" />
+                              </button>
                               <button @click.stop="openConvertTaskModal(cap)" title="Capture to Task" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <CheckSquare class="w-3.5 h-3.5"/>
                               </button>
@@ -625,20 +792,13 @@ const deleteCap = async (path: string, index: number) => {
     </div>
 
     <!-- Full View Modal -->
-    <div v-if="selectedCap" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
+    <div v-if="selectedCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
         <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
             <div class="p-8 overflow-y-auto flex-1 flex flex-col min-h-0 bg-transparent">
-                <textarea 
-                    ref="editInputRef"
-                    v-model="editingContent"
-                    @input="handleEditInput"
-                    class="w-full shrink-0 bg-transparent resize-none outline-none text-[16px] leading-relaxed text-[#1c1c1e] dark:text-[#f4f4f5] border-none focus:ring-0 appearance-none m-0 p-0 overflow-hidden min-h-[100px]"
-                    placeholder="Note content..."
-                    autofocus
-                ></textarea>
+                <EditorContent :editor="editor" class="w-full" />
                 
                 <!-- Render tags as chips in modal -->
-                <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0">
+                <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0 pt-4 border-t border-gray-100 dark:border-[#2c2c2c]">
                    <span v-for="tag in activeTags" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                        {{ tag }}
                        <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer">
@@ -663,6 +823,14 @@ const deleteCap = async (path: string, index: number) => {
         :showActions="true"
         @save="confirmTurnIntoTask" 
         @close="closeTaskModal" 
+    />
+    
+    <!-- Convert to Note Modal -->
+    <NoteEditModal 
+        v-if="convertingNoteCap"
+        :note="convertingNoteParams"
+        @save="confirmTurnIntoNote"
+        @close="closeNoteModal"
     />
   </div>
 </template>

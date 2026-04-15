@@ -2,7 +2,7 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Info, Target, Inbox, Sun, Calendar, Coffee, Send, Flag, ListTodo } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Info, Target, Inbox, Sun, Calendar, Coffee, Send, Flag, ListTodo, Eye, EyeOff, Filter } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 
 const props = defineProps<{
@@ -19,6 +19,8 @@ export interface TaskMetadata {
     title: string;
     status: string;
     is_transferred: boolean;
+    transferred_to: string;
+    track_progress: boolean;
     priority: string;
     start_date: string;
     due_date: string;
@@ -30,6 +32,7 @@ export interface TaskMetadata {
     path: string;
     created_at: string;
     updated_at: string;
+    completed_at: string;
     custom_fields: Record<string, any>;
     isNew?: boolean;
 }
@@ -41,18 +44,65 @@ const activeCategory = ref<'all' | 'today' | 'upcoming' | 'someday' | 'transferr
 
 const searchedTasks = computed(() => {
     let result = tasks.value;
+    
     if (searchQuery.value.trim()) {
         const query = searchQuery.value.toLowerCase();
-        if (query.startsWith('#') && query.length > 1) {
-            const tagSearch = query.substring(1).trim();
-            result = result.filter(t => t.tags.some(tag => tag.toLowerCase().includes(tagSearch)));
-        } else {
-            result = result.filter(t => 
-                t.title.toLowerCase().includes(query) || 
-                t.content.toLowerCase().includes(query) ||
-                t.tags.some(tag => tag.toLowerCase().includes(query))
-            );
-        }
+        
+        const isQuery = (prop: string) => query.includes(`is:${prop}`);
+        const notQuery = (prop: string) => query.includes(`not:${prop}`);
+        const pQueryMatch = query.match(/(?:p|priority):([1-4])/);
+        const statusQueryMatch = query.match(/status:([a-z_]+)/);
+        const tagQueryMatch = query.match(/(?:#|tag:)([^\s]+)/);
+        const assignQueryMatch = query.match(/@([^\s]+)/);
+        const customPropMatches = [...query.matchAll(/prop:([^:=\s]+)(?:=([^\s]+))?/g)];
+
+        result = result.filter(t => {
+            if (isQuery('transferred') && !t.is_transferred) return false;
+            if (notQuery('transferred') && t.is_transferred) return false;
+            if (isQuery('tracked') && !t.track_progress) return false;
+            if (notQuery('tracked') && t.track_progress) return false;
+            
+            if (isQuery('completed') && t.status !== 'done') return false;
+            if (isQuery('todo') && t.status !== 'todo') return false;
+            if (isQuery('in_progress') && t.status !== 'in_progress') return false;
+            
+            if (pQueryMatch && t.priority !== `P${pQueryMatch[1]}`) return false;
+            if (statusQueryMatch && t.status !== statusQueryMatch[1]) return false;
+            
+            if (tagQueryMatch) {
+               const searchTag = tagQueryMatch[1];
+               if (!t.tags.some(tag => tag.toLowerCase() === searchTag || tag.toLowerCase().includes(searchTag))) return false;
+            }
+            
+            if (assignQueryMatch) {
+               const searchName = assignQueryMatch[1];
+               if (!t.transferred_to?.toLowerCase().includes(searchName)) return false;
+            }
+            
+            for (const match of customPropMatches) {
+                const key = match[1];
+                const expectedValue = match[2];
+                if (!t.custom_fields || t.custom_fields[key] === undefined) return false;
+                if (expectedValue && String(t.custom_fields[key]).toLowerCase() !== expectedValue) return false;
+            }
+            
+            let textQuery = query
+                .replace(/is:[^\s]+/g, '')
+                .replace(/not:[^\s]+/g, '')
+                .replace(/(?:p|priority):[1-4]/g, '')
+                .replace(/status:[a-z_]+/g, '')
+                .replace(/(?:#|tag:)[^\s]+/g, '')
+                .replace(/@[^\s]+/g, '')
+                .replace(/prop:[^:=\s]+(?:=[^\s]+)?/g, '')
+                .trim();
+                
+            if (textQuery) {
+                return t.title.toLowerCase().includes(textQuery) || 
+                       t.content.toLowerCase().includes(textQuery) ||
+                       t.tags.some(tag => tag.toLowerCase().includes(textQuery));
+            }
+            return true;
+        });
     }
     return result;
 });
@@ -74,17 +124,19 @@ const categoryCounts = computed(() => {
         }
         
         let isToday = false;
-        if (t.due_date === todayStr) isToday = true;
-        else if (!t.due_date && t.start_date && t.start_date <= todayStr) isToday = true;
-        else if (t.due_date && t.due_date < todayStr) isToday = true;
+        if (t.due_date && t.due_date <= todayStr) isToday = true;
+        else if (t.start_date && t.start_date <= todayStr) isToday = true;
         
         if (isToday) {
             today++;
             return;
         }
         
-        if (t.due_date && t.due_date > todayStr) upcoming++;
-        else if (t.start_date && t.start_date > todayStr) upcoming++;
+        let isUpcoming = false;
+        if (t.start_date && t.start_date > todayStr) isUpcoming = true;
+        else if (t.due_date && t.due_date > todayStr) isUpcoming = true;
+        
+        if (isUpcoming) upcoming++;
         else someday++;
     });
     
@@ -107,15 +159,18 @@ const activeCategoryTasks = computed(() => {
         if (activeCategory.value === 'transferred') return t.is_transferred;
         if (t.is_transferred) return false; 
         
-        const isToday = (t.due_date === today) || 
-                        (!t.due_date && t.start_date && t.start_date <= today) ||
-                        (t.due_date && t.due_date < today);
+        let isToday = false;
+        if (t.due_date && t.due_date <= today) isToday = true;
+        else if (t.start_date && t.start_date <= today) isToday = true;
 
         if (activeCategory.value === 'today') return isToday;
         
         if (isToday) return false; 
         
-        const isUpcoming = (t.due_date && t.due_date > today) || (t.start_date && t.start_date > today);
+        let isUpcoming = false;
+        if (t.start_date && t.start_date > today) isUpcoming = true;
+        else if (t.due_date && t.due_date > today) isUpcoming = true;
+        
         if (activeCategory.value === 'upcoming') return isUpcoming;
         
         if (activeCategory.value === 'someday') return !isUpcoming;
@@ -229,6 +284,14 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     task.custom_fields['order'] = newOrder;
     task.status = newStatus;
     
+    // Track completed_at timestamp for archiving
+    const nowStr = new Date().toISOString().split('T')[0];
+    if (newStatus === 'done' && !task.completed_at) {
+        task.completed_at = nowStr;
+    } else if (newStatus !== 'done') {
+        task.completed_at = '';
+    }
+    
     try {
         await invoke('update_task', {
             path: task.path,
@@ -236,12 +299,15 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
                 title: task.title,
                 status: newStatus,
                 is_transferred: task.is_transferred,
+                transferred_to: task.transferred_to,
+                track_progress: task.track_progress,
                 priority: task.priority,
                 start_date: task.start_date,
                 due_date: task.due_date,
                 comment: task.comment,
                 source_link: task.source_link,
                 tags: task.tags,
+                completed_at: task.completed_at,
                 ...task.custom_fields
             },
             content: task.content
@@ -256,6 +322,8 @@ const editingTaskParams = ref({
     title: '',
     content: '',
     is_transferred: false,
+    transferred_to: '',
+    track_progress: false,
     priority: '',
     start_date: '',
     due_date: '',
@@ -271,11 +339,13 @@ const openEditModal = (task: TaskMetadata) => {
         title: task.title,
         content: task.content,
         is_transferred: task.is_transferred || false,
+        transferred_to: task.transferred_to || '',
+        track_progress: task.track_progress || false,
         priority: task.priority || '',
         start_date: task.start_date,
         due_date: task.due_date,
         comment: task.comment,
-        tags: task.tags.join(', '),
+        tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
         checklist: JSON.parse(JSON.stringify(task.checklist || []))
     };
     customFields.value = Object.entries(task.custom_fields || {})
@@ -289,6 +359,8 @@ const openCreateModal = () => {
         title: '',
         status: 'todo',
         is_transferred: false,
+        transferred_to: '',
+        track_progress: false,
         priority: '',
         start_date: '',
         due_date: '',
@@ -307,6 +379,8 @@ const openCreateModal = () => {
         title: '',
         content: '',
         is_transferred: false,
+        transferred_to: '',
+        track_progress: false,
         priority: '',
         start_date: '',
         due_date: '',
@@ -368,6 +442,8 @@ const saveTask = async () => {
                     title: editingTaskParams.value.title || 'Untitled',
                     status: editingTask.value.status || 'todo',
                     is_transferred: editingTaskParams.value.is_transferred,
+                    transferred_to: editingTaskParams.value.transferred_to,
+                    track_progress: editingTaskParams.value.track_progress,
                     priority: editingTaskParams.value.priority,
                     start_date: editingTaskParams.value.start_date,
                     due_date: editingTaskParams.value.due_date,
@@ -375,6 +451,7 @@ const saveTask = async () => {
                     source_link: '',
                     tags: tagArray,
                     checklist: editingTaskParams.value.checklist,
+                    completed_at: '',
                     ...updatedCustomFields
                 },
                 content: editingTaskParams.value.content
@@ -387,6 +464,8 @@ const saveTask = async () => {
                     title: editingTaskParams.value.title,
                     status: editingTask.value.status,
                     is_transferred: editingTaskParams.value.is_transferred,
+                    transferred_to: editingTaskParams.value.transferred_to,
+                    track_progress: editingTaskParams.value.track_progress,
                     priority: editingTaskParams.value.priority,
                     start_date: editingTaskParams.value.start_date,
                     due_date: editingTaskParams.value.due_date,
@@ -394,6 +473,7 @@ const saveTask = async () => {
                     source_link: editingTask.value.source_link,
                     tags: tagArray,
                     checklist: editingTaskParams.value.checklist,
+                    completed_at: editingTask.value.completed_at || '',
                     ...updatedCustomFields
                 },
                 content: editingTaskParams.value.content
@@ -402,6 +482,8 @@ const saveTask = async () => {
             editingTask.value.title = editingTaskParams.value.title;
             editingTask.value.content = editingTaskParams.value.content;
             editingTask.value.is_transferred = editingTaskParams.value.is_transferred;
+            editingTask.value.transferred_to = editingTaskParams.value.transferred_to;
+            editingTask.value.track_progress = editingTaskParams.value.track_progress;
             editingTask.value.priority = editingTaskParams.value.priority;
             editingTask.value.start_date = editingTaskParams.value.start_date;
             editingTask.value.due_date = editingTaskParams.value.due_date;
@@ -420,6 +502,9 @@ const saveTask = async () => {
 const loadTasks = async () => {
     if (!props.vaultPath) return;
     try {
+        // Auto-archive tasks done > configured days (default 30)
+        const archiveDays = Number(localStorage.getItem('synabitTaskArchiveDays') || '30');
+        await invoke('archive_done_tasks', { vaultPath: props.vaultPath, days: archiveDays });
         tasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
     } catch (e) {
         console.error("Failed to load tasks", e);
@@ -428,6 +513,8 @@ const loadTasks = async () => {
 
 const toggleTaskStatus = async (task: TaskMetadata) => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
+    const nowStr = new Date().toISOString().split('T')[0];
+    const newCompletedAt = newStatus === 'done' ? nowStr : '';
     
     try {
         await invoke('update_task', {
@@ -436,17 +523,21 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
                 title: task.title,
                 status: newStatus,
                 is_transferred: task.is_transferred,
+                transferred_to: task.transferred_to,
+                track_progress: task.track_progress,
                 priority: task.priority,
                 start_date: task.start_date,
                 due_date: task.due_date,
                 comment: task.comment,
                 source_link: task.source_link,
                 tags: task.tags,
+                completed_at: newCompletedAt,
                 ...task.custom_fields
             },
             content: task.content
         });
         task.status = newStatus;
+        task.completed_at = newCompletedAt;
     } catch (e) {
         console.error("Failed to update task", e);
     }
@@ -540,8 +631,8 @@ watch(() => props.vaultPath, () => {
                   </div>
               </div>
 
-              <!-- Filter Bar (Search only) -->
-              <div class="mt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <!-- Filter Bar (Search & Properties) -->
+              <div class="mt-4 flex flex-row items-center gap-3">
                   <div class="relative w-full sm:max-w-xs group">
                       <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                           <Search class="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
@@ -550,11 +641,25 @@ watch(() => props.vaultPath, () => {
                           v-model="searchQuery" 
                           type="text" 
                           class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
-                          placeholder="Search tasks or #tag..." 
+                          placeholder="Search tasks or properties..." 
                       />
-                      <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer">
+                      <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10">
                           <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
                       </button>
+                      
+                      <!-- Advanced Search Tooltip/Hints -->
+                      <div class="absolute top-full left-0 mt-2 p-3 bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-[#2c2c2c] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-20 w-72 opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible transition-all">
+                          <div class="flex items-center text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-2.5 uppercase tracking-wider">
+                              <Search class="w-3.5 h-3.5 mr-1" /> Quick Filter Syntax
+                          </div>
+                          <div class="space-y-2 text-[11px] text-gray-600 dark:text-gray-400">
+                              <div class="flex items-center gap-2"><span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:transferred</span>, <span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:tracked</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-purple-50/80 dark:bg-purple-900/30 px-1 border border-purple-100 dark:border-purple-900/50 rounded text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">p:3</span> hay <span class="font-mono bg-indigo-50/80 dark:bg-indigo-900/30 px-1 border border-indigo-100 dark:border-indigo-900/50 rounded text-indigo-600 dark:text-indigo-400 font-medium whitespace-nowrap">status:todo</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-emerald-50/80 dark:bg-emerald-900/30 px-1 border border-emerald-100 dark:border-emerald-900/50 rounded text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap">@name</span> <span class="text-gray-400">(Trạng thái Assign)</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">#tag</span> hoặc <span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">tag:urgent</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-slate-100 dark:bg-slate-800/50 px-1 border border-slate-200 dark:border-[#333] rounded text-slate-600 dark:text-slate-300 font-medium whitespace-nowrap">prop:cost=100</span> <span class="text-gray-400 px-1">(Custom Prop)</span></div>
+                          </div>
+                      </div>
                   </div>
               </div>
           </div>
@@ -588,9 +693,14 @@ watch(() => props.vaultPath, () => {
                           <div class="flex items-center gap-3 overflow-hidden ml-4 shrink-0">
                               <span v-if="task.status === 'in_progress'" class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold tracking-wider">DOING</span>
                               
-                              <span v-if="task.priority" class="text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider" :class="getPriorityClass(task.priority)">
+                              <span v-if="task.priority" class="text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider shrink-0" :class="getPriorityClass(task.priority)">
                                   {{ task.priority }}
                               </span>
+                              
+                              <div v-if="task.is_transferred" class="flex items-center shrink-0 ml-1 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
+                                  <Eye v-if="task.track_progress" class="w-4 h-4 text-blue-500" />
+                                  <EyeOff v-else class="w-4 h-4" />
+                              </div>
                               
                               <span v-if="task.due_date" class="text-xs flex items-center text-red-500 font-medium">
                                   <CalendarDays class="w-3 h-3 mr-1" />
@@ -643,6 +753,10 @@ watch(() => props.vaultPath, () => {
                                      <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">
                                          {{ task.priority }}
                                      </span>
+                                     <div v-if="task.is_transferred" class="flex items-center shrink-0 ml-0.5 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
+                                         <Eye v-if="task.track_progress" class="w-3.5 h-3.5 text-blue-500" />
+                                         <EyeOff v-else class="w-3.5 h-3.5" />
+                                     </div>
                                      <span v-if="task.start_date || task.due_date" class="text-[10px] text-gray-500 bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded flex items-center">
                                          <CalendarDays class="w-3 h-3 mr-1" /> {{ task.start_date ? task.start_date.substring(5) : '--' }} - {{ task.due_date ? task.due_date.substring(5) : '--' }}
                                      </span>
@@ -682,8 +796,12 @@ watch(() => props.vaultPath, () => {
                                       <Circle v-else class="w-5 h-5 text-gray-300 dark:text-gray-600 hover:text-black dark:hover:text-white" />
                                   </button>
                              </td>
-                             <td class="px-6 py-3 font-medium text-[#1c1c1e] dark:text-[#f4f4f5]" :class="task.status === 'done' ? 'line-through text-gray-400' : ''">
-                                 <span v-if="task.priority" class="mr-2 text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                             <td class="px-6 py-3 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2" :class="task.status === 'done' ? 'line-through text-gray-400' : ''">
+                                 <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                                 <div v-if="task.is_transferred" class="flex items-center shrink-0 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
+                                     <Eye v-if="task.track_progress" class="w-4 h-4 text-blue-500" />
+                                     <EyeOff v-else class="w-4 h-4" />
+                                 </div>
                                  {{ task.title }}
                              </td>
                              <td class="px-6 py-3 text-gray-500 font-mono text-xs">

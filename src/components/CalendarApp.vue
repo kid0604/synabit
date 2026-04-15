@@ -498,7 +498,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                  <div class="space-y-2">
                      <div v-for="ev in selectedEvents" :key="ev.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group">
                          <div class="flex justify-between items-start mb-1">
-                             <h4 class="font-bold text-base text-[#1c1c1e] dark:text-[#f4f4f5] line-clamp-1">{{ ev.title }}</h4>
+                             <h4 class="font-bold text-base text-gray-900 dark:text-gray-100 line-clamp-1">{{ ev.title }}</h4>
                              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button @click="openEditEventModal(ev)" class="p-1 hover:bg-gray-100 dark:hover:bg-[#333] rounded text-gray-500"><Edit2 class="w-3 h-3"/></button>
                                 <button @click="deleteEvent(ev)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
@@ -532,7 +532,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                              </div>
                          </div>
                          <div class="flex-1">
-                             <h4 class="text-sm font-semibold" :class="tk.status === 'done' ? 'line-through text-gray-400' : 'text-[#1c1c1e] dark:text-[#f4f4f5]'">{{ tk.title }}</h4>
+                             <h4 class="text-sm font-semibold" :class="tk.status === 'done' ? 'line-through text-gray-400' : 'text-gray-900 dark:text-gray-100'">{{ tk.title }}</h4>
                              <p v-if="tk.comment" class="text-xs text-gray-500 mt-1 line-clamp-1">{{ tk.comment }}</p>
                          </div>
                      </div>

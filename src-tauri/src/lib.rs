@@ -69,6 +69,10 @@ struct TaskFrontMatter {
     #[serde(default)]
     is_transferred: bool,
     #[serde(default)]
+    transferred_to: String,
+    #[serde(default)]
+    track_progress: bool,
+    #[serde(default)]
     priority: String,
     #[serde(default)]
     start_date: String,
@@ -82,6 +86,8 @@ struct TaskFrontMatter {
     tags: Vec<String>,
     #[serde(default)]
     checklist: Vec<ChecklistItem>,
+    #[serde(default)]
+    completed_at: String,
     #[serde(flatten)]
     custom_fields: std::collections::HashMap<String, serde_json::Value>,
 }
@@ -92,6 +98,8 @@ pub struct TaskMetadata {
     title: String,
     status: String,
     is_transferred: bool,
+    transferred_to: String,
+    track_progress: bool,
     priority: String,
     start_date: String,
     due_date: String,
@@ -103,6 +111,7 @@ pub struct TaskMetadata {
     path: String,
     created_at: String,
     updated_at: String,
+    completed_at: String,
     custom_fields: std::collections::HashMap<String, serde_json::Value>,
 }
 
@@ -638,7 +647,13 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
         }
     }
 
+    let archived_dir = tasks_dir.join("archived");
+
     for entry in WalkDir::new(&tasks_dir).into_iter().filter_map(|e| e.ok()) {
+        // Skip files inside the archived subdirectory
+        if entry.path().starts_with(&archived_dir) {
+            continue;
+        }
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension() {
                 if ext == "md" {
@@ -646,6 +661,8 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                         let mut title = String::new();
                         let mut status = "todo".to_string();
                         let mut is_transferred = false;
+                        let mut transferred_to = String::new();
+                        let mut track_progress = false;
                         let mut priority = String::new();
                         let mut start_date = String::new();
                         let mut due_date = String::new();
@@ -654,12 +671,15 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                         let mut tags = Vec::new();
                         let mut task_content = content.clone();
                         let mut custom_fields = std::collections::HashMap::new();
+                        let mut completed_at = String::new();
 
                         if let Ok(parsed) = matter.parse::<TaskFrontMatter>(&content) {
                             if let Some(frontmatter) = parsed.data {
                                 title = frontmatter.title;
                                 status = frontmatter.status;
                                 is_transferred = frontmatter.is_transferred;
+                                transferred_to = frontmatter.transferred_to;
+                                track_progress = frontmatter.track_progress;
                                 priority = frontmatter.priority;
                                 start_date = frontmatter.start_date;
                                 due_date = frontmatter.due_date;
@@ -667,6 +687,7 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                                 source_link = frontmatter.source_link;
                                 tags = frontmatter.tags;
                                 custom_fields = frontmatter.custom_fields;
+                                completed_at = frontmatter.completed_at;
                             }
                             task_content = parsed.content;
                         }
@@ -683,6 +704,8 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                             title,
                             status,
                             is_transferred,
+                            transferred_to,
+                            track_progress,
                             priority,
                             start_date,
                             due_date,
@@ -694,6 +717,7 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                             path: entry.path().to_string_lossy().to_string(),
                             created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
                             updated_at: modified_date.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            completed_at,
                             custom_fields,
                         });
                     }
@@ -736,6 +760,8 @@ fn create_task(
         title: metadata.title,
         status: metadata.status,
         is_transferred: metadata.is_transferred,
+        transferred_to: metadata.transferred_to,
+        track_progress: metadata.track_progress,
         priority: metadata.priority,
         start_date: metadata.start_date,
         due_date: metadata.due_date,
@@ -744,6 +770,7 @@ fn create_task(
         tags: metadata.tags,
         checklist: metadata.checklist,
         custom_fields: metadata.custom_fields,
+        completed_at: metadata.completed_at,
         content,
         path: path.to_string_lossy().to_string(),
         created_at: date_str.clone(),
@@ -764,6 +791,58 @@ fn update_task(
 #[tauri::command]
 fn delete_task(path: String) -> Result<(), String> {
     fs::remove_file(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn archive_done_tasks(vault_path: String, days: u64) -> Result<u32, String> {
+    use chrono::NaiveDate;
+    
+    let tasks_dir = Path::new(&vault_path).join("Tasks");
+    if !tasks_dir.exists() {
+        return Ok(0);
+    }
+    
+    let archived_dir = tasks_dir.join("archived");
+    let matter = Matter::<YAML>::new();
+    let today = chrono::Local::now().date_naive();
+    let mut archived_count: u32 = 0;
+    
+    let entries: Vec<_> = WalkDir::new(&tasks_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| !e.path().starts_with(&archived_dir))
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    
+    for entry in entries {
+        if let Ok(content) = fs::read_to_string(entry.path()) {
+            if let Ok(parsed) = matter.parse::<TaskFrontMatter>(&content) {
+                if let Some(ref fm) = parsed.data {
+                    if fm.status != "done" || fm.completed_at.is_empty() {
+                        continue;
+                    }
+                    // Parse completed_at date (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
+                    let date_part = fm.completed_at.split_whitespace().next().unwrap_or("");
+                    if let Ok(completed_date) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d") {
+                        let elapsed = today.signed_duration_since(completed_date).num_days();
+                        if elapsed >= days as i64 {
+                            // Move file to archived/
+                            if !archived_dir.exists() {
+                                fs::create_dir_all(&archived_dir).map_err(|e| e.to_string())?;
+                            }
+                            let file_name = entry.path().file_name().unwrap_or_default();
+                            let dest = archived_dir.join(file_name);
+                            fs::rename(entry.path(), &dest).map_err(|e| e.to_string())?;
+                            archived_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(archived_count)
 }
 
 
@@ -1141,7 +1220,8 @@ pub fn run() {
             scan_events,
             create_event,
             update_event,
-            delete_event
+            delete_event,
+            archive_done_tasks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

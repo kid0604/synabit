@@ -11,6 +11,7 @@ import Tasks from './components/Tasks.vue';
 import CalendarApp from './components/CalendarApp.vue';
 import Nexus from './components/Nexus.vue';
 import FileManager from './components/FileManager.vue';
+import NoteGraph from './components/NoteGraph.vue';
 
 // --- Vault & Data State ---
 const vaultPath = ref<string>(localStorage.getItem('synabitVaultPath') || '');
@@ -29,7 +30,21 @@ const notes = ref<NoteMetadata[]>([]);
 const currentNoteId = ref<string | null>(null);
 
 // --- App View State ---
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'settings'>('nexus');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file'>('nexus');
+
+// --- Settings Modal State ---
+const showSettingsModal = ref(false);
+const settingsTab = ref<'general' | 'tasks' | 'about'>('general');
+const taskArchiveDays = ref(Number(localStorage.getItem('synabitTaskArchiveDays') || '30'));
+
+watch(taskArchiveDays, (v) => {
+    localStorage.setItem('synabitTaskArchiveDays', String(v));
+});
+
+const openSettings = () => {
+    showSettingsModal.value = true;
+    settingsTab.value = 'general';
+};
 
 const themeMode = ref<'light' | 'dark' | 'system'>(localStorage.getItem('synabitThemeMode') as 'light' | 'dark' | 'system' || 'system');
 
@@ -114,6 +129,10 @@ onMounted(() => {
       if (currentNoteId.value === data.id) {
          currentContent.value = data.content;
       }
+  });
+  
+  listen('vault-changed', () => {
+      scanVault();
   });
   
   getCurrentWindow().onCloseRequested(async () => {
@@ -451,6 +470,29 @@ const saveNoteFile = () => {
 }
 
 const currentBacklinks = ref<NoteMetadata[]>([]);
+const activeNote = computed(() => notes.value.find(n => n.id === currentNoteId.value) || null);
+
+const currentOutgoingLinks = computed(() => {
+    if (!currentContent.value) return [];
+    // Regex matches synabit://note/([^)]+)
+    const regex = /synabit:\/\/note\/([^\s\)"']+)/g;
+    const links = new Set<string>();
+    let m;
+    while ((m = regex.exec(currentContent.value)) !== null) {
+        // m[1] contains the basename/path. 
+        // Our notes use full paths as ID, but links often just use basename.
+        // We'll try to find the full note object via basename or raw.
+        const targetFilename = decodeURIComponent(m[1]);
+        const targetNote = notes.value.find(n => n.path.endsWith(targetFilename));
+        if (targetNote) {
+           links.add(targetNote.id);
+        } else {
+           links.add(targetFilename); // Fallback
+        }
+    }
+    return Array.from(links);
+});
+
 const editorRefs = ref<any[]>([]);
 
 const onEditorUpdate = (val: string) => {
@@ -516,8 +558,16 @@ const openNoteManager = (filterType: string) => {
 const managerFilteredNotes = computed(() => {
    let result = notes.value;
    if (managerSearchQuery.value.trim()) {
-      const q = managerSearchQuery.value.toLowerCase();
-      result = result.filter(n => n.title.toLowerCase().includes(q) || n.tags.some(t => t.toLowerCase().includes(q)));
+      const q = managerSearchQuery.value.toLowerCase().trim();
+      const isTagSearch = q.startsWith('#');
+      const searchTerm = isTagSearch ? q.slice(1) : q;
+      
+      result = result.filter(n => {
+         if (isTagSearch) {
+             return n.tags.some(t => t.toLowerCase().includes(searchTerm));
+         }
+         return n.title.toLowerCase().includes(searchTerm) || n.tags.some(t => t.toLowerCase().includes(searchTerm));
+      });
    }
    
    if (managerFilter.value === 'notes' || !managerFilter.value || managerFilter.value === 'tags') {
@@ -533,11 +583,17 @@ const filteredNotes = computed(() => {
   let result = notes.value;
   
   if (searchQuery.value.trim()) {
-      const q = searchQuery.value.toLowerCase();
-      result = result.filter(n => 
-          n.title.toLowerCase().includes(q) || 
-          n.tags.some(t => t.toLowerCase().includes(q))
-      );
+      const q = searchQuery.value.toLowerCase().trim();
+      const isTagSearch = q.startsWith('#');
+      const searchTerm = isTagSearch ? q.slice(1) : q;
+      
+      result = result.filter(n => {
+          if (isTagSearch) {
+              return n.tags.some(t => t.toLowerCase().includes(searchTerm));
+          }
+          return n.title.toLowerCase().includes(searchTerm) || 
+                 n.tags.some(t => t.toLowerCase().includes(searchTerm));
+      });
   }
   
   if (selectedTags.value.size > 0) {
@@ -627,7 +683,7 @@ const clearVault = () => {
             </button>
          </div>
          <div class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
-            <button @click="activeTool = 'settings'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'settings' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+            <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                <Settings class="w-5 h-5" />
                <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
             </button>
@@ -804,7 +860,7 @@ const clearVault = () => {
               </div>
               
               <div class="flex gap-2">
-                <button v-if="currentBacklinks.length > 0" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Backlinks">
+                <button v-if="currentNoteId" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
                   <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
                   <PanelRight v-else class="w-4 h-4" />
                 </button>
@@ -895,7 +951,7 @@ const clearVault = () => {
                        v-model="managerSearchQuery"
                        type="text" 
                        placeholder="Search notes or tags..." 
-                       class="w-full pl-12 pr-4 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5]"
+                       class="w-full pl-12 pr-4 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input"
                      >
                    </div>
                    
@@ -976,32 +1032,52 @@ const clearVault = () => {
         </template>
       </main>
 
-      <!-- Right Sidebar: Backlinks -->
-      <aside v-if="currentNoteId && currentBacklinks.length > 0" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden" :style="{ width: wRightSidebar + 'px' }">
+      <!-- Right Sidebar: Graph & Backlinks -->
+      <aside v-if="currentNoteId" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden" :style="{ width: wRightSidebar + 'px' }">
         <!-- Drag Handle -->
         <div 
           class="absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity"
           @mousedown.stop="startDragRightSidebar"
         ></div>
+        
+        <!-- Graph View Section -->
         <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
             <Globe class="w-4 h-4 text-gray-500 mr-2" />
-            <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">Linked Mentions ({{ currentBacklinks.length }})</span>
+            <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">Graph View</span>
             <button @click="showRightSidebar = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors">
                <X class="w-3.5 h-3.5" />
             </button>
         </div>
-        <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#fdfdfc] dark:bg-[#242424]">
+        <div class="h-1/2 border-b border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden">
+            <NoteGraph 
+                v-if="activeNote"
+                :current-note-id="currentNoteId || ''"
+                :current-note-title="activeNote.title || 'Untitled Node'"
+                :tags="activeNote.tags || []"
+                :outgoing-links="currentOutgoingLinks"
+                :backlinks="currentBacklinks"
+                :all-notes="notes"
+                @open-note="handleOpenInternalNote"
+            />
+        </div>
+
+        <!-- Backlinks Section -->
+        <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
+            <span class="font-bold text-[11px] tracking-wider text-[#8b8b8b] dark:text-[#71717a] uppercase mt-0.5">Linked Mentions ({{ currentBacklinks.length }})</span>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+            <div v-if="currentBacklinks.length === 0" class="text-[13px] text-gray-400 text-center py-4">No linked mentions.</div>
             <div 
               v-for="bl in currentBacklinks" 
               :key="bl.id" 
               @click="handleOpenInternalNote(bl.id)"
-              class="p-3.5 rounded-xl border border-gray-100 dark:border-[#2c2c2c] bg-white dark:bg-[#1a1a1a] cursor-pointer hover:border-purple-500/50 dark:hover:border-purple-500/50 hover:shadow-md transition-all group"
+              class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group"
             >
-              <h5 class="text-sm font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-1.5 flex items-center gap-2">
-                  <FileText class="w-3.5 h-3.5 opacity-40 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/> 
-                  <span class="truncate">{{ bl.title }}</span>
+              <h5 class="flex items-center gap-2 mb-1.5 pr-2">
+                  <FileText class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/> 
+                  <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ bl.title }}</span>
               </h5>
-              <p class="text-[11px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-3 leading-relaxed opacity-80 group-hover:opacity-100 transition-opacity">{{ bl.summary || 'No text content available.' }}</p>
+              <p class="text-[11px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-3 leading-relaxed pl-5">{{ bl.summary || 'No text content available.' }}</p>
             </div>
         </div>
       </aside>
@@ -1041,61 +1117,121 @@ const clearVault = () => {
        </main>
     </template>
 
-    <!-- SETTINGS VIEW -->
-    <template v-else-if="activeTool === 'settings'">
-      <main class="flex-1 overflow-y-auto bg-[#fdfdfc] dark:bg-[#242424] flex justify-center text-[#1c1c1e] dark:text-[#f4f4f5]">
-         <div class="max-w-2xl w-full py-16 px-8">
-            <h1 class="text-3xl font-bold mb-8">Settings</h1>
+    <!-- SETTINGS MODAL (Global Overlay) -->
+    <Teleport to="body">
+      <Transition name="settings-modal">
+        <div v-if="showSettingsModal" class="fixed inset-0 z-[200] flex items-center justify-center">
+          <!-- Backdrop -->
+          <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @mousedown="showSettingsModal = false"></div>
+          
+          <!-- Modal Container -->
+          <div class="relative w-[720px] max-w-[90vw] h-[520px] max-h-[85vh] bg-[#fdfdfc] dark:bg-[#242424] rounded-2xl shadow-2xl border border-[#e0e0e0] dark:border-[#333] flex overflow-hidden" @mousedown.stop>
             
-            <div class="space-y-8">
-               <!-- Vault Management -->
-               <section>
-                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">Vault Management</h2>
-                  <div class="bg-gray-50 dark:bg-[#1e1e1e] p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
-                     <div class="mb-4">
-                       <p class="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Current Vault Location</p>
-                       <p class="font-mono text-sm break-all text-black dark:text-white bg-white dark:bg-[#2a2a2a] p-2 rounded-md border border-gray-200 dark:border-transparent">{{ vaultPath }}</p>
-                     </div>
-                     <button @click="clearVault" class="px-5 py-2.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-sm font-medium transition-all shadow-md mt-2 flex items-center gap-2">
-                        <FolderOpen class="w-4 h-4" /> Switch Vault Folder
-                     </button>
-                  </div>
-               </section>
-               
-               <!-- Appearance -->
-               <section>
-                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">Appearance</h2>
-                  <div class="p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50 dark:bg-[#1e1e1e]">
-                      <h3 class="text-sm font-medium mb-3">Theme Preference</h3>
-                      <div class="flex items-center gap-6">
-                         <label class="flex items-center gap-2 cursor-pointer group">
-                            <input type="radio" value="light" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
-                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">Light</span>
-                         </label>
-                         <label class="flex items-center gap-2 cursor-pointer group">
-                            <input type="radio" value="dark" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
-                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">Dark</span>
-                         </label>
-                         <label class="flex items-center gap-2 cursor-pointer group">
-                            <input type="radio" value="system" v-model="themeMode" class="accent-black dark:accent-white w-4 h-4 cursor-pointer">
-                            <span class="text-sm text-gray-700 dark:text-gray-300 group-hover:text-black dark:group-hover:text-white transition-colors">System</span>
-                         </label>
+            <!-- Left Tab Navigation -->
+            <nav class="w-[200px] shrink-0 bg-[#f5f5f5] dark:bg-[#1a1a1a] border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col py-5 px-3">
+              <h2 class="text-[13px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5] mb-5 px-2">Settings</h2>
+              
+              <div class="space-y-0.5">
+                <button @click="settingsTab = 'general'" 
+                  :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'general' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                  <Settings class="w-4 h-4 opacity-70" />
+                  General
+                </button>
+                <button @click="settingsTab = 'tasks'" 
+                  :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'tasks' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                  <CheckSquare class="w-4 h-4 opacity-70" />
+                  Tasks
+                </button>
+                <button @click="settingsTab = 'about'" 
+                  :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'about' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                  <Globe class="w-4 h-4 opacity-70" />
+                  About
+                </button>
+              </div>
+            </nav>
+            
+            <!-- Right Content Area -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <!-- Header -->
+              <div class="h-12 shrink-0 flex items-center justify-between px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
+                <h3 class="text-[15px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] capitalize">{{ settingsTab }}</h3>
+                <button @click="showSettingsModal = false" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                  <X class="w-4 h-4" />
+                </button>
+              </div>
+              
+              <!-- Scrollable Content -->
+              <div class="flex-1 overflow-y-auto p-6">
+                
+                <!-- === GENERAL TAB === -->
+                <div v-if="settingsTab === 'general'" class="space-y-6">
+                  <!-- Vault Management -->
+                  <section>
+                    <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Vault</h4>
+                    <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <p class="text-[11px] font-medium text-gray-400 dark:text-gray-500 mb-1.5">Current Location</p>
+                      <p class="font-mono text-[12px] break-all text-[#1c1c1e] dark:text-[#f4f4f5] bg-white dark:bg-[#2a2a2a] px-3 py-2 rounded-lg border border-gray-200 dark:border-transparent">{{ vaultPath }}</p>
+                      <button @click="clearVault" class="mt-3 px-4 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm flex items-center gap-2">
+                        <FolderOpen class="w-3.5 h-3.5" /> Switch Vault
+                      </button>
+                    </div>
+                  </section>
+
+                  <!-- Theme -->
+                  <section>
+                    <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Appearance</h4>
+                    <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] mb-3">Theme</p>
+                      <div class="flex gap-2">
+                        <button v-for="mode in (['light', 'dark', 'system'] as const)" :key="mode"
+                          @click="themeMode = mode"
+                          :class="['px-4 py-2 rounded-lg text-[12px] font-medium transition-all border capitalize', themeMode === mode ? 'bg-black text-white dark:bg-white dark:text-black border-transparent shadow-sm' : 'bg-white dark:bg-[#2a2a2a] border-[#e0e0e0] dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500']">
+                          {{ mode }}
+                        </button>
                       </div>
-                  </div>
-               </section>
-               
-               <!-- About -->
-               <section>
-                  <h2 class="text-xl font-semibold mb-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c] pb-2">About Synabit</h2>
-                  <div class="p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50 dark:bg-[#1e1e1e]">
-                      <p class="text-sm font-medium">Synabit v1.0.0-alpha</p>
-                      <p class="text-xs text-gray-500 mt-1">A unified productivity workspace.</p>
-                  </div>
-               </section>
+                    </div>
+                  </section>
+                </div>
+                
+                <!-- === TASKS TAB === -->
+                <div v-else-if="settingsTab === 'tasks'" class="space-y-6">
+                  <section>
+                    <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Auto Archive</h4>
+                    <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <div class="flex items-center justify-between mb-2">
+                        <div>
+                          <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Archive completed tasks</p>
+                          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Tasks marked as "done" for longer than this period will be moved to the <code class="px-1 py-0.5 bg-gray-200 dark:bg-[#333] rounded text-[10px]">Tasks/archived</code> folder.</p>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-3 mt-3">
+                        <label class="text-[12px] text-gray-500 dark:text-gray-400">After</label>
+                        <input type="number" v-model.number="taskArchiveDays" min="1" max="365" class="w-20 px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                        <span class="text-[12px] text-gray-500 dark:text-gray-400">days</span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+                
+                <!-- === ABOUT TAB === -->
+                <div v-else-if="settingsTab === 'about'" class="space-y-6">
+                  <section>
+                    <div class="text-center pt-8">
+                      <div class="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-[#2a2a2a] dark:to-[#333] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner">
+                        <Globe class="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 class="text-[18px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5]">Synabit</h3>
+                      <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">Version 1.0.0-alpha</p>
+                      <p class="text-[12px] text-gray-500 dark:text-gray-400 mt-4 max-w-xs mx-auto leading-relaxed">A unified, local-first productivity workspace for notes, tasks, quick captures, and more.</p>
+                    </div>
+                  </section>
+                </div>
+              </div>
             </div>
-         </div>
-      </main>
-    </template>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
     
     </template>
   </div>
@@ -1104,5 +1240,33 @@ const clearVault = () => {
 <style scoped>
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
+}
+
+.settings-modal-enter-active,
+.settings-modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+.settings-modal-enter-active > div:last-child,
+.settings-modal-leave-active > div:last-child {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.settings-modal-enter-from,
+.settings-modal-leave-to {
+  opacity: 0;
+}
+.settings-modal-enter-from > div:last-child {
+  transform: scale(0.95) translateY(10px);
+  opacity: 0;
+}
+.settings-modal-leave-to > div:last-child {
+  transform: scale(0.95) translateY(10px);
+  opacity: 0;
+}
+
+.manager-search-input {
+  color: #1c1c1e !important;
+}
+html.dark .manager-search-input {
+  color: #f4f4f5 !important;
 }
 </style>
