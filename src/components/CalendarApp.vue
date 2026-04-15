@@ -273,8 +273,11 @@ const submitEvent = async () => {
     } catch(e) { console.error("Failed to save event:", e); }
 };
 
+import { confirm } from '@tauri-apps/plugin-dialog';
+
 const deleteEvent = async (ev: EventMetadata) => {
-    if (confirm(`Delete event '${ev.title}'?`)) {
+    const isConfirmed = await confirm(`Delete event '${ev.title}'?`, { title: 'Delete Event', kind: 'warning' });
+    if (isConfirmed) {
         try {
             await invoke('delete_event', { path: ev.path });
             await loadData();

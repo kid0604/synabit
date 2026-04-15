@@ -236,8 +236,30 @@ const renderGraph = () => {
     }
 };
 
+let lastGraphFingerprint = '';
+
+const computeGraphFingerprint = () => {
+    return JSON.stringify([
+        props.currentNoteId,
+        props.tags.slice().sort(),
+        props.outgoingLinks.slice().sort(),
+        props.backlinks.map(b => b.id).sort(),
+        isShowMore.value
+    ]);
+};
+
+let graphDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 watch(() => [props.currentNoteId, props.tags, props.outgoingLinks, props.backlinks, isShowMore.value], () => {
-    renderGraph();
+    const fingerprint = computeGraphFingerprint();
+    if (fingerprint === lastGraphFingerprint) return;
+    lastGraphFingerprint = fingerprint;
+    
+    // Debounce to avoid rapid re-renders when switching notes
+    if (graphDebounceTimer) clearTimeout(graphDebounceTimer);
+    graphDebounceTimer = setTimeout(() => {
+        renderGraph();
+    }, 150);
 }, { deep: true });
 
 // Listen for dark mode toggle to update arrow markers

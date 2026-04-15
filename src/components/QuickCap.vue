@@ -173,15 +173,21 @@ const saveSelectedCap = async () => {
 
 const injectLocalAssets = (md: string) => {
    if (!props.vaultPath) return md;
+   
+   const cleanVaultPath = props.vaultPath.endsWith('/') || props.vaultPath.endsWith('\\') 
+        ? props.vaultPath.slice(0, -1) : props.vaultPath;
+   const sep = cleanVaultPath.includes('\\') ? '\\' : '/';
+   
    let result = md.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
-      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
-      const absPath = `${props.vaultPath}${sep}assets${sep}${filename}`;
+      const decodedFilename = decodeURIComponent(filename);
+      const absPath = `${cleanVaultPath}${sep}assets${sep}${decodedFilename}`;
       const assetUrl = convertFileSrc(absPath); 
       return `](${assetUrl})`;
    });
-   result = result.replace(/src="(?:[^"]*(?:\/|%2F))?assets(?:\/|%2F)([^"]+)"/g, (_m: string, filename: string) => {
-      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
-      const absPath = `${props.vaultPath}${sep}assets${sep}${filename}`;
+   
+   result = result.replace(/src="assets\/([^"]+)"/g, (_m: string, filename: string) => {
+      const decodedFilename = decodeURIComponent(filename);
+      const absPath = `${cleanVaultPath}${sep}assets${sep}${decodedFilename}`;
       const assetUrl = convertFileSrc(absPath); 
       return `src="${assetUrl}"`;
    });
@@ -617,23 +623,35 @@ const renderPreview = (content: string) => {
     html = html.replace(/(^|[^!])\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1<a href="$3" target="_blank" class="text-blue-500 hover:underline break-all" @click.stop>$2</a>');
         
     // Process markdown images: ![alt](url)
-    html = html.replace(/!\[.*?\]\((.*?)\)/g, (_match, path) => {
+    html = html.replace(/!\[(.*?)\]\((.*?)\)/g, (_match, alt, path) => {
         let absPath = path;
+        try { path = decodeURIComponent(path); } catch(e) {}
+        
+        const cleanVaultPath = props.vaultPath.endsWith('/') || props.vaultPath.endsWith('\\') 
+             ? props.vaultPath.slice(0, -1) : props.vaultPath;
+        const sep = cleanVaultPath.includes('\\') ? '\\' : '/';
+        
         if (path.startsWith('assets/')) {
-            absPath = `${props.vaultPath}/${path}`;
+            absPath = `${cleanVaultPath}${sep}${path}`;
         }
         const src = convertFileSrc(absPath);
-        return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
+        return `<img src="${src}" alt="${alt}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
     });
     
     // Process HTML images exported by raw Markdown serializers
     html = html.replace(/&lt;img.*?src=["'](.*?)["'].*?&gt;/g, (_match, path) => {
         let absPath = path;
+        try { path = decodeURIComponent(path); } catch(e) {}
+        
+        const cleanVaultPath = props.vaultPath.endsWith('/') || props.vaultPath.endsWith('\\') 
+             ? props.vaultPath.slice(0, -1) : props.vaultPath;
+        const sep = cleanVaultPath.includes('\\') ? '\\' : '/';
+        
         const assetMatch = path.match(/assets(%2F|\/)([^?&'"]+)/);
         if (assetMatch) {
-            absPath = `${props.vaultPath}/assets/${decodeURIComponent(assetMatch[2])}`;
+            absPath = `${cleanVaultPath}${sep}assets${sep}${decodeURIComponent(assetMatch[2])}`;
         } else if (path.startsWith('assets/')) {
-            absPath = `${props.vaultPath}/${path}`;
+            absPath = `${cleanVaultPath}${sep}${path}`;
         }
         const src = convertFileSrc(absPath);
         return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;

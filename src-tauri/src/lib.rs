@@ -1,3 +1,5 @@
+mod gdrive;
+
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use gray_matter::Matter;
@@ -467,6 +469,40 @@ fn create_new_note(vault_path: String) -> Result<String, String> {
     
     let content = "---\ntitle: Untitled Note\ntags: []\n---\n\n";
     fs::write(&path, content).map_err(|e| e.to_string())?;
+    
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_daily_note(vault_path: String, format_str: String, tag: String) -> Result<String, String> {
+    let notes_dir = Path::new(&vault_path).join("Notes");
+    if !notes_dir.exists() {
+        fs::create_dir_all(&notes_dir).map_err(|e| e.to_string())?;
+    }
+    
+    // Convert common YYYY-MM-DD pattern to chrono's format
+    let chrono_format = format_str
+        .replace("YYYY", "%Y")
+        .replace("YY", "%y")
+        .replace("MM", "%m")
+        .replace("M", "%-m")
+        .replace("DD", "%d")
+        .replace("D", "%-d");
+        
+    let today = chrono::Local::now();
+    let date_str = today.format(&chrono_format).to_string();
+    let filename = format!("{}.md", date_str);
+    let path = notes_dir.join(&filename);
+    
+    if !path.exists() {
+        let title = date_str.clone();
+        let content = if tag.trim().is_empty() {
+            format!("---\ntitle: \"{}\"\n---\n\n", title)
+        } else {
+            format!("---\ntitle: \"{}\"\ntags:\n  - {}\n---\n\n", title, tag.trim())
+        };
+        fs::write(&path, content).map_err(|e| e.to_string())?;
+    }
     
     Ok(path.to_string_lossy().to_string())
 }
@@ -1221,7 +1257,13 @@ pub fn run() {
             create_event,
             update_event,
             delete_event,
-            archive_done_tasks
+            archive_done_tasks,
+            open_daily_note,
+            gdrive::gdrive_auth_start,
+            gdrive::gdrive_auth_status,
+            gdrive::gdrive_disconnect,
+            gdrive::gdrive_sync_full,
+            gdrive::gdrive_get_cache_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

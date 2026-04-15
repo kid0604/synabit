@@ -10,6 +10,16 @@
     "fs:default",
     "core:window:allow-destroy",
     "core:window:allow-close",
-    "core:window:allow-create"
+    "core:window:allow-create",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    {
+      "identifier": "fs:allow-read",
+      "allow": [{ "path": "$HOME/.synabit/**" }]
+    },
+    {
+      "identifier": "fs:allow-write",
+      "allow": [{ "path": "$HOME/.synabit/**" }]
+    }
   ]
 }
