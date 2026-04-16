@@ -1,4 +1,5 @@
 mod gdrive;
+pub mod watcher;
 
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -1226,6 +1227,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(watcher::WatcherState::default())
         .invoke_handler(tauri::generate_handler![
             scan_vault_path, 
             create_new_note, 
@@ -1263,7 +1265,8 @@ pub fn run() {
             gdrive::gdrive_auth_status,
             gdrive::gdrive_disconnect,
             gdrive::gdrive_sync_full,
-            gdrive::gdrive_get_cache_path
+            gdrive::gdrive_get_cache_path,
+            watcher::start_vault_watcher,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

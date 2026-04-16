@@ -142,6 +142,7 @@ onMounted(() => {
   
   if (vaultPath.value) {
      scanVault();
+     invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
   }
   
   // Check Google Drive auth status
@@ -164,6 +165,13 @@ onMounted(() => {
   
   listen('vault-changed', () => {
       scanVault();
+  });
+  
+  listen('vault-filesystem-changed', () => {
+      scanVault();
+      if (vaultType.value === 'gdrive' && gdriveConnected.value && !gdriveSyncing.value) {
+          syncGDrive();
+      }
   });
   
   getCurrentWindow().onCloseRequested(async () => {
@@ -395,6 +403,7 @@ const selectVault = async () => {
         if (selected) {
             vaultPath.value = selected as string;
             localStorage.setItem('synabitVaultPath', vaultPath.value);
+            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
             scanVault();
         }
     } catch(err) {

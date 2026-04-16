@@ -759,7 +759,9 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
         let drive_mtime = df.modified_time.clone().unwrap_or_default();
 
         let should_pull = if !local_path.exists() {
-            true
+            // If it's in the manifest, it means we synced it before and user deleted it locally. Do not pull (let DELETE step handle it).
+            // If it's NOT in the manifest, it's a new remote file. Do pull.
+            !manifest.files.contains_key(rel_path)
         } else if let Some(entry) = manifest.files.get(rel_path) {
             // File exists locally and in manifest: pull if drive is newer
             drive_mtime > entry.drive_modified_time

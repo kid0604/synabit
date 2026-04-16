@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as emitTauri } from '@tauri-apps/api/event';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, Edit2 } from 'lucide-vue-next';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -266,8 +267,11 @@ const submitEvent = async () => {
         event_time: eventForm.value.event_time, location: eventForm.value.location, tags: finalTags
     };
     try {
-        if (eventForm.value.isEdit) await invoke('update_event', { path: eventForm.value.path, metadata: meta, content: eventForm.value.description });
-        else await invoke('create_event', { vaultPath: props.vaultPath, metadata: meta, content: eventForm.value.description });
+        if (eventForm.value.isEdit) {
+            await invoke('update_event', { path: eventForm.value.path, metadata: meta, content: eventForm.value.description });
+        } else {
+            await invoke('create_event', { vaultPath: props.vaultPath, metadata: meta, content: eventForm.value.description });
+        }
         closeEventForm();
         await loadData();
     } catch(e) { console.error("Failed to save event:", e); }

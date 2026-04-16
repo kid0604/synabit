@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Info, Target, Inbox, Sun, Calendar, Coffee, Send, Flag, ListTodo, Eye, EyeOff, Filter } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
