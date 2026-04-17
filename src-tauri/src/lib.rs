@@ -45,6 +45,7 @@ pub struct NoteMetadata {
     tags: Vec<String>,
     path: String,
     pinned: bool,
+    content: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -217,7 +218,7 @@ fn get_nexus_items(vault_path: String) -> Result<Vec<NexusItem>, String> {
     
     if let Ok(notes) = scan_vault_path(vault_path.clone()) {
         for n in notes {
-            let full_str = format!("{} {}", n.title, n.summary);
+            let full_str = format!("{} {}", n.title, n.content);
             items.push(NexusItem {
                 id: n.id,
                 item_type: "note".to_string(),
@@ -439,6 +440,7 @@ fn scan_vault_path(vault_path: String) -> Result<Vec<NoteMetadata>, String> {
                             tags,
                             path: entry.path().to_string_lossy().to_string(),
                             pinned,
+                            content: content.clone(),
                         });
                     }
                 }
@@ -944,7 +946,8 @@ async fn get_note_backlinks(vault_path: String, target_id: String) -> Result<Vec
                         date,
                         tags,
                         pinned,
-                        summary
+                        summary,
+                        content: content.clone(),
                     });
                 }
             }

@@ -1,19 +1,28 @@
-use notify_debouncer_mini::{new_debouncer, notify::*};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 pub struct WatcherState {
-    pub debouncer: Mutex<Option<notify_debouncer_mini::Debouncer<RecommendedWatcher>>>,
+    pub watcher: Mutex<Option<RecommendedWatcher>>,
 }
 
 impl Default for WatcherState {
     fn default() -> Self {
         Self {
-            debouncer: Mutex::new(None),
+            watcher: Mutex::new(None),
         }
     }
+}
+
+/// Returns true if this path should be ignored by the watcher.
+fn should_ignore(path_str: &str) -> bool {
+    path_str.contains(".DS_Store")
+        || path_str.contains(".git")
+        || path_str.contains(".synabit_sync_manifest.json")
+        || path_str.ends_with('~')
+        || path_str.contains(".Trash")
 }
 
 #[tauri::command]
@@ -22,10 +31,10 @@ pub fn start_vault_watcher(
     state: tauri::State<'_, WatcherState>,
     vault_path: String,
 ) -> std::result::Result<(), String> {
-    let mut db_lock = state.debouncer.lock().unwrap();
+    let mut watcher_lock = state.watcher.lock().unwrap();
 
-    // Drop old debouncer if exists (this halts the previous watching loop)
-    *db_lock = None;
+    // Drop old watcher if exists
+    *watcher_lock = None;
 
     let path = PathBuf::from(&vault_path);
     if !path.exists() {
@@ -34,52 +43,79 @@ pub fn start_vault_watcher(
 
     let emit_handle = app_handle.clone();
 
-    // Create a new debouncer with a 2-second timeout
-    let mut debouncer = match new_debouncer(
-        Duration::from_secs(2),
-        move |res: std::result::Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify_debouncer_mini::notify::Error>| {
-            match res {
-                Ok(events) => {
-                    let mut should_emit = false;
-                    for event in events {
-                        let path_str = event.path.to_string_lossy();
-                        // Ignore system hidden files/folders and specific synabit files
-                        if path_str.contains(".DS_Store")
-                            || path_str.contains(".git")
-                            || path_str.contains(".synabit_sync_manifest.json")
-                            || path_str.ends_with('~')
-                            || path_str.contains(".Trash")
-                        {
-                            continue;
-                        }
-                        should_emit = true;
-                        break;
-                    }
+    // Manual debounce state shared across events
+    // We track two separate debounce timers: one for create/delete, one for modify
+    let debounce_state = std::sync::Arc::new(Mutex::new(DebounceState::default()));
 
-                    if should_emit {
-                        let _ = emit_handle.emit("vault-filesystem-changed", ());
-                    }
+    let ds = debounce_state.clone();
+    let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+        match res {
+            Ok(event) => {
+                // Check if any path in this event is relevant
+                let dominated_by_ignored = event.paths.iter().all(|p| {
+                    should_ignore(&p.to_string_lossy())
+                });
+                if dominated_by_ignored {
+                    return;
                 }
-                Err(e) => {
-                    eprintln!("Watcher error: {:?}", e);
+
+                let is_create_delete = matches!(
+                    event.kind,
+                    EventKind::Create(_) | EventKind::Remove(_)
+                );
+
+                let mut state = ds.lock().unwrap();
+
+                if is_create_delete {
+                    // Create/Delete → debounce 500ms then emit immediate sync event
+                    state.last_create_delete = Some(Instant::now());
+                    let handle = emit_handle.clone();
+                    let ds_inner = ds.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(500));
+                        let s = ds_inner.lock().unwrap();
+                        // Only fire if no newer create/delete came in during debounce
+                        if let Some(last) = s.last_create_delete {
+                            if last.elapsed() >= Duration::from_millis(450) {
+                                let _ = handle.emit("vault-file-created-deleted", ());
+                            }
+                        }
+                    });
+                } else {
+                    // Modify → debounce 2s then emit UI-refresh-only event
+                    state.last_modify = Some(Instant::now());
+                    let handle = emit_handle.clone();
+                    let ds_inner = ds.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs(2));
+                        let s = ds_inner.lock().unwrap();
+                        if let Some(last) = s.last_modify {
+                            if last.elapsed() >= Duration::from_millis(1900) {
+                                let _ = handle.emit("vault-file-modified", ());
+                            }
+                        }
+                    });
                 }
             }
-        },
-    ) {
-        Ok(d) => d,
-        Err(e) => return Err(format!("Failed to initialize watcher: {}", e)),
-    };
+            Err(e) => {
+                eprintln!("Watcher error: {:?}", e);
+            }
+        }
+    })
+    .map_err(|e| format!("Failed to initialize watcher: {}", e))?;
 
-    // Add path to watcher
-    if let Err(e) = debouncer
-        .watcher()
+    watcher
         .watch(&path, RecursiveMode::Recursive)
-    {
-        return Err(format!("Failed to watch path: {}", e));
-    }
+        .map_err(|e| format!("Failed to watch path: {}", e))?;
 
-    *db_lock = Some(debouncer);
+    *watcher_lock = Some(watcher);
     println!("File System Watcher started for: {}", vault_path);
 
     Ok(())
+}
+
+#[derive(Default)]
+struct DebounceState {
+    last_create_delete: Option<Instant>,
+    last_modify: Option<Instant>,
 }

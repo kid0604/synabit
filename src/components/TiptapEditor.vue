@@ -658,7 +658,7 @@ const editor = useEditor({
   },
   editorProps: {
     attributes: {
-      class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px]',
+      class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
     },
     handleClick: (_view, _pos, event) => {
       if (event.target instanceof HTMLElement) {
@@ -792,7 +792,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="tiptap-wrapper w-full relative">
+  <div class="tiptap-wrapper w-full relative overflow-x-hidden">
     <!-- Floating Toolbar -->
     <Transition name="bubble">
       <div
@@ -1518,6 +1518,17 @@ onBeforeUnmount(() => {
 .dark .prose.dark\:prose-invert li {
   color: #e4e4e7 !important;
 }
+
+/* === Fix for Cursor Bouncing/Jumping at Line Ends (macOS IME & WebKit bug) === */
+.ProseMirror {
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+  white-space: break-spaces !important; 
+}
+.ProseMirror * {
+  max-width: 100%;
+}
+
 
 .prose a[href^="synabit://note/"] {
   background-color: rgba(168, 85, 247, 0.1);

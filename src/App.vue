@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap, Globe, ArrowLeft, ExternalLink, Sun, Cloud, RefreshCw, CloudOff } from 'lucide-vue-next';
+import { FileText, Search, Settings, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, FolderOpen, Plus, MoreVertical, Pin, Trash2, Edit2, X, Calendar, CheckSquare, Zap, Globe, ArrowLeft, ExternalLink, Sun, Cloud, RefreshCw, CloudOff, CaseSensitive } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -153,13 +153,16 @@ onMounted(() => {
   // Listen to cross-window note updates
   listen('note-updated', (event: any) => {
       const data = event.payload as { id: string, content: string };
+      
+      // Prevent IPC loopback from overwriting the currently active editor, 
+      // preventing massive race conditions that cause cursor jumping/IME resetting!
+      if (currentNoteId.value === data.id) {
+          return; 
+      }
+      
       // If we have it in the cache, update it instantly
       if (tabContents.value[data.id] !== undefined) {
          tabContents.value[data.id] = data.content;
-      }
-      // If it's the current note, update current content so it flows to Tiptap
-      if (currentNoteId.value === data.id) {
-         currentContent.value = data.content;
       }
   });
   
@@ -167,11 +170,17 @@ onMounted(() => {
       scanVault();
   });
   
-  listen('vault-filesystem-changed', () => {
+  // Create/Delete → immediate GDrive sync
+  listen('vault-file-created-deleted', () => {
       scanVault();
       if (vaultType.value === 'gdrive' && gdriveConnected.value && !gdriveSyncing.value) {
           syncGDrive();
       }
+  });
+
+  // Modify → UI refresh only, GDrive sync follows the periodic timer in settings
+  listen('vault-file-modified', () => {
+      scanVault();
   });
   
   getCurrentWindow().onCloseRequested(async () => {
@@ -202,6 +211,7 @@ const managerSearchQuery = ref('');
 const activeContextMenu = ref<string | null>(null);
 const searchQuery = ref('');
 const newTagInput = ref('');
+const isCaseSensitiveSearch = ref(false);
 
 const toggleContext = (id: string, e: Event) => {
   e.stopPropagation();
@@ -561,6 +571,7 @@ const editorRefs = ref<any[]>([]);
 const onEditorUpdate = (val: string) => {
     currentContent.value = val;
     if (currentNoteId.value) {
+        tabContents.value[currentNoteId.value] = val;
         emit('note-updated', { id: currentNoteId.value, content: val });
     }
     saveNoteFile();
@@ -621,15 +632,24 @@ const openNoteManager = (filterType: string) => {
 const managerFilteredNotes = computed(() => {
    let result = notes.value;
    if (managerSearchQuery.value.trim()) {
-      const q = managerSearchQuery.value.toLowerCase().trim();
+      const q = managerSearchQuery.value.trim();
       const isTagSearch = q.startsWith('#');
       const searchTerm = isTagSearch ? q.slice(1) : q;
       
+      const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
+      
+      const match = (text: string) => {
+         if (!text) return false;
+         return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
+      };
+      
       result = result.filter(n => {
          if (isTagSearch) {
-             return n.tags.some(t => t.toLowerCase().includes(searchTerm));
+             return n.tags.some(t => match(t));
          }
-         return n.title.toLowerCase().includes(searchTerm) || n.tags.some(t => t.toLowerCase().includes(searchTerm));
+         return match(n.title) || 
+                n.tags.some(t => match(t)) ||
+                match(n.content);
       });
    }
    
@@ -646,16 +666,24 @@ const filteredNotes = computed(() => {
   let result = notes.value;
   
   if (searchQuery.value.trim()) {
-      const q = searchQuery.value.toLowerCase().trim();
+      const q = searchQuery.value.trim();
       const isTagSearch = q.startsWith('#');
       const searchTerm = isTagSearch ? q.slice(1) : q;
       
+      const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
+      
+      const match = (text: string) => {
+         if (!text) return false;
+         return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
+      };
+      
       result = result.filter(n => {
           if (isTagSearch) {
-              return n.tags.some(t => t.toLowerCase().includes(searchTerm));
+              return n.tags.some(t => match(t));
           }
-          return n.title.toLowerCase().includes(searchTerm) || 
-                 n.tags.some(t => t.toLowerCase().includes(searchTerm));
+          return match(n.title) || 
+                 n.tags.some(t => match(t)) ||
+                 match(n.content);
       });
   }
   
@@ -916,8 +944,14 @@ const syncGDrive = async () => {
                   v-model="searchQuery"
                   type="text" 
                   placeholder="Search notes..." 
-                  class="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                  class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500"
                 >
+                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                  <X class="w-3.5 h-3.5" />
+                </button>
+                <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" title="Match Case">
+                  <CaseSensitive class="w-3.5 h-3.5" />
+                </button>
               </div>
           </div>
 
@@ -1145,8 +1179,14 @@ const syncGDrive = async () => {
                        v-model="managerSearchQuery"
                        type="text" 
                        placeholder="Search notes or tags..." 
-                       class="w-full pl-12 pr-4 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input"
+                       class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input"
                      >
+                     <button v-if="managerSearchQuery" @click="managerSearchQuery = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                       <X class="w-4 h-4" />
+                     </button>
+                     <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" title="Match Case">
+                       <CaseSensitive class="w-4 h-4" />
+                     </button>
                    </div>
                    
                    <!-- Tags View -->
