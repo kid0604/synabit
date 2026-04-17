@@ -820,6 +820,33 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
         }
     }
 
+    // 4.5 Handle files deleted remotely but still present locally and in manifest
+    // This MUST run before PUSH phase.
+    let remotely_deleted_keys: Vec<String> = manifest
+        .files
+        .keys()
+        .filter(|k| vault.join(k).exists() && !drive_map.contains_key(k.as_str()))
+        .cloned()
+        .collect();
+
+    for key in &remotely_deleted_keys {
+        let local_path = vault.join(key);
+        let current_hash = file_sha256(&local_path);
+        let entry_hash = manifest.files.get(key).map(|e| e.local_sha256.clone()).unwrap_or_default();
+
+        if current_hash == entry_hash {
+            // Logic 1: Not modified locally. Safe to delete.
+            let _ = fs::remove_file(&local_path);
+            manifest.files.remove(key);
+            result.deleted += 1;
+        } else {
+            // Logic 2: Modified locally! We must recover it.
+            // By stripping it from the manifest, the PUSH phase below will treat it 
+            // as a brand new local file and will securely upload it.
+            manifest.files.remove(key);
+        }
+    }
+
     // 5. PUSH: files local but not on Drive, or modified locally since last sync
     for rel_path in &local_files {
         let local_path = vault.join(rel_path);
