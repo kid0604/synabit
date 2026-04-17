@@ -68,17 +68,41 @@ const emit = defineEmits<{
 // --- Asset path helpers ---
 const injectLocalAssets = (md: string) => {
    if (!props.vaultPath) return md;
-   return md.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
+   let processed = md;
+   
+   // Tiptap-markdown sometimes serializes images with custom attributes as raw HTML <img> tags.
+   // This causes markdown-it to crash or swallow subsequent text on reload.
+   // We force convert them back to standard Markdown before processing.
+   processed = processed.replace(/<img\s+[^>]*src="([^"]+)"[^>]*>/g, (m, src) => {
+      const altMatch = m.match(/alt="([^"]*)"/);
+      const alt = altMatch ? altMatch[1] : 'Image';
+      return `![${alt}](${src})`;
+   });
+   
+   return processed.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
-      const absPath = `${props.vaultPath}${sep}assets${sep}${filename}`;
+      // Decode URI in case it was encoded (e.g. spaces as %20)
+      const decodedName = decodeURIComponent(filename);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
       const assetUrl = convertFileSrc(absPath); 
       return `](${assetUrl})`;
    });
 };
 
 const stripLocalAssets = (md: string) => {
-   return md.replace(/\]\(asset:\/\/[^\)]+(?:\/|%2F)assets(?:\/|%2F)([^\)]+)\)/g, (_m: string, filename: string) => {
-      return `](assets/${decodeURIComponent(filename)})`;
+   let processed = md;
+   
+   // Also handle HTML tags when saving, just in case tiptap-markdown output an <img> tag during edit
+   processed = processed.replace(/<img\s+[^>]*src="([^"]+)"[^>]*>/g, (m, src) => {
+      const altMatch = m.match(/alt="([^"]*)"/);
+      const alt = altMatch ? altMatch[1] : 'Image';
+      return `![${alt}](${src})`;
+   });
+
+   return processed.replace(/\]\((?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\)]+(?:\/|%2F)assets(?:\/|%2F)([^\)]+)\)/g, (_m: string, filename: string) => {
+      // Decode first to get real filename, then encode for valid Markdown URL
+      const decodedName = decodeURIComponent(filename);
+      return `](assets/${encodeURI(decodedName)})`;
    });
 };
 
@@ -412,7 +436,7 @@ const slashCommandItems = (): SlashCommandItem[] => [
           const absPath = `${props.vaultPath}${sep}${relativePath}`;
           const renderUrl = convertFileSrc(absPath);
           
-          editor.commands.insertContent(`\n![${filename}](${renderUrl})\n`);
+          editor.commands.setImage({ src: renderUrl, alt: filename });
         }
       } catch (e) {
         console.error("Failed to insert image", e);
@@ -695,9 +719,9 @@ const editor = useEditor({
                   const renderUrl = convertFileSrc(absPath);
                   
                   if (pos !== undefined) {
-                     editor.value?.commands.insertContentAt(pos, `\n![${file.name}](${renderUrl})\n`);
+                     editor.value?.commands.insertContentAt(pos, { type: 'image', attrs: { src: renderUrl, alt: file.name } });
                   } else {
-                     editor.value?.commands.insertContent(`\n![${file.name}](${renderUrl})\n`);
+                     editor.value?.commands.setImage({ src: renderUrl, alt: file.name });
                   }
               } catch(e) { console.error("Failed to save dropped asset", e); }
            });
@@ -727,7 +751,7 @@ const editor = useEditor({
                      const absPath = `${props.vaultPath}${sep}${relativePath}`;
                      const renderUrl = convertFileSrc(absPath);
                      
-                     editor.value?.commands.insertContent(`\n![Pasted Image](${renderUrl})\n`);
+                     editor.value?.commands.setImage({ src: renderUrl, alt: file.name || 'Pasted Image' });
                  } catch(e) { console.error("Paste image failed", e); }
               });
             }
