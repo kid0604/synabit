@@ -268,7 +268,7 @@ const submitEvent = async () => {
     };
     try {
         if (eventForm.value.isEdit) {
-            await invoke('update_event', { path: eventForm.value.path, metadata: meta, content: eventForm.value.description });
+            await invoke('update_event', { vaultPath: props.vaultPath, path: eventForm.value.path, metadata: meta, content: eventForm.value.description });
         } else {
             await invoke('create_event', { vaultPath: props.vaultPath, metadata: meta, content: eventForm.value.description });
         }
@@ -283,7 +283,7 @@ const deleteEvent = async (ev: EventMetadata) => {
     const isConfirmed = await confirm(`Delete event '${ev.title}'?`, { title: 'Delete Event', kind: 'warning' });
     if (isConfirmed) {
         try {
-            await invoke('delete_event', { path: ev.path });
+            await invoke('delete_event', { vaultPath: props.vaultPath, path: ev.path });
             await loadData();
         } catch(e) { console.error("Failed to delete event:", e); }
     }

@@ -106,7 +106,7 @@ const getTypeColor = (type: string) => {
 const openPreview = async (item: NexusItem) => {
     if (item.item_type === 'file') {
         try {
-            await invoke('open_local_file', { path: item.path });
+            await invoke('open_local_file', { vaultPath: props.vaultPath, path: item.path });
         } catch(e) {
             console.error("Failed to open file", e);
         }

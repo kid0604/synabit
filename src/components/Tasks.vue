@@ -295,6 +295,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     
     try {
         await invoke('update_task', {
+            vaultPath: props.vaultPath,
             path: task.path,
             metadata: {
                 title: task.title,
@@ -460,6 +461,7 @@ const saveTask = async () => {
             tasks.value.unshift(newTask);
         } else if (editingTask.value.path) {
             await invoke('update_task', {
+                vaultPath: props.vaultPath,
                 path: editingTask.value.path,
                 metadata: {
                     title: editingTaskParams.value.title,
@@ -519,6 +521,7 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
     
     try {
         await invoke('update_task', {
+            vaultPath: props.vaultPath,
             path: task.path,
             metadata: {
                 title: task.title,
@@ -549,7 +552,7 @@ const deleteTask = async (task: TaskMetadata) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_task', { path: task.path });
+        await invoke('delete_task', { vaultPath: props.vaultPath, path: task.path });
         const idx = tasks.value.findIndex(t => t.id === task.id);
         if (idx !== -1) tasks.value.splice(idx, 1);
     } catch (e) {

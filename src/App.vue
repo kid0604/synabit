@@ -189,7 +189,7 @@ onMounted(() => {
           if (note && currentContent.value) {
               let fullRaw = `${buildFrontmatter(note)}\n\n${currentContent.value}`;
               try {
-                  await invoke('update_note', { path: note.id, content: fullRaw });
+                  await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: fullRaw });
                   emit('note-updated', { id: note.id, content: currentContent.value });
               } catch(e) { console.error('Save before close failed', e); }
           }
@@ -227,13 +227,13 @@ const togglePin = async (id: string) => {
     if (!note) return;
     note.pinned = !note.pinned;
     try {
-        const rawContent = await invoke<string>('read_note', { path: id });
+        const rawContent = await invoke<string>('read_note', { vaultPath: vaultPath.value, path: id });
         let body = rawContent;
         if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
             const splitIdx = rawContent.indexOf('---', 3);
             if (splitIdx > 0) body = rawContent.substring(splitIdx + 3).replace(/^\s+/, '');
         }
-        await invoke('update_note', { path: id, content: `${buildFrontmatter(note)}\n\n${body}` });
+        await invoke('update_note', { vaultPath: vaultPath.value, path: id, content: `${buildFrontmatter(note)}\n\n${body}` });
         scanVault();
     } catch(e) { console.error('Pin fail:', e); }
 };
@@ -245,7 +245,7 @@ const deleteNote = async (id: string) => {
         if (currentNoteId.value === id) {
            clearTimeout(saveTimeout);
         }
-        await invoke('delete_note', { path: id });
+        await invoke('delete_note', { vaultPath: vaultPath.value, path: id });
         delete tabContents.value[id];
         activeTabs.value = activeTabs.value.filter(t => t !== id);
         tabAccessTime.delete(id);
@@ -279,16 +279,16 @@ const handleRenamePrompt = async (id: string) => {
            // If editing the active note, sync id properly
            if (currentNoteId.value === note.id) {
                currentNoteId.value = newPath;
-               await invoke('update_note', { path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+               await invoke('update_note', { vaultPath: vaultPath.value, path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
            } else {
                // Update frontmatter for inactive note
-               const rawContent = await invoke<string>('read_note', { path: newPath });
+               const rawContent = await invoke<string>('read_note', { vaultPath: vaultPath.value, path: newPath });
                let body = rawContent;
                if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
                    const splitIdx = rawContent.indexOf('---', 3);
                    if (splitIdx > 0) body = rawContent.substring(splitIdx + 3).replace(/^\s+/, '');
                }
-               await invoke('update_note', { path: newPath, content: `${buildFrontmatter(note)}\n\n${body}` });
+               await invoke('update_note', { vaultPath: vaultPath.value, path: newPath, content: `${buildFrontmatter(note)}\n\n${body}` });
            }
            scanVault();
        } catch(err) {
@@ -308,7 +308,7 @@ const renameTopTitle = async (e: Event) => {
         note.title = newTitle;
         currentNoteId.value = newPath;
         // The path changed, so we must trigger a save properly with new frontmatter
-        await invoke('update_note', { path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+        await invoke('update_note', { vaultPath: vaultPath.value, path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
         scanVault();
     } catch(err) {
         alert(err);
@@ -321,7 +321,7 @@ const addTag = async (e: KeyboardEvent) => {
        if (note && !note.tags.includes(newTagInput.value.trim())) {
            note.tags.push(newTagInput.value.trim());
            newTagInput.value = '';
-           await invoke('update_note', { path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+           await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
            scanVault();
        }
    }
@@ -331,7 +331,7 @@ const removeTag = async (tagToRemove: string) => {
    const note = notes.value.find(n => n.id === currentNoteId.value);
    if (note) {
        note.tags = note.tags.filter(t => t !== tagToRemove);
-       await invoke('update_note', { path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+       await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
        scanVault();
    }
 };
@@ -508,7 +508,7 @@ const loadNoteFile = async (id: string) => {
     
     if (tabContents.value[id] === undefined) {
         try {
-            const rawContent = await invoke<string>('read_note', { path: id });
+            const rawContent = await invoke<string>('read_note', { vaultPath: vaultPath.value, path: id });
             let body = rawContent;
             if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
                 const splitIdx = rawContent.indexOf('---', 3);
@@ -532,7 +532,7 @@ const saveNoteFile = () => {
     saveTimeout = setTimeout(async () => {
         let fullRaw = `${buildFrontmatter(note)}\n\n${currentContent.value}`;
         try {
-            await invoke('update_note', { path: note.id, content: fullRaw });
+            await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: fullRaw });
             note.summary = currentContent.value.substring(0, 150).trim();
             // Broadcast the update to all windows
             emit('note-updated', { id: note.id, content: currentContent.value });
@@ -796,7 +796,7 @@ const syncGDrive = async () => {
     gdriveSyncing.value = true;
     gdriveSyncError.value = '';
     try {
-        const result = await invoke<{ pulled: number; pushed: number; deleted: number; errors: string[] }>('gdrive_sync_full', { vaultPath: vaultPath.value });
+        const result = await invoke<{ pulled: number; pulled_files: string[]; pushed: number; deleted: number; errors: string[] }>('gdrive_sync_full', { vaultPath: vaultPath.value });
         const now = new Date().toLocaleTimeString();
         lastSyncTime.value = now;
         localStorage.setItem('synabitLastSyncTime', now);
@@ -806,7 +806,15 @@ const syncGDrive = async () => {
         }
         // Re-scan vault after sync to pick up pulled changes
         if (result.pulled > 0) {
+            if (result.pulled_files) {
+               result.pulled_files.forEach(p => {
+                  delete tabContents.value[p];
+               });
+            }
             await scanVault();
+            if (currentNoteId.value && result.pulled_files && result.pulled_files.includes(currentNoteId.value)) {
+               await loadNoteFile(currentNoteId.value);
+            }
         }
     } catch (e: any) {
         gdriveSyncError.value = e?.toString() || 'Sync failed';

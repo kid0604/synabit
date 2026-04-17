@@ -91,7 +91,7 @@ const saveInlineTag = async (cap: QuickCapMetadata) => {
     const formattedTag = isMultiWord ? `#${rawTag}#` : `#${rawTag}`;
     const updatedContent = `${cap.content}\n\n${formattedTag}`;
     try {
-        await invoke('update_note', { path: cap.path, content: updatedContent });
+        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
         cap.content = updatedContent;
         taggingCapId.value = null;
         tagInputText.value = '';
@@ -122,7 +122,7 @@ const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
     }
     
     try {
-        await invoke('update_note', { path: cap.path, content: updatedContent });
+        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
         console.error("Failed to update color", e);
@@ -164,7 +164,7 @@ const saveSelectedCap = async () => {
     if (selectedCap.value.content === finalPayload) return;
     
     try {
-        await invoke('update_note', { path: selectedCap.value.path, content: finalPayload });
+        await invoke('update_note', { vaultPath: props.vaultPath, path: selectedCap.value.path, content: finalPayload });
         selectedCap.value.content = finalPayload;
     } catch(e) {
         console.error("Failed to update note", e);
@@ -383,7 +383,7 @@ const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
             });
             const imgMd = `\n\n![Image](${relPath})`;
             const updatedContent = cap.content + imgMd;
-            await invoke('update_note', { path: cap.path, content: updatedContent });
+            await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
             cap.content = updatedContent;
         }
     } catch(e) {
@@ -469,11 +469,11 @@ const confirmTurnIntoNote = async (payload: any) => {
         }
         
         const frontmatter = `---\ntitle: "${payload.title.replace(/"/g, '\\"')}"\ntags: [${tagsArray.map(t => `"${t}"`).join(', ')}]\n---\n\n`;
-        await invoke('update_note', { path, content: frontmatter + payload.content });
+        await invoke('update_note', { vaultPath: props.vaultPath, path, content: frontmatter + payload.content });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_note', { path: cap.path });
+            await invoke('delete_note', { vaultPath: props.vaultPath, path: cap.path });
             quickCaps.value.splice(index, 1);
         }
         
@@ -512,7 +512,7 @@ const confirmTurnIntoTask = async (payload: any) => {
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_note', { path: cap.path });
+            await invoke('delete_note', { vaultPath: props.vaultPath, path: cap.path });
             quickCaps.value.splice(index, 1);
         }
         
@@ -574,7 +574,7 @@ const removeTag = async (cap: QuickCapMetadata, tag: string) => {
     updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
     
     try {
-        await invoke('update_note', { path: cap.path, content: updatedContent });
+        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
         console.error("Failed to remove tag", e);
@@ -665,7 +665,7 @@ const deleteCap = async (path: string, index: number) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_note', { path });
+        await invoke('delete_note', { vaultPath: props.vaultPath, path });
         quickCaps.value.splice(index, 1);
     } catch(e) {
         console.error(e);

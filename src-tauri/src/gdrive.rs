@@ -47,9 +47,10 @@ pub struct SyncFileEntry {
     pub local_modified_time: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Clone)]
 pub struct SyncResult {
     pub pulled: u32,
+    pub pulled_files: Vec<String>,
     pub pushed: u32,
     pub deleted: u32,
     pub errors: Vec<String>,
@@ -727,12 +728,25 @@ fn collect_local_files(vault_path: &str) -> Vec<String> {
     files
 }
 
+/// Generate a conflict copy path: "filename (Conflict copy 2026-04-17 15-40-00).ext"
+fn conflict_copy_path(original: &Path) -> PathBuf {
+    let stem = original.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = original
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H-%M-%S");
+    let new_name = format!("{} (Conflict copy {}){}", stem, timestamp, ext);
+    original.with_file_name(new_name)
+}
+
 #[tauri::command]
 pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> {
     let token = get_valid_token().await?;
     let mut manifest = load_manifest(&vault_path);
     let mut result = SyncResult {
         pulled: 0,
+        pulled_files: Vec::new(),
         pushed: 0,
         deleted: 0,
         errors: Vec::new(),
@@ -771,28 +785,42 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
         let drive_id = df.id.clone().unwrap_or_default();
         let drive_mtime = df.modified_time.clone().unwrap_or_default();
 
-        let should_pull = if !local_path.exists() {
-            // If it's in the manifest, it means we synced it before and user deleted it locally. Do not pull (let DELETE step handle it).
-            // If it's NOT in the manifest, it's a new remote file. Do pull.
-            !manifest.files.contains_key(rel_path)
-        } else if let Some(entry) = manifest.files.get(rel_path) {
-            let current_hash = file_sha256(&local_path);
-            if current_hash == entry.local_sha256 {
-                // Local hasn't changed. Pull if Google's time is different (covers newer edits OR older times due to clock drift)
-                drive_mtime != entry.drive_modified_time
+        // 3-way comparison: Local vs Base (manifest) vs Remote (Drive)
+        let (should_pull, is_conflict) = if !local_path.exists() {
+            if manifest.files.contains_key(rel_path) {
+                // Known file, deleted locally → DELETE phase handles
+                (false, false)
             } else {
-                // Local HAS changed (conflict). Only pull and overwrite if Google is strictly newer.
-                drive_mtime > entry.drive_modified_time
+                // New remote file → pull
+                (true, false)
+            }
+        } else if let Some(entry) = manifest.files.get(rel_path) {
+            let local_changed = file_sha256(&local_path) != entry.local_sha256;
+            let remote_changed = drive_mtime != entry.drive_modified_time;
+
+            match (local_changed, remote_changed) {
+                (false, false) => (false, false), // A: Up-to-date
+                (false, true)  => (true, false),  // B: Only remote changed → PULL
+                (true, false)  => (false, false),  // C: Only local changed → PUSH handles
+                (true, true)   => (true, true),   // D: CONFLICT → both changed
             }
         } else {
-            // File exists locally but not in manifest (first sync): compare hash
-            false
+            // Local exists but not in manifest → PUSH handles as new
+            (false, false)
         };
 
         if should_pull {
-            // Ensure parent directory exists locally
             if let Some(parent) = local_path.parent() {
                 let _ = fs::create_dir_all(parent);
+            }
+
+            // CONFLICT: both sides changed → rename local to conflict copy first
+            if is_conflict {
+                let conflict_path = conflict_copy_path(&local_path);
+                if let Err(e) = fs::rename(&local_path, &conflict_path) {
+                    result.errors.push(format!("Conflict rename {}: {}", rel_path, e));
+                    continue;
+                }
             }
 
             match drive_download_file(&token, &drive_id).await {
@@ -812,6 +840,7 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
                         },
                     );
                     result.pulled += 1;
+                    result.pulled_files.push(rel_path.clone());
                 }
                 Err(e) => {
                     result.errors.push(format!("Download {}: {}", rel_path, e));
@@ -855,7 +884,15 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
         if let Some(entry) = manifest.files.get(rel_path) {
             // Already tracked: check if local has changed
             if current_hash != entry.local_sha256 {
-                // Local file changed, push update
+                // 3-way safety: verify remote hasn't also changed before pushing
+                let remote_mtime = drive_map.get(rel_path)
+                    .and_then(|df| df.modified_time.clone())
+                    .unwrap_or_default();
+                if !remote_mtime.is_empty() && remote_mtime != entry.drive_modified_time {
+                    // Remote also changed — conflict resolved in PULL phase, skip push
+                    continue;
+                }
+                // Remote == Base: safe to push local changes
                 match fs::read(&local_path) {
                     Ok(content) => {
                         match drive_update_file(&token, &entry.drive_file_id, &content).await {
@@ -945,22 +982,57 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
         result.deleted += 1;
     }
 
-    // Handle files deleted locally but still on Drive: delete from Drive
-    let locally_deleted: Vec<(String, String)> = manifest
+    // Handle files deleted locally but still on Drive
+    // Only delete from Drive if Remote == Base (no one else edited it)
+    let locally_deleted: Vec<(String, String, String, String)> = manifest
         .files
         .iter()
         .filter(|(k, _v)| !vault.join(k).exists() && drive_map.contains_key(k.as_str()))
-        .map(|(k, v)| (k.clone(), v.drive_file_id.clone()))
+        .map(|(k, v)| {
+            let remote_mtime = drive_map.get(k.as_str())
+                .and_then(|df| df.modified_time.clone())
+                .unwrap_or_default();
+            (k.clone(), v.drive_file_id.clone(), v.drive_modified_time.clone(), remote_mtime)
+        })
         .collect();
 
-    for (key, drive_id) in &locally_deleted {
-        match drive_delete_file(&token, drive_id).await {
-            Ok(_) => {
-                manifest.files.remove(key);
-                result.deleted += 1;
+    for (key, drive_id, base_mtime, remote_mtime) in &locally_deleted {
+        if remote_mtime == base_mtime {
+            // Remote == Base: unchanged on Drive, safe to propagate local delete
+            match drive_delete_file(&token, drive_id).await {
+                Ok(_) => {
+                    manifest.files.remove(key);
+                    result.deleted += 1;
+                }
+                Err(e) => {
+                    result.errors.push(format!("Delete remote {}: {}", key, e));
+                }
             }
-            Err(e) => {
-                result.errors.push(format!("Delete remote {}: {}", key, e));
+        } else {
+            // Remote != Base: someone else edited this file. Delete-vs-Edit conflict.
+            // Preserve the remote edit by re-downloading.
+            let local_path = vault.join(key);
+            if let Some(parent) = local_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            match drive_download_file(&token, drive_id).await {
+                Ok(content) => {
+                    if let Err(e) = fs::write(&local_path, &content) {
+                        result.errors.push(format!("Re-download write {}: {}", key, e));
+                        continue;
+                    }
+                    let hash = file_sha256(&local_path);
+                    if let Some(entry) = manifest.files.get_mut(key) {
+                        entry.local_sha256 = hash;
+                        entry.drive_modified_time = remote_mtime.clone();
+                        entry.local_modified_time = chrono::Utc::now().to_rfc3339();
+                    }
+                    result.pulled += 1;
+                    result.pulled_files.push(key.clone());
+                }
+                Err(e) => {
+                    result.errors.push(format!("Re-download {}: {}", key, e));
+                }
             }
         }
     }

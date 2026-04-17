@@ -412,7 +412,7 @@ fn scan_vault_path(vault_path: String) -> Result<Vec<NoteMetadata>, String> {
                     if let Ok(content) = fs::read_to_string(entry.path()) {
                         let mut title = entry.path().file_stem().unwrap_or_default().to_string_lossy().to_string();
                         let mut tags = Vec::new();
-                        let mut summary = String::new();
+                        let mut summary;
                         let mut pinned = false;
 
                         if let Ok(parsed) = matter.parse::<FrontMatter>(&content) {
@@ -432,13 +432,15 @@ fn scan_vault_path(vault_path: String) -> Result<Vec<NoteMetadata>, String> {
                         let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
                         let date: chrono::DateTime<chrono::Local> = created.into();
 
+                        let path_str = entry.path().to_string_lossy().to_string();
+                        let relative_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                         notes.push(NoteMetadata {
-                            id: entry.path().to_string_lossy().to_string(),
+                            id: relative_path.clone(),
                             title,
                             summary,
                             date: date.format("%Y-%m-%d").to_string(),
                             tags,
-                            path: entry.path().to_string_lossy().to_string(),
+                            path: relative_path,
                             pinned,
                             content: content.clone(),
                         });
@@ -473,7 +475,8 @@ fn create_new_note(vault_path: String) -> Result<String, String> {
     let content = "---\ntitle: Untitled Note\ntags: []\n---\n\n";
     fs::write(&path, content).map_err(|e| e.to_string())?;
     
-    Ok(path.to_string_lossy().to_string())
+    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
+    Ok(rel_path)
 }
 
 #[tauri::command]
@@ -507,17 +510,20 @@ fn open_daily_note(vault_path: String, format_str: String, tag: String) -> Resul
         fs::write(&path, content).map_err(|e| e.to_string())?;
     }
     
-    Ok(path.to_string_lossy().to_string())
+    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
+    Ok(rel_path)
 }
 
 #[tauri::command]
-fn read_note(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+fn read_note(vault_path: String, path: String) -> Result<String, String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    fs::read_to_string(&abs_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn update_note(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())
+fn update_note(vault_path: String, path: String, content: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    fs::write(&abs_path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -559,14 +565,17 @@ fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> Result<St
 }
 
 #[tauri::command]
-fn delete_note(path: String) -> Result<(), String> {
-    fs::remove_file(&path).map_err(|e| e.to_string())
+fn delete_note(vault_path: String, path: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    fs::remove_file(&abs_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn rename_note(vault_path: String, old_path: String, new_name: String) -> Result<String, String> {
     use std::path::Path;
-    let old = Path::new(&old_path);
+    let base_dir = Path::new(&vault_path);
+    let old = base_dir.join(&old_path);
+    
     // Secure the new name: ensuring no path traversal
     let safe_name = new_name.replace("/", "").replace("\\", "");
     let mut final_name = safe_name;
@@ -582,8 +591,10 @@ fn rename_note(vault_path: String, old_path: String, new_name: String) -> Result
         return Err("A file with this name already exists.".to_string());
     }
     
-    fs::rename(old, &new_path).map_err(|e| e.to_string())?;
-    Ok(new_path.to_string_lossy().to_string())
+    fs::rename(&old, &new_path).map_err(|e| e.to_string())?;
+    
+    // Return relative path of the new file
+    Ok(new_path.strip_prefix(base_dir).unwrap_or(&new_path).to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -603,11 +614,13 @@ fn scan_quick_caps(vault_path: String) -> Result<Vec<QuickCapMetadata>, String> 
                     let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
                     let date: chrono::DateTime<chrono::Local> = created.into();
                     
+                    let path_str = entry.path().to_string_lossy().to_string();
+                    let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                     caps.push(QuickCapMetadata {
-                        id: entry.path().to_string_lossy().to_string(),
+                        id: rel_path.clone(),
                         date: date.format("%Y-%m-%d %H:%M:%S").to_string(),
                         content,
-                        path: entry.path().to_string_lossy().to_string(),
+                        path: rel_path,
                     });
                 }
             }
@@ -637,17 +650,19 @@ fn create_quick_cap(vault_path: String, content: String) -> Result<QuickCapMetad
     
     let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
     
+    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
     Ok(QuickCapMetadata {
-        id: path.to_string_lossy().to_string(),
+        id: rel_path.clone(),
         date: date.format("%Y-%m-%d %H:%M:%S").to_string(),
         content,
-        path: path.to_string_lossy().to_string(),
+        path: rel_path,
     })
 }
 
 #[tauri::command]
-fn update_quick_cap(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())
+fn update_quick_cap(vault_path: String, path: String, content: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    fs::write(&abs_path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -738,8 +753,10 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                         let created_date: chrono::DateTime<chrono::Local> = created.into();
                         let modified_date: chrono::DateTime<chrono::Local> = modified.into();
 
+                        let path_str = entry.path().to_string_lossy().to_string();
+                        let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                         tasks.push(TaskMetadata {
-                            id: entry.path().to_string_lossy().to_string(),
+                            id: rel_path.clone(),
                             title,
                             status,
                             is_transferred,
@@ -753,7 +770,7 @@ fn scan_tasks(vault_path: String) -> Result<Vec<TaskMetadata>, String> {
                             tags,
                             checklist: std::vec::Vec::new(),
                             content: task_content,
-                            path: entry.path().to_string_lossy().to_string(),
+                            path: rel_path,
                             created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
                             updated_at: modified_date.format("%Y-%m-%d %H:%M:%S").to_string(),
                             completed_at,
@@ -794,8 +811,10 @@ fn create_task(
     let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
     let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
     
+    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
+    
     Ok(TaskMetadata {
-        id: path.to_string_lossy().to_string(),
+        id: rel_path.clone(),
         title: metadata.title,
         status: metadata.status,
         is_transferred: metadata.is_transferred,
@@ -811,7 +830,7 @@ fn create_task(
         custom_fields: metadata.custom_fields,
         completed_at: metadata.completed_at,
         content,
-        path: path.to_string_lossy().to_string(),
+        path: rel_path,
         created_at: date_str.clone(),
         updated_at: date_str,
     })
@@ -819,17 +838,19 @@ fn create_task(
 
 #[tauri::command]
 fn update_task(
-    path: String, metadata: TaskFrontMatter, content: String
+    vault_path: String, path: String, metadata: TaskFrontMatter, content: String
 ) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
     let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
         
-    fs::write(&path, full_content).map_err(|e| e.to_string())
+    fs::write(&abs_path, full_content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn delete_task(path: String) -> Result<(), String> {
-    fs::remove_file(&path).map_err(|e| e.to_string())
+fn delete_task(vault_path: String, path: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    fs::remove_file(&abs_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -939,9 +960,11 @@ async fn get_note_backlinks(vault_path: String, target_id: String) -> Result<Vec
                         }
                     }
                     
+                    let path_str = entry.path().to_string_lossy().to_string();
+                    let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                     backlinks.push(NoteMetadata {
-                        id: entry.path().file_name().unwrap().to_string_lossy().to_string(),
-                        path: entry.path().to_string_lossy().to_string(),
+                        id: rel_path.clone(),
+                        path: rel_path,
                         title,
                         date,
                         tags,
@@ -975,18 +998,20 @@ fn save_settings(vault_path: String, settings: FileManagerSettings) -> Result<()
 }
 
 #[tauri::command]
-fn open_local_file(path: String) -> Result<(), String> {
+fn open_local_file(vault_path: String, path: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    let p = abs_path.to_string_lossy().to_string();
     #[cfg(target_os = "macos")]
     {
-        Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("open").arg(&p).spawn().map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("explorer").arg(&p).spawn().map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("xdg-open").arg(&p).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -1064,18 +1089,19 @@ fn get_file_items(vault_path: String) -> Result<Vec<FileItem>, String> {
                     let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
                     let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
                     let name = entry.file_name().to_string_lossy().to_string();
-                    let absolute = entry.path().to_string_lossy().to_string();
+                    let path_str = entry.path().to_string_lossy().to_string();
+                    let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                     let date = "Unknown".to_string();
-                    let tags = file_meta.get(&absolute).cloned().unwrap_or_default();
+                    let tags = file_meta.get(&rel_path).cloned().unwrap_or_default();
                     
                     items.push(FileItem {
-                        id: absolute.clone(),
+                        id: rel_path.clone(),
                         name: name.clone(),
                         extension: ext,
                         size_mb: size,
                         source_folder: folder_name.to_string(),
                         date_modified: date,
-                        absolute_path: absolute.clone(),
+                        absolute_path: rel_path,
                         tags
                     });
                 }
@@ -1090,17 +1116,18 @@ fn get_file_items(vault_path: String) -> Result<Vec<FileItem>, String> {
                         let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
                         let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
                         let name = entry.file_name().to_string_lossy().to_string();
-                        let absolute = entry.path().to_string_lossy().to_string();
-                        let tags = file_meta.get(&absolute).cloned().unwrap_or_default();
+                        let path_str = entry.path().to_string_lossy().to_string();
+                        let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
+                        let tags = file_meta.get(&rel_path).cloned().unwrap_or_default();
                         
                         items.push(FileItem {
-                            id: absolute.clone(),
+                            id: rel_path.clone(),
                             name: name.clone(),
                             extension: ext,
                             size_mb: size,
                             source_folder: source.clone(),
                             date_modified: "Unknown".to_string(),
-                            absolute_path: absolute.clone(),
+                            absolute_path: rel_path,
                             tags
                         });
                     }
@@ -1151,15 +1178,17 @@ fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
                         let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
                         let created_date: chrono::DateTime<chrono::Local> = created.into();
 
+                        let path_str = entry.path().to_string_lossy().to_string();
+                        let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
                         events.push(EventMetadata {
-                            id: entry.path().to_string_lossy().to_string(),
+                            id: rel_path.clone(),
                             title,
                             event_date,
                             event_time,
                             location,
                             tags,
                             content: event_content,
-                            path: entry.path().to_string_lossy().to_string(),
+                            path: rel_path,
                             created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
                         });
                     }
@@ -1196,32 +1225,35 @@ fn create_event(
     let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
     let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
     
+    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
     Ok(EventMetadata {
-        id: path.to_string_lossy().to_string(),
+        id: rel_path.clone(),
         title: metadata.title,
         event_date: metadata.event_date,
         event_time: metadata.event_time,
         location: metadata.location,
         tags: metadata.tags,
         content,
-        path: path.to_string_lossy().to_string(),
+        path: rel_path,
         created_at: date_str,
     })
 }
 
 #[tauri::command]
 fn update_event(
-    path: String, metadata: EventFrontMatter, content: String
+    vault_path: String, path: String, metadata: EventFrontMatter, content: String
 ) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
     let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
         
-    fs::write(&path, full_content).map_err(|e| e.to_string())
+    fs::write(&abs_path, full_content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn delete_event(path: String) -> Result<(), String> {
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
+fn delete_event(vault_path: String, path: String) -> Result<(), String> {
+    let abs_path = std::path::Path::new(&vault_path).join(&path);
+    std::fs::remove_file(&abs_path).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
