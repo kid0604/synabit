@@ -412,7 +412,7 @@ async fn drive_upload_file(
     folder_id: &str,
     name: &str,
     content: &[u8],
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let client = reqwest::Client::new();
 
     let metadata = serde_json::json!({
@@ -436,7 +436,7 @@ async fn drive_upload_file(
         );
 
     let resp = client
-        .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+        .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime")
         .header("Authorization", format!("Bearer {}", token))
         .multipart(form)
         .send()
@@ -449,20 +449,27 @@ async fn drive_upload_file(
     }
 
     let result: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    result["id"]
+    let id = result["id"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| "No file ID returned".to_string())
+        .ok_or_else(|| "No file ID returned".to_string())?;
+    
+    let modified_time = result["modifiedTime"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        
+    Ok((id, modified_time))
 }
 
 async fn drive_update_file(
     token: &str,
     file_id: &str,
     content: &[u8],
-) -> Result<(), String> {
+) -> Result<String, String> {
     let client = reqwest::Client::new();
     let url = format!(
-        "https://www.googleapis.com/upload/drive/v3/files/{}?uploadType=media",
+        "https://www.googleapis.com/upload/drive/v3/files/{}?uploadType=media&fields=id,modifiedTime",
         file_id
     );
 
@@ -480,7 +487,13 @@ async fn drive_update_file(
         return Err(format!("Update error: {}", err));
     }
 
-    Ok(())
+    let result: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let modified_time = result["modifiedTime"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+    Ok(modified_time)
 }
 
 async fn drive_delete_file(token: &str, file_id: &str) -> Result<(), String> {
@@ -763,8 +776,14 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
             // If it's NOT in the manifest, it's a new remote file. Do pull.
             !manifest.files.contains_key(rel_path)
         } else if let Some(entry) = manifest.files.get(rel_path) {
-            // File exists locally and in manifest: pull if drive is newer
-            drive_mtime > entry.drive_modified_time
+            let current_hash = file_sha256(&local_path);
+            if current_hash == entry.local_sha256 {
+                // Local hasn't changed. Pull if Google's time is different (covers newer edits OR older times due to clock drift)
+                drive_mtime != entry.drive_modified_time
+            } else {
+                // Local HAS changed (conflict). Only pull and overwrite if Google is strictly newer.
+                drive_mtime > entry.drive_modified_time
+            }
         } else {
             // File exists locally but not in manifest (first sync): compare hash
             false
@@ -813,11 +832,11 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
                 match fs::read(&local_path) {
                     Ok(content) => {
                         match drive_update_file(&token, &entry.drive_file_id, &content).await {
-                            Ok(_) => {
+                            Ok(new_gdrive_time) => {
                                 let mut updated = entry.clone();
                                 updated.local_sha256 = current_hash;
                                 updated.local_modified_time = chrono::Utc::now().to_rfc3339();
-                                updated.drive_modified_time = chrono::Utc::now().to_rfc3339();
+                                updated.drive_modified_time = new_gdrive_time;
                                 manifest.files.insert(rel_path.clone(), updated);
                                 result.pushed += 1;
                             }
@@ -853,13 +872,13 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
                             match drive_upload_file(&token, &parent_folder_id, &filename, &content)
                                 .await
                             {
-                                Ok(file_id) => {
+                                Ok((file_id, new_gdrive_time)) => {
                                     manifest.files.insert(
                                         rel_path.clone(),
                                         SyncFileEntry {
                                             drive_file_id: file_id,
                                             local_sha256: current_hash,
-                                            drive_modified_time: chrono::Utc::now().to_rfc3339(),
+                                            drive_modified_time: new_gdrive_time,
                                             local_modified_time: chrono::Utc::now().to_rfc3339(),
                                         },
                                     );
