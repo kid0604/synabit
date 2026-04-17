@@ -4174,6 +4174,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "synabit"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "gray_matter",
+ "notify",
+ "oauth2",
+ "opener",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tokio",
+ "urlencoding",
+ "walkdir",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4332,31 +4357,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs",
- "gray_matter",
- "notify",
- "oauth2",
- "opener",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tokio",
- "urlencoding",
- "walkdir",
 ]
 
 [[package]]

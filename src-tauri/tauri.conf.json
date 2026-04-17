@@ -19,11 +19,11 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost blob: data:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com",
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "**",
+          "$APPDATA/**",
           "$HOME/.synabit/**"
         ]
       }

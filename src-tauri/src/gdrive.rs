@@ -9,8 +9,17 @@ use std::future::Future;
 // ──────────────────────────────────────────────
 // Constants
 // ──────────────────────────────────────────────
-const CLIENT_ID: &str = "REDACTED_GOOGLE_CLIENT_ID";
-const CLIENT_SECRET: &str = "REDACTED_GOOGLE_CLIENT_SECRET";
+// OAuth credentials are read from build-time environment variables.
+// Set SYNABIT_GOOGLE_CLIENT_ID and SYNABIT_GOOGLE_CLIENT_SECRET before building.
+// For development, fallback values are compiled in via option_env!().
+const CLIENT_ID: &str = match option_env!("SYNABIT_GOOGLE_CLIENT_ID") {
+    Some(v) => v,
+    None => "REDACTED_GOOGLE_CLIENT_ID",
+};
+const CLIENT_SECRET: &str = match option_env!("SYNABIT_GOOGLE_CLIENT_SECRET") {
+    Some(v) => v,
+    None => "REDACTED_GOOGLE_CLIENT_SECRET",
+};
 const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";

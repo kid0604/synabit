@@ -692,10 +692,10 @@ const filteredNotes = computed(() => {
   }
   
   return result.sort((a,b) => {
-      // Pinned dồn lên trên
+      // Pinned notes float to top
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
-      // Trong cùng nhóm Pinned/Unpinned thì sort date
+      // Within same pinned/unpinned group, sort by date descending
       return b.date.localeCompare(a.date);
   });
 });
