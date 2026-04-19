@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
 use crate::models::nexus::{NexusItem, TagStat, VaultStats};
-use crate::commands::notes::scan_vault_path;
-use crate::commands::quickcaps::scan_quick_caps;
-use crate::commands::tasks::scan_tasks;
 use crate::commands::files::get_file_items;
+use crate::db::DbBridge;
+use crate::error::AppResult;
 
 #[tauri::command]
-pub fn get_nexus_stats(vault_path: String) -> Result<VaultStats, String> {
+pub fn get_nexus_stats(vault_path: String) -> AppResult<VaultStats> {
     let items = get_nexus_items(vault_path)?;
     let mut type_distribution = HashMap::new();
     let mut tag_map: HashMap<String, TagStat> = HashMap::new();
@@ -46,76 +45,52 @@ pub fn get_nexus_stats(vault_path: String) -> Result<VaultStats, String> {
 }
 
 #[tauri::command]
-pub fn get_nexus_items(vault_path: String) -> Result<Vec<NexusItem>, String> {
+pub fn get_nexus_items(vault_path: String) -> AppResult<Vec<NexusItem>> {
     let mut items = Vec::new();
-    
-    if let Ok(notes) = scan_vault_path(vault_path.clone()) {
-        for n in notes {
-            let full_str = format!("{} {}", n.title, n.content);
-            items.push(NexusItem {
-                id: n.id,
-                item_type: "note".to_string(),
-                title: if n.title.is_empty() { "Untitled Note".to_string() } else { n.title },
-                preview: n.summary,
-                tags: n.tags,
-                date: n.date,
-                path: n.path,
-                content: full_str,
-            });
+
+    // ─── Query indexed data from SQLite (fast) ─────────────
+    if let Ok(db) = DbBridge::new(&vault_path) {
+        if let Ok(rows) = db.get_all_nexus_items() {
+            for r in rows {
+                let title = if r.title.is_empty() {
+                    match r.item_type.as_str() {
+                        "note" => "Untitled Note".to_string(),
+                        "task" => "Untitled Task".to_string(),
+                        _ => r.title,
+                    }
+                } else { r.title };
+
+                items.push(NexusItem {
+                    id: r.id,
+                    item_type: r.item_type,
+                    title: title.clone(),
+                    preview: r.preview,
+                    tags: r.tags,
+                    date: r.date,
+                    path: r.path,
+                    content: format!("{} {}", title, r.content),
+                    status: r.status,
+                });
+            }
         }
     }
     
-    if let Ok(caps) = scan_quick_caps(vault_path.clone()) {
-        for c in caps {
-            let preview = c.content.trim().chars().take(150).collect();
-            let mut extracted_tags: Vec<String> = c.content
-                .split_whitespace()
-                .filter(|w| w.starts_with('#') && w.len() > 1)
-                .map(|w| w[1..].to_string())
-                .collect();
-            extracted_tags.dedup();
-            
-            items.push(NexusItem {
-                id: c.id.clone(),
-                item_type: "quickcap".to_string(),
-                title: "⚡ QuickCap".to_string(),
-                preview,
-                tags: extracted_tags,
-                date: c.date,
-                path: c.path,
-                content: c.content,
-            });
-        }
-    }
-    
-    if let Ok(tasks) = scan_tasks(vault_path.clone()) {
-        for t in tasks {
-            let title = if t.title.is_empty() { "Untitled Task".to_string() } else { t.title.clone() };
-            let preview = t.content.trim().chars().take(150).collect();
-            items.push(NexusItem {
-                id: t.id,
-                item_type: "task".to_string(),
-                title: title.clone(),
-                preview,
-                tags: t.tags,
-                date: t.created_at,
-                path: t.path,
-                content: format!("{} {}", title, t.content),
-            });
-        }
-    }
-    
+    // ─── Files still come from disk (not indexed) ──────────
     if let Ok(files) = get_file_items(vault_path.clone()) {
         for f in files {
+            if f.extension == "md" {
+                continue; // Avoid double counting Markdown files
+            }
             items.push(NexusItem {
-                id: f.absolute_path.clone(),
+                id: f.path.clone(),
                 item_type: "file".to_string(),
                 title: f.name.clone(),
                 preview: format!("{} • {}MB", f.extension, (f.size_mb * 100.0).round() / 100.0),
                 tags: f.tags.clone(),
                 date: f.date_modified,
-                path: f.absolute_path,
+                path: f.path,
                 content: f.name,
+                status: None,
             });
         }
     }
@@ -125,7 +100,7 @@ pub fn get_nexus_items(vault_path: String) -> Result<Vec<NexusItem>, String> {
 }
 
 #[tauri::command]
-pub fn search_nexus(vault_path: String, query: String) -> Result<Vec<NexusItem>, String> {
+pub fn search_nexus(vault_path: String, query: String) -> AppResult<Vec<NexusItem>> {
     let all_items = get_nexus_items(vault_path)?;
     if query.trim().is_empty() {
         return Ok(all_items.into_iter().take(50).collect()); // return top 50 recent

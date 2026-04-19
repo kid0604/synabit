@@ -16,8 +16,19 @@ pub struct NoteMetadata {
     pub title: String,
     pub summary: String,
     pub date: String,
+    pub timestamp: i64,
     pub tags: Vec<String>,
     pub path: String,
     pub pinned: bool,
     pub content: String,
+    #[serde(default)]
+    pub is_task: bool,
+    #[serde(default)]
+    pub is_event: bool,
+    #[serde(default)]
+    pub has_reminder: bool,
+    #[serde(default)]
+    pub is_done: bool,
+    #[serde(default)]
+    pub raw_frontmatter: String,
 }

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next';
-import { useSettings } from '../composables/useSettings';
+import { useSettings } from '../../composables/useSettings';
+import { ref, onMounted } from 'vue';
+import { getVersion } from '@tauri-apps/api/app';
 
 const {
   showSettingsModal, settingsTab,
@@ -8,6 +10,15 @@ const {
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
 } = useSettings();
+
+const appVersion = ref('');
+onMounted(async () => {
+  try {
+    appVersion.value = await getVersion();
+  } catch(e) {
+    console.error("Failed to get version", e);
+  }
+});
 
 defineProps<{
   vaultPath: string;
@@ -222,7 +233,7 @@ const emit = defineEmits<{
                       <Globe class="w-8 h-8 text-gray-400" />
                     </div>
                     <h3 class="text-[18px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5]">Synabit</h3>
-                    <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">Version 1.0.0-alpha</p>
+                    <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">Version {{ appVersion || '...' }}</p>
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mt-4 max-w-xs mx-auto leading-relaxed">A unified, local-first productivity workspace for notes, tasks, quick captures, and more.</p>
                   </div>
                 </section>

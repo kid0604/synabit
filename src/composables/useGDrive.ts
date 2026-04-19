@@ -1,6 +1,9 @@
-import { ref, watch, type Ref } from 'vue';
+import { ref, watch, computed, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { SyncResult } from '../types/ipc';
+import { useAppStore } from '../stores/useAppStore';
+import { storeToRefs } from 'pinia';
+import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 /**
  * Composable for Google Drive sync state and operations.
@@ -14,15 +17,14 @@ export function useGDrive(
   loadNoteFile: (id: string) => Promise<void>,
   currentNoteId: Ref<string | null>,
 ) {
+  const appStore = useAppStore();
+
   // --- State ---
   const gdriveConnected = ref(false);
   const gdriveSyncing = ref(false);
   const gdriveSyncError = ref('');
-  const lastSyncTime = ref(localStorage.getItem('synabitLastSyncTime') || '');
   const gdriveAuthLoading = ref(false);
 
-  const gdriveAutoSyncEnabled = ref(localStorage.getItem('synabitGDriveAutoSync') === 'true');
-  const gdriveAutoSyncInterval = ref(Number(localStorage.getItem('synabitGDriveInterval') || '15'));
   let autoSyncTimer: number | null = null;
 
   // --- Auto Sync ---
@@ -31,8 +33,8 @@ export function useGDrive(
       window.clearInterval(autoSyncTimer);
       autoSyncTimer = null;
     }
-    if (gdriveAutoSyncEnabled.value && vaultType.value === 'gdrive' && gdriveConnected.value) {
-      const mins = Math.max(1, Math.min(60, gdriveAutoSyncInterval.value));
+    if (appStore.gdriveAutoSyncEnabled && vaultType.value === 'gdrive' && gdriveConnected.value) {
+      const mins = Math.max(1, Math.min(60, appStore.gdriveAutoSyncInterval));
       autoSyncTimer = window.setInterval(() => {
         if (!gdriveSyncing.value && gdriveConnected.value && vaultType.value === 'gdrive') {
           syncGDrive();
@@ -41,18 +43,26 @@ export function useGDrive(
     }
   }
 
-  watch(gdriveAutoSyncEnabled, (val) => {
-    localStorage.setItem('synabitGDriveAutoSync', String(val));
+  watch(() => appStore.gdriveAutoSyncEnabled, async (val) => {
+    const store = appStore.getStoreInstance();
+    if (store) {
+      await store.set('gdriveAutoSyncEnabled', val);
+      await store.save();
+    }
     setupAutoSync();
   });
 
-  watch(gdriveAutoSyncInterval, (val) => {
+  watch(() => appStore.gdriveAutoSyncInterval, async (val) => {
     const safeVal = Math.max(1, Math.min(60, val || 1));
     if (safeVal !== val) {
-      gdriveAutoSyncInterval.value = safeVal;
+      appStore.gdriveAutoSyncInterval = safeVal;
       return;
     }
-    localStorage.setItem('synabitGDriveInterval', String(safeVal));
+    const store = appStore.getStoreInstance();
+    if (store) {
+      await store.set('gdriveAutoSyncInterval', safeVal);
+      await store.save();
+    }
     setupAutoSync();
   });
 
@@ -65,23 +75,52 @@ export function useGDrive(
     }
   }
 
+  async function finishConnect() {
+      gdriveConnected.value = true;
+      try {
+          const cachePath = await invoke<string>('gdrive_get_cache_path');
+          await appStore.setVaultPath(cachePath, 'gdrive');
+          await syncGDrive();
+          scanVault();
+          setupAutoSync();
+      } catch (e: any) {
+          gdriveSyncError.value = e?.toString() || 'Vault initialization failed';
+      } finally {
+          gdriveAuthLoading.value = false;
+      }
+  }
+
   async function connectGDrive() {
     gdriveAuthLoading.value = true;
     gdriveSyncError.value = '';
     try {
-      await invoke<string>('gdrive_auth_start');
-      gdriveConnected.value = true;
-      const cachePath = await invoke<string>('gdrive_get_cache_path');
-      vaultPath.value = cachePath;
-      vaultType.value = 'gdrive';
-      localStorage.setItem('synabitVaultPath', cachePath);
-      localStorage.setItem('synabitVaultType', 'gdrive');
-      await syncGDrive();
-      scanVault();
-      setupAutoSync();
+      const resp = await invoke<string>('gdrive_auth_start');
+      if (resp === 'WAITING_DEEP_LINK') {
+          // Listen for Deep Link from Google Auth
+          const unlisten = await onOpenUrl(async (urls) => {
+              const url = urls[0] || '';
+              if (url.includes('?code=')) {
+                  const codeMatch = url.match(/[?&]code=([^&]+)/);
+                  if (codeMatch && codeMatch[1]) {
+                      const code = decodeURIComponent(codeMatch[1]);
+                      try {
+                          await invoke('gdrive_auth_complete', { authCode: code });
+                          await finishConnect();
+                      } catch(err: any) {
+                          gdriveSyncError.value = err?.toString() || 'OAuth Exchange failed';
+                          gdriveAuthLoading.value = false;
+                      }
+                  }
+              }
+              // Cleanup listener after single use
+              unlisten();
+          });
+      } else {
+          // Loopback success on Desktop
+          await finishConnect();
+      }
     } catch (e: any) {
       gdriveSyncError.value = e?.toString() || 'Connection failed';
-    } finally {
       gdriveAuthLoading.value = false;
     }
   }
@@ -106,8 +145,12 @@ export function useGDrive(
         vaultPath: vaultPath.value,
       });
       const now = new Date().toLocaleTimeString();
-      lastSyncTime.value = now;
-      localStorage.setItem('synabitLastSyncTime', now);
+      appStore.gdriveLastSyncTime = now;
+      const store = appStore.getStoreInstance();
+      if (store) {
+          await store.set('gdriveLastSyncTime', now);
+          await store.save();
+      }
       if (result.errors.length > 0) {
         gdriveSyncError.value = `${result.errors.length} error(s)`;
         console.warn('Sync errors:', result.errors);
@@ -141,10 +184,16 @@ export function useGDrive(
     gdriveConnected,
     gdriveSyncing,
     gdriveSyncError,
-    lastSyncTime,
+    lastSyncTime: computed(() => appStore.gdriveLastSyncTime),
     gdriveAuthLoading,
-    gdriveAutoSyncEnabled,
-    gdriveAutoSyncInterval,
+    gdriveAutoSyncEnabled: computed({
+      get: () => appStore.gdriveAutoSyncEnabled,
+      set: (val) => appStore.gdriveAutoSyncEnabled = val
+    }),
+    gdriveAutoSyncInterval: computed({
+      get: () => appStore.gdriveAutoSyncInterval,
+      set: (val) => appStore.gdriveAutoSyncInterval = val
+    }),
     // Actions
     setupAutoSync,
     checkGDriveAuth,

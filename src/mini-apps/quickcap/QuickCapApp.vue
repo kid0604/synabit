@@ -9,8 +9,8 @@ import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from 'tiptap-markdown';
 import TiptapImage from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
-import TaskEditModal from './TaskEditModal.vue';
-import NoteEditModal from './NoteEditModal.vue';
+import TaskEditModal from '../task/TaskEditModal.vue';
+import NoteEditModal from '../note/NoteEditModal.vue';
 
 const props = defineProps<{
   vaultPath: string;

@@ -15,11 +15,13 @@
     "dialog:allow-message",
     {
       "identifier": "fs:allow-read",
-      "allow": [{ "path": "$HOME/.synabit/**" }]
+      "allow": [{ "path": "**" }]
     },
     {
       "identifier": "fs:allow-write",
-      "allow": [{ "path": "$HOME/.synabit/**" }]
-    }
+      "allow": [{ "path": "**" }]
+    },
+    "store:default",
+    "deep-link:default"
   ]
 }

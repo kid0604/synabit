@@ -2,15 +2,20 @@ mod gdrive;
 pub mod watcher;
 pub mod models;
 pub mod commands;
+pub mod error;
+pub mod db;
+pub mod path_utils;
 
 use commands::{notes, tasks, events, quickcaps, files, nexus};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .manage(watcher::WatcherState::default())
         .invoke_handler(tauri::generate_handler![
             // Notes
@@ -52,11 +57,12 @@ pub fn run() {
             nexus::search_nexus,
             nexus::get_nexus_stats,
             // Google Drive
-            gdrive::gdrive_auth_start,
-            gdrive::gdrive_auth_status,
-            gdrive::gdrive_disconnect,
-            gdrive::gdrive_sync_full,
-            gdrive::gdrive_get_cache_path,
+            gdrive::auth::gdrive_auth_start,
+            gdrive::auth::gdrive_auth_complete,
+            gdrive::auth::gdrive_auth_status,
+            gdrive::auth::gdrive_disconnect,
+            gdrive::sync::gdrive_sync_full,
+            gdrive::sync::gdrive_get_cache_path,
             // Watcher
             watcher::start_vault_watcher,
         ])

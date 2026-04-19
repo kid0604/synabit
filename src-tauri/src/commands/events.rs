@@ -6,18 +6,22 @@ use gray_matter::engine::YAML;
 use walkdir::WalkDir;
 
 use crate::models::event::{EventFrontMatter, EventMetadata};
+use crate::error::{AppError, AppResult};
+use crate::path_utils;
+use crate::db::DbBridge;
 
 #[tauri::command]
-pub fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
+pub fn scan_events(vault_path: String) -> AppResult<Vec<EventMetadata>> {
     let mut events = Vec::new();
     let matter = Matter::<YAML>::new();
     
     let events_dir = Path::new(&vault_path).join("Events");
     if !events_dir.exists() {
-        if let Err(e) = fs::create_dir_all(&events_dir) {
-            return Err(e.to_string());
-        }
+        fs::create_dir_all(&events_dir)?;
     }
+
+    let db = DbBridge::new(&vault_path).ok();
+    let mut current_disk_files = std::collections::HashSet::new();
 
     for entry in WalkDir::new(&events_dir).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
@@ -42,13 +46,13 @@ pub fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
                             event_content = parsed.content;
                         }
                         
-                        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+                        let metadata = entry.metadata().map_err(|e| AppError::General(e.to_string()))?;
                         let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
                         let created_date: chrono::DateTime<chrono::Local> = created.into();
 
-                        let path_str = entry.path().to_string_lossy().to_string();
-                        let rel_path = entry.path().strip_prefix(&vault_path).map(|p| p.to_string_lossy().to_string()).unwrap_or(path_str);
-                        events.push(EventMetadata {
+                        let rel_path = path_utils::to_relative(entry.path(), &vault_path);
+                        current_disk_files.insert(rel_path.clone());
+                        let event_meta = EventMetadata {
                             id: rel_path.clone(),
                             title,
                             event_date,
@@ -58,8 +62,23 @@ pub fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
                             content: event_content,
                             path: rel_path,
                             created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
-                        });
+                        };
+                        
+                        if let Some(db_bridge) = &db {
+                            let _ = db_bridge.upsert_event(&event_meta);
+                        }
+                        events.push(event_meta);
                     }
+                }
+            }
+        }
+    }
+    
+    if let Some(db_bridge) = &db {
+        if let Ok(existing) = db_bridge.get_all_event_timestamps() {
+            for id in existing.keys() {
+                if !current_disk_files.contains(id) {
+                    let _ = db_bridge.delete_event(id);
                 }
             }
         }
@@ -72,29 +91,29 @@ pub fn scan_events(vault_path: String) -> Result<Vec<EventMetadata>, String> {
 #[tauri::command]
 pub fn create_event(
     vault_path: String, metadata: EventFrontMatter, content: String
-) -> Result<EventMetadata, String> {
+) -> AppResult<EventMetadata> {
     let events_dir = Path::new(&vault_path).join("Events");
     if !events_dir.exists() {
-        fs::create_dir_all(&events_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&events_dir)?;
     }
     
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("System time error: {}", e))?
+        .map_err(|e| AppError::General(format!("System time error: {}", e)))?
         .as_millis();
     let filename = format!("event-{}.md", timestamp);
     let path = events_dir.join(&filename);
     
-    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
+    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| AppError::General(e.to_string()))?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
         
-    fs::write(&path, &full_content).map_err(|e| e.to_string())?;
+    fs::write(&path, &full_content)?;
     
     let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
     let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
     
-    let rel_path = path.strip_prefix(&vault_path).unwrap_or(&path).to_string_lossy().to_string();
-    Ok(EventMetadata {
+    let rel_path = path_utils::to_relative(&path, &vault_path);
+    let event_meta = EventMetadata {
         id: rel_path.clone(),
         title: metadata.title,
         event_date: metadata.event_date,
@@ -104,22 +123,52 @@ pub fn create_event(
         content,
         path: rel_path,
         created_at: date_str,
-    })
+    };
+    
+    if let Ok(db) = DbBridge::new(&vault_path) {
+        let _ = db.upsert_event(&event_meta);
+    }
+    Ok(event_meta)
 }
 
 #[tauri::command]
 pub fn update_event(
     vault_path: String, path: String, metadata: EventFrontMatter, content: String
-) -> Result<(), String> {
+) -> AppResult<()> {
     let abs_path = Path::new(&vault_path).join(&path);
-    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| e.to_string())?;
+    let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| AppError::General(e.to_string()))?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
         
-    fs::write(&abs_path, full_content).map_err(|e| e.to_string())
+    fs::write(&abs_path, full_content)?;
+    
+    if let Ok(db) = DbBridge::new(&vault_path) {
+        if let Ok(file_meta) = fs::metadata(&abs_path) {
+            let created = file_meta.created().unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+            let created_date: chrono::DateTime<chrono::Local> = created.into();
+            
+            let event_meta = EventMetadata {
+                id: path.clone(),
+                title: metadata.title,
+                event_date: metadata.event_date,
+                event_time: metadata.event_time,
+                location: metadata.location,
+                tags: metadata.tags,
+                content: content,
+                path: path.clone(),
+                created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+            let _ = db.upsert_event(&event_meta);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn delete_event(vault_path: String, path: String) -> Result<(), String> {
+pub fn delete_event(vault_path: String, path: String) -> AppResult<()> {
     let abs_path = Path::new(&vault_path).join(&path);
-    fs::remove_file(&abs_path).map_err(|e| e.to_string())
+    fs::remove_file(&abs_path)?;
+    if let Ok(db) = DbBridge::new(&vault_path) {
+        let _ = db.delete_event(&path);
+    }
+    Ok(())
 }

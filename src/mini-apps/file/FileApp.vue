@@ -14,7 +14,7 @@ interface FileItem {
     size_mb: number;
     source_folder: string;
     date_modified: string;
-    absolute_path: string;
+    path: string;
     tags: string[];
 }
 
@@ -72,7 +72,7 @@ const saveFileMetadata = async () => {
     try {
         const newPath = await invoke<string>('update_file_metadata', {
             vaultPath: props.vaultPath,
-            absolutePath: selectedFile.value.absolute_path,
+            path: selectedFile.value.path,
             newFilename: fullNewName,
             newTags: editTags.value
         });
@@ -80,7 +80,7 @@ const saveFileMetadata = async () => {
         await fetchFiles();
         
         // Re-select the updated file to keep properties panel active with correct data
-        const reselected = fileItems.value.find(f => f.absolute_path === newPath);
+        const reselected = fileItems.value.find(f => f.path === newPath);
         if (reselected) {
             selectedFile.value = reselected;
         }
@@ -153,7 +153,7 @@ const filteredFileItems = computed(() => {
         
         return item.name.toLowerCase().includes(query) 
             || item.extension.toLowerCase().includes(query)
-            || item.absolute_path.toLowerCase().includes(query)
+            || item.path.toLowerCase().includes(query)
             || item.tags.some(t => t.toLowerCase().includes(query));
     });
 });
@@ -326,7 +326,7 @@ onMounted(() => {
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-3 mt-0.5">
-                                    <p class="text-[12px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[50%]">{{ item.absolute_path }}</p>
+                                    <p class="text-[12px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[50%]">{{ item.path }}</p>
                                     <span class="text-[12px] text-gray-400 dark:text-gray-500">{{ item.size_mb.toFixed(2) }} MB</span>
                                 </div>
                             </div>
@@ -422,13 +422,13 @@ onMounted(() => {
                     </div>
                     
                     <div class="p-4 bg-gray-50 dark:bg-[#222] rounded-xl border border-gray-200 dark:border-[#333]">
-                        <span class="block text-[11px] uppercase font-bold text-gray-400 mb-2">Absolute Path</span>
-                        <code class="block font-mono text-[13px] text-[#52525b] dark:text-[#a1a1aa] break-all">{{ selectedFile.absolute_path }}</code>
+                        <span class="block text-[11px] uppercase font-bold text-gray-400 mb-2">Internal Path</span>
+                        <code class="block font-mono text-[13px] text-[#52525b] dark:text-[#a1a1aa] break-all">{{ selectedFile.path }}</code>
                     </div>
                 </div>
 
                 <div class="mt-8 pt-6 border-t border-gray-100 dark:border-[#2c2c2c]">
-                    <button @click="openLocalFile(selectedFile.absolute_path)" class="w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-xl font-bold transition-all shadow-md active:scale-[0.98]">
+                    <button @click="openLocalFile(selectedFile.path)" class="w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-xl font-bold transition-all shadow-md active:scale-[0.98]">
                         Open in System Viewer
                     </button>
                 </div>
@@ -452,7 +452,7 @@ onMounted(() => {
             </div>
             <div class="p-6">
                 <label class="block text-[13px] font-bold text-gray-700 dark:text-gray-300 mb-3 tracking-wide">Sync External Folders</label>
-                <textarea v-model="trackedSources" rows="5" class="w-full p-4 font-mono text-[13px] sm:text-sm border border-gray-200 dark:border-[#333] rounded-2xl bg-white dark:bg-[#111] text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 dark:focus:ring-purple-500/20 dark:focus:border-purple-400 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-700 leading-relaxed resize-none shadow-inner" placeholder="/Users/kid0604/Google Drive&#10;/Users/kid0604/Downloads"></textarea>
+                <textarea v-model="trackedSources" rows="5" class="w-full p-4 font-mono text-[13px] sm:text-sm border border-gray-200 dark:border-[#333] rounded-2xl bg-white dark:bg-[#111] text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 dark:focus:ring-purple-500/20 dark:focus:border-purple-400 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-700 leading-relaxed resize-none shadow-inner" placeholder="/Path/To/Google Drive&#10;/Path/To/Downloads"></textarea>
                 <p class="text-[12px] text-gray-500 mt-3 flex items-start gap-1.5 font-medium">
                     <span class="text-purple-500 mt-0.5">*</span>
                     These folders and their 1st level children will be scanned and cached.

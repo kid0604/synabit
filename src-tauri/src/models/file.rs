@@ -9,8 +9,7 @@ pub struct FileItem {
     pub source_folder: String,
     pub date_modified: String,
     /// Note: despite the name, this field contains a relative path.
-    /// Kept as `absolute_path` for frontend API compatibility.
-    pub absolute_path: String,
+    pub path: String,
     pub tags: Vec<String>,
 }
 

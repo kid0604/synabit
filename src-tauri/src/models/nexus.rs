@@ -12,6 +12,8 @@ pub struct NexusItem {
     pub path: String,
     #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

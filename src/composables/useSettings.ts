@@ -1,4 +1,5 @@
 import { ref, computed, watch } from 'vue';
+import { load } from '@tauri-apps/plugin-store';
 
 /**
  * Composable for app-wide settings and theme management.
@@ -10,45 +11,66 @@ const showSettingsModal = ref(false);
 const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about'>('general');
 
 // --- Theme ---
-const themeMode = ref<'light' | 'dark' | 'system'>(
-  localStorage.getItem('synabitThemeMode') as 'light' | 'dark' | 'system' || 'system'
-);
+const themeMode = ref<'light' | 'dark' | 'system'>('system');
 
 // --- Task Archive ---
-const taskArchiveDays = ref(Number(localStorage.getItem('synabitTaskArchiveDays') || '30'));
+const taskArchiveDays = ref(30);
 
 // --- Daily Notes ---
-const enableDailyNotes = ref(localStorage.getItem('synabitConfig_enableDailyNotes') !== 'false');
-const dailyNoteFormat = ref(localStorage.getItem('synabitConfig_dailyNoteFormat') || 'YYYY-MM-DD');
-const dailyNoteTag = ref(localStorage.getItem('synabitConfig_dailyNoteTag') ?? 'daily');
+const enableDailyNotes = ref(true);
+const dailyNoteFormat = ref('YYYY-MM-DD');
+const dailyNoteTag = ref('daily');
 
 const isValidDailyFormat = computed(() => {
   const val = dailyNoteFormat.value.toUpperCase();
   return val.includes('YY') && val.includes('MM') && (val.includes('DD') || val.includes('D'));
 });
 
+let isInitialized = false;
+
 export function useSettings() {
-  // --- Watchers (idempotent — safe to call multiple times) ---
-  watch(themeMode, (newMode) => {
-    localStorage.setItem('synabitThemeMode', newMode);
+  async function initSettings() {
+    if (isInitialized) return;
+    const store = await load('settings.json', { autoSave: false });
+    
+    // Load
+    themeMode.value = await store.get<'light' | 'dark' | 'system'>('themeMode') || 'system';
+    taskArchiveDays.value = Number(await store.get<number>('taskArchiveDays') || 30);
+    const hasEnableDaily = await store.has('enableDailyNotes');
+    enableDailyNotes.value = hasEnableDaily ? (await store.get<boolean>('enableDailyNotes') as boolean) : true;
+    dailyNoteFormat.value = await store.get<string>('dailyNoteFormat') || 'YYYY-MM-DD';
+    dailyNoteTag.value = await store.get<string>('dailyNoteTag') || 'daily';
+    
     applyTheme();
-  });
+    isInitialized = true;
 
-  watch(taskArchiveDays, (v) => {
-    localStorage.setItem('synabitTaskArchiveDays', String(v));
-  });
+    // Watchers (idempotent — safe to call multiple times)
+    watch(themeMode, async (newMode) => {
+      await store.set('themeMode', newMode);
+      await store.save();
+      applyTheme();
+    });
 
-  watch(enableDailyNotes, (val) =>
-    localStorage.setItem('synabitConfig_enableDailyNotes', String(val))
-  );
+    watch(taskArchiveDays, async (v) => {
+      await store.set('taskArchiveDays', v);
+      await store.save();
+    });
 
-  watch(dailyNoteFormat, (val) =>
-    localStorage.setItem('synabitConfig_dailyNoteFormat', val)
-  );
+    watch(enableDailyNotes, async (val) => {
+      await store.set('enableDailyNotes', val);
+      await store.save();
+    });
 
-  watch(dailyNoteTag, (val) =>
-    localStorage.setItem('synabitConfig_dailyNoteTag', val)
-  );
+    watch(dailyNoteFormat, async (val) => {
+      await store.set('dailyNoteFormat', val);
+      await store.save();
+    });
+
+    watch(dailyNoteTag, async (val) => {
+      await store.set('dailyNoteTag', val);
+      await store.save();
+    });
+  }
 
   // --- Actions ---
   function openSettings() {
@@ -69,6 +91,8 @@ export function useSettings() {
   }
 
   return {
+    // Initialization
+    initSettings,
     // Settings modal
     showSettingsModal,
     settingsTab,

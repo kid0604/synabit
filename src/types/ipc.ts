@@ -115,8 +115,7 @@ export interface FileItem {
   size_mb: number;
   source_folder: string;
   date_modified: string;
-  /** Note: despite the name, this contains a relative path */
-  absolute_path: string;
+  path: string;
   tags: string[];
 }
 

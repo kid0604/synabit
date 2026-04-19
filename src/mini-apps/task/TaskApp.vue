@@ -5,6 +5,9 @@ import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Info, Target, Inbox, Sun, Calendar, Coffee, Send, Flag, ListTodo, Eye, EyeOff, Filter } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
+import { useSettings } from '../../composables/useSettings';
+
+const { taskArchiveDays } = useSettings();
 
 const props = defineProps<{
   vaultPath: string;
@@ -160,6 +163,14 @@ const activeCategoryTasks = computed(() => {
         if (activeCategory.value === 'transferred') return t.is_transferred;
         if (t.is_transferred) return false; 
         
+        // Hide completed tasks from all views except 'today' (only if completed today) and 'all'
+        if (t.status === 'done') {
+             if (activeCategory.value === 'today') {
+                 return t.completed_at && t.completed_at.startsWith(today);
+             }
+             return false;
+        }
+        
         let isToday = false;
         if (t.due_date && t.due_date <= today) isToday = true;
         else if (t.start_date && t.start_date <= today) isToday = true;
@@ -180,11 +191,7 @@ const activeCategoryTasks = computed(() => {
     });
 });
 
-const viewMode = ref<'list' | 'board' | 'table' | 'gtd'>(localStorage.getItem('synabitTaskViewMode') as 'list' | 'board' | 'table' | 'gtd' || 'list');
-
-watch(viewMode, (newVal) => {
-    localStorage.setItem('synabitTaskViewMode', newVal);
-});
+const viewMode = ref<'list' | 'board' | 'table' | 'gtd'>('list');
 
 const BOARD_COLUMNS = [
   { id: 'todo', name: 'TO DO', class: 'border-t-2 border-gray-300 dark:border-gray-600' },
@@ -332,6 +339,8 @@ const editingTaskParams = ref({
     comment: '',
     tags: '',
     checklist: [] as ChecklistItem[],
+    status: 'todo',
+    completed_at: ''
 });
 const customFields = ref<{k: string, v: string}[]>([]);
 
@@ -348,7 +357,9 @@ const openEditModal = (task: TaskMetadata) => {
         due_date: task.due_date,
         comment: task.comment,
         tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
-        checklist: JSON.parse(JSON.stringify(task.checklist || []))
+        checklist: JSON.parse(JSON.stringify(task.checklist || [])),
+        status: task.status,
+        completed_at: task.completed_at || ''
     };
     customFields.value = Object.entries(task.custom_fields || {})
         .filter(([k, _]) => k.trim() !== 'order')
@@ -388,7 +399,9 @@ const openCreateModal = () => {
         due_date: '',
         comment: '',
         tags: '',
-        checklist: []
+        checklist: [],
+        status: 'todo',
+        completed_at: ''
     };
     customFields.value = [];
 };
@@ -411,6 +424,13 @@ const focusLastChecklistItem = () => {
 const handleModalSave = async (payload: any) => {
     editingTaskParams.value = payload;
     if (editingTask.value) {
+        if (editingTask.value.status !== payload.status) {
+            if (payload.status === 'done') {
+                editingTask.value.completed_at = new Date().toISOString().split('T')[0];
+            } else {
+                editingTask.value.completed_at = '';
+            }
+        }
         editingTask.value.status = payload.status;
     }
     await saveTask();
@@ -506,7 +526,7 @@ const loadTasks = async () => {
     if (!props.vaultPath) return;
     try {
         // Auto-archive tasks done > configured days (default 30)
-        const archiveDays = Number(localStorage.getItem('synabitTaskArchiveDays') || '30');
+        const archiveDays = taskArchiveDays.value;
         await invoke('archive_done_tasks', { vaultPath: props.vaultPath, days: archiveDays });
         tasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
     } catch (e) {
@@ -575,9 +595,6 @@ watch(() => props.vaultPath, () => {
   <div class="h-full flex bg-[#fdfdfc] dark:bg-[#242424] w-full overflow-hidden">
       <!-- SIDEBAR -->
       <div class="w-64 border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50/50 dark:bg-[#1a1a1a]/50 flex flex-col pt-10 shrink-0 hidden md:flex">
-          <div class="px-6 mb-6">
-              <h2 class="text-xs font-bold uppercase tracking-wider text-gray-500">Navigation</h2>
-          </div>
           <div class="flex flex-col px-3 space-y-1">
               <button @click="activeCategory = 'all'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'all' ? 'bg-white dark:bg-[#2c2c2c] text-black dark:text-white shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
                   <div class="flex items-center"><Inbox class="w-4 h-4 mr-3" />All Tasks</div>

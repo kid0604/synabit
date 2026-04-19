@@ -2,21 +2,48 @@
 @custom-variant dark (&:is(.dark, .dark *));
 @plugin "@tailwindcss/typography";
 
+/* ─────────────────────────────────────────────────
+   Design Tokens — Single source of truth for colors
+   Usage in Tailwind: bg-base, text-text, border-border, etc.
+   Usage in CSS: var(--color-base), var(--color-text), etc.
+   ───────────────────────────────────────────────── */
 @theme {
+  /* Light palette */
   --color-base: #fdfdfc;
   --color-surface: #ffffff;
+  --color-surface-alt: #fbfbfc;
+  --color-surface-hover: #f5f5f5;
   --color-border: #e6e6e6;
+  --color-border-subtle: #e0e0e0;
   --color-muted: #8b8b8b;
   --color-text: #1c1c1e;
-  --color-text-light: #52525b;
+  --color-text-secondary: #52525b;
+  --color-text-tertiary: #a1a1aa;
   --color-primary: #000000;
-  
+  --color-accent: #7c3aed;
+
+  /* Dark palette */
   --color-base-dark: #242424;
   --color-surface-dark: #1e1e1e;
+  --color-surface-alt-dark: #191919;
+  --color-surface-hover-dark: #2a2a2a;
   --color-border-dark: #2c2c2c;
+  --color-border-subtle-dark: #3a3a3a;
   --color-muted-dark: #71717a;
   --color-text-dark: #f4f4f5;
-  --color-text-light-dark: #a1a1aa;
+  --color-text-secondary-dark: #a1a1aa;
+  --color-text-tertiary-dark: #71717a;
+  --color-accent-dark: #a78bfa;
+
+  /* Sidebar */
+  --color-sidebar: #fbfbfc;
+  --color-sidebar-dark: #191919;
+
+  /* Semantic tokens */
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
 }
 
 /* Custom Scrollbar for sleek appearance */

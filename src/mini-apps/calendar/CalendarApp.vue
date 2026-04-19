@@ -54,6 +54,7 @@ const eventForm = ref({
     title: '',
     event_date: '',
     event_time: '',
+    isAllDay: false,
     location: '',
     description: '',
     tagsStr: ''
@@ -239,7 +240,7 @@ const openAddEventModal = (defaultDate?: Date) => {
     const targetDateStr = defaultDate ? formatDateString(defaultDate) : selectedDateFormattedStr.value;
     eventForm.value = {
         isEdit: false, id: '', path: '', title: '',
-        event_date: targetDateStr, event_time: '12:00',
+        event_date: targetDateStr, event_time: '12:00', isAllDay: false,
         location: '', description: '', tagsStr: ''
     };
     showEventForm.value = true;
@@ -248,7 +249,7 @@ const openAddEventModal = (defaultDate?: Date) => {
 const openEditEventModal = (ev: EventMetadata) => {
     eventForm.value = {
         isEdit: true, id: ev.id, path: ev.path, title: ev.title,
-        event_date: ev.event_date, event_time: ev.event_time, location: ev.location,
+        event_date: ev.event_date, event_time: ev.event_time || '12:00', isAllDay: !ev.event_time, location: ev.location,
         description: ev.content, tagsStr: ev.tags.join(', ')
     };
     showEventForm.value = true;
@@ -262,9 +263,10 @@ const submitEvent = async () => {
     if (eventForm.value.tagsStr.trim()) {
         finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
     }
+    const finalEventTime = eventForm.value.isAllDay ? '' : eventForm.value.event_time;
     const meta = {
         title: eventForm.value.title, event_date: eventForm.value.event_date,
-        event_time: eventForm.value.event_time, location: eventForm.value.location, tags: finalTags
+        event_time: finalEventTime, location: eventForm.value.location, tags: finalTags
     };
     try {
         if (eventForm.value.isEdit) {
@@ -378,6 +380,9 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm">
                             <CheckSquare class="w-3 h-3 flex-shrink-0" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
                         </div>
+                        <div v-for="ev in getEventsForDate(formatDateString(currentDate)).filter(e => !e.event_time)" :key="'ad-ev-'+ev.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-sm" @click.stop="openEditEventModal(ev)">
+                            <CalendarIcon class="w-3 h-3 flex-shrink-0" /> {{ ev.title }}
+                        </div>
                     </div>
                 </div>
                 <!-- Hour grid -->
@@ -421,6 +426,9 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <div class="p-1 min-h-[40px] flex flex-col gap-1 bg-gray-50/20 dark:bg-[#1d1d1d]" @dblclick="openAddEventModal(dayObj.date)">
                             <div v-for="tk in getTasksForDate(dayObj.dateStr)" :key="'wk-tsk-'+tk.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
                                 <CheckSquare class="w-2.5 h-2.5 flex-shrink-0" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                            </div>
+                            <div v-for="ev in getEventsForDate(dayObj.dateStr).filter(e => !e.event_time)" :key="'wk-ad-ev-'+ev.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-[0_1px_2px_rgba(0,0,0,0.05)]" @click.stop="openEditEventModal(ev)">
+                                <CalendarIcon class="w-2.5 h-2.5 flex-shrink-0" /> {{ ev.title }}
                             </div>
                         </div>
                     </div>
@@ -566,8 +574,14 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <input v-model="eventForm.event_date" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Time</label>
-                        <input v-model="eventForm.event_time" type="time" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider">Time</label>
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" v-model="eventForm.isAllDay" class="w-3 h-3 text-purple-600 rounded focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
+                                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">All Day</span>
+                            </label>
+                        </div>
+                        <input v-model="eventForm.event_time" type="time" :disabled="eventForm.isAllDay" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white disabled:opacity-50" style="color-scheme: dark;">
                     </div>
                 </div>
                 <div>
