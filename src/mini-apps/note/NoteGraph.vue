@@ -32,8 +32,11 @@ const renderGraph = () => {
     const nodes: any[] = [];
     const links: any[] = [];
     
+    const cx = width / 2;
+    const cy = height / 2;
+
     // Central node
-    const centerNode = { id: props.currentNoteId, title: props.currentNoteTitle, group: 'center', radius: 10 };
+    const centerNode = { id: props.currentNoteId, title: props.currentNoteTitle, group: 'center', radius: 10, x: cx, y: cy };
     nodes.push(centerNode);
 
     // Track added nodes to avoid duplicates if a note is both outgoing and incoming
@@ -43,7 +46,7 @@ const renderGraph = () => {
     // Helper to add nodes
     const addNoteNode = (id: string, title: string, group: string) => {
         if (!addedNodes.has(id)) {
-            nodes.push({ id, title, group, radius: 8 });
+            nodes.push({ id, title, group, radius: 8, x: cx, y: cy });
             addedNodes.add(id);
         }
     };
@@ -66,7 +69,7 @@ const renderGraph = () => {
     props.tags.forEach(t => {
         const tagId = `tag-${t}`;
         if (!addedNodes.has(tagId)) {
-            nodes.push({ id: tagId, title: `#${t}`, group: 'tag', radius: 6 });
+            nodes.push({ id: tagId, title: `#${t}`, group: 'tag', radius: 6, x: cx, y: cy });
             addedNodes.add(tagId);
         }
         links.push({ source: props.currentNoteId, target: tagId, type: 'tag' });
@@ -92,7 +95,7 @@ const renderGraph = () => {
                 nodeMeta.tags.forEach(t => {
                     const tagId = `tag-${t}`;
                     if (!addedNodes.has(tagId)) {
-                        nodes.push({ id: tagId, title: `#${t}`, group: 'tag', radius: 6 });
+                        nodes.push({ id: tagId, title: `#${t}`, group: 'tag', radius: 6, x: cx, y: cy });
                         addedNodes.add(tagId);
                     }
                     links.push({ source: id, target: tagId, type: 'related-tag' });

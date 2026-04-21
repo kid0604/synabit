@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
-import { VueRenderer } from '@tiptap/vue-3';
+import { VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import ImageResize from 'tiptap-extension-resize-image';
@@ -27,6 +27,7 @@ import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import SlashCommandMenu from './SlashCommandMenu.vue';
 import type { SlashCommandItem } from './SlashCommandMenu.vue';
 import NoteMentionMenu from './NoteMentionMenu.vue';
+import CodeBlockComponent from './CodeBlockComponent.vue';
 import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
@@ -514,7 +515,11 @@ const editor = useEditor({
     }),
     Underline,
     Highlight.configure({ multicolor: false }),
-    CodeBlockLowlight.configure({
+    CodeBlockLowlight.extend({
+      addNodeView() {
+        return VueNodeViewRenderer(CodeBlockComponent);
+      },
+    }).configure({
       lowlight,
     }),
     EquationExtension,
@@ -689,7 +694,7 @@ const editor = useEditor({
   },
   editorProps: {
     attributes: {
-      class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
+      class: 'prose focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
     },
     handleClick: (_view, _pos, event) => {
       if (event.target instanceof HTMLElement) {
@@ -777,8 +782,15 @@ const loadContent = (markdown: string) => {
   }
 };
 
+const focus = () => {
+  if (editor.value) {
+    editor.value.commands.focus('start');
+  }
+};
+
 defineExpose({
-  loadContent
+  loadContent,
+  focus
 });
 
 // Close context menu on click outside

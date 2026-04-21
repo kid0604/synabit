@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -33,6 +33,7 @@ const currentNoteId = ref<string | null>(null);
 // ─── Tab / Content Management ──────────────────────────────
 const activeTabs = ref<string[]>([]);
 const tabContents = ref<Record<string, string>>({});
+const focusedTitles = ref<Record<string, string>>({});
 const tabAccessTime = new Map<string, number>();
 
 const currentContent = computed({
@@ -42,7 +43,10 @@ const currentContent = computed({
    }
 });
 
-let saveTimeout: ReturnType<typeof setTimeout>;
+const saveTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const renamedTabs = new Map<string, string>(); // Maps old path to new path to catch delayed editor updates
+let isCreatingNote = false;
+let suppressWatcherUntil = 0;
 
 const loadNoteFile = async (id: string) => {
     if (!id) return;
@@ -157,8 +161,9 @@ const deleteNote = async (id: string) => {
     const isConfirmed = await confirm('Are you sure you want to delete this note irreversibly?', { title: 'Delete Note', kind: 'warning' });
     if (!isConfirmed) return;
     try {
-        if (currentNoteId.value === id) {
-           clearTimeout(saveTimeout);
+        if (saveTimeouts.has(id)) {
+           clearTimeout(saveTimeouts.get(id)!);
+           saveTimeouts.delete(id);
         }
         await invoke('delete_note', { vaultPath: props.vaultPath, path: id });
         delete tabContents.value[id];
@@ -189,11 +194,41 @@ const confirmRename = async () => {
     const note = notes.value.find(n => n.id === noteId);
     if (!note || !newName || newName === note.title) return;
     try {
-        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: note.id, newName });
+        const oldId = note.id;
+        // Cancel any pending auto-save for the old path to prevent it from recreating the file after rename
+        if (saveTimeouts.has(oldId)) {
+            clearTimeout(saveTimeouts.get(oldId)!);
+            saveTimeouts.delete(oldId);
+        }
+        const savedContent = tabContents.value[oldId];
+        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: oldId, newName });
+        
+        // Secondary cancellation: if the user typed during the await rename_note, a new timeout for the old path might have been created.
+        let needsSave = false;
+        if (saveTimeouts.has(oldId)) {
+            clearTimeout(saveTimeouts.get(oldId)!);
+            saveTimeouts.delete(oldId);
+            needsSave = true;
+        }
+
         note.title = newName;
-        if (currentNoteId.value === note.id) {
+        renamedTabs.set(oldId, newPath);
+        
+        if (savedContent !== undefined) {
+            tabContents.value[newPath] = tabContents.value[oldId] || savedContent;
+            delete tabContents.value[oldId];
+        }
+        if (activeTabs.value.includes(oldId)) {
+            activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
+        }
+        if (tabAccessTime.has(oldId)) {
+            tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
+            tabAccessTime.delete(oldId);
+        }
+
+        if (currentNoteId.value === oldId) {
             currentNoteId.value = newPath;
-            await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+            await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${tabContents.value[newPath] || savedContent || ''}` });
         } else {
             const rawContent = await invoke<string>('read_note', { vaultPath: props.vaultPath, path: newPath });
             let body = rawContent;
@@ -203,20 +238,79 @@ const confirmRename = async () => {
             }
             await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${body}` });
         }
+        
+        if (needsSave) {
+            saveNoteForTab(newPath);
+        }
+        delete focusedTitles.value[oldId];
+        delete focusedTitles.value[newPath];
         scanVault();
     } catch(err) { alert(err); }
 };
 
 const renameTopTitle = async (e: Event) => {
+    const isEnter = e.type === 'keydown' && (e as KeyboardEvent).key === 'Enter';
     const newTitle = (e.target as HTMLInputElement).value.trim();
     const note = notes.value.find(n => n.id === currentNoteId.value);
-    if (!note || note.title === newTitle || !newTitle) return;
+    
+    const focusEditor = () => {
+        if (editorRefs.value && editorRefs.value.length > 0) {
+            editorRefs.value.forEach(ref => {
+                if (ref && typeof ref.focus === 'function') ref.focus();
+            });
+        }
+    };
+
+    if (!note || note.title === newTitle || !newTitle) {
+        if (isEnter) focusEditor();
+        delete focusedTitles.value[note.id];
+        return;
+    }
+    
     try {
-        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: note.id, newName: newTitle });
+        const oldId = note.id;
+        // Cancel any pending auto-save for the old path to prevent it from recreating the file after rename
+        if (saveTimeouts.has(oldId)) {
+            clearTimeout(saveTimeouts.get(oldId)!);
+            saveTimeouts.delete(oldId);
+        }
+        const savedContent = tabContents.value[oldId] || '';
+        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: oldId, newName: newTitle });
+        
+        // Secondary cancellation: if the user typed during the await rename_note, a new timeout for the old path might have been created.
+        let needsSave = false;
+        if (saveTimeouts.has(oldId)) {
+            clearTimeout(saveTimeouts.get(oldId)!);
+            saveTimeouts.delete(oldId);
+            needsSave = true;
+        }
+
         note.title = newTitle;
+        renamedTabs.set(oldId, newPath);
+        
+        if (tabContents.value[oldId] !== undefined) {
+            tabContents.value[newPath] = tabContents.value[oldId];
+            delete tabContents.value[oldId];
+        }
+        if (activeTabs.value.includes(oldId)) {
+            activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
+        }
+        if (tabAccessTime.has(oldId)) {
+            tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
+            tabAccessTime.delete(oldId);
+        }
+
         currentNoteId.value = newPath;
-        await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+        await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${tabContents.value[newPath] || savedContent || ''}` });
         scanVault();
+        
+        if (needsSave) {
+            saveNoteForTab(newPath);
+        }
+        
+        if (isEnter) {
+            setTimeout(focusEditor, 50);
+        }
     } catch(err) { alert(err); }
 };
 
@@ -291,6 +385,7 @@ const toggleTagSelection = (tagName: string) => {
 // ─── API Calls ─────────────────────────────────────────────
 async function scanVault() {
    if (!props.vaultPath) return;
+   console.trace('[NoteApp] scanVault called');
    try {
        const scannedNotes = await invoke<NoteMetadata[]>('scan_vault_path', { vaultPath: props.vaultPath });
        notes.value = scannedNotes;
@@ -304,12 +399,27 @@ async function scanVault() {
 }
 
 const createNewNote = async () => {
-    if (!props.vaultPath) return;
+    console.trace('[NoteApp] createNewNote called, isCreatingNote=', isCreatingNote);
+    if (!props.vaultPath || isCreatingNote) return;
+    isCreatingNote = true;
+    suppressWatcherUntil = Date.now() + 3000;
     try {
+        console.log('[NoteApp] Invoking create_new_note...');
         const newPath = await invoke<string>('create_new_note', { vaultPath: props.vaultPath });
+        console.log('[NoteApp] Created:', newPath);
         await scanVault();
-        if (newPath) { currentNoteId.value = newPath; viewMode.value = 'editor'; }
+        if (newPath) {
+            currentNoteId.value = newPath;
+            viewMode.value = 'editor';
+            await nextTick();
+            const titleInput = document.querySelector('.note-title-input') as HTMLInputElement;
+            if (titleInput) {
+                titleInput.focus();
+                titleInput.select();
+            }
+        }
     } catch(e) { console.error("Failed to create note:", e); }
+    finally { isCreatingNote = false; }
 }
 
 async function openDailyNote() {
@@ -324,19 +434,27 @@ async function openDailyNote() {
 }
 
 // ─── Save & Editor ─────────────────────────────────────────
-const saveNoteFile = () => {
-    if (!currentNoteId.value) return;
-    const note = notes.value.find(n => n.id === currentNoteId.value);
-    if (!note) return;
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
-        let fullRaw = `${buildFrontmatter(note)}\n\n${currentContent.value}`;
+const saveNoteForTab = (rawTabId: string) => {
+    let tabId = rawTabId;
+    while (renamedTabs.has(tabId)) {
+        tabId = renamedTabs.get(tabId)!;
+    }
+    const note = notes.value.find(n => n.id === tabId);
+    if (!note) { console.warn('[NoteApp] saveNoteForTab: note not found for', tabId); return; }
+    const existing = saveTimeouts.get(tabId);
+    if (existing) clearTimeout(existing);
+    saveTimeouts.set(tabId, setTimeout(async () => {
+        saveTimeouts.delete(tabId);
+        suppressWatcherUntil = Date.now() + 3000;
+        const content = tabContents.value[tabId] || '';
+        console.log('[NoteApp] saveNoteForTab executing for:', tabId, 'noteId:', note.id, 'content length:', content.length);
+        let fullRaw = `${buildFrontmatter(note)}\n\n${content}`;
         try {
             await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: fullRaw });
-            note.summary = currentContent.value.substring(0, 150).trim();
-            emit('note-updated', { id: note.id, content: currentContent.value });
+            note.summary = content.substring(0, 150).trim();
+            emit('note-updated', { id: note.id, content });
         } catch(e) { console.error("Failed to save note:", e); }
-    }, 600);
+    }, 600));
 }
 
 const currentBacklinks = ref<NoteMetadata[]>([]);
@@ -358,13 +476,17 @@ const currentOutgoingLinks = computed(() => {
 
 const editorRefs = ref<any[]>([]);
 
-const onEditorUpdate = (val: string) => {
-    currentContent.value = val;
-    if (currentNoteId.value) {
-        tabContents.value[currentNoteId.value] = val;
-        emit('note-updated', { id: currentNoteId.value, content: val });
+const onEditorUpdate = (val: string, rawTabId: string) => {
+    let tabId = rawTabId;
+    while (renamedTabs.has(tabId)) {
+        tabId = renamedTabs.get(tabId)!;
     }
-    saveNoteFile();
+    console.log('[NoteApp] onEditorUpdate for tabId:', tabId, 'original:', rawTabId, 'val length:', val.length);
+    tabContents.value[tabId] = val;
+    if (currentNoteId.value === tabId) {
+        emit('note-updated', { id: tabId, content: val });
+    }
+    saveNoteForTab(tabId);
 };
 
 watch(currentNoteId, async (newId) => {
@@ -481,7 +603,14 @@ onMounted(async () => {
   });
 
   listen('vault-changed', () => { scanVault(); });
-  listen('vault-file-modified', () => { scanVault(); });
+  listen('vault-file-modified', () => {
+      if (Date.now() < suppressWatcherUntil) return;
+      scanVault();
+  });
+  listen('vault-file-created-deleted', () => {
+      if (Date.now() < suppressWatcherUntil) return;
+      scanVault();
+  });
 });
 </script>
 
@@ -653,10 +782,16 @@ onMounted(async () => {
                           <input v-model="newTagInput" @keydown="addTag" placeholder="Add tag..." class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]" />
                        </div>
                    </div>
-                  <input type="text" class="w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700" :value="notes.find(n => n.id === tabId)?.title" @blur="renameTopTitle" @keydown.enter="renameTopTitle" placeholder="Note Title">
+                  <input type="text" class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700" 
+                    :value="focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title" 
+                    @focus="focusedTitles[tabId] = $event.target.value"
+                    @input="focusedTitles[tabId] = $event.target.value"
+                    @blur="renameTopTitle" 
+                    @keydown.enter.prevent="renameTopTitle" 
+                    placeholder="Note Title">
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark">
-                   <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" @update:model-value="onEditorUpdate" @open-internal-note="handleOpenInternalNote" />
+                   <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" @update:model-value="(val: string) => onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
                 </div>
                 </div>
               </div>
