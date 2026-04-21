@@ -1,472 +1,563 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { FolderOpen, Settings, FolderSync, X, File, Search, ChevronRight, ChevronDown, FileImage, FileText, Video, Music, FileArchive, Code, Hash } from 'lucide-vue-next';
+import { open } from '@tauri-apps/plugin-dialog';
+import { 
+    FolderOpen, FolderSync, X, File, Search, FileText,
+    Video, Music, FileArchive, Code, Plus, Trash2,
+    HardDrive, Image as ImageIcon, FileType, LayoutGrid, List
+} from 'lucide-vue-next';
 
 const props = defineProps<{
     vaultPath: string;
 }>();
 
-interface FileItem {
+interface FileMetadata {
     id: string;
-    name: string;
-    extension: string;
-    size_mb: number;
-    source_folder: string;
-    date_modified: string;
     path: string;
+    filename: string;
+    extension: string;
+    size: number;
+    created_at: string;
+    modified_at: string;
     tags: string[];
+    source_type: string;
 }
 
-const fileItems = ref<FileItem[]>([]);
-const isSettingsOpen = ref(false);
-const trackedSources = ref<string>('');
-const isReindexing = ref(false);
-const isLoading = ref(true);
+interface FileSource {
+    id: string;
+    path: string;
+    name: string;
+}
 
-const selectedFile = ref<FileItem | null>(null);
+const files = ref<FileMetadata[]>([]);
+const sources = ref<FileSource[]>([]);
+const isLoading = ref(true);
+const isScanning = ref(false);
+
+const selectedFile = ref<FileMetadata | null>(null);
+const activeSourceId = ref<string | null>(null);
+const activeType = ref<string | null>(null);
+
+const searchQuery = ref('');
+const viewMode = ref<'grid' | 'list'>('grid');
 
 const editFileName = ref('');
-const editFileExt = ref('');
-const editTags = ref<string[]>([]);
 const newTagInput = ref('');
-const isSavingMeta = ref(false);
+const isAddingTag = ref(false);
+const isSavingTags = ref(false);
+
+import { watch } from 'vue';
 
 watch(selectedFile, (newVal) => {
     if (newVal) {
-        const lastDot = newVal.name.lastIndexOf('.');
-        if (lastDot > 0) { // Has extension and not just a hidden file like .gitignore
-            editFileName.value = newVal.name.substring(0, lastDot);
-            editFileExt.value = newVal.name.substring(lastDot);
+        // Strip extension for edit field
+        if (newVal.extension && newVal.filename.endsWith(`.${newVal.extension}`)) {
+            editFileName.value = newVal.filename.substring(0, newVal.filename.lastIndexOf('.'));
         } else {
-            editFileName.value = newVal.name;
-            editFileExt.value = '';
+            editFileName.value = newVal.filename;
         }
-        editTags.value = [...newVal.tags];
-    } else {
-        editFileName.value = '';
-        editFileExt.value = '';
-        editTags.value = [];
+        isAddingTag.value = false;
+        newTagInput.value = '';
     }
 });
 
-const saveFileMetadata = async () => {
-    if (!selectedFile.value || isSavingMeta.value) return;
-    
-    // Prevent empty name
-    if (!editFileName.value.trim()) {
-        const lastDot = selectedFile.value.name.lastIndexOf('.');
-        editFileName.value = (lastDot > 0) ? selectedFile.value.name.substring(0, lastDot) : selectedFile.value.name;
+const isAssetsFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return selectedFile.value.path.includes('/assets/');
+});
+
+const saveFileName = async () => {
+    if (!selectedFile.value || isAssetsFile.value || isSavingTags.value) return;
+    let newName = editFileName.value.trim();
+    if (!newName) {
+        // Revert
+        if (selectedFile.value.extension && selectedFile.value.filename.endsWith(`.${selectedFile.value.extension}`)) {
+            editFileName.value = selectedFile.value.filename.substring(0, selectedFile.value.filename.lastIndexOf('.'));
+        } else {
+            editFileName.value = selectedFile.value.filename;
+        }
         return;
     }
     
-    const fullNewName = editFileName.value.trim() + editFileExt.value;
+    // Append extension back
+    if (selectedFile.value.extension && !newName.endsWith(`.${selectedFile.value.extension}`)) {
+        newName = `${newName}.${selectedFile.value.extension}`;
+    }
     
-    // Check if nothing changed
-    const tagsUnchanged = JSON.stringify(editTags.value) === JSON.stringify(selectedFile.value.tags);
-    if (fullNewName === selectedFile.value.name && tagsUnchanged) {
+    if (newName === selectedFile.value.filename) {
         return;
     }
     
-    isSavingMeta.value = true;
+    isSavingTags.value = true;
     try {
         const newPath = await invoke<string>('update_file_metadata', {
             vaultPath: props.vaultPath,
             path: selectedFile.value.path,
-            newFilename: fullNewName,
-            newTags: editTags.value
+            newFilename: newName,
+            newTags: selectedFile.value.tags
         });
         
-        await fetchFiles();
+        selectedFile.value.filename = newName;
+        selectedFile.value.path = newPath;
         
-        // Re-select the updated file to keep properties panel active with correct data
-        const reselected = fileItems.value.find(f => f.path === newPath);
-        if (reselected) {
-            selectedFile.value = reselected;
+        const idx = files.value.findIndex(f => f.id === selectedFile.value!.id);
+        if (idx !== -1) {
+            files.value[idx].filename = newName;
+            files.value[idx].path = newPath;
         }
     } catch(e) {
-        console.error("Failed to update file metadata", e);
-        // Revert on error
-        const lastDot = selectedFile.value.name.lastIndexOf('.');
-        if (lastDot > 0) {
-            editFileName.value = selectedFile.value.name.substring(0, lastDot);
-            editFileExt.value = selectedFile.value.name.substring(lastDot);
-        } else {
-            editFileName.value = selectedFile.value.name;
-            editFileExt.value = '';
-        }
+        console.error("Failed to rename file", e);
+        editFileName.value = selectedFile.value.filename;
     } finally {
-        isSavingMeta.value = false;
+        isSavingTags.value = false;
     }
 };
 
-const addTag = () => {
-    const val = newTagInput.value.trim().toLowerCase();
-    if (val && !editTags.value.includes(val)) {
-        editTags.value.push(val);
-        saveFileMetadata();
+const addTag = async () => {
+    if (!selectedFile.value || !newTagInput.value.trim() || isSavingTags.value) return;
+    const tag = newTagInput.value.trim().toLowerCase();
+    
+    if (selectedFile.value.tags.includes(tag)) {
+        newTagInput.value = '';
+        isAddingTag.value = false;
+        return;
     }
-    newTagInput.value = '';
+    
+    isSavingTags.value = true;
+    const updatedTags = [...selectedFile.value.tags, tag];
+    
+    try {
+        await invoke('update_file_metadata', {
+            vaultPath: props.vaultPath,
+            path: selectedFile.value.path,
+            newFilename: selectedFile.value.filename,
+            newTags: updatedTags
+        });
+        selectedFile.value.tags = updatedTags;
+        newTagInput.value = '';
+        isAddingTag.value = false;
+        
+        // Update in main list
+        const idx = files.value.findIndex(f => f.id === selectedFile.value!.id);
+        if (idx !== -1) files.value[idx].tags = updatedTags;
+    } catch(e) {
+        console.error("Failed to add tag", e);
+    } finally {
+        isSavingTags.value = false;
+    }
 };
 
-const removeTag = (tag: string) => {
-    editTags.value = editTags.value.filter(t => t !== tag);
-    saveFileMetadata();
+const removeTag = async (tag: string) => {
+    if (!selectedFile.value || isSavingTags.value) return;
+    isSavingTags.value = true;
+    
+    const updatedTags = selectedFile.value.tags.filter(t => t !== tag);
+    try {
+        await invoke('update_file_metadata', {
+            vaultPath: props.vaultPath,
+            path: selectedFile.value.path,
+            newFilename: selectedFile.value.filename,
+            newTags: updatedTags
+        });
+        selectedFile.value.tags = updatedTags;
+        
+        const idx = files.value.findIndex(f => f.id === selectedFile.value!.id);
+        if (idx !== -1) files.value[idx].tags = updatedTags;
+    } catch(e) {
+        console.error("Failed to remove tag", e);
+    } finally {
+        isSavingTags.value = false;
+    }
 };
 
-const collapsedGroups = ref<Set<string>>(new Set());
-
-const toggleGroup = (groupName: string) => {
-    if (collapsedGroups.value.has(groupName)) {
-        collapsedGroups.value.delete(groupName);
-    } else {
-        collapsedGroups.value.add(groupName);
+const fetchSources = async () => {
+    try {
+        sources.value = await invoke<FileSource[]>('get_file_sources', { vaultPath: props.vaultPath });
+    } catch (e) {
+        console.error("Failed to load sources", e);
     }
 };
 
 const fetchFiles = async () => {
     isLoading.value = true;
     try {
-        const allItems = await invoke<FileItem[]>('get_file_items', { vaultPath: props.vaultPath });
-        fileItems.value = allItems;
-    } catch(e) {
+        files.value = await invoke<FileMetadata[]>('query_files', { vaultPath: props.vaultPath });
+    } catch (e) {
         console.error("Failed to load files", e);
     } finally {
         isLoading.value = false;
     }
 };
 
-const searchQuery = ref('');
-
-const filteredFileItems = computed(() => {
-    if (!searchQuery.value.trim()) return fileItems.value;
-    
-    // Check if user specifically searching for tag (starts with #)
-    let query = searchQuery.value.toLowerCase().trim();
-    const isTagSearch = query.startsWith('#');
-    if (isTagSearch) query = query.slice(1);
-    
-    return fileItems.value.filter(item => {
-        if (isTagSearch) {
-             return item.tags.some(t => t.toLowerCase().includes(query));
-        }
+const addNewSource = async () => {
+    try {
+        const selectedPath = await open({
+            directory: true,
+            multiple: false,
+            title: "Select a folder to sync"
+        });
         
-        return item.name.toLowerCase().includes(query) 
-            || item.extension.toLowerCase().includes(query)
-            || item.path.toLowerCase().includes(query)
-            || item.tags.some(t => t.toLowerCase().includes(query));
-    });
-});
-
-const groupedItems = computed(() => {
-    const map = new Map<string, FileItem[]>();
-    for (const item of filteredFileItems.value) {
-        const groupName = item.source_folder || 'Unknown Source';
-        if (!map.has(groupName)) map.set(groupName, []);
-        map.get(groupName)!.push(item);
-    }
-    return map;
-});
-
-const getFileIcon = (ext: string) => {
-    switch (ext) {
-        case 'jpg':
-        case 'jpeg':
-        case 'png':
-        case 'gif':
-        case 'svg':
-        case 'webp': return FileImage;
-        case 'pdf':
-        case 'txt':
-        case 'md':
-        case 'doc':
-        case 'docx': return FileText;
-        case 'mp4':
-        case 'mov':
-        case 'avi': return Video;
-        case 'mp3':
-        case 'wav': return Music;
-        case 'zip':
-        case 'rar':
-        case 'gz': return FileArchive;
-        case 'js':
-        case 'ts':
-        case 'vue':
-        case 'json':
-        case 'html':
-        case 'css':
-        case 'rs': return Code;
-        default: return File;
+        if (selectedPath && typeof selectedPath === 'string') {
+            const folderName = selectedPath.split('/').pop() || selectedPath.split('\\').pop() || "Unknown Folder";
+            await invoke('add_file_source', { 
+                vaultPath: props.vaultPath, 
+                path: selectedPath, 
+                name: folderName 
+            });
+            await fetchSources();
+            // Start scan visually
+            isScanning.value = true;
+            // Await actual scan so UI refreshes after it's done
+            await invoke('scan_directory', { vaultPath: props.vaultPath, sourcePath: selectedPath });
+            await fetchFiles();
+            isScanning.value = false;
+        }
+    } catch (e) {
+        console.error("Failed to add source", e);
+        isScanning.value = false;
     }
 };
 
-const openSettings = async () => {
-    isSettingsOpen.value = true;
+const removeSource = async (id: string) => {
     try {
-        const settings = await invoke<any>('get_settings', { vaultPath: props.vaultPath });
-        trackedSources.value = settings.tracked_sources.join('\n');
-    } catch(e) {
-        console.error("Failed to load settings", e);
-    }
-};
-
-const saveAndReindex = async () => {
-    isReindexing.value = true;
-    try {
-        const sources = trackedSources.value.split('\n').map(s => s.trim()).filter(s => s);
-        await invoke('save_settings', { vaultPath: props.vaultPath, settings: { tracked_sources: sources } });
-        await invoke('reindex_sources', { vaultPath: props.vaultPath });
-        isSettingsOpen.value = false;
-        await fetchFiles();
-    } catch(e) {
-        console.error(e);
-    } finally {
-        isReindexing.value = false;
+        await invoke('remove_file_source', { vaultPath: props.vaultPath, sourceId: id });
+        if (activeSourceId.value === id) activeSourceId.value = null;
+        await fetchSources();
+        await fetchFiles(); // Refresh to remove files from that source (if backend supports it later)
+    } catch (e) {
+        console.error("Failed to remove source", e);
     }
 };
 
 const openLocalFile = async (path: string) => {
     try {
-        await invoke('open_local_file', { path });
+        await invoke('open_local_file', { vaultPath: props.vaultPath, path });
     } catch(e) {
         console.error("Failed to open file", e);
     }
 };
 
-onMounted(() => {
-    fetchFiles();
+const getFileIcon = (ext: string) => {
+    const e = ext.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(e)) return ImageIcon;
+    if (['pdf', 'txt', 'md', 'doc', 'docx'].includes(e)) return FileText;
+    if (['mp4', 'mov', 'avi'].includes(e)) return Video;
+    if (['mp3', 'wav'].includes(e)) return Music;
+    if (['zip', 'rar', 'gz'].includes(e)) return FileArchive;
+    if (['js', 'ts', 'vue', 'json', 'html', 'css', 'rs', 'py'].includes(e)) return Code;
+    return File;
+};
+
+const getFileTypeGroup = (ext: string) => {
+    const e = ext.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(e)) return 'Images';
+    if (['pdf', 'txt', 'md', 'doc', 'docx'].includes(e)) return 'Documents';
+    if (['mp4', 'mov', 'avi'].includes(e)) return 'Videos';
+    if (['mp3', 'wav'].includes(e)) return 'Audio';
+    if (['zip', 'rar', 'gz'].includes(e)) return 'Archives';
+    if (['js', 'ts', 'vue', 'json', 'html', 'css', 'rs', 'py'].includes(e)) return 'Code';
+    return 'Other';
+};
+
+const filteredFiles = computed(() => {
+    let result = files.value;
+    
+    if (activeSourceId.value) {
+        const source = sources.value.find(s => s.id === activeSourceId.value);
+        if (source) {
+            result = result.filter(f => f.path.startsWith(source.path));
+        }
+    }
+    
+    if (activeType.value) {
+        result = result.filter(f => getFileTypeGroup(f.extension) === activeType.value);
+    }
+    
+    if (searchQuery.value) {
+        let q = searchQuery.value.toLowerCase().trim();
+        const isTagSearch = q.startsWith('#');
+        
+        if (isTagSearch) {
+            q = q.slice(1);
+            result = result.filter(f => f.tags.some(t => t.toLowerCase().includes(q)));
+        } else {
+            result = result.filter(f => 
+                f.filename.toLowerCase().includes(q) || 
+                f.tags.some(t => t.toLowerCase().includes(q)) ||
+                f.extension.toLowerCase().includes(q)
+            );
+        }
+    }
+    
+    return result;
+});
+
+const formatSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+onMounted(async () => {
+    await fetchSources();
+    await fetchFiles();
 });
 
 </script>
 
 <template>
-  <div class="h-full w-full flex flex-col bg-[#fdfdfc] dark:bg-[#242424] font-sans relative overflow-hidden">
+  <div class="h-full w-full flex bg-[#f5f5f7] dark:bg-[#0a0a0a] font-sans text-gray-900 dark:text-gray-100 overflow-hidden">
     
-    <!-- Header -->
-    <div class="w-full flex-shrink-0 border-b border-gray-200 dark:border-[#2c2c2c] bg-white/80 dark:bg-[#1e1e1e]/80 backdrop-blur-md sticky top-0 z-10 px-8 py-5 flex items-center justify-between">
-        <div class="flex items-center gap-4">
-            <div class="w-10 h-10 bg-purple-100 dark:bg-purple-500/20 rounded-xl flex items-center justify-center transform -rotate-3 border border-purple-200 dark:border-purple-500/30">
-                <FolderOpen class="w-5 h-5 text-purple-600 dark:text-purple-400 fill-purple-600/20" />
+    <!-- Sidebar -->
+    <div class="w-64 flex-shrink-0 bg-white/40 dark:bg-white/[0.02] backdrop-blur-xl border-r border-gray-200/50 dark:border-white/5 flex flex-col z-20">
+        <div class="p-6 flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                <FolderSync class="w-4 h-4 text-white" />
             </div>
-            <div>
-                <h1 class="text-xl font-extrabold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight">File Manager</h1>
-                <p class="text-[12px] font-medium text-gray-400 dark:text-gray-500 flex items-center gap-2">
-                    {{ fileItems.length }} Indexed Files
-                </p>
-            </div>
+            <h1 class="font-bold text-lg tracking-tight">OmniDrive</h1>
         </div>
-        <div>
-            <button @click="openSettings" class="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold border border-gray-200 dark:border-transparent transition-all shadow-sm">
-                <Settings class="w-4 h-4" /> Config Tracking
-            </button>
+        
+        <div class="flex-1 overflow-y-auto px-4 pb-6 space-y-8">
+            <!-- Sources -->
+            <div>
+                <div class="flex items-center justify-between px-2 mb-2">
+                    <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Locations</h3>
+                    <button @click="addNewSource" class="text-gray-400 hover:text-indigo-500 transition-colors">
+                        <Plus class="w-4 h-4" />
+                    </button>
+                </div>
+                <div class="space-y-1">
+                    <button @click="activeSourceId = null; activeType = null" 
+                            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+                            :class="!activeSourceId && !activeType ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
+                        <HardDrive class="w-4 h-4" /> All Files
+                    </button>
+                    
+                    <div v-for="source in sources" :key="source.id" class="group relative">
+                        <button @click="activeSourceId = source.id; activeType = null" 
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+                                :class="activeSourceId === source.id ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
+                            <FolderOpen class="w-4 h-4" /> <span class="truncate">{{ source.name }}</span>
+                        </button>
+                        <button @click="removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
+                            <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Types -->
+            <div>
+                <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 mb-2">Categories</h3>
+                <div class="space-y-1">
+                    <button v-for="t in ['Images', 'Documents', 'Videos', 'Audio', 'Code', 'Archives']" :key="t"
+                            @click="activeType = t; activeSourceId = null"
+                            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+                            :class="activeType === t ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
+                        <component :is="t === 'Images' ? ImageIcon : t === 'Videos' ? Video : t === 'Audio' ? Music : t === 'Code' ? Code : FileType" class="w-4 h-4" />
+                        {{ t }}
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 overflow-y-auto px-8 py-6 scroll-smooth bg-gray-50/30 dark:bg-black/10">
-        <div class="max-w-5xl mx-auto">
-            
-            <!-- Search Bar -->
-            <div class="mb-8 relative group">
-                <Search class="w-5 h-5 absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-purple-500 transition-colors" />
-                <input 
-                    v-model="searchQuery" 
-                    placeholder="Search by file name, path, extension or Type # to search by tag..." 
-                    class="w-full pl-11 pr-4 py-3.5 bg-white xl:bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#333] rounded-2xl text-[14.5px] focus:outline-none focus:ring-4 focus:ring-purple-500/10 focus:border-purple-400 transition-all font-medium text-gray-800 dark:text-gray-200 shadow-sm" 
-                />
+    <div class="flex-1 flex flex-col relative z-10 min-w-0">
+        <!-- Header -->
+        <div class="h-20 px-8 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
+            <div class="flex-1 max-w-xl relative group">
+                <Search class="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
+                <input v-model="searchQuery" placeholder="Search files, tags, extensions..." class="w-full pl-10 pr-4 py-2.5 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
             </div>
             
-            <!-- Loading -->
-            <div v-if="isLoading" class="flex justify-center py-20 opacity-50">
-                <div class="w-6 h-6 rounded-full border-2 border-black dark:border-white border-t-transparent animate-spin"></div>
-            </div>
-
-            <!-- Empty State -->
-            <div v-else-if="fileItems.length === 0" class="text-center py-24 px-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-3xl border border-dashed border-gray-200 dark:border-[#2c2c2c]">
-                <div class="w-20 h-20 bg-white dark:bg-white/5 shadow-sm rounded-full flex items-center justify-center mx-auto mb-5 border border-gray-100 dark:border-white/10">
-                    <Search class="w-8 h-8 text-gray-300 dark:text-gray-600" />
-                </div>
-                <h3 class="text-lg font-bold text-gray-800 dark:text-gray-200 mb-2">No Files Found</h3>
-                <p class="text-[#52525b] dark:text-[#a1a1aa] text-[14px]">You haven't tracked any folders yet, or your assets are empty.</p>
-                <button @click="openSettings" class="mt-6 px-6 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-xl font-bold shadow-md transition-all">
-                    Setup Data Sources
+            <div class="flex items-center gap-2 ml-4 bg-white/50 dark:bg-white/5 p-1 rounded-lg border border-gray-200/50 dark:border-white/10">
+                <button @click="viewMode = 'grid'" class="p-1.5 rounded-md transition-colors" :class="viewMode === 'grid' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'">
+                    <LayoutGrid class="w-4 h-4" />
+                </button>
+                <button @click="viewMode = 'list'" class="p-1.5 rounded-md transition-colors" :class="viewMode === 'list' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'">
+                    <List class="w-4 h-4" />
                 </button>
             </div>
+        </div>
 
-            <!-- List View (Grouped) -->
-            <div v-else class="space-y-6">
-                <div v-for="[groupName, items] in groupedItems" :key="groupName" class="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                    <button @click="toggleGroup(groupName)" class="w-full text-left font-black text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors uppercase tracking-widest pl-2 mb-3 flex items-center justify-between group">
-                        <div class="flex items-center gap-2 text-[11px]">
-                            <FolderOpen class="w-3.5 h-3.5" /> {{ groupName }}
-                            <span class="text-gray-300 dark:text-gray-600 px-1">{{ items.length }}</span>
-                        </div>
-                        <div class="text-gray-300 dark:text-gray-600 group-hover:text-black dark:group-hover:text-white pr-2">
-                            <ChevronDown v-if="!collapsedGroups.has(groupName)" class="w-4 h-4" />
-                            <ChevronRight v-else class="w-4 h-4" />
-                        </div>
-                    </button>
-                    
-                    <div v-show="!collapsedGroups.has(groupName)" class="bg-white dark:bg-[#1a1a1a] border border-gray-100 dark:border-[#2c2c2c] rounded-2xl overflow-hidden shadow-sm">
-                        <div v-for="(item, idx) in items" :key="item.id"
-                             @click="selectedFile = item"
-                             class="group flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                             :class="{'border-b border-gray-100 dark:border-[#2c2c2c]': idx !== items.length - 1}">
-                            
-                            <div class="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-purple-100 dark:group-hover:bg-purple-500/20 transition-colors">
-                                <component :is="getFileIcon(item.extension)" class="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                            </div>
-                            
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2">
-                                    <h4 class="font-semibold text-[14.5px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ item.name }}</h4>
-                                    <!-- Render tags if any -->
-                                    <span v-for="tag in item.tags" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex items-center shadow-sm">
-                                        <Hash class="w-2.5 h-2.5 opacity-60 mr-0.5" /> {{ tag }}
-                                    </span>
-                                </div>
-                                <div class="flex items-center gap-3 mt-0.5">
-                                    <p class="text-[12px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[50%]">{{ item.path }}</p>
-                                    <span class="text-[12px] text-gray-400 dark:text-gray-500">{{ item.size_mb.toFixed(2) }} MB</span>
-                                </div>
-                            </div>
-                            
-                            <div class="flex-shrink-0 pr-2">
-                                <ChevronRight class="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-black dark:group-hover:text-white transition-colors" />
-                            </div>
-                        </div>
+        <!-- Scanning Indicator -->
+        <div v-if="isScanning" class="w-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-8 py-3 text-sm font-medium flex items-center gap-3">
+            <FolderSync class="w-4 h-4 animate-spin" /> Scanning directory and indexing files...
+        </div>
+
+        <!-- File List/Grid -->
+        <div class="flex-1 overflow-y-auto p-8 custom-scrollbar">
+            <div v-if="isLoading" class="flex justify-center py-20">
+                <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+            
+            <div v-else-if="filteredFiles.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
+                <FileArchive class="w-16 h-16 mb-4 opacity-20" />
+                <p class="text-lg font-medium text-gray-500">No files found</p>
+                <p class="text-sm">Try adjusting your filters or adding a new source.</p>
+            </div>
+
+            <!-- Grid View -->
+            <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                <div v-for="file in filteredFiles" :key="file.id" 
+                     @click="selectedFile = file"
+                     class="group bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl p-4 cursor-pointer hover:bg-white dark:hover:bg-white/10 transition-all hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1"
+                     :class="{'ring-2 ring-indigo-500 border-transparent': selectedFile?.id === file.id}">
+                    <div class="aspect-square rounded-xl bg-gray-100/50 dark:bg-black/20 mb-4 flex items-center justify-center border border-gray-200/30 dark:border-white/5">
+                        <component :is="getFileIcon(file.extension)" class="w-12 h-12 text-gray-400 dark:text-gray-500 group-hover:text-indigo-500 transition-colors" />
+                    </div>
+                    <h4 class="text-sm font-bold truncate mb-1" :title="file.filename">{{ file.filename }}</h4>
+                    <div class="flex items-center justify-between text-xs text-gray-500">
+                        <span>{{ file.extension.toUpperCase() || 'FILE' }}</span>
+                        <span>{{ formatSize(file.size) }}</span>
                     </div>
                 </div>
             </div>
 
+            <!-- List View -->
+            <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5">
+                        <tr>
+                            <th class="px-6 py-4 font-medium">Name</th>
+                            <th class="px-6 py-4 font-medium">Size</th>
+                            <th class="px-6 py-4 font-medium">Modified</th>
+                            <th class="px-6 py-4 font-medium">Tags</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200/50 dark:divide-white/5">
+                        <tr v-for="file in filteredFiles" :key="file.id" 
+                            @click="selectedFile = file"
+                            class="hover:bg-white dark:hover:bg-white/5 cursor-pointer transition-colors"
+                            :class="{'bg-indigo-50/50 dark:bg-indigo-500/10': selectedFile?.id === file.id}">
+                            <td class="px-6 py-3">
+                                <div class="flex items-center gap-3">
+                                    <component :is="getFileIcon(file.extension)" class="w-5 h-5 text-indigo-500" />
+                                    <span class="font-medium truncate max-w-[200px] xl:max-w-md">{{ file.filename }}</span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-3 text-gray-500">{{ formatSize(file.size) }}</td>
+                            <td class="px-6 py-3 text-gray-500">{{ file.modified_at.split(' ')[0] }}</td>
+                            <td class="px-6 py-3">
+                                <div class="flex gap-1">
+                                    <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300">#{{ t }}</span>
+                                    <span v-if="file.tags.length > 2" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300">+{{file.tags.length - 2}}</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <!-- Slide-over Preview Panel -->
-    <div class="absolute top-0 right-0 h-full w-[400px] border-l border-gray-200 dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#1a1a1a] shadow-2xl transition-transform duration-300 ease-out z-30"
-         :class="selectedFile ? 'translate-x-0' : 'translate-x-full'">
+    <!-- Detail Panel -->
+    <div v-if="selectedFile" class="w-80 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.02)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.2)] animate-in slide-in-from-right-4 duration-300">
+        <div class="h-20 px-6 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
+            <h2 class="font-bold text-sm">File Details</h2>
+            <button @click="selectedFile = null" class="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors text-gray-500">
+                <X class="w-4 h-4" />
+            </button>
+        </div>
         
-        <div class="flex flex-col h-full" v-if="selectedFile">
-            <!-- Header -->
-            <div class="h-16 border-b border-gray-200 dark:border-[#2c2c2c] flex items-center justify-between px-6 flex-shrink-0 bg-white/80 dark:bg-[#1e1e1e]/80 backdrop-blur-md">
-                <div class="flex items-center gap-3">
-                    <div class="p-2 rounded-lg bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400">
-                        <File class="w-4 h-4" />
-                    </div>
-                    <span class="text-xs font-bold tracking-widest text-gray-800 dark:text-gray-200 uppercase">File Properties</span>
-                </div>
-                <button @click="selectedFile = null" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 transition-colors">
-                    <ChevronRight class="w-5 h-5" />
-                </button>
+        <div class="flex-1 overflow-y-auto p-6">
+            <div class="aspect-square w-full rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-500/10 dark:to-purple-500/10 border border-indigo-100 dark:border-indigo-500/20 flex items-center justify-center mb-6 shadow-inner">
+                <component :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50 dark:text-indigo-400/50" />
             </div>
+            
+            <template v-if="isAssetsFile">
+                <h3 class="font-extrabold text-lg break-words leading-tight mb-2">{{ selectedFile.filename }}</h3>
+            </template>
+            <template v-else>
+                <div class="flex items-center gap-0.5 mb-2">
+                    <input 
+                        v-model="editFileName"
+                        @blur="saveFileName"
+                        @keydown.enter="($event.target as HTMLInputElement).blur()"
+                        :disabled="isSavingTags"
+                        class="bg-transparent border-none outline-none font-extrabold text-lg break-all p-0 focus:ring-0 text-gray-900 dark:text-white min-w-0"
+                        placeholder="File Name"
+                        :style="{ width: `${Math.max(editFileName.length, 1)}ch`, maxWidth: '100%' }"
+                    />
+                    <span v-if="selectedFile.extension" class="font-extrabold text-lg text-gray-400 dark:text-gray-500 flex-shrink-0">.{{ selectedFile.extension }}</span>
+                </div>
+            </template>
+            
+            <div class="space-y-4 mt-6">
+                <div class="p-4 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-3">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Type</span>
+                        <span class="font-medium uppercase">{{ selectedFile.extension || 'Unknown' }}</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Size</span>
+                        <span class="font-medium">{{ formatSize(selectedFile.size) }}</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Modified</span>
+                        <span class="font-medium">{{ selectedFile.modified_at.split(' ')[0] }}</span>
+                    </div>
+                </div>
 
-            <!-- Content Area -->
-            <div class="flex-1 px-8 py-8 bg-white dark:bg-[#1a1a1a] break-words overflow-y-auto">
-                <div class="flex items-center gap-0.5 mb-6">
-                    <template v-if="selectedFile.source_folder === 'assets'">
-                        <h2 class="text-3xl font-extrabold text-[#1c1c1e] dark:text-white leading-tight tracking-tight break-all">{{ selectedFile.name }}</h2>
-                    </template>
-                    <template v-else>
-                        <input 
-                            v-model="editFileName" 
-                            @blur="saveFileMetadata"
-                            @keydown.enter="($event.target as any).blur()"
-                            :disabled="isSavingMeta"
-                            class="bg-transparent border-none outline-none text-3xl font-extrabold text-[#1c1c1e] dark:text-white leading-tight tracking-tight focus:ring-0 p-0 min-w-0 flex-shrink"
-                            placeholder="File Name"
-                            :style="`width: ${Math.max(editFileName.length, 1)}ch; max-width: 100%;`"
-                        />
-                        <span v-if="editFileExt" class="text-3xl font-extrabold text-gray-300 dark:text-gray-600 flex-shrink-0">{{ editFileExt }}</span>
-                    </template>
+                <div>
+                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Location</h4>
+                    <p class="text-xs font-mono text-gray-500 break-all p-3 bg-white dark:bg-black/40 rounded-lg border border-gray-200/50 dark:border-white/5">{{ selectedFile.path }}</p>
                 </div>
                 
-                <div class="space-y-6">
-                    <div>
-                        <span class="block text-[11px] uppercase font-bold text-gray-400 mb-2">Tags</span>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span v-for="tag in editTags" :key="tag" class="text-xs px-2 py-1.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 shadow-sm group">
-                                <Hash class="w-3 h-3 opacity-50"/> 
-                                {{ tag }}
-                                <button @click="removeTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity ml-0.5"><X class="w-3 h-3"/></button>
-                            </span>
-                            
-                            <input 
-                               v-model="newTagInput"
-                               @keydown.enter="addTag"
-                               placeholder="+ Add tag (Enter)"
-                               class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1.5 px-2 w-28 focus:w-36 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]"
-                            />
-                        </div>
+                <div>
+                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Tags</h4>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span v-for="tag in selectedFile.tags" :key="tag" class="group relative px-2.5 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-medium border border-indigo-100 dark:border-indigo-500/20 shadow-sm flex items-center gap-1">
+                            #{{ tag }}
+                            <button @click="removeTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity ml-0.5" :disabled="isSavingTags">
+                                <X class="w-3 h-3" />
+                            </button>
+                        </span>
+                        
+                        <input 
+                            v-if="isAddingTag"
+                            v-model="newTagInput"
+                            @keydown.enter="addTag"
+                            @blur="isAddingTag = false; newTagInput = ''"
+                            ref="tagInputRef"
+                            type="text"
+                            placeholder="Tag name..."
+                            class="px-2.5 py-1 bg-white dark:bg-black/40 border border-indigo-300 dark:border-indigo-500/50 rounded-lg text-xs font-medium focus:outline-none w-24 shadow-sm"
+                            autofocus
+                        />
+                        <button v-else @click="isAddingTag = true" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-500 hover:text-indigo-500 transition-colors">
+                            + Add Tag
+                        </button>
                     </div>
-
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <span class="block text-[11px] uppercase font-bold text-gray-400 mb-1">Source Size</span>
-                            <div class="text-[15px] font-medium text-gray-800 dark:text-gray-200">
-                                {{ selectedFile.size_mb.toFixed(2) }} MB
-                            </div>
-                        </div>
-                        <div>
-                            <span class="block text-[11px] uppercase font-bold text-gray-400 mb-1">Type</span>
-                            <div class="text-[15px] p-1 px-3 rounded-md bg-gray-100 dark:bg-white/10 font-bold font-mono text-gray-800 dark:text-gray-200">
-                                {{ selectedFile.extension ? `.${selectedFile.extension}` : 'Unknown' }}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div>
-                        <span class="block text-[11px] uppercase font-bold text-gray-400 mb-1">Last Modified</span>
-                        <div class="text-[15px] font-medium text-gray-800 dark:text-gray-200">
-                            {{ selectedFile.date_modified }}
-                        </div>
-                    </div>
-                    
-                    <div class="p-4 bg-gray-50 dark:bg-[#222] rounded-xl border border-gray-200 dark:border-[#333]">
-                        <span class="block text-[11px] uppercase font-bold text-gray-400 mb-2">Internal Path</span>
-                        <code class="block font-mono text-[13px] text-[#52525b] dark:text-[#a1a1aa] break-all">{{ selectedFile.path }}</code>
-                    </div>
-                </div>
-
-                <div class="mt-8 pt-6 border-t border-gray-100 dark:border-[#2c2c2c]">
-                    <button @click="openLocalFile(selectedFile.path)" class="w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-xl font-bold transition-all shadow-md active:scale-[0.98]">
-                        Open in System Viewer
-                    </button>
                 </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Backdrop for mobile/smaller screens -->
-    <div v-if="selectedFile" @click="selectedFile = null" class="absolute inset-0 z-20 bg-black/5 dark:bg-black/20 backdrop-blur-[1px] transition-opacity 2xl:hidden"></div>
-
-    <!-- Settings Modal -->
-    <div v-if="isSettingsOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md">
-        <div class="bg-white dark:bg-[#1a1a1a] rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden border border-gray-200 dark:border-[#2c2c2c] flex flex-col scale-100 transition-transform">
-            <div class="px-6 py-5 border-b border-gray-100 dark:border-[#2c2c2c] flex justify-between items-center bg-gray-50/50 dark:bg-[#1a1a1a]">
-                <h3 class="font-extrabold text-[15px] text-gray-800 dark:text-gray-200 flex items-center gap-2 uppercase tracking-wider">
-                    <FolderSync class="w-4 h-4 text-purple-500" /> Tracked Sources
-                </h3>
-                <button @click="isSettingsOpen = false" class="text-gray-400 hover:text-black dark:hover:text-white bg-gray-200/50 dark:bg-white/10 p-1.5 rounded-full transition-colors">
-                    <X class="w-4 h-4" />
-                </button>
-            </div>
-            <div class="p-6">
-                <label class="block text-[13px] font-bold text-gray-700 dark:text-gray-300 mb-3 tracking-wide">Sync External Folders</label>
-                <textarea v-model="trackedSources" rows="5" class="w-full p-4 font-mono text-[13px] sm:text-sm border border-gray-200 dark:border-[#333] rounded-2xl bg-white dark:bg-[#111] text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 dark:focus:ring-purple-500/20 dark:focus:border-purple-400 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-700 leading-relaxed resize-none shadow-inner" placeholder="/Path/To/Google Drive&#10;/Path/To/Downloads"></textarea>
-                <p class="text-[12px] text-gray-500 mt-3 flex items-start gap-1.5 font-medium">
-                    <span class="text-purple-500 mt-0.5">*</span>
-                    These folders and their 1st level children will be scanned and cached.
-                </p>
-            </div>
-            <div class="px-6 py-4 border-t border-gray-100 dark:border-[#2c2c2c] flex justify-end gap-3 bg-gray-50/50 dark:bg-[#151515]">
-                <button @click="isSettingsOpen = false" class="px-5 py-2.5 rounded-xl font-bold text-[13px] text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#2c2c2c] transition-colors">Cancel</button>
-                <button @click="saveAndReindex" :disabled="isReindexing" class="px-5 py-2.5 rounded-xl font-bold text-[13px] text-white bg-black hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 flex items-center gap-2 transition-all shadow-sm" :class="{'opacity-70 cursor-not-allowed': isReindexing}">
-                    <FolderSync class="w-4 h-4" :class="{'animate-spin': isReindexing}" /> 
-                    {{ isReindexing ? 'Indexing...' : 'Save & Sync' }}
-                </button>
-            </div>
+        
+        <div class="p-6 border-t border-gray-200/50 dark:border-white/5 bg-white/50 dark:bg-transparent">
+            <button @click="openLocalFile(selectedFile.path)" class="w-full py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold text-sm shadow-xl shadow-gray-900/20 dark:shadow-white/10 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                Open in Native App
+            </button>
         </div>
     </div>
-
   </div>
 </template>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.3);
+    border-radius: 10px;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+}
+</style>

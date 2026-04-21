@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::models::nexus::{NexusItem, TagStat, VaultStats};
-use crate::commands::files::get_file_items;
 use crate::db::DbBridge;
 use crate::error::AppResult;
 
@@ -72,26 +71,6 @@ pub fn get_nexus_items(vault_path: String) -> AppResult<Vec<NexusItem>> {
                     status: r.status,
                 });
             }
-        }
-    }
-    
-    // ─── Files still come from disk (not indexed) ──────────
-    if let Ok(files) = get_file_items(vault_path.clone()) {
-        for f in files {
-            if f.extension == "md" {
-                continue; // Avoid double counting Markdown files
-            }
-            items.push(NexusItem {
-                id: f.path.clone(),
-                item_type: "file".to_string(),
-                title: f.name.clone(),
-                preview: format!("{} • {}MB", f.extension, (f.size_mb * 100.0).round() / 100.0),
-                tags: f.tags.clone(),
-                date: f.date_modified,
-                path: f.path,
-                content: f.name,
-                status: None,
-            });
         }
     }
     

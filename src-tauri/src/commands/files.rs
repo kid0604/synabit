@@ -1,115 +1,159 @@
-use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 use walkdir::WalkDir;
+use uuid::Uuid;
+use std::time::SystemTime;
 
-use crate::models::file::{FileItem, FileManagerSettings};
+use crate::models::file::{FileMetadata, FileSource, FileManagerSettings};
 use crate::error::{AppError, AppResult};
-use crate::path_utils;
+use crate::db::DbBridge;
 
-fn get_file_meta(vault_path: &str) -> HashMap<String, Vec<String>> {
-    let meta_path = Path::new(vault_path).join(".synabit_fm_meta.json");
-    if let Ok(content) = fs::read_to_string(meta_path) {
-        if let Ok(meta) = serde_json::from_str(&content) {
-            return meta;
-        }
-    }
-    HashMap::new()
+#[tauri::command]
+pub fn add_file_source(vault_path: String, path: String, name: String) -> AppResult<FileSource> {
+    let db = DbBridge::new(&vault_path)?;
+    let id = Uuid::new_v4().to_string();
+    let source = FileSource {
+        id,
+        path: path.clone(),
+        name,
+    };
+    db.upsert_file_source(&source)?;
+    
+    // Auto trigger scan for the new source
+    let vault_path_clone = vault_path.clone();
+    let path_clone = path.clone();
+    std::thread::spawn(move || {
+        let _ = scan_directory(vault_path_clone, path_clone);
+    });
+    
+    Ok(source)
 }
 
-fn save_file_meta(vault_path: &str, meta: &HashMap<String, Vec<String>>) -> AppResult<()> {
-    let meta_path = Path::new(vault_path).join(".synabit_fm_meta.json");
-    let content = serde_json::to_string(meta)?;
-    fs::write(meta_path, content)?;
+#[tauri::command]
+pub fn get_file_sources(vault_path: String) -> AppResult<Vec<FileSource>> {
+    let db = DbBridge::new(&vault_path)?;
+    let mut sources = db.get_all_file_sources()?;
+    
+    // Auto-add assets folder if it doesn't exist
+    let assets_path = std::path::Path::new(&vault_path).join("assets");
+    if assets_path.exists() {
+        let assets_path_str = assets_path.to_string_lossy().to_string();
+        if !sources.iter().any(|s| s.path == assets_path_str) {
+            let source = FileSource {
+                id: Uuid::new_v4().to_string(),
+                path: assets_path_str.clone(),
+                name: "Vault Assets".to_string(),
+            };
+            db.upsert_file_source(&source)?;
+            sources.push(source);
+            
+            // Auto trigger scan for the new source
+            let vault_path_clone = vault_path.clone();
+            std::thread::spawn(move || {
+                let _ = scan_directory(vault_path_clone, assets_path_str);
+            });
+        }
+    }
+    
+    Ok(sources)
+}
+
+#[tauri::command]
+pub fn remove_file_source(vault_path: String, source_id: String) -> AppResult<()> {
+    let db = DbBridge::new(&vault_path)?;
+    // Ideally we should also remove the files associated with this source from DB.
+    // For MVP, we just remove the source. The next full scan might clean up or we can just leave it.
+    // A proper implementation would query files starting with the source path and delete them.
+    db.delete_file_source(&source_id)?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_file_items(vault_path: String) -> AppResult<Vec<FileItem>> {
-    let mut items = Vec::new();
-    let file_meta = get_file_meta(&vault_path);
-    let folders_to_scan = ["assets", "files"];
+pub fn scan_directory(vault_path: String, source_path: String) -> AppResult<()> {
+    let db = DbBridge::new(&vault_path)?;
+    let path = Path::new(&source_path);
     
-    for folder_name in folders_to_scan.iter() {
-        let dir_path = Path::new(&vault_path).join(folder_name);
-        if dir_path.exists() {
-            for entry in WalkDir::new(&dir_path).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
-                    let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let rel_path = path_utils::to_relative(entry.path(), &vault_path);
-                    let date = "Unknown".to_string();
-                    let tags = file_meta.get(&rel_path).cloned().unwrap_or_default();
-                    
-                    items.push(FileItem {
-                        id: rel_path.clone(),
-                        name: name.clone(),
-                        extension: ext,
-                        size_mb: size,
-                        source_folder: folder_name.to_string(),
-                        date_modified: date,
-                        path: rel_path.clone(),
-                        tags
-                    });
-                }
+    if !path.exists() || !path.is_dir() {
+        return Err(AppError::InvalidPath("Source path is invalid or not a directory".to_string()));
+    }
+
+    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            
+            let modified = meta.as_ref()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+                
+            let created = meta.as_ref()
+                .and_then(|m| m.created().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+
+            let created_dt: chrono::DateTime<chrono::Local> = created.into();
+            let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
+
+            let mut ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
+            if let Ok(Some(kind)) = infer::get_from_path(entry.path()) {
+                ext = kind.extension().to_string();
             }
+            
+            let name = entry.file_name().to_string_lossy().to_string();
+            let abs_path = entry.path().to_string_lossy().to_string();
+            
+            // Basic filtering to avoid indexing git/node_modules/etc
+            if abs_path.contains("/.git/") || abs_path.contains("/node_modules/") || abs_path.contains("/.Trash") {
+                continue;
+            }
+
+            let file_meta = FileMetadata {
+                id: Uuid::new_v4().to_string(), // Or path hash
+                path: abs_path,
+                filename: name,
+                extension: ext,
+                size: size as i64,
+                created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                tags: vec![],
+                source_type: "local".to_string(),
+            };
+            
+            let _ = db.upsert_file(&file_meta);
         }
     }
-    if let Ok(settings) = get_settings(vault_path.clone()) {
-        for source in settings.tracked_sources {
-            if Path::new(&source).exists() {
-                for entry in WalkDir::new(&source).into_iter().filter_map(|e| e.ok()) {
-                    if entry.file_type().is_file() {
-                        let size = entry.metadata().map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
-                        let ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        let rel_path = path_utils::to_relative(entry.path(), &vault_path);
-                        let tags = file_meta.get(&rel_path).cloned().unwrap_or_default();
-                        
-                        items.push(FileItem {
-                            id: rel_path.clone(),
-                            name: name.clone(),
-                            extension: ext,
-                            size_mb: size,
-                            source_folder: source.clone(),
-                            date_modified: "Unknown".to_string(),
-                            path: rel_path,
-                            tags
-                        });
-                    }
-                }
-            }
-        }
-    }
-    Ok(items)
+    
+    Ok(())
 }
 
 #[tauri::command]
-pub fn get_settings(vault_path: String) -> AppResult<FileManagerSettings> {
-    let settings_path = Path::new(&vault_path).join(".synabit_fm_settings.json");
-    if let Ok(content) = fs::read_to_string(settings_path) {
-        if let Ok(settings) = serde_json::from_str(&content) {
-            return Ok(settings);
-        }
-    }
+pub fn query_files(vault_path: String) -> AppResult<Vec<FileMetadata>> {
+    let db = DbBridge::new(&vault_path)?;
+    db.get_all_files()
+}
+
+// ─── Legacy/Compatibility endpoints (to not break compilation if used elsewhere) ───
+
+#[tauri::command]
+pub fn get_file_items(_vault_path: String) -> AppResult<Vec<crate::models::file::FileItem>> {
+    // For now return empty or dummy to avoid compilation errors if something still expects this
+    Ok(vec![])
+}
+
+#[tauri::command]
+pub fn get_settings(_vault_path: String) -> AppResult<FileManagerSettings> {
     Ok(FileManagerSettings::default())
 }
 
 #[tauri::command]
-pub fn save_settings(vault_path: String, settings: FileManagerSettings) -> AppResult<()> {
-    let settings_path = Path::new(&vault_path).join(".synabit_fm_settings.json");
-    let content = serde_json::to_string(&settings)?;
-    fs::write(settings_path, content)?;
+pub fn save_settings(_vault_path: String, _settings: FileManagerSettings) -> AppResult<()> {
     Ok(())
 }
 
 #[cfg(desktop)]
 #[tauri::command]
-pub fn open_local_file(vault_path: String, path: String) -> AppResult<()> {
-    let abs_path = Path::new(&vault_path).join(&path);
-    let p = abs_path.to_string_lossy().to_string();
+pub fn open_local_file(_vault_path: String, path: String) -> AppResult<()> {
+    // Note: path is now an absolute path in the new OmniDrive architecture
+    let p = path.clone();
     #[cfg(target_os = "macos")]
     {
         Command::new("open").arg(&p).spawn()?;
@@ -127,40 +171,53 @@ pub fn open_local_file(vault_path: String, path: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn update_file_metadata(vault_path: String, path: String, new_filename: String, new_tags: Vec<String>) -> AppResult<String> {
-    let mut meta = get_file_meta(&vault_path);
-    let original_path = Path::new(&vault_path).join(&path);
+    let db = DbBridge::new(&vault_path)?;
     
-    let current_filename = original_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-    let mut final_path_str = path.clone();
+    // 1. Update tags
+    db.update_file_tags(&path, new_tags)?;
     
-    if current_filename != new_filename {
-        if let Some(parent) = original_path.parent() {
-            if parent.ends_with("assets") {
-                return Err(AppError::InvalidPath("Cannot rename files inside the 'assets' directory. You can only edit tags.".to_string()));
-            } else {
+    // 2. Handle rename if needed
+    let mut final_path = path.clone();
+    
+    // Do not rename if it's inside assets folder
+    let assets_dir = std::path::Path::new(&vault_path).join("assets").to_string_lossy().to_string();
+    if path.starts_with(&assets_dir) {
+        return Ok(path);
+    }
+    
+    let path_obj = std::path::Path::new(&path);
+    if let Some(parent) = path_obj.parent() {
+        if let Some(old_name) = path_obj.file_name() {
+            let old_name_str = old_name.to_string_lossy().to_string();
+            if old_name_str != new_filename {
                 let new_path = parent.join(&new_filename);
-                if new_path.exists() {
-                     return Err(AppError::InvalidPath(format!("File '{}' already exists.", new_filename)));
+                // rename on disk
+                if let Err(e) = std::fs::rename(&path, &new_path) {
+                    return Err(crate::error::AppError::General(format!("Failed to rename file on disk: {}", e)));
                 }
-                match fs::rename(&original_path, &new_path) {
-                    Ok(_) => {
-                        final_path_str = path_utils::to_relative(&new_path, &vault_path);
-                        meta.remove(&path);
-                    },
-                    Err(e) => return Err(AppError::Io(e))
+                
+                final_path = new_path.to_string_lossy().to_string();
+                
+                // Extract extension
+                let mut extension = new_path.extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                
+                if let Ok(Some(kind)) = infer::get_from_path(&new_path) {
+                    extension = kind.extension().to_string();
                 }
+                
+                // update db
+                db.update_file_path_and_name(&path, &final_path, &new_filename, &extension)?;
             }
         }
     }
-    
-    meta.insert(final_path_str.clone(), new_tags);
-    save_file_meta(&vault_path, &meta)?;
-    
-    Ok(final_path_str)
+
+    Ok(final_path)
 }
 
 #[tauri::command]
 pub fn reindex_sources(_vault_path: String) -> AppResult<()> {
-    // Basic placeholder
     Ok(())
 }

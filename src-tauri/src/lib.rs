@@ -46,6 +46,11 @@ pub fn run() {
             quickcaps::update_quick_cap,
             quickcaps::copy_asset_to_vault,
             // Files
+            files::add_file_source,
+            files::get_file_sources,
+            files::remove_file_source,
+            files::scan_directory,
+            files::query_files,
             files::get_file_items,
             files::get_settings,
             files::save_settings,
