@@ -9,6 +9,7 @@ const {
   themeMode,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
+  nestedNumberListStyle,
 } = useSettings();
 
 const appVersion = ref('');
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   (e: 'clear-vault'): void;
   (e: 'sync-gdrive'): void;
   (e: 'disconnect-gdrive'): void;
+  (e: 'connect-gdrive'): void;
   (e: 'update:gdriveAutoSyncEnabled', val: boolean): void;
   (e: 'update:gdriveAutoSyncInterval', val: number): void;
 }>();
@@ -122,9 +124,13 @@ const emit = defineEmits<{
                         <div :class="['w-2 h-2 rounded-full', gdriveConnected ? 'bg-green-500' : 'bg-red-500']"></div>
                         <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ gdriveConnected ? 'Connected' : 'Disconnected' }}</p>
                       </div>
-                      <button @click="emit('sync-gdrive')" :disabled="gdriveSyncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-60">
+                      <button v-if="gdriveConnected" @click="emit('sync-gdrive')" :disabled="gdriveSyncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-60">
                         <RefreshCw class="w-3.5 h-3.5" :class="gdriveSyncing ? 'animate-spin' : ''" />
                         {{ gdriveSyncing ? 'Syncing…' : 'Sync Now' }}
+                      </button>
+                      <button v-else @click="emit('connect-gdrive')" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white">
+                        <Cloud class="w-3.5 h-3.5" />
+                        Reconnect
                       </button>
                     </div>
                     <div v-if="lastSyncTime" class="flex items-center gap-2 text-[11px] text-gray-400">
@@ -200,6 +206,23 @@ const emit = defineEmits<{
                         <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Tag automatically assigned to new daily notes.</p>
                       </div>
                       <input type="text" v-model="dailyNoteTag" placeholder="daily" class="w-28 px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-colors" />
+                    </div>
+                  </div>
+                </section>
+                
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3 mt-6">Editor</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col gap-4">
+                    <div class="flex items-center justify-between">
+                      <div>
+                        <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Nested Numbered List Style</p>
+                        <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Style of ordered lists when indented (sub-lists).</p>
+                      </div>
+                      <select v-model="nestedNumberListStyle" class="appearance-none px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-colors cursor-pointer text-center pr-8 bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%239ca3af%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_10px] bg-[right_10px_center] bg-no-repeat">
+                        <option value="decimal">Default (1, 2, 3)</option>
+                        <option value="alpha">Alphabetical (a, b, c)</option>
+                        <option value="nested">Nested (1.1, 1.2)</option>
+                      </select>
                     </div>
                   </div>
                 </section>

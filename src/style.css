@@ -75,3 +75,34 @@ body {
   background-color: var(--color-base-dark);
   color: var(--color-text-dark);
 }
+
+/* Fix for Tailwind Typography inline code backticks */
+.prose code::before,
+.prose code::after {
+  content: none !important;
+}
+
+/* Better styling for inline code to look like Notion/Obsidian */
+.prose code {
+  background-color: var(--color-surface-hover);
+  color: #eb5757; /* Subtle reddish color */
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 0.85em;
+}
+
+.dark .prose code {
+  background-color: var(--color-surface-hover-dark);
+  color: #ff7b72;
+}
+
+/* Exclude code blocks (pre code) from inline styling */
+.prose pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  font-weight: inherit;
+  font-size: inherit;
+}

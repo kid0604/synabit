@@ -2,7 +2,6 @@ import { ref, watch, computed, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
-import { storeToRefs } from 'pinia';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 /**

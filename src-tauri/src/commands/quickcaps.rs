@@ -90,6 +90,7 @@ pub fn create_quick_cap(vault_path: String, content: String) -> AppResult<QuickC
 
 #[tauri::command]
 pub fn delete_quick_cap(vault_path: String, path: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::remove_file(&abs_path)?;
     if let Ok(db) = DbBridge::new(&vault_path) {
@@ -100,6 +101,7 @@ pub fn delete_quick_cap(vault_path: String, path: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn update_quick_cap(vault_path: String, path: String, content: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::write(&abs_path, content.clone())?;
     

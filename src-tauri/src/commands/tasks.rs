@@ -180,6 +180,7 @@ pub fn create_task(
 pub fn update_task(
     vault_path: String, path: String, metadata: TaskFrontMatter, content: String
 ) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| AppError::General(e.to_string()))?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
@@ -222,6 +223,7 @@ pub fn update_task(
 
 #[tauri::command]
 pub fn delete_task(vault_path: String, path: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::remove_file(&abs_path)?;
     if let Ok(db) = DbBridge::new(&vault_path) {

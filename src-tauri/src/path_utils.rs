@@ -18,3 +18,17 @@ pub fn to_relative(full_path: &Path, vault_path: &str) -> String {
         .unwrap_or_else(|_| full_path.to_string_lossy().to_string())
         .replace('\\', "/")
 }
+
+pub fn is_safe_filename(filename: &str) -> bool {
+    if filename.is_empty() || filename == "." || filename == ".." {
+        return false;
+    }
+    !filename.contains('/') && !filename.contains('\\')
+}
+
+pub fn enforce_no_traversal(path: &str) -> Result<(), crate::error::AppError> {
+    if path.contains("..") {
+        return Err(crate::error::AppError::InvalidPath("Path traversal detected".to_string()));
+    }
+    Ok(())
+}

@@ -3,28 +3,28 @@ use super::{
     GDriveTokens, TokenResponse,
     CLIENT_ID, CLIENT_SECRET, TOKEN_URI, AUTH_URI, SCOPE,
     REDIRECT_PORT_START, REDIRECT_PORT_END,
-    config_dir, tokens_path,
+    tokens_path,
 };
 
 // ──────────────────────────────────────────────
 // Token Management
 // ──────────────────────────────────────────────
 
+fn get_vault_sync_keyring() -> Result<keyring::Entry, String> {
+    keyring::Entry::new("synabit_vault_sync", "global")
+        .map_err(|e| format!("Keyring error: {}", e))
+}
+
 pub(crate) fn load_tokens() -> Option<GDriveTokens> {
-    let path = tokens_path();
-    if path.exists() {
-        let content = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&content).ok()
-    } else {
-        None
-    }
+    let entry = get_vault_sync_keyring().ok()?;
+    let content = entry.get_password().ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 pub(crate) fn save_tokens(tokens: &GDriveTokens) -> Result<(), String> {
-    let dir = config_dir();
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let content = serde_json::to_string_pretty(tokens).map_err(|e| e.to_string())?;
-    fs::write(tokens_path(), content).map_err(|e| e.to_string())
+    let content = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
+    let entry = get_vault_sync_keyring()?;
+    entry.set_password(&content).map_err(|e| format!("Failed to save tokens to keychain: {}", e))
 }
 
 pub(crate) async fn get_valid_token() -> Result<String, String> {
@@ -48,7 +48,10 @@ pub(crate) async fn get_valid_token() -> Result<String, String> {
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
             if err_text.contains("invalid_grant") {
-                let _ = fs::remove_file(tokens_path());
+                if let Ok(entry) = get_vault_sync_keyring() {
+                    let _ = entry.delete_credential();
+                }
+                let _ = fs::remove_file(tokens_path()); // Cleanup old JSON file if present
                 return Err("Google Drive session expired. Please reconnect.".to_string());
             }
             return Err(format!("Token refresh failed: {}", err_text));
@@ -81,9 +84,13 @@ pub fn gdrive_auth_status() -> Result<bool, String> {
 
 #[tauri::command]
 pub fn gdrive_disconnect() -> Result<(), String> {
+    if let Ok(entry) = get_vault_sync_keyring() {
+        let _ = entry.delete_credential();
+    }
+    // Cleanup old legacy JSON file if present
     let path = tokens_path();
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| e.to_string())?;
+        let _ = fs::remove_file(&path);
     }
     Ok(())
 }

@@ -186,6 +186,7 @@ pub fn open_daily_note(vault_path: String, format_str: String, tag: String) -> A
 
 #[tauri::command]
 pub fn read_note(vault_path: String, path: String) -> AppResult<String> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     let content = fs::read_to_string(&abs_path)?;
     Ok(content)
@@ -193,6 +194,7 @@ pub fn read_note(vault_path: String, path: String) -> AppResult<String> {
 
 #[tauri::command]
 pub fn update_note(vault_path: String, path: String, content: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::write(&abs_path, content)?;
     Ok(())
@@ -200,6 +202,7 @@ pub fn update_note(vault_path: String, path: String, content: String) -> AppResu
 
 #[tauri::command]
 pub fn delete_note(vault_path: String, path: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::remove_file(&abs_path)?;
     Ok(())
@@ -207,6 +210,7 @@ pub fn delete_note(vault_path: String, path: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn rename_note(vault_path: String, old_path: String, new_name: String) -> AppResult<String> {
+    path_utils::enforce_no_traversal(&old_path)?;
     let base_dir = Path::new(&vault_path);
     let old = base_dir.join(&old_path);
     
@@ -233,6 +237,9 @@ pub fn rename_note(vault_path: String, old_path: String, new_name: String) -> Ap
 
 #[tauri::command]
 pub fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> AppResult<String> {
+    if !path_utils::is_safe_filename(&filename) {
+        return Err(crate::error::AppError::InvalidPath("Invalid asset filename".to_string()));
+    }
     let assets_dir = Path::new(&vault_path).join("assets");
     if !assets_dir.exists() {
         fs::create_dir_all(&assets_dir)?;
@@ -276,6 +283,7 @@ pub fn spawn_note_window(app_handle: tauri::AppHandle, note_id: String) -> AppRe
 
 #[tauri::command]
 pub async fn get_note_backlinks(vault_path: String, target_id: String) -> AppResult<Vec<NoteMetadata>> {
+    path_utils::enforce_no_traversal(&target_id)?;
     let notes_dir = Path::new(&vault_path).join("Notes");
     let mut backlinks = Vec::new();
     

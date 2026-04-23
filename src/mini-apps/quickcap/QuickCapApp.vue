@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import DOMPurify from 'dompurify';
 import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText } from 'lucide-vue-next';
@@ -286,6 +287,15 @@ const closeFullView = async () => {
        editor.value.commands.clearContent();
     }
 };
+
+const openEditById = (id: string) => {
+    const cap = quickCaps.value.find(c => c.id === id);
+    if (cap) {
+        openFullView(cap);
+    }
+};
+
+defineExpose({ openEditById });
 
 const handleInput = () => {
     if (inputRef.value) {
@@ -657,7 +667,7 @@ const renderPreview = (content: string) => {
         return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
     });
     
-    return html;
+    return DOMPurify.sanitize(html, { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: /^(?:(?:https?|asset):)|(?:data:image\/)/i });
 };
 
 const deleteCap = async (path: string, index: number) => {

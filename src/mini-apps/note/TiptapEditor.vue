@@ -18,6 +18,8 @@ import { Color } from '@tiptap/extension-color';
 import { common, createLowlight } from 'lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { EquationExtension } from './EquationExtension';
+import { VideoExtension } from './VideoExtension';
+import { AudioExtension } from './AudioExtension';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension } from '@tiptap/core';
@@ -32,7 +34,8 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
   Quote, Code2, Minus, Type, Table2,
-  Image as ImageIcon, Sigma
+  Image as ImageIcon, Sigma, Video as VideoIcon,
+  Music as MusicIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -52,6 +55,9 @@ import {
 } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
+import { useSettings } from '../../composables/useSettings';
+
+const { nestedNumberListStyle } = useSettings();
 
 const lowlight = createLowlight(common);
 
@@ -80,6 +86,22 @@ const injectLocalAssets = (md: string) => {
       return `![${alt}](${src})`;
    });
    
+   processed = processed.replace(/<video\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (m, before, filename, after) => {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const decodedName = decodeURIComponent(filename);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
+      const assetUrl = convertFileSrc(absPath); 
+      return `<video ${before}src="${assetUrl}"${after}>`;
+   });
+   
+   processed = processed.replace(/<audio\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (m, before, filename, after) => {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const decodedName = decodeURIComponent(filename);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
+      const assetUrl = convertFileSrc(absPath); 
+      return `<audio ${before}src="${assetUrl}"${after}>`;
+   });
+   
    return processed.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
       // Decode URI in case it was encoded (e.g. spaces as %20)
@@ -98,6 +120,24 @@ const stripLocalAssets = (md: string) => {
       const altMatch = m.match(/alt="([^"]*)"/);
       const alt = altMatch ? altMatch[1] : 'Image';
       return `![${alt}](${src})`;
+   });
+
+   processed = processed.replace(/<video\s+([^>]*)src="([^"]+)"([^>]*)>/g, (m, before, src, after) => {
+      const match = src.match(/(?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\"]+(?:\/|%2F)assets(?:\/|%2F)([^\"]+)/);
+      if (match) {
+         const decodedName = decodeURIComponent(match[1]);
+         return `<video ${before}src="assets/${encodeURI(decodedName)}"${after}>`;
+      }
+      return m;
+   });
+
+   processed = processed.replace(/<audio\s+([^>]*)src="([^"]+)"([^>]*)>/g, (m, before, src, after) => {
+      const match = src.match(/(?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\"]+(?:\/|%2F)assets(?:\/|%2F)([^\"]+)/);
+      if (match) {
+         const decodedName = decodeURIComponent(match[1]);
+         return `<audio ${before}src="assets/${encodeURI(decodedName)}"${after}>`;
+      }
+      return m;
    });
 
    return processed.replace(/\]\((?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\)]+(?:\/|%2F)assets(?:\/|%2F)([^\)]+)\)/g, (_m: string, filename: string) => {
@@ -125,6 +165,96 @@ const confirmLink = () => {
     return;
   }
   editor.value.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+};
+
+// --- Video prompt ---
+const videoModal = ref<{ show: boolean; url: string }>({ show: false, url: '' });
+
+const confirmVideo = () => {
+  videoModal.value.show = false;
+  if (!editor.value) return;
+  const url = videoModal.value.url;
+  if (!url || url === '') return;
+  
+  editor.value.commands.setVideo({ src: url });
+};
+
+const selectLocalVideo = async () => {
+  try {
+    const selectedPath = await open({
+      multiple: false,
+      filters: [{
+        name: 'Video',
+        extensions: ['mp4', 'webm', 'mov', 'mkv', 'ogg']
+      }]
+    });
+    
+    if (selectedPath && !Array.isArray(selectedPath) && props.vaultPath) {
+      const pathStr = selectedPath as string;
+      const match = pathStr.match(/[\\\/]([^\\\/]+)$/);
+      const filename = match ? match[1] : `video-${Date.now()}.mp4`;
+      const buffer = await readFile(pathStr);
+      
+      const relativePath = await invoke<string>('save_asset', {
+          vaultPath: props.vaultPath,
+          filename: filename,
+          bytes: Array.from(buffer)
+      });
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const absPath = `${props.vaultPath}${sep}${relativePath}`;
+      const renderUrl = convertFileSrc(absPath);
+      
+      videoModal.value.show = false;
+      editor.value?.commands.setVideo({ src: renderUrl });
+    }
+  } catch (e) {
+    console.error("Failed to insert local video", e);
+  }
+};
+
+// --- Audio prompt ---
+const audioModal = ref<{ show: boolean; url: string }>({ show: false, url: '' });
+
+const confirmAudio = () => {
+  audioModal.value.show = false;
+  if (!editor.value) return;
+  const url = audioModal.value.url;
+  if (!url || url === '') return;
+  
+  editor.value.commands.setAudio({ src: url });
+};
+
+const selectLocalAudio = async () => {
+  try {
+    const selectedPath = await open({
+      multiple: false,
+      filters: [{
+        name: 'Audio',
+        extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac']
+      }]
+    });
+    
+    if (selectedPath && !Array.isArray(selectedPath) && props.vaultPath) {
+      const pathStr = selectedPath as string;
+      const match = pathStr.match(/[\\\/]([^\\\/]+)$/);
+      const filename = match ? match[1] : `audio-${Date.now()}.mp3`;
+      const buffer = await readFile(pathStr);
+      
+      const relativePath = await invoke<string>('save_asset', {
+          vaultPath: props.vaultPath,
+          filename: filename,
+          bytes: Array.from(buffer)
+      });
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const absPath = `${props.vaultPath}${sep}${relativePath}`;
+      const renderUrl = convertFileSrc(absPath);
+      
+      audioModal.value.show = false;
+      editor.value?.commands.setAudio({ src: renderUrl });
+    }
+  } catch (e) {
+    console.error("Failed to insert local audio", e);
+  }
 };
 
 // --- Floating Toolbar (manual implementation) ---
@@ -270,15 +400,6 @@ const ctxAction = (action: string) => {
 };
 
 // Focus a specific cell to position cursor there before operations
-const _focusCellAt = (rowIdx: number, colIdx: number) => {
-  if (!activeTableEl.value || !editor.value) return;
-  const row = activeTableEl.value.querySelectorAll('tr')[rowIdx];
-  if (!row) return;
-  const cell = row.querySelectorAll('td, th')[colIdx];
-  if (!cell) return;
-  const pos = editor.value.view.posAtDOM(cell, 0);
-  editor.value.commands.setTextSelection(pos);
-};
 
 const addRowAtBottom = () => {
   if (!editor.value || !activeTableEl.value) return;
@@ -452,6 +573,24 @@ const slashCommandItems = (): SlashCommandItem[] => [
     },
   },
   {
+    title: 'Video',
+    description: 'Embed YouTube or local video',
+    icon: VideoIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      videoModal.value = { show: true, url: '' };
+    },
+  },
+  {
+    title: 'Audio',
+    description: 'Embed Spotify, SoundCloud or local audio',
+    icon: MusicIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      audioModal.value = { show: true, url: '' };
+    },
+  },
+  {
     title: 'Table',
     description: 'Insert a table',
     icon: Table2,
@@ -523,6 +662,8 @@ const editor = useEditor({
       lowlight,
     }),
     EquationExtension,
+    VideoExtension,
+    AudioExtension,
     Table.configure({
       resizable: true,
     }),
@@ -1020,7 +1161,13 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
-    <editor-content :editor="editor" @contextmenu="(e: MouseEvent) => { if (editor?.isActive('table')) openContextMenu(e); }" />
+    <div :class="{
+      'list-style-decimal': nestedNumberListStyle === 'decimal',
+      'list-style-alpha': nestedNumberListStyle === 'alpha',
+      'list-style-nested': nestedNumberListStyle === 'nested'
+    }" class="editor-wrapper h-full w-full">
+      <editor-content :editor="editor" @contextmenu="(e: MouseEvent) => { if (editor?.isActive('table')) openContextMenu(e); }" />
+    </div>
 
     <!-- Link URL Modal (replaces window.prompt) -->
     <Teleport to="body">
@@ -1039,6 +1186,84 @@ onBeforeUnmount(() => {
             <button @click="linkModal.url = ''; confirmLink()" class="px-4 py-1.5 text-sm rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">Remove Link</button>
             <button @click="linkModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
             <button @click="confirmLink" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">Apply</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Video Modal -->
+    <Teleport to="body">
+      <div v-if="videoModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="videoModal.show = false">
+        <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-96 border border-[#e6e6e6] dark:border-[#3a3a3a]">
+          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">Embed Video</h3>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">YouTube or Web URL</label>
+              <input
+                v-model="videoModal.url"
+                type="url"
+                placeholder="https://youtube.com/watch?v=..."
+                class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20"
+                @keydown.enter="confirmVideo"
+                autofocus
+              />
+            </div>
+            
+            <div class="flex items-center justify-center">
+              <div class="h-px bg-gray-200 dark:bg-[#444] flex-1"></div>
+              <span class="text-xs text-gray-400 px-3 uppercase tracking-wider font-semibold">Or</span>
+              <div class="h-px bg-gray-200 dark:bg-[#444] flex-1"></div>
+            </div>
+            
+            <button @click="selectLocalVideo" class="w-full py-2 px-4 rounded-lg bg-[#f4f4f5] dark:bg-[#333] text-sm text-[#1c1c1e] dark:text-[#f4f4f5] font-medium hover:bg-[#e4e4e7] dark:hover:bg-[#444] transition-colors border border-[#e0e0e0] dark:border-[#444] flex items-center justify-center gap-2">
+              <VideoIcon class="w-4 h-4" />
+              Browse Local File
+            </button>
+          </div>
+          
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="videoModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
+            <button @click="confirmVideo" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">Embed</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Audio Modal -->
+    <Teleport to="body">
+      <div v-if="audioModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="audioModal.show = false">
+        <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-96 border border-[#e6e6e6] dark:border-[#3a3a3a]">
+          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">Embed Audio</h3>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Spotify, SoundCloud or Web URL</label>
+              <input
+                v-model="audioModal.url"
+                type="url"
+                placeholder="https://open.spotify.com/track/..."
+                class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20"
+                @keydown.enter="confirmAudio"
+                autofocus
+              />
+            </div>
+            
+            <div class="flex items-center justify-center">
+              <div class="h-px bg-gray-200 dark:bg-[#444] flex-1"></div>
+              <span class="text-xs text-gray-400 px-3 uppercase tracking-wider font-semibold">Or</span>
+              <div class="h-px bg-gray-200 dark:bg-[#444] flex-1"></div>
+            </div>
+            
+            <button @click="selectLocalAudio" class="w-full py-2 px-4 rounded-lg bg-[#f4f4f5] dark:bg-[#333] text-sm text-[#1c1c1e] dark:text-[#f4f4f5] font-medium hover:bg-[#e4e4e7] dark:hover:bg-[#444] transition-colors border border-[#e0e0e0] dark:border-[#444] flex items-center justify-center gap-2">
+              <MusicIcon class="w-4 h-4" />
+              Browse Local File
+            </button>
+          </div>
+          
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="audioModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
+            <button @click="confirmAudio" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">Embed</button>
           </div>
         </div>
       </div>
@@ -1087,7 +1312,7 @@ onBeforeUnmount(() => {
 
 .tiptap ul[data-type="taskList"] li > label {
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: 3px;
   user-select: none;
 }
 
@@ -1658,8 +1883,42 @@ onBeforeUnmount(() => {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
 }
+.prose hr {
+  margin-top: 1.5em !important;
+  margin-bottom: 1.5em !important;
+  border-top-color: #e5e7eb !important; /* Tailwind gray-200 */
+}
+.dark .prose hr {
+  border-top-color: #3f3f46 !important; /* Tailwind zinc-700 */
+}
 .prose blockquote p:first-of-type::before,
 .prose blockquote p:last-of-type::after {
   content: none !important;
 }
+
+/* === Nested List Styles === */
+/* Alpha Style */
+.list-style-alpha .prose ol ol { list-style-type: lower-alpha !important; }
+.list-style-alpha .prose ol ol ol { list-style-type: lower-roman !important; }
+
+/* Nested Numbered Style (1.1, 1.2) */
+.list-style-nested .prose ol {
+  counter-reset: item;
+  list-style-type: none !important;
+}
+.list-style-nested .prose ol > li {
+  counter-increment: item;
+  position: relative;
+}
+.list-style-nested .prose ol > li::before {
+  content: counters(item, ".") ". ";
+  position: absolute;
+  right: 100%;
+  padding-right: 0.5rem;
+  color: var(--tw-prose-counters);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
 </style>

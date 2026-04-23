@@ -57,6 +57,7 @@ pub fn run() {
             files::open_local_file,
             files::update_file_metadata,
             files::reindex_sources,
+            files::read_local_file_content,
             // Nexus
             nexus::get_nexus_items,
             nexus::search_nexus,
@@ -70,6 +71,12 @@ pub fn run() {
             gdrive::sync::gdrive_get_cache_path,
             // Watcher
             watcher::start_vault_watcher,
+            // GDrive File Manager (OmniDrive — independent auth via Keychain)
+            gdrive::browse::is_gdrive_connected,
+            gdrive::browse::get_gdrive_user_info,
+            gdrive::browse::connect_gdrive,
+            gdrive::browse::disconnect_gdrive,
+            gdrive::browse::get_gdrive_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

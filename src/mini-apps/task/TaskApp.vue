@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Info, Target, Inbox, Sun, Calendar, Coffee, Send, Flag, ListTodo, Eye, EyeOff, Filter } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import { useSettings } from '../../composables/useSettings';
 
@@ -366,6 +365,15 @@ const openEditModal = (task: TaskMetadata) => {
         .map(([k, v]) => ({ k, v: String(v) }));
 };
 
+const openEditById = (id: string) => {
+    const task = tasks.value.find(t => t.id === id);
+    if (task) {
+        openEditModal(task);
+    }
+};
+
+defineExpose({ openEditById });
+
 const openCreateModal = () => {
     editingTask.value = {
         id: '',
@@ -385,6 +393,7 @@ const openCreateModal = () => {
         path: '',
         created_at: '',
         updated_at: '',
+        completed_at: '',
         custom_fields: {},
         isNew: true
     };
@@ -406,20 +415,7 @@ const openCreateModal = () => {
     customFields.value = [];
 };
 
-const addChecklistItem = () => {
-    editingTaskParams.value.checklist.push({ content: '', completed: false });
-};
 
-const removeChecklistItem = (index: number) => {
-    editingTaskParams.value.checklist.splice(index, 1);
-};
-
-const focusLastChecklistItem = () => {
-    const inputs = document.querySelectorAll('.checklist-input');
-    if (inputs.length > 0) {
-        (inputs[inputs.length - 1] as HTMLInputElement).focus();
-    }
-};
 
 const handleModalSave = async (payload: any) => {
     editingTaskParams.value = payload;
@@ -652,7 +648,7 @@ watch(() => props.vaultPath, () => {
                   </div>
               </div>
 
-              <!-- Filter Bar (Search & Properties) -->
+              <!-- Bar (Search & Properties) -->
               <div class="mt-4 flex flex-row items-center gap-3">
                   <div class="relative w-full sm:max-w-xs group">
                       <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -671,7 +667,7 @@ watch(() => props.vaultPath, () => {
                       <!-- Advanced Search Tooltip/Hints -->
                       <div class="absolute top-full left-0 mt-2 p-3 bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-[#2c2c2c] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-20 w-72 opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible transition-all">
                           <div class="flex items-center text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-2.5 uppercase tracking-wider">
-                              <Search class="w-3.5 h-3.5 mr-1" /> Quick Filter Syntax
+                              <Search class="w-3.5 h-3.5 mr-1" /> Quick Syntax
                           </div>
                           <div class="space-y-2 text-[11px] text-gray-600 dark:text-gray-400">
                               <div class="flex items-center gap-2"><span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:transferred</span>, <span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:tracked</span></div>

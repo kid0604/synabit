@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { open, confirm, message } from '@tauri-apps/plugin-dialog';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { useVirtualList, useWindowSize } from '@vueuse/core';
 import { 
-    FolderOpen, FolderSync, X, File, Search, FileText,
+    FolderOpen, FolderSync, X, Search, FileText,
     Video, Music, FileArchive, Code, Plus, Trash2,
-    HardDrive, Image as ImageIcon, FileType, LayoutGrid, List
+    ImageIcon, LayoutGrid, List, HardDrive, FileType, Unlink
 } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -47,9 +50,37 @@ const newTagInput = ref('');
 const isAddingTag = ref(false);
 const isSavingTags = ref(false);
 
+const previewContent = ref<string | null>(null);
+const isLoadingPreview = ref(false);
+
+const isImageFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp', 'ico', 'tiff', 'heic'].includes(selectedFile.value.extension.toLowerCase());
+});
+
+const isVideoFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return ['mp4', 'mov', 'avi', 'webm', 'mkv', 'flv', 'wmv', 'm4v'].includes(selectedFile.value.extension.toLowerCase());
+});
+
+const isAudioFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'alac'].includes(selectedFile.value.extension.toLowerCase());
+});
+
+const isPdfFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return selectedFile.value.extension.toLowerCase() === 'pdf';
+});
+
+const isTextFile = computed(() => {
+    if (!selectedFile.value) return false;
+    return ['js', 'ts', 'vue', 'json', 'html', 'css', 'rs', 'py', 'txt', 'md', 'csv', 'yaml', 'toml', 'xml'].includes(selectedFile.value.extension.toLowerCase());
+});
+
 import { watch } from 'vue';
 
-watch(selectedFile, (newVal) => {
+watch(selectedFile, async (newVal) => {
     if (newVal) {
         // Strip extension for edit field
         if (newVal.extension && newVal.filename.endsWith(`.${newVal.extension}`)) {
@@ -59,6 +90,20 @@ watch(selectedFile, (newVal) => {
         }
         isAddingTag.value = false;
         newTagInput.value = '';
+        
+        // Load text preview if necessary
+        previewContent.value = null;
+        if (isTextFile.value) {
+            isLoadingPreview.value = true;
+            try {
+                previewContent.value = await invoke<string>('read_local_file_content', { path: newVal.path });
+            } catch (e) {
+                console.error("Failed to read text preview", e);
+                previewContent.value = "Unable to load preview or file is too large.";
+            } finally {
+                isLoadingPreview.value = false;
+            }
+        }
     }
 });
 
@@ -190,6 +235,22 @@ const fetchFiles = async () => {
     }
 };
 
+const syncAllSources = async () => {
+    if (isScanning.value) return;
+    isScanning.value = true;
+    try {
+        await invoke('reindex_sources', { vaultPath: props.vaultPath });
+        if (isGDriveConnected.value) {
+            await invoke('get_gdrive_files', { vaultPath: props.vaultPath });
+        }
+        await fetchFiles();
+    } catch(e) {
+        console.error("Failed to sync sources", e);
+    } finally {
+        isScanning.value = false;
+    }
+};
+
 const addNewSource = async () => {
     try {
         const selectedPath = await open({
@@ -239,22 +300,87 @@ const openLocalFile = async (path: string) => {
 };
 
 const getFileIcon = (ext: string) => {
-    const e = ext.toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(e)) return ImageIcon;
-    if (['pdf', 'txt', 'md', 'doc', 'docx'].includes(e)) return FileText;
-    if (['mp4', 'mov', 'avi'].includes(e)) return Video;
-    if (['mp3', 'wav'].includes(e)) return Music;
-    if (['zip', 'rar', 'gz'].includes(e)) return FileArchive;
-    if (['js', 'ts', 'vue', 'json', 'html', 'css', 'rs', 'py'].includes(e)) return Code;
-    return File;
+    const extLower = ext.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic'].includes(extLower)) return ImageIcon;
+    if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(extLower)) return Video;
+    if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(extLower)) return Music;
+    if (['pdf', 'doc', 'docx', 'txt', 'md'].includes(extLower)) return FileText;
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extLower)) return FileArchive;
+    if (['js', 'ts', 'vue', 'rs', 'py', 'json', 'html', 'css'].includes(extLower)) return Code;
+    return FileType;
+};
+
+// --- Cloud Connect ---
+const isGDriveConnected = ref(false);
+const gdriveEmail = ref('');
+const isConnectingGDrive = ref(false);
+
+const checkGDriveStatus = async () => {
+    try {
+        isGDriveConnected.value = await invoke<boolean>('is_gdrive_connected', { vaultPath: props.vaultPath });
+        if (isGDriveConnected.value) {
+            gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: props.vaultPath });
+        }
+    } catch (e) {
+        console.error("Failed to check GDrive status", e);
+    }
+};
+
+const connectGDrive = async () => {
+    if (isConnectingGDrive.value) return;
+    isConnectingGDrive.value = true;
+    try {
+        const success = await invoke('connect_gdrive', { vaultPath: props.vaultPath });
+        if (success) {
+            isGDriveConnected.value = true;
+            gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: props.vaultPath });
+            // Fetch the files, which will auto-insert into DB
+            await invoke('get_gdrive_files', { vaultPath: props.vaultPath });
+            // Refresh local state
+            await fetchFiles();
+            activeSourceId.value = 'gdrive';
+        }
+    } catch (e: any) {
+        console.error("Failed to connect GDrive", JSON.stringify(e));
+        const errStr = typeof e === 'object' ? JSON.stringify(e) : String(e);
+        await message(`Failed to connect Google Drive: ${errStr}`, { title: 'Error', kind: 'error' });
+    } finally {
+        isConnectingGDrive.value = false;
+    }
+};
+
+const syncGDrive = async () => {
+    isScanning.value = true;
+    try {
+        await invoke('get_gdrive_files', { vaultPath: props.vaultPath });
+        await fetchFiles();
+    } catch (e: any) {
+        console.error("GDrive sync failed", e);
+    } finally {
+        isScanning.value = false;
+    }
+};
+
+const disconnectGDrive = async () => {
+    const isConfirmed = await confirm('Are you sure you want to disconnect Google Drive? This will remove all cloud files from your view.', { title: 'Disconnect Google Drive', kind: 'warning' });
+    if (!isConfirmed) return;
+    try {
+        await invoke('disconnect_gdrive', { vaultPath: props.vaultPath });
+        isGDriveConnected.value = false;
+        gdriveEmail.value = '';
+        if (activeSourceId.value === 'gdrive') activeSourceId.value = null;
+        await fetchFiles();
+    } catch (e: any) {
+        console.error("Failed to disconnect", e);
+    }
 };
 
 const getFileTypeGroup = (ext: string) => {
     const e = ext.toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(e)) return 'Images';
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp', 'ico', 'tiff', 'heic'].includes(e)) return 'Images';
     if (['pdf', 'txt', 'md', 'doc', 'docx'].includes(e)) return 'Documents';
-    if (['mp4', 'mov', 'avi'].includes(e)) return 'Videos';
-    if (['mp3', 'wav'].includes(e)) return 'Audio';
+    if (['mp4', 'mov', 'avi', 'webm', 'mkv', 'flv', 'wmv', 'm4v'].includes(e)) return 'Videos';
+    if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'alac'].includes(e)) return 'Audio';
     if (['zip', 'rar', 'gz'].includes(e)) return 'Archives';
     if (['js', 'ts', 'vue', 'json', 'html', 'css', 'rs', 'py'].includes(e)) return 'Code';
     return 'Other';
@@ -264,9 +390,13 @@ const filteredFiles = computed(() => {
     let result = files.value;
     
     if (activeSourceId.value) {
-        const source = sources.value.find(s => s.id === activeSourceId.value);
-        if (source) {
-            result = result.filter(f => f.path.startsWith(source.path));
+        if (activeSourceId.value === 'gdrive') {
+            result = result.filter(f => f.source_type === 'gdrive');
+        } else {
+            const source = sources.value.find(s => s.id === activeSourceId.value);
+            if (source) {
+                result = result.filter(f => f.path.startsWith(source.path));
+            }
         }
     }
     
@@ -293,6 +423,31 @@ const filteredFiles = computed(() => {
     return result;
 });
 
+const { width } = useWindowSize();
+const gridCols = computed(() => {
+    if (width.value >= 1536) return 5;
+    if (width.value >= 1280) return 4;
+    if (width.value >= 768) return 3;
+    return 2;
+});
+
+const gridRows = computed(() => {
+    const result = [];
+    const cols = gridCols.value;
+    for (let i = 0; i < filteredFiles.value.length; i += cols) {
+        result.push(filteredFiles.value.slice(i, i + cols));
+    }
+    return result;
+});
+
+const { list: virtualListItems, containerProps, wrapperProps } = useVirtualList(filteredFiles, {
+  itemHeight: 57,
+});
+
+const { list: virtualGridRows, containerProps: gridContainerProps, wrapperProps: gridWrapperProps } = useVirtualList(gridRows, {
+  itemHeight: 180,
+});
+
 const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -303,7 +458,10 @@ const formatSize = (bytes: number) => {
 
 onMounted(async () => {
     await fetchSources();
+    await checkGDriveStatus();
     await fetchFiles();
+    // Silently sync in background on load
+    syncAllSources();
 });
 
 </script>
@@ -314,9 +472,9 @@ onMounted(async () => {
     <!-- Sidebar -->
     <div class="w-64 flex-shrink-0 bg-white/40 dark:bg-white/[0.02] backdrop-blur-xl border-r border-gray-200/50 dark:border-white/5 flex flex-col z-20">
         <div class="p-6 flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <FolderSync class="w-4 h-4 text-white" />
-            </div>
+            <button @click="syncAllSources" :class="{'animate-spin text-white': isScanning, 'shadow-lg shadow-indigo-500/20 text-white hover:scale-105 active:scale-95': !isScanning}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer group" title="Sync Files">
+                <FolderSync class="w-4 h-4" />
+            </button>
             <h1 class="font-bold text-lg tracking-tight">OmniDrive</h1>
         </div>
         
@@ -344,6 +502,38 @@ onMounted(async () => {
                         </button>
                         <button @click="removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
                             <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+
+                    <!-- Cloud Drives -->
+                    <div class="flex items-center justify-between px-2 pt-4 mb-2">
+                        <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Cloud Drives</h3>
+                        <button @click="syncGDrive" title="Sync Google Drive" class="text-gray-400 hover:text-indigo-500 transition-colors">
+                            <FolderSync class="w-4 h-4" />
+                        </button>
+                    </div>
+                    <button @click="connectGDrive" v-if="!isGDriveConnected" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all hover:bg-blue-50 dark:hover:bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <svg v-if="!isConnectingGDrive" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2L2 19h7.5l5.5-9.5h7L12 2zm1.5 12.5L8 22h14l-5.5-9.5h-3zM2 19l4.5 7.5h7.5L9.5 19H2z"/>
+                        </svg>
+                        <FolderSync v-else class="w-4 h-4 animate-spin" />
+                        Connect Google Drive
+                    </button>
+                    
+                    <div v-else class="relative group">
+                        <button @click="activeSourceId = 'gdrive'; activeType = null" 
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all"
+                                :class="activeSourceId === 'gdrive' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
+                            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2L2 19h7.5l5.5-9.5h7L12 2zm1.5 12.5L8 22h14l-5.5-9.5h-3zM2 19l4.5 7.5h7.5L9.5 19H2z"/>
+                            </svg>
+                            <div class="flex flex-col items-start truncate pr-6">
+                                <span class="font-medium truncate">Google Drive</span>
+                                <span v-if="gdriveEmail" class="text-[10px] opacity-70 truncate">{{ gdriveEmail }}</span>
+                            </div>
+                        </button>
+                        <button @click.stop="disconnectGDrive" title="Disconnect" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
+                            <Unlink class="w-3.5 h-3.5" />
                         </button>
                     </div>
                 </div>
@@ -401,62 +591,67 @@ onMounted(async () => {
                 <p class="text-sm">Try adjusting your filters or adding a new source.</p>
             </div>
 
-            <!-- Grid View -->
-            <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                <div v-for="file in filteredFiles" :key="file.id" 
-                     @click="selectedFile = file"
-                     class="group bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl p-4 cursor-pointer hover:bg-white dark:hover:bg-white/10 transition-all hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1"
-                     :class="{'ring-2 ring-indigo-500 border-transparent': selectedFile?.id === file.id}">
-                    <div class="aspect-square rounded-xl bg-gray-100/50 dark:bg-black/20 mb-4 flex items-center justify-center border border-gray-200/30 dark:border-white/5">
-                        <component :is="getFileIcon(file.extension)" class="w-12 h-12 text-gray-400 dark:text-gray-500 group-hover:text-indigo-500 transition-colors" />
-                    </div>
-                    <h4 class="text-sm font-bold truncate mb-1" :title="file.filename">{{ file.filename }}</h4>
-                    <div class="flex items-center justify-between text-xs text-gray-500">
-                        <span>{{ file.extension.toUpperCase() || 'FILE' }}</span>
-                        <span>{{ formatSize(file.size) }}</span>
+            <!-- Grid View (Virtual) -->
+            <div v-else-if="viewMode === 'grid'" v-bind="gridContainerProps" class="h-full overflow-y-auto custom-scrollbar">
+                <div v-bind="gridWrapperProps">
+                    <div v-for="{ index, data: row } in virtualGridRows" :key="index" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mb-4">
+                        <div v-for="file in row" :key="file.id" 
+                             @click="selectedFile = file"
+                             class="group bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl p-4 cursor-pointer hover:bg-white dark:hover:bg-white/10 transition-all hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1"
+                             :class="{'ring-2 ring-indigo-500 border-transparent': selectedFile?.id === file.id}">
+                            <div class="aspect-square rounded-xl bg-gray-100/50 dark:bg-black/20 mb-4 flex items-center justify-center border border-gray-200/30 dark:border-white/5">
+                                <component :is="getFileIcon(file.extension)" class="w-12 h-12 text-gray-400 dark:text-gray-500 group-hover:text-indigo-500 transition-colors" />
+                            </div>
+                            <h4 class="text-sm font-bold truncate mb-1" :title="file.filename">{{ file.filename }}</h4>
+                            <div class="flex items-center justify-between text-xs text-gray-500">
+                                <span>{{ file.extension.toUpperCase() || 'FILE' }}</span>
+                                <span>{{ formatSize(file.size) }}</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- List View -->
-            <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm">
-                <table class="w-full text-left text-sm">
-                    <thead class="bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5">
-                        <tr>
-                            <th class="px-6 py-4 font-medium">Name</th>
-                            <th class="px-6 py-4 font-medium">Size</th>
-                            <th class="px-6 py-4 font-medium">Modified</th>
-                            <th class="px-6 py-4 font-medium">Tags</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-200/50 dark:divide-white/5">
-                        <tr v-for="file in filteredFiles" :key="file.id" 
+            <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm flex flex-col h-full">
+                <!-- List Header -->
+                <div class="grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-4 bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5 sticky top-0 z-10 text-sm">
+                    <div>Name</div>
+                    <div>Size</div>
+                    <div>Modified</div>
+                    <div>Tags</div>
+                </div>
+                
+                <!-- List Body (Virtual) -->
+                <div v-bind="containerProps" class="flex-1 overflow-y-auto custom-scrollbar">
+                    <div v-bind="wrapperProps">
+                        <div v-for="{ data: file } in virtualListItems" :key="file.id" 
                             @click="selectedFile = file"
-                            class="hover:bg-white dark:hover:bg-white/5 cursor-pointer transition-colors"
+                            class="grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-3 items-center hover:bg-white dark:hover:bg-white/5 cursor-pointer transition-colors border-b border-gray-100/50 dark:border-white/5 text-sm"
                             :class="{'bg-indigo-50/50 dark:bg-indigo-500/10': selectedFile?.id === file.id}">
-                            <td class="px-6 py-3">
-                                <div class="flex items-center gap-3">
-                                    <component :is="getFileIcon(file.extension)" class="w-5 h-5 text-indigo-500" />
-                                    <span class="font-medium truncate max-w-[200px] xl:max-w-md">{{ file.filename }}</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-3 text-gray-500">{{ formatSize(file.size) }}</td>
-                            <td class="px-6 py-3 text-gray-500">{{ file.modified_at.split(' ')[0] }}</td>
-                            <td class="px-6 py-3">
-                                <div class="flex gap-1">
-                                    <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300">#{{ t }}</span>
-                                    <span v-if="file.tags.length > 2" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300">+{{file.tags.length - 2}}</span>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                            
+                            <div class="flex items-center gap-3 overflow-hidden">
+                                <component :is="getFileIcon(file.extension)" class="w-5 h-5 flex-shrink-0 text-indigo-500" />
+                                <span class="font-medium truncate">{{ file.filename }}</span>
+                            </div>
+                            
+                            <div class="text-gray-500 truncate">{{ formatSize(file.size) }}</div>
+                            <div class="text-gray-500 truncate">{{ file.modified_at.split(' ')[0] }}</div>
+                            
+                            <div class="flex gap-1 overflow-hidden">
+                                <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300 truncate">#{{ t }}</span>
+                                <span v-if="file.tags.length > 2" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300 flex-shrink-0">+{{file.tags.length - 2}}</span>
+                            </div>
+                            
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Detail Panel -->
-    <div v-if="selectedFile" class="w-80 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.02)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.2)] animate-in slide-in-from-right-4 duration-300">
+    <div v-if="selectedFile" class="w-96 xl:w-[450px] flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.02)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.2)] animate-in slide-in-from-right-4 duration-300">
         <div class="h-20 px-6 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
             <h2 class="font-bold text-sm">File Details</h2>
             <button @click="selectedFile = null" class="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors text-gray-500">
@@ -465,8 +660,25 @@ onMounted(async () => {
         </div>
         
         <div class="flex-1 overflow-y-auto p-6">
-            <div class="aspect-square w-full rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-500/10 dark:to-purple-500/10 border border-indigo-100 dark:border-indigo-500/20 flex items-center justify-center mb-6 shadow-inner">
-                <component :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50 dark:text-indigo-400/50" />
+            <div class="aspect-square w-full rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-500/10 dark:to-purple-500/10 border border-indigo-100 dark:border-indigo-500/20 flex items-center justify-center mb-6 shadow-inner overflow-hidden relative">
+                
+                <img v-if="isImageFile" :src="convertFileSrc(selectedFile.path)" class="w-full h-full object-contain" />
+                
+                <video v-else-if="isVideoFile" :src="convertFileSrc(selectedFile.path)" controls class="w-full h-full object-contain bg-black/5" />
+                
+                <audio v-else-if="isAudioFile" :src="convertFileSrc(selectedFile.path)" controls class="w-full px-4" />
+                
+                <iframe v-else-if="isPdfFile" :src="convertFileSrc(selectedFile.path)" class="w-full h-full border-none bg-white"></iframe>
+                
+                <div v-else-if="isTextFile" class="w-full h-full overflow-y-auto bg-white/50 dark:bg-black/20 p-4 text-xs font-mono text-gray-700 dark:text-gray-300 custom-scrollbar text-left">
+                    <div v-if="isLoadingPreview" class="flex items-center justify-center h-full">
+                        <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                    <div v-else-if="selectedFile.extension.toLowerCase() === 'md'" class="prose prose-sm dark:prose-invert max-w-none" v-html="DOMPurify.sanitize(marked.parse(previewContent || '') as string)"></div>
+                    <pre v-else class="whitespace-pre-wrap break-words m-0">{{ previewContent }}</pre>
+                </div>
+                
+                <component v-else :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50 dark:text-indigo-400/50" />
             </div>
             
             <template v-if="isAssetsFile">

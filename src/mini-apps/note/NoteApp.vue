@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -17,10 +17,6 @@ const props = defineProps<{
   vaultPath: string;
   isFloatingView?: boolean;
   floatingNoteId?: string | null;
-}>();
-
-const emit2 = defineEmits<{
-  (e: 'open-note-id', id: string): void;
 }>();
 
 const appStore = useAppStore();
@@ -263,7 +259,7 @@ const renameTopTitle = async (e: Event) => {
 
     if (!note || note.title === newTitle || !newTitle) {
         if (isEnter) focusEditor();
-        delete focusedTitles.value[note.id];
+        if (note) delete focusedTitles.value[note.id];
         return;
     }
     
@@ -581,7 +577,6 @@ defineExpose({ openNoteById, scanVault, notes, tabContents, loadNoteFile, curren
 onMounted(async () => {
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
-  document.addEventListener('click', () => { activeContextMenu.value = null; });
 
   if (props.isFloatingView && props.floatingNoteId) {
       currentNoteId.value = props.floatingNoteId;
@@ -594,22 +589,37 @@ onMounted(async () => {
      await scanVault();
   }
 
+  let unlistenFns: (() => void)[] = [];
+
   listen('note-updated', (event: any) => {
       const data = event.payload as { id: string, content: string };
       if (currentNoteId.value === data.id) return;
       if (tabContents.value[data.id] !== undefined) {
          tabContents.value[data.id] = data.content;
       }
-  });
+  }).then(fn => unlistenFns.push(fn));
 
-  listen('vault-changed', () => { scanVault(); });
+  listen('vault-changed', () => { scanVault(); }).then(fn => unlistenFns.push(fn));
+  
   listen('vault-file-modified', () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
-  });
+  }).then(fn => unlistenFns.push(fn));
+  
   listen('vault-file-created-deleted', () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
+  }).then(fn => unlistenFns.push(fn));
+
+  const onClickOutside = () => { activeContextMenu.value = null; };
+  document.addEventListener('click', onClickOutside);
+
+  onUnmounted(() => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.removeEventListener('click', onClickOutside);
+      unlistenFns.forEach(fn => fn());
+      unlistenFns = [];
   });
 });
 </script>
@@ -784,8 +794,8 @@ onMounted(async () => {
                    </div>
                   <input type="text" class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700" 
                     :value="focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title" 
-                    @focus="focusedTitles[tabId] = $event.target.value"
-                    @input="focusedTitles[tabId] = $event.target.value"
+                    @focus="focusedTitles[tabId] = ($event.target as HTMLInputElement).value"
+                    @input="focusedTitles[tabId] = ($event.target as HTMLInputElement).value"
                     @blur="renameTopTitle" 
                     @keydown.enter.prevent="renameTopTitle" 
                     placeholder="Note Title">

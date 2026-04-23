@@ -28,3 +28,8 @@ debug_*.rs
 debug_*.js
 test_*.js
 test_*.rs
+
+# Secrets (OAuth credentials, API keys)
+src-tauri/secrets/
+*.env
+.env*

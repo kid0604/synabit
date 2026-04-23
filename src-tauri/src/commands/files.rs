@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use crate::models::file::{FileMetadata, FileSource, FileManagerSettings};
 use crate::error::{AppError, AppResult};
 use crate::db::DbBridge;
+use crate::path_utils;
 
 #[tauri::command]
 pub fn add_file_source(vault_path: String, path: String, name: String) -> AppResult<FileSource> {
@@ -152,6 +153,7 @@ pub fn save_settings(_vault_path: String, _settings: FileManagerSettings) -> App
 #[cfg(desktop)]
 #[tauri::command]
 pub fn open_local_file(_vault_path: String, path: String) -> AppResult<()> {
+    path_utils::enforce_no_traversal(&path)?;
     // Note: path is now an absolute path in the new OmniDrive architecture
     let p = path.clone();
     #[cfg(target_os = "macos")]
@@ -185,11 +187,16 @@ pub fn update_file_metadata(vault_path: String, path: String, new_filename: Stri
         return Ok(path);
     }
     
+    path_utils::enforce_no_traversal(&path)?;
+
     let path_obj = std::path::Path::new(&path);
     if let Some(parent) = path_obj.parent() {
         if let Some(old_name) = path_obj.file_name() {
             let old_name_str = old_name.to_string_lossy().to_string();
             if old_name_str != new_filename {
+                if !path_utils::is_safe_filename(&new_filename) {
+                    return Err(crate::error::AppError::InvalidPath("Invalid filename".to_string()));
+                }
                 let new_path = parent.join(&new_filename);
                 // rename on disk
                 if let Err(e) = std::fs::rename(&path, &new_path) {
@@ -218,6 +225,42 @@ pub fn update_file_metadata(vault_path: String, path: String, new_filename: Stri
 }
 
 #[tauri::command]
-pub fn reindex_sources(_vault_path: String) -> AppResult<()> {
+pub fn reindex_sources(vault_path: String) -> AppResult<()> {
+    let db = DbBridge::new(&vault_path)?;
+    
+    // Auto scan assets
+    let assets_dir = std::path::Path::new(&vault_path).join("assets");
+    if assets_dir.exists() {
+        let _ = scan_directory(vault_path.clone(), assets_dir.to_string_lossy().to_string());
+    }
+
+    // Scan all custom sources
+    if let Ok(sources) = db.get_all_file_sources() {
+        for source in sources {
+            let _ = scan_directory(vault_path.clone(), source.path);
+        }
+    }
+    
     Ok(())
+}
+
+#[tauri::command]
+pub fn read_local_file_content(path: String) -> AppResult<String> {
+    path_utils::enforce_no_traversal(&path)?;
+    let p = std::path::Path::new(&path);
+    if !p.exists() || !p.is_file() {
+        return Err(AppError::InvalidPath("File not found or is a directory".to_string()));
+    }
+    
+    // Check size limit (e.g. 5MB)
+    if let Ok(meta) = p.metadata() {
+        if meta.len() > 5 * 1024 * 1024 {
+            return Err(AppError::General("File is too large to preview (max 5MB)".to_string()));
+        }
+    }
+    
+    let content = std::fs::read_to_string(p)
+        .map_err(|e| AppError::General(format!("Failed to read file: {}", e)))?;
+        
+    Ok(content)
 }

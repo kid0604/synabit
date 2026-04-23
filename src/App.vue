@@ -36,10 +36,11 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 
 // ─── App View State ───────────────────────────────────────
 const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file'>('nexus');
-const editTargetId = ref<string>(''); // cross-app nav target (replaces localStorage)
 
-// ─── NoteApp ref for cross-app navigation ─────────────────
+// ─── Mini App Refs for cross-app navigation ─────────────────
 const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
+const quickCapAppRef = ref<any>(null);
+const taskAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isFloatingView = ref(false);
@@ -87,9 +88,18 @@ const clearVault = () => {
 
 // ─── Cross-app Navigation (Nexus → Note/Task/QuickCap) ───
 const handleEditFromNexus = (id: string, type: string) => {
-    if (type === 'note') { activeTool.value = 'note'; nextTick(() => noteAppRef.value?.openNoteById(id)); }
-    else if (type === 'quickcap') { activeTool.value = 'quickcap'; editTargetId.value = id; }
-    else if (type === 'task') { activeTool.value = 'task'; editTargetId.value = id; }
+    if (type === 'note') { 
+        activeTool.value = 'note'; 
+        nextTick(() => noteAppRef.value?.openNoteById(id)); 
+    }
+    else if (type === 'quickcap') { 
+        activeTool.value = 'quickcap'; 
+        nextTick(() => quickCapAppRef.value?.openEditById(id)); 
+    }
+    else if (type === 'task') { 
+        activeTool.value = 'task'; 
+        nextTick(() => taskAppRef.value?.openEditById(id)); 
+    }
 };
 
 import { nextTick } from 'vue';
@@ -121,6 +131,8 @@ onMounted(async () => {
 
   gdrive.checkGDriveAuth().then(() => { gdrive.setupAutoSync(); });
 
+  let unlistenFns: (() => void)[] = [];
+
   listen('vault-file-created-deleted', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
       invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(console.error);
@@ -130,13 +142,18 @@ onMounted(async () => {
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
-  });
+  }).then(fn => unlistenFns.push(fn));
 
   listen('vault-file-modified', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
       invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(console.error);
       invoke('scan_events', { vaultPath: vaultPath.value }).catch(console.error);
       invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(console.error);
+  }).then(fn => unlistenFns.push(fn));
+
+  onUnmounted(() => {
+      unlistenFns.forEach(fn => fn());
+      unlistenFns = [];
   });
 
   getCurrentWindow().onCloseRequested(async () => {
@@ -255,13 +272,13 @@ onUnmounted(() => {
         <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" />
       </template>
       <template v-else-if="activeTool === 'quickcap'">
-         <main class="flex-1 overflow-hidden relative"><QuickCap :vaultPath="vaultPath" /></main>
+         <main class="flex-1 overflow-hidden relative"><QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" /></main>
       </template>
       <template v-else-if="activeTool === 'nexus'">
          <main class="flex-1 overflow-hidden relative"><Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" /></main>
       </template>
       <template v-else-if="activeTool === 'task'">
-         <main class="flex-1 overflow-hidden relative"><Tasks :vaultPath="vaultPath" /></main>
+         <main class="flex-1 overflow-hidden relative"><Tasks ref="taskAppRef" :vaultPath="vaultPath" /></main>
       </template>
       <template v-else-if="activeTool === 'calendar'">
         <main class="flex-1 overflow-hidden relative"><CalendarApp :vaultPath="vaultPath" /></main>
@@ -282,6 +299,7 @@ onUnmounted(() => {
         :gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value"
         @clear-vault="clearVault"
         @sync-gdrive="gdrive.syncGDrive()"
+        @connect-gdrive="gdrive.connectGDrive()"
         @disconnect-gdrive="gdrive.disconnectGDrive().then(clearVault)"
         @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
         @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"

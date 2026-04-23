@@ -8,7 +8,7 @@ const props = defineProps<{
   tags: string[];
   outgoingLinks: string[]; // IDs
   backlinks: Array<{ id: string, title: string }>;
-  allNotes: Array<{ id: string, title: string }>;
+  allNotes: Array<{ id: string, title: string, tags?: string[] }>;
 }>();
 
 const emit = defineEmits<{
@@ -199,7 +199,7 @@ const renderGraph = () => {
         .attr("text-anchor", "middle")
         .attr("dy", 18);
 
-    node.on("click", (event, d: any) => {
+    node.on("click", (_event, d: any) => {
         if (d.group !== 'tag') {
             emit('open-note', d.id);
         }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue';
-import { CheckCircle2, Circle, ListTodo, Calendar, Tag, Flag, X, Send, Eye, EyeOff } from 'lucide-vue-next';
+import { CheckCircle2, ListTodo, Calendar, Tag, Flag, X, Send, Eye, EyeOff } from 'lucide-vue-next';
 
 const props = defineProps<{
     task: any;

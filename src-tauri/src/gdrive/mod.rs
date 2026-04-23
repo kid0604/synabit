@@ -2,26 +2,26 @@
 //
 // ┌─────────────┐
 // │  mod.rs     │ ← re-exports + shared types/constants
-// │  auth.rs    │ ← OAuth2 flow, token management
+// │  auth.rs    │ ← Vault Sync OAuth2 (tokens in JSON file, scope: drive.file)
 // │  api.rs     │ ← Drive API helpers (list, upload, download, delete, folders)
 // │  sync.rs    │ ← Full sync engine (3-way merge logic)
+// │  browse.rs  │ ← File Manager GDrive browse (tokens in Keychain, scope: drive.readonly)
 // └─────────────┘
+//
+// auth.rs + api.rs + sync.rs = Vault Sync (backup vault to Drive)
+// browse.rs = OmniDrive File Manager (browse ALL user Drive files)
+// Each has its own OAuth token. Users can enable either, both, or neither.
 
 pub mod auth;
 pub mod api;
 pub mod sync;
+pub mod browse;
 
 // ──────────────────────────────────────────────
 // Shared Constants
 // ──────────────────────────────────────────────
-pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_GOOGLE_CLIENT_ID") {
-    Some(v) => v,
-    None => "REDACTED_GOOGLE_CLIENT_ID",
-};
-pub(crate) const CLIENT_SECRET: &str = match option_env!("SYNABIT_GOOGLE_CLIENT_SECRET") {
-    Some(v) => v,
-    None => "REDACTED_GOOGLE_CLIENT_SECRET",
-};
+pub(crate) const CLIENT_ID: &str = env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time");
+pub(crate) const CLIENT_SECRET: &str = env!("SYNABIT_GOOGLE_CLIENT_SECRET", "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time");
 pub(crate) const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 pub(crate) const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 pub(crate) const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
