@@ -4339,7 +4339,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs",
@@ -4350,6 +4350,7 @@ dependencies = [
  "notify",
  "oauth2",
  "opener",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

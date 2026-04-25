@@ -792,13 +792,16 @@ onMounted(async () => {
                           <input v-model="newTagInput" @keydown="addTag" placeholder="Add tag..." class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]" />
                        </div>
                    </div>
-                  <input type="text" class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700" 
-                    :value="focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title" 
-                    @focus="focusedTitles[tabId] = ($event.target as HTMLInputElement).value"
-                    @input="focusedTitles[tabId] = ($event.target as HTMLInputElement).value"
-                    @blur="renameTopTitle" 
-                    @keydown.enter.prevent="renameTopTitle" 
-                    placeholder="Note Title">
+                   <div class="w-full grid grow-wrap" :data-replicated-value="(focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title) || ''">
+                     <textarea class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700 resize-none overflow-hidden col-start-1 row-start-1 h-full" 
+                       rows="1"
+                       :value="focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title" 
+                       @focus="focusedTitles[tabId] = ($event.target as HTMLTextAreaElement).value"
+                       @input="focusedTitles[tabId] = ($event.target as HTMLTextAreaElement).value"
+                       @blur="renameTopTitle" 
+                       @keydown.enter.prevent="renameTopTitle" 
+                       placeholder="Note Title"></textarea>
+                   </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark">
                    <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" @update:model-value="(val: string) => onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
@@ -962,5 +965,23 @@ onMounted(async () => {
 }
 html.dark .manager-search-input {
   color: #f4f4f5 !important;
+}
+
+/* Auto-resizing textarea for note title */
+.grow-wrap {
+  display: grid;
+}
+.grow-wrap::after {
+  content: attr(data-replicated-value) " ";
+  white-space: pre-wrap;
+  visibility: hidden;
+  grid-area: 1 / 1 / 2 / 2;
+  font-size: 2.25rem; /* Matches text-4xl */
+  line-height: 2.5rem; /* Matches text-4xl */
+  font-weight: 700; /* Matches font-bold */
+  word-break: break-word;
+}
+.grow-wrap > textarea {
+  grid-area: 1 / 1 / 2 / 2;
 }
 </style>

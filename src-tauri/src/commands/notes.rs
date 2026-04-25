@@ -96,7 +96,7 @@ pub fn scan_vault_path(vault_path: String) -> AppResult<Vec<NoteMetadata>> {
                                     timestamp, // We temporarily use timestamp from metadata as u64
                                     tags,
                                     pinned,
-                                    content,
+                                    content: content.clone(),
                                     is_task: false,
                                     is_event: false,
                                     has_reminder: false,
@@ -104,6 +104,9 @@ pub fn scan_vault_path(vault_path: String) -> AppResult<Vec<NoteMetadata>> {
                                     raw_frontmatter: String::new(),
                                 };
                                 let _ = db.upsert_note(&note);
+                                
+                                let edges = crate::utils::graph_parser::extract_edges(&note.id, &content);
+                                let _ = db.update_edges(&note.id, edges);
                             }
                         }
                     }
@@ -230,6 +233,38 @@ pub fn rename_note(vault_path: String, old_path: String, new_name: String) -> Ap
     }
     
     fs::rename(&old, &new_path)?;
+
+    // Auto-Rename Links in other files
+    if let Ok(db) = DbBridge::new(&vault_path) {
+        let old_title = old.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let new_title = new_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        
+        if old_title != new_title {
+            if let Ok(edges) = db.get_all_edges() {
+                let target_lower = old_title.to_lowercase();
+                let target_md = format!("{}.md", target_lower);
+                for edge in edges {
+                    let edge_target = edge.target_title_or_path.to_lowercase();
+                    let is_match = edge_target == target_lower ||
+                                   edge_target == target_md ||
+                                   edge_target.ends_with(&format!("/{}", target_md));
+
+                    if (edge.link_type == "wikilink" || edge.link_type == "internal_link") && is_match {
+                        // This source file has a link to the old note. Let's update it!
+                        let source_abs_path = base_dir.join(&edge.source_id);
+                        if source_abs_path.exists() {
+                            if let Ok(content) = fs::read_to_string(&source_abs_path) {
+                                let updated_content = crate::utils::graph_parser::rename_links_in_text(&content, &old_title, &new_title);
+                                if updated_content != content {
+                                    let _ = fs::write(&source_abs_path, updated_content);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     // Return relative path of the new file
     Ok(path_utils::to_relative(&new_path, &vault_path))

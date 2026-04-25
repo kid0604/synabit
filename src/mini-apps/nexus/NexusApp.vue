@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Search, FileText, CheckSquare, Zap, Clock, X, ChevronRight, Globe, Tag, File, LayoutGrid, Inbox, Calendar, ArrowRight } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import GraphView from './components/GraphView.vue';
 
 const emit = defineEmits<{
     (e: 'edit-item', id: string, type: string): void
@@ -25,72 +26,54 @@ interface NexusItem {
     status?: string;
 }
 
-interface TagStat {
-    name: string;
-    total_count: number;
-    distribution: Record<string, number>;
+interface GraphNode {
+    id: string;
+    item_type: string;
+    title: string;
+    tags: string[];
 }
 
-interface VaultStats {
-    total_items: number;
-    type_distribution: Record<string, number>;
-    tags: TagStat[];
+interface GraphLink {
+    source: string;
+    target: string;
 }
 
-const items = ref<NexusItem[]>([]);
-const vaultStats = ref<VaultStats | null>(null);
+interface GraphData {
+    nodes: GraphNode[];
+    links: GraphLink[];
+}
+
+const allItems = ref<NexusItem[]>([]);
+const graphData = ref<GraphData | null>(null);
+const searchResults = ref<NexusItem[]>([]);
 const searchQuery = ref('');
 const isSearching = ref(false);
 
 const selectedItem = ref<NexusItem | null>(null);
 
-// Dashboard specific state
-const todaysTasks = ref<NexusItem[]>([]);
-const todaysEvents = ref<NexusItem[]>([]);
-const inboxQuickCaps = ref<NexusItem[]>([]);
-const recentActivity = ref<NexusItem[]>([]);
-
 let searchTimeout: ReturnType<typeof setTimeout>;
 
-const fetchStats = async () => {
+const loadAllData = async () => {
     try {
-        vaultStats.value = await invoke<VaultStats>('get_nexus_stats', { vaultPath: props.vaultPath });
-    } catch(e) {
-        console.error("Failed to fetch nexus stats", e);
-    }
-};
-
-const loadDashboardData = async () => {
-    try {
-        const allItems = await invoke<NexusItem[]>('search_nexus', { vaultPath: props.vaultPath, query: '' });
-        recentActivity.value = allItems.filter(i => i.item_type !== 'quickcap').slice(0, 10);
-        
-        const tasks = await invoke<NexusItem[]>('search_nexus', { vaultPath: props.vaultPath, query: 'is:task' });
-        // Filter out completed tasks using the explicit status field
-        todaysTasks.value = tasks.filter(t => t.status !== 'done').slice(0, 5);
-
-        const events = await invoke<NexusItem[]>('search_nexus', { vaultPath: props.vaultPath, query: 'is:event' });
-        
-        // Filter for upcoming events (date >= today) and sort nearest first
-        const todayStr = new Date().toISOString().split('T')[0];
-        const upcomingEvents = events.filter(e => {
-            const eventDate = e.date.split(' ')[0];
-            return eventDate >= todayStr;
-        }).sort((a, b) => a.date.localeCompare(b.date));
-
-        todaysEvents.value = upcomingEvents.slice(0, 3);
-
-        const qcs = await invoke<NexusItem[]>('search_nexus', { vaultPath: props.vaultPath, query: 'is:quickcap' });
-        // Inbox = quickcaps with no tags
-        inboxQuickCaps.value = qcs.filter(q => q.tags.length === 0).slice(0, 10);
+        const [items, data] = await Promise.all([
+            invoke<NexusItem[]>('get_nexus_items', { vaultPath: props.vaultPath }),
+            invoke<GraphData>('get_nexus_graph_data', { vaultPath: props.vaultPath })
+        ]);
+        allItems.value = items;
+        graphData.value = data;
     } catch (e) {
-        console.error(e);
+        console.error("Failed to load nexus data", e);
     }
 };
 
 let currentSearchId = 0;
 
 const performSearch = async () => {
+    if (!searchQuery.value.trim()) {
+        searchResults.value = [];
+        return;
+    }
+
     isSearching.value = true;
     const searchId = ++currentSearchId;
     try {
@@ -99,7 +82,7 @@ const performSearch = async () => {
             query: searchQuery.value 
         });
         if (searchId === currentSearchId) {
-            items.value = results;
+            searchResults.value = results;
         }
     } catch(e) {
         console.error(e);
@@ -118,9 +101,7 @@ watch(searchQuery, () => {
 });
 
 onMounted(() => {
-    performSearch();
-    fetchStats();
-    loadDashboardData();
+    loadAllData();
 });
 
 const getTypeIcon = (type: string) => {
@@ -129,6 +110,7 @@ const getTypeIcon = (type: string) => {
     if (type === 'quickcap') return Zap;
     if (type === 'file') return File;
     if (type === 'event') return Calendar;
+    if (type === 'tag') return Tag;
     return FileText;
 };
 
@@ -138,6 +120,7 @@ const getTypeColor = (type: string) => {
     if (type === 'quickcap') return 'text-amber-600 bg-amber-100 dark:bg-amber-500/20 dark:text-amber-400';
     if (type === 'file') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     if (type === 'event') return 'text-rose-600 bg-rose-100 dark:bg-rose-500/20 dark:text-rose-400';
+    if (type === 'tag') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
@@ -151,6 +134,16 @@ const openPreview = async (item: NexusItem) => {
         return;
     }
     selectedItem.value = item;
+};
+
+const openPreviewFromGraph = async (node: GraphNode) => {
+    if (node.item_type === 'tag') return;
+    try {
+        const item = await invoke<NexusItem>('get_nexus_item', { vaultPath: props.vaultPath, id: node.id });
+        await openPreview(item);
+    } catch (e) {
+        console.error("Failed to load item from graph", e);
+    }
 };
 
 const closePreview = () => {
@@ -182,28 +175,25 @@ const renderMarkdownPreview = (text: string, type: string) => {
     const html = marked.parse(parsed, { async: false, breaks: true }) as string;
     return DOMPurify.sanitize(html);
 };
-
-const applySearchFilter = (filter: string) => {
-    searchQuery.value = filter;
-};
 </script>
 
 <template>
   <div class="h-full w-full flex relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] font-sans">
     
     <!-- Main UI -->
-    <div v-show="!selectedItem" class="flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-50/40 to-[#fdfdfc] dark:from-indigo-900/10 dark:to-[#1a1a1c] transition-all">
+    <div v-show="!selectedItem" class="flex-1 flex flex-col h-full relative transition-all">
         
-        <!-- Header / Search OmniBar -->
-        <div class="w-full pt-10 px-8 pb-6 flex-shrink-0 z-10 sticky top-0 bg-[#fdfdfc]/80 dark:bg-[#1a1a1c]/80 backdrop-blur-xl border-b border-gray-200/50 dark:border-[#2c2c2e]/50">
-            <div class="max-w-5xl mx-auto flex items-center gap-6">
-                <div class="flex-shrink-0 flex items-center gap-3">
-                    <div class="w-10 h-10 bg-black dark:bg-white rounded-xl flex items-center justify-center shadow-md">
-                        <Globe class="w-6 h-6 text-white dark:text-black" />
-                    </div>
-                    <h1 class="text-2xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight hidden sm:block">Nexus</h1>
-                </div>
+        <!-- Background Graph View -->
+        <div class="absolute inset-0 z-0">
+            <GraphView v-if="graphData" :graph-data="graphData" @node-click="openPreviewFromGraph" />
+            <div v-else class="w-full h-full flex items-center justify-center">
+                <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
+            </div>
+        </div>
 
+        <!-- Header / Search OmniBar (Floating) -->
+        <div class="absolute top-0 inset-x-0 pt-10 px-8 pb-6 z-20 pointer-events-none">
+            <div class="max-w-3xl mx-auto flex items-center gap-6 pointer-events-auto">
                 <div class="flex-1 relative group">
                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                        <Search class="h-5 w-5 text-gray-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors" />
@@ -211,8 +201,8 @@ const applySearchFilter = (filter: string) => {
                    <input 
                        v-model="searchQuery" 
                        type="text" 
-                       class="block w-full pl-12 pr-12 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-gray-50/50 dark:bg-[#242426] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-sm" 
-                       placeholder="Omni Search... (e.g. is:task #urgent)" 
+                       class="block w-full pl-12 pr-12 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-lg" 
+                       placeholder="Universal Search... (e.g. is:task #urgent)" 
                    />
                    <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-4 flex items-center cursor-pointer">
                        <X class="h-5 w-5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
@@ -221,152 +211,14 @@ const applySearchFilter = (filter: string) => {
             </div>
         </div>
 
-        <!-- Scrollable Content -->
-        <div class="flex-1 overflow-y-auto px-8 pb-16 scroll-smooth">
-            
-            <!-- Dashboard View (When no search query) -->
-            <div v-if="!searchQuery" class="max-w-5xl mx-auto mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    
-                    <!-- Left Column: Focus & Activity -->
-                    <div class="md:col-span-2 space-y-6">
-                        
-                        <!-- Today's Focus Bento Box -->
-                        <div class="bg-white dark:bg-[#242426] rounded-3xl p-6 border border-gray-100 dark:border-[#2c2c2e] shadow-sm">
-                            <div class="flex items-center justify-between mb-6">
-                                <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                                    <LayoutGrid class="w-5 h-5 text-indigo-500" /> Today's Focus
-                                </h2>
-                                <button @click="applySearchFilter('is:task')" class="text-xs font-semibold text-gray-500 hover:text-indigo-500 dark:text-gray-400 dark:hover:text-indigo-400 flex items-center gap-1">
-                                    View All <ArrowRight class="w-3 h-3" />
-                                </button>
-                            </div>
-                            
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <!-- Tasks Column -->
-                                <div>
-                                    <h3 class="text-xs font-bold text-emerald-600/80 uppercase tracking-widest mb-3 flex items-center gap-2"><CheckSquare class="w-3.5 h-3.5"/> Pending Tasks</h3>
-                                    <div class="space-y-2">
-                                        <div v-for="task in todaysTasks" :key="task.id" @click="openPreview(task)" class="p-3 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-[#1a1a1c] dark:hover:bg-[#2c2c2e] border border-transparent hover:border-gray-200 dark:hover:border-[#333] transition-colors cursor-pointer group">
-                                            <div class="font-medium text-sm text-gray-800 dark:text-gray-200 truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{{ task.title }}</div>
-                                            <div class="text-xs text-gray-500 dark:text-gray-500 mt-1 flex items-center gap-2">
-                                                <span>{{ task.date.split(' ')[0] }}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="todaysTasks.length === 0" class="text-sm text-gray-400 italic px-2 py-3">No pending tasks found.</div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Events Column -->
-                                <div>
-                                    <h3 class="text-xs font-bold text-rose-600/80 uppercase tracking-widest mb-3 flex items-center gap-2"><Calendar class="w-3.5 h-3.5"/> Events</h3>
-                                    <div class="space-y-2">
-                                        <div v-for="event in todaysEvents" :key="event.id" @click="openPreview(event)" class="p-3 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-[#1a1a1c] dark:hover:bg-[#2c2c2e] border border-transparent hover:border-gray-200 dark:hover:border-[#333] transition-colors cursor-pointer group">
-                                            <div class="font-medium text-sm text-gray-800 dark:text-gray-200 truncate group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">{{ event.title }}</div>
-                                            <div class="text-xs text-gray-500 dark:text-gray-500 mt-1 flex items-center gap-2">
-                                                <span>{{ event.date.split(' ')[0] }}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="todaysEvents.length === 0" class="text-sm text-gray-400 italic px-2 py-3">No scheduled events.</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Recent Activity Stream -->
-                        <div class="bg-white dark:bg-[#242426] rounded-3xl p-6 border border-gray-100 dark:border-[#2c2c2e] shadow-sm">
-                            <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-6">
-                                <Clock class="w-5 h-5 text-blue-500" /> Recent Activity Stream
-                            </h2>
-                            <div class="space-y-3">
-                                <div v-for="item in recentActivity" :key="item.id"
-                                     @click="openPreview(item)"
-                                     class="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-[#2c2c2e] cursor-pointer transition-colors"
-                                >
-                                    <div class="w-10 h-10 rounded-lg flex flex-shrink-0 items-center justify-center shadow-sm" :class="getTypeColor(item.item_type)">
-                                        <component :is="getTypeIcon(item.item_type)" class="w-5 h-5 stroke-[1.5]" />
-                                    </div>
-                                    <div class="flex-1 min-w-0">
-                                        <div class="font-semibold text-[15px] text-gray-800 dark:text-gray-200 truncate">{{ item.title }}</div>
-                                        <div class="text-[12px] text-gray-500 mt-0.5 flex items-center gap-2">
-                                            <span class="capitalize">{{ item.item_type }}</span> &bull; <span>{{ item.date }}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- Right Column: Inbox & Taxonomy -->
-                    <div class="space-y-6">
-                        
-                        <!-- Stats Mini Bar -->
-                        <div v-if="vaultStats" class="grid grid-cols-2 gap-3">
-                            <div class="bg-white dark:bg-[#242426] p-4 rounded-2xl border border-gray-100 dark:border-[#2c2c2e] shadow-sm flex flex-col items-center">
-                                <div class="text-2xl font-black text-gray-800 dark:text-gray-100">{{ vaultStats.total_items }}</div>
-                                <div class="text-[10px] font-bold text-gray-400 uppercase">Total Items</div>
-                            </div>
-                            <div class="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800/30 shadow-sm flex flex-col items-center">
-                                <div class="text-2xl font-black text-blue-600 dark:text-blue-400">{{ vaultStats.type_distribution['note'] || 0 }}</div>
-                                <div class="text-[10px] font-bold text-blue-500/80 uppercase">Notes</div>
-                            </div>
-                        </div>
-
-                        <!-- Triage Inbox -->
-                        <div class="bg-amber-50/40 dark:bg-amber-900/10 rounded-3xl p-5 border border-amber-100 dark:border-amber-900/30 shadow-sm">
-                            <div class="flex items-center justify-between mb-4">
-                                <h2 class="text-md font-bold text-amber-800 dark:text-amber-400 flex items-center gap-2">
-                                    <Inbox class="w-4 h-4" /> Triage Inbox
-                                </h2>
-                                <span class="bg-amber-200 dark:bg-amber-800/50 text-amber-800 dark:text-amber-300 text-xs font-bold px-2 py-0.5 rounded-full">{{ inboxQuickCaps.length }}</span>
-                            </div>
-                            <p class="text-[12px] text-amber-700/70 dark:text-amber-500/70 mb-4 leading-snug">
-                                Untagged QuickCaps waiting to be processed into Tasks or Notes.
-                            </p>
-                            
-                            <div class="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                                <div v-for="qc in inboxQuickCaps" :key="qc.id" class="bg-white dark:bg-[#242426] p-3 rounded-xl border border-amber-100 dark:border-amber-900/30 shadow-sm hover:shadow-md transition-shadow">
-                                    <div class="text-xs text-gray-400 mb-1">{{ qc.date.split(' ')[0] }}</div>
-                                    <p class="text-sm text-gray-700 dark:text-gray-300 line-clamp-3 mb-3 leading-relaxed">{{ qc.content }}</p>
-                                    <button @click="openPreview(qc)" class="w-full py-1.5 bg-amber-100 dark:bg-amber-800/30 hover:bg-amber-200 dark:hover:bg-amber-800/50 text-amber-800 dark:text-amber-300 text-xs font-bold rounded-lg transition-colors">
-                                        Process
-                                    </button>
-                                </div>
-                                <div v-if="inboxQuickCaps.length === 0" class="text-sm text-center py-6 text-amber-600/50 italic">
-                                    Inbox Zero! 🎉
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Taxonomy Cloud -->
-                        <div v-if="vaultStats" class="bg-white dark:bg-[#242426] rounded-3xl p-5 border border-gray-100 dark:border-[#2c2c2e] shadow-sm">
-                            <h2 class="text-md font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-4">
-                                <Tag class="w-4 h-4 text-purple-500" /> Taxonomy
-                            </h2>
-                            <div class="flex flex-wrap gap-2 max-h-[250px] overflow-y-auto pr-1">
-                                <button v-for="tag in vaultStats.tags" :key="tag.name"
-                                    @click="applySearchFilter('#' + tag.name)"
-                                    class="group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200 dark:border-[#3a3a3c] bg-gray-50 dark:bg-[#1a1a1c] hover:border-purple-300 dark:hover:border-purple-500/50 transition-all cursor-pointer">
-                                    <span class="text-[12px] font-medium text-gray-600 dark:text-gray-300 group-hover:text-purple-600 dark:group-hover:text-purple-400">#{{ tag.name }}</span>
-                                    <span class="text-[10px] font-bold text-gray-400 group-hover:text-purple-500 bg-white dark:bg-[#2c2c2e] px-1.5 rounded-md shadow-sm border border-gray-100 dark:border-[#3a3a3c]">
-                                        {{ tag.total_count }}
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-
-            <!-- Search Results Stream -->
-            <div v-else class="max-w-4xl mx-auto mt-4">
+        <!-- Search Results Overlay -->
+        <div v-if="searchQuery" class="absolute inset-0 z-10 pt-32 px-8 pb-16 bg-[#fdfdfc]/90 dark:bg-[#1a1a1c]/90 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
+            <div class="max-w-3xl mx-auto">
                 <div v-if="isSearching" class="text-center py-10 opacity-50 flex items-center justify-center gap-2">
                     <div class="w-5 h-5 rounded-full border-2 border-black dark:border-white border-t-transparent animate-spin"></div>
                 </div>
                 
-                <div v-else-if="items.length === 0" class="text-center py-16">
+                <div v-else-if="searchResults.length === 0" class="text-center py-16">
                     <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
                         <Search class="w-8 h-8 text-gray-300 dark:text-gray-600" />
                     </div>
@@ -376,10 +228,10 @@ const applySearchFilter = (filter: string) => {
                 <div v-else class="space-y-3">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">Search Results</h3>
-                        <span class="text-xs font-semibold text-gray-400">{{ items.length }} items</span>
+                        <span class="text-xs font-semibold text-gray-400">{{ searchResults.length }} items</span>
                     </div>
 
-                    <div v-for="item in items" :key="item.id"
+                    <div v-for="item in searchResults" :key="item.id"
                          @click="openPreview(item)"
                          class="group flex gap-4 p-4 rounded-2xl bg-white dark:bg-[#242426] border border-gray-100 dark:border-[#2c2c2e] hover:border-indigo-300 dark:hover:border-indigo-500/50 shadow-sm hover:shadow-md cursor-pointer transition-all active:scale-[0.99]"
                     >
@@ -414,9 +266,8 @@ const applySearchFilter = (filter: string) => {
         </div>
     </div>
 
-    <!-- Full-page Preview Panel (No Changes to logic, updated styling) -->
+    <!-- Full-page Preview Panel (Unchanged logic, floating on top when active) -->
     <div v-if="selectedItem" class="absolute inset-0 bg-[#fdfdfc] dark:bg-[#1a1a1c] flex flex-col z-30 animate-in fade-in zoom-in-95 duration-200">
-        
         <!-- Header -->
         <div class="h-16 border-b border-gray-200 dark:border-[#2c2c2e] flex items-center justify-between px-6 flex-shrink-0 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md">
             <div class="flex items-center gap-4">

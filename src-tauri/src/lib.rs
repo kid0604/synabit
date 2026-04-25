@@ -5,6 +5,7 @@ pub mod commands;
 pub mod error;
 pub mod db;
 pub mod path_utils;
+pub mod utils;
 
 use commands::{notes, tasks, events, quickcaps, files, nexus};
 
@@ -60,6 +61,8 @@ pub fn run() {
             files::read_local_file_content,
             // Nexus
             nexus::get_nexus_items,
+            nexus::get_nexus_item,
+            nexus::get_nexus_graph_data,
             nexus::search_nexus,
             nexus::get_nexus_stats,
             // Google Drive

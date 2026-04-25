@@ -102,6 +102,11 @@ const injectLocalAssets = (md: string) => {
       return `<audio ${before}src="${assetUrl}"${after}>`;
    });
    
+   processed = processed.replace(/\[([^\]]*)\]\(synabit:\/\/note\/([^)]+)\)/g, (match, label, uri) => {
+      const decoded = decodeURIComponent(uri);
+      return `[${label}](synabit://note/${encodeURIComponent(decoded)})`;
+   });
+   
    return processed.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
       // Decode URI in case it was encoded (e.g. spaces as %20)
@@ -651,6 +656,10 @@ const editor = useEditor({
       autolink: true,
       linkOnPaste: true,
       protocols: ['http', 'https', 'ftp', 'mailto', 'synabit'],
+      HTMLAttributes: {
+        title: 'Cmd/Ctrl + Click to open link',
+        class: 'synabit-link',
+      },
     }),
     Underline,
     Highlight.configure({ multicolor: false }),
@@ -751,7 +760,7 @@ const editor = useEditor({
                   marks: [
                     {
                       type: 'link',
-                      attrs: { href: `synabit://note/${basename}` }
+                      attrs: { href: `synabit://note/${encodeURIComponent(basename)}` }
                     }
                   ],
                   text: props.title
@@ -843,10 +852,12 @@ const editor = useEditor({
           if (anchor) {
               const href = anchor.getAttribute('href');
               if (href?.startsWith('synabit://note/')) {
-                  const noteId = href.replace('synabit://note/', '');
-                  emit('open-internal-note', noteId);
-                  event.preventDefault();
-                  return true;
+                  if (event.metaKey || event.ctrlKey) {
+                      const noteId = decodeURIComponent(href.replace('synabit://note/', ''));
+                      emit('open-internal-note', noteId);
+                      event.preventDefault();
+                      return true;
+                  }
               }
           }
       }

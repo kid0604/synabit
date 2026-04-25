@@ -8,6 +8,7 @@ use crate::models::event::EventMetadata;
 use crate::models::quickcap::QuickCapMetadata;
 use crate::models::file::{FileMetadata, FileSource};
 use crate::error::{AppError, AppResult};
+use crate::utils::graph_parser::GraphEdge;
 
 pub struct DbBridge {
     conn: Connection,
@@ -129,6 +130,17 @@ impl DbBridge {
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (kv_store): {}", e)))?;
 
+        // ─── Graph Edges (for Nexus Knowledge Graph) ───────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS graph_edges (
+                source_id TEXT NOT NULL,
+                target_title_or_path TEXT NOT NULL,
+                link_type TEXT NOT NULL,
+                PRIMARY KEY (source_id, target_title_or_path, link_type)
+            )",
+            [],
+        ).map_err(|e| AppError::General(format!("DB Schema Error (graph_edges): {}", e)))?;
+
         Ok(Self { conn })
     }
 
@@ -210,6 +222,7 @@ impl DbBridge {
             "DELETE FROM notes WHERE id = ?1",
             params![id],
          ).map_err(|e| AppError::General(format!("DB Delete Error: {}", e)))?;
+         let _ = self.delete_edges(id);
          Ok(())
     }
 
@@ -603,6 +616,54 @@ impl DbBridge {
             "DELETE FROM notes; DELETE FROM tasks; DELETE FROM events; DELETE FROM quickcaps;"
         ).map_err(|e| AppError::General(format!("DB Clear Error: {}", e)))?;
         Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  GRAPH EDGES
+    // ═══════════════════════════════════════════════════════════
+
+    pub fn update_edges(&self, source_id: &str, edges: Vec<GraphEdge>) -> AppResult<()> {
+        let mut stmt = self.conn.prepare("DELETE FROM graph_edges WHERE source_id = ?1")
+            .map_err(|e| AppError::General(format!("DB Error prepare delete edges: {}", e)))?;
+        stmt.execute(params![source_id]).map_err(|e| AppError::General(format!("DB Error deleting edges: {}", e)))?;
+
+        let mut insert_stmt = self.conn.prepare(
+            "INSERT INTO graph_edges (source_id, target_title_or_path, link_type) VALUES (?1, ?2, ?3)"
+        ).map_err(|e| AppError::General(format!("DB Error preparing edge insert: {}", e)))?;
+        
+        for edge in edges {
+            let _ = insert_stmt.execute(params![
+                edge.source_id,
+                edge.target_title_or_path,
+                edge.link_type
+            ]); // Ignore individual insert errors (like duplicates)
+        }
+        
+        Ok(())
+    }
+
+    pub fn delete_edges(&self, source_id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM graph_edges WHERE source_id = ?1", params![source_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting edges: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn get_all_edges(&self) -> AppResult<Vec<GraphEdge>> {
+        let mut stmt = self.conn.prepare("SELECT source_id, target_title_or_path, link_type FROM graph_edges")
+            .map_err(|e| AppError::General(format!("DB Error preparing edges query: {}", e)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok(GraphEdge {
+                source_id: row.get(0)?,
+                target_title_or_path: row.get(1)?,
+                link_type: row.get(2)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Error mapping edges: {}", e)))?;
+
+        let mut edges = Vec::new();
+        for edge in rows.flatten() {
+            edges.push(edge);
+        }
+        Ok(edges)
     }
 }
 
