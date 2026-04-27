@@ -2,7 +2,7 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import { useSettings } from '../../composables/useSettings';
 
@@ -623,7 +623,7 @@ watch(() => props.vaultPath, () => {
               <div class="flex items-center justify-between mb-4 md:mb-6">
                   <div class="flex items-center gap-3">
                       <button @click="isMobileSidebarOpen = true" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer">
-                          <Menu class="w-6 h-6" />
+                          <MenuIcon class="w-6 h-6" />
                       </button>
                       <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize">
                           {{ activeCategory === 'all' ? 'All Tasks' : activeCategory }}
@@ -633,7 +633,7 @@ watch(() => props.vaultPath, () => {
                       <!-- New Task Button -->
                       <button 
                           @click="openCreateModal"
-                          class="flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-[0_2px_10px_rgba(59,130,246,0.3)] hover:shadow-[0_4px_14px_rgba(59,130,246,0.4)] transition-all cursor-pointer text-sm font-medium"
+                          class="hidden md:flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-[0_2px_10px_rgba(59,130,246,0.3)] hover:shadow-[0_4px_14px_rgba(59,130,246,0.4)] transition-all cursor-pointer text-sm font-medium"
                       >
                           <Plus class="w-4 h-4 mr-1.5"/>
                           New
@@ -711,7 +711,7 @@ watch(() => props.vaultPath, () => {
                           <p class="text-[15px] font-medium truncate transition-all duration-300" :class="task.status === 'done' ? 'text-gray-400 line-through' : 'text-[#1c1c1e] dark:text-[#f4f4f5]'">
                               {{ task.title }}
                           </p>
-                          <div class="flex items-center gap-3 overflow-hidden ml-4 shrink-0">
+                          <div class="hidden md:flex items-center gap-3 overflow-hidden ml-4 shrink-0">
                               <span v-if="task.status === 'in_progress'" class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold tracking-wider">DOING</span>
                               
                               <span v-if="task.priority" class="text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider shrink-0" :class="getPriorityClass(task.priority)">
@@ -858,6 +858,14 @@ watch(() => props.vaultPath, () => {
       @save="handleModalSave" 
       @close="editingTask = null" 
   />
+
+  <!-- Mobile Floating Action Button (FAB) -->
+  <button 
+      @click="openCreateModal"
+      class="md:hidden fixed bottom-20 right-6 z-[100] flex items-center justify-center w-14 h-14 bg-blue-500 text-white rounded-full shadow-[0_4px_20px_rgba(59,130,246,0.4)] hover:bg-blue-600 active:scale-95 transition-all"
+  >
+      <Plus class="w-6 h-6" />
+  </button>
 
   <!-- Mobile Sidebar Overlay -->
   <div v-if="isMobileSidebarOpen" class="fixed inset-0 z-[120] md:hidden flex">
