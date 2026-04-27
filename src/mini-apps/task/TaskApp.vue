@@ -44,6 +44,7 @@ const tasks = ref<TaskMetadata[]>([]);
 const searchQuery = ref('');
 
 const activeCategory = ref<'all' | 'today' | 'upcoming' | 'someday' | 'transferred'>('today');
+const isMobileSidebarOpen = ref(false);
 
 const searchedTasks = computed(() => {
     let result = tasks.value;
@@ -618,12 +619,16 @@ watch(() => props.vaultPath, () => {
       <!-- MAIN CONTENT -->
       <div class="flex-1 flex flex-col h-full overflow-hidden">
           <!-- Header -->
-          <div class="px-8 pt-10 pb-4 shrink-0 border-b border-transparent">
-              <div class="flex items-center justify-between mb-6">
-                  <h1 class="text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize">
-                      {{ activeCategory === 'all' ? 'All Tasks' : activeCategory }}
-                  </h1>
-                  
+          <div class="px-4 md:px-8 pt-12 md:pt-10 pb-2 md:pb-4 shrink-0 border-b border-transparent">
+              <div class="flex items-center justify-between mb-4 md:mb-6">
+                  <div class="flex items-center gap-3">
+                      <button @click="isMobileSidebarOpen = true" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer">
+                          <Menu class="w-6 h-6" />
+                      </button>
+                      <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize">
+                          {{ activeCategory === 'all' ? 'All Tasks' : activeCategory }}
+                      </h1>
+                  </div>
                   <div class="flex items-center gap-3">
                       <!-- New Task Button -->
                       <button 
@@ -679,10 +684,9 @@ watch(() => props.vaultPath, () => {
                       </div>
                   </div>
               </div>
-          </div>
 
       <!-- Main Content -->
-      <div class="flex-1 overflow-y-auto px-8 pb-16">
+      <div class="flex-1 overflow-y-auto px-4 md:px-8 pb-16">
           <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-full opacity-40">
               <CheckCircle2 class="w-16 h-16 mb-4"/>
               <p>You're all caught up!</p>
@@ -737,7 +741,7 @@ watch(() => props.vaultPath, () => {
                       </div>
                       
                       <!-- Actions -->
-                      <div class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-4 w-[60px] justify-end">
+                      <div class="hidden md:flex shrink-0 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity items-center gap-1 ml-4 w-[60px] justify-end">
                           <button @click.stop="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-500 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors cursor-pointer">
                               <Trash2 class="w-4 h-4" />
                           </button>
@@ -854,5 +858,47 @@ watch(() => props.vaultPath, () => {
       @save="handleModalSave" 
       @close="editingTask = null" 
   />
+
+  <!-- Mobile Sidebar Overlay -->
+  <div v-if="isMobileSidebarOpen" class="fixed inset-0 z-[120] md:hidden flex">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/20 dark:bg-black/60 backdrop-blur-sm transition-opacity" @click="isMobileSidebarOpen = false"></div>
+      
+      <!-- Sidebar Panel -->
+      <div class="relative w-[75%] max-w-sm h-full bg-[#fdfdfc] dark:bg-[#1e1e1e] shadow-2xl flex flex-col transform transition-transform duration-300" style="padding-top: max(env(safe-area-inset-top), 20px);">
+          <!-- Header with Close Button -->
+          <div class="flex items-center justify-between px-5 pb-4 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
+              <h2 class="text-xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Views</h2>
+              <button @click="isMobileSidebarOpen = false" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                  <X class="w-5 h-5" />
+              </button>
+          </div>
+          
+          <!-- Menu Items -->
+          <div class="flex-1 overflow-y-auto px-3 py-6 flex flex-col space-y-1.5">
+              <button @click="activeCategory = 'all'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'all' ? 'bg-black/5 dark:bg-white/10 text-black dark:text-white font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center"><Inbox class="w-5 h-5 mr-3" />All Tasks</div>
+                  <span class="text-xs bg-gray-200 dark:bg-[#333] px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-400" v-if="categoryCounts.all">{{ categoryCounts.all }}</span>
+              </button>
+              <button @click="activeCategory = 'today'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'today' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center"><Sun class="w-5 h-5 mr-3" />Today</div>
+                  <span class="text-xs bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 rounded-full text-blue-600 dark:text-blue-400" v-if="categoryCounts.today">{{ categoryCounts.today }}</span>
+              </button>
+              <button @click="activeCategory = 'upcoming'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'upcoming' ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center"><Calendar class="w-5 h-5 mr-3" />Upcoming</div>
+                  <span class="text-xs bg-red-100 dark:bg-red-900/30 px-2 py-0.5 rounded-full text-red-600 dark:text-red-400" v-if="categoryCounts.upcoming">{{ categoryCounts.upcoming }}</span>
+              </button>
+              <button @click="activeCategory = 'someday'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'someday' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center"><Coffee class="w-5 h-5 mr-3" />Someday</div>
+                  <span class="text-xs bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded-full text-yellow-600 dark:text-yellow-400" v-if="categoryCounts.someday">{{ categoryCounts.someday }}</span>
+              </button>
+              <button @click="activeCategory = 'transferred'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'transferred' ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center"><Send class="w-5 h-5 mr-3" />Transferred</div>
+                  <span class="text-xs bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-400" v-if="categoryCounts.transferred">{{ categoryCounts.transferred }}</span>
+              </button>
+          </div>
+      </div>
+  </div>
+  </div>
   </div>
 </template>
