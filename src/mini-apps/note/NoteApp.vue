@@ -653,11 +653,11 @@ onMounted(async () => {
          </button>
 
          <div class="flex gap-1 ml-auto" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="openDailyNote; if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
+           <button v-if="enableDailyNotes" @click="openDailyNote(); if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
              <Sun class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">Today</span>
            </button>
-           <button @click="createNewNote; if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
+           <button @click="createNewNote(); if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
              <Plus class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">New</span>
            </button>
