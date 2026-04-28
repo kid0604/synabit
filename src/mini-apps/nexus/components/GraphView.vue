@@ -352,12 +352,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div ref="containerRef" class="w-full h-full relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] select-none">
+    <div ref="containerRef" class="w-full h-full relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] select-none" @click="isPanelOpen = false">
         <canvas ref="canvasRef" class="w-full h-full cursor-grab active:cursor-grabbing"></canvas>
         
         <!-- Toggle Button -->
         <button 
-            @click="isPanelOpen = !isPanelOpen" 
+            @click.stop="isPanelOpen = !isPanelOpen" 
             class="absolute top-6 right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
             :class="{ 'rotate-90': isPanelOpen }"
         >
@@ -367,6 +367,7 @@ onUnmounted(() => {
         <!-- Obsidian-Style Floating Settings Panel -->
         <div 
             v-show="isPanelOpen"
+            @click.stop
             class="absolute top-20 right-6 z-20 w-80 max-h-[calc(100vh-100px)] flex flex-col bg-white/95 dark:bg-[#1e1e20]/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gray-200/50 dark:border-[#3a3a3c]/50 overflow-hidden animate-in slide-in-from-right-8 duration-300"
         >
             <!-- Tabs Header -->

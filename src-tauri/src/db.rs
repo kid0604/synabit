@@ -51,7 +51,8 @@ impl DbBridge {
                 is_event BOOLEAN NOT NULL DEFAULT 0,
                 has_reminder BOOLEAN NOT NULL DEFAULT 0,
                 is_done BOOLEAN NOT NULL DEFAULT 0,
-                raw_frontmatter TEXT NOT NULL
+                raw_frontmatter TEXT NOT NULL,
+                full_width BOOLEAN NOT NULL DEFAULT 0
             )",
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (notes): {}", e)))?;
@@ -59,6 +60,7 @@ impl DbBridge {
         // Migration: add columns if missing (for existing vaults)
         let _ = conn.execute("ALTER TABLE notes ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE notes ADD COLUMN content TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE notes ADD COLUMN full_width BOOLEAN NOT NULL DEFAULT 0", []);
 
         // ─── Tasks Table ───────────────────────────────────────
         conn.execute(
@@ -197,8 +199,8 @@ impl DbBridge {
     pub fn upsert_note(&self, note: &NoteMetadata) -> AppResult<()> {
         let tags_json = serde_json::to_string(&note.tags)?;
         self.conn.execute(
-            "INSERT INTO notes (id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO notes (id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter, full_width) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO UPDATE SET 
                 title=excluded.title,
                 date=excluded.date,
@@ -211,7 +213,8 @@ impl DbBridge {
                 is_event=excluded.is_event,
                 has_reminder=excluded.has_reminder,
                 is_done=excluded.is_done,
-                raw_frontmatter=excluded.raw_frontmatter",
+                raw_frontmatter=excluded.raw_frontmatter,
+                full_width=excluded.full_width",
             params![
                 note.id,
                 note.title,
@@ -225,7 +228,8 @@ impl DbBridge {
                 note.is_event,
                 note.has_reminder,
                 note.is_done,
-                note.raw_frontmatter
+                note.raw_frontmatter,
+                note.full_width
             ],
         ).map_err(|e| AppError::General(format!("DB Upsert Note Error: {}", e)))?;
         Ok(())
@@ -256,7 +260,7 @@ impl DbBridge {
 
     pub fn get_all_notes(&self) -> AppResult<Vec<NoteMetadata>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter 
+            "SELECT id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter, full_width 
              FROM notes ORDER BY timestamp DESC"
         ).map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
 
@@ -264,6 +268,8 @@ impl DbBridge {
             let tags_str: String = row.get(5)?;
             let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
             let id: String = row.get(0)?;
+            let raw_frontmatter: String = row.get(12)?;
+            let full_width: bool = row.get(13).unwrap_or(false);
             
             Ok(NoteMetadata {
                 id: id.clone(),
@@ -279,7 +285,8 @@ impl DbBridge {
                 is_event: row.get(9)?,
                 has_reminder: row.get(10)?,
                 is_done: row.get(11)?,
-                raw_frontmatter: row.get(12)?,
+                raw_frontmatter,
+                full_width,
             })
         }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 

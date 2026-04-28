@@ -360,8 +360,14 @@ const openEditModal = (task: TaskMetadata) => {
         .map(([k, v]) => ({ k, v: String(v) }));
 };
 
-const openEditById = (id: string) => {
-    const task = tasks.value.find(t => t.id === id);
+const openEditById = async (id: string) => {
+    if (tasks.value.length === 0) {
+        await loadTasks();
+    }
+    // Normalize path separators to ensure matching works cross-platform
+    const normalizedId = id.replace(/\\/g, '/');
+    const task = tasks.value.find(t => t.id.replace(/\\/g, '/') === normalizedId) 
+              || tasks.value.find(t => t.id.replace(/\\/g, '/').endsWith(normalizedId));
     if (task) {
         openEditModal(task);
     }

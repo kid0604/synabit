@@ -18,6 +18,7 @@ export interface NoteMetadata {
   tags: string[];
   path: string;
   pinned: boolean;
+  full_width: boolean;
   content: string;
 }
 

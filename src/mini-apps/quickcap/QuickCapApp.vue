@@ -307,8 +307,13 @@ const closeFullView = async () => {
     }
 };
 
-const openEditById = (id: string) => {
-    const cap = quickCaps.value.find(c => c.id === id);
+const openEditById = async (id: string) => {
+    if (quickCaps.value.length === 0) {
+        await loadCaps();
+    }
+    const normalizedId = id.replace(/\\/g, '/');
+    const cap = quickCaps.value.find(c => c.id.replace(/\\/g, '/') === normalizedId) 
+             || quickCaps.value.find(c => c.id.replace(/\\/g, '/').endsWith(normalizedId));
     if (cap) {
         openFullView(cap);
     }

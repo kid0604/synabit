@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { confirm } from '@tauri-apps/plugin-dialog';
@@ -10,6 +10,7 @@ import NoteGraph from './NoteGraph.vue';
 
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
+import { useSettings } from '../../composables/useSettings';
 
 import type { NoteMetadata } from '../../types/ipc';
 
@@ -133,7 +134,7 @@ const isValidDailyFormat = computed(() => {
 
 // ─── Frontmatter Utils ─────────────────────────────────────
 const buildFrontmatter = (n: NoteMetadata) => {
-    return `---\ntitle: "${n.title}"\npinned: ${n.pinned}\ntags: [${n.tags.map(t=>`"${t}"`).join(', ')}]\n---`;
+    return `---\ntitle: "${n.title}"\npinned: ${n.pinned}\nfull_width: ${n.full_width || false}\ntags: [${n.tags.map(t=>`"${t}"`).join(', ')}]\n---`;
 };
 
 // ─── Note CRUD Operations ──────────────────────────────────
@@ -144,6 +145,23 @@ const handleNoteSelect = (id: string) => {
         showNoteSidebar.value = false;
     }
 };
+
+const editorFullWidth = computed({
+    get: () => {
+        if (!currentNoteId.value) return false;
+        const note = notes.value.find(n => n.id === currentNoteId.value);
+        return note ? note.full_width : false;
+    },
+    set: async (val: boolean) => {
+        if (!currentNoteId.value) return;
+        const note = notes.value.find(n => n.id === currentNoteId.value);
+        if (note) {
+            note.full_width = val;
+            await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+            // Refresh to ensure frontend state is correct (though we updated it locally, back-end has the final say)
+        }
+    }
+});
 
 const togglePin = async (id: string) => {
     const note = notes.value.find(n => n.id === id);
@@ -551,6 +569,28 @@ const managerFilteredNotes = computed(() => {
    else return result.filter(n => n.tags.includes(managerFilter.value));
 });
 
+const managerCurrentPage = ref(1);
+const managerItemsPerPage = 50;
+
+watch([managerSearchQuery, managerFilter], () => {
+    managerCurrentPage.value = 1;
+});
+
+const managerTotalPages = computed(() => Math.ceil(managerFilteredNotes.value.length / managerItemsPerPage));
+
+const managerPaginatedNotes = computed(() => {
+    const start = (managerCurrentPage.value - 1) * managerItemsPerPage;
+    return managerFilteredNotes.value.slice(start, start + managerItemsPerPage);
+});
+
+const managerNextPage = () => {
+    if (managerCurrentPage.value < managerTotalPages.value) managerCurrentPage.value++;
+};
+
+const managerPrevPage = () => {
+    if (managerCurrentPage.value > 1) managerCurrentPage.value--;
+};
+
 const filteredNotes = computed(() => {
   let result = notes.value;
   if (searchQuery.value.trim()) {
@@ -578,9 +618,24 @@ const filteredNotes = computed(() => {
 });
 
 // ─── Public API for parent (Nexus cross-navigation) ────────
-const openNoteById = (id: string) => {
-    handleOpenInternalNote(id);
+const openNoteById = async (id: string) => {
+    // Set synchronously to prevent concurrent scanVault from overwriting it
+    currentNoteId.value = id;
     viewMode.value = 'editor';
+    
+    // Ensure notes array is loaded to properly resolve suffixes
+    if (notes.value.length === 0) {
+        await scanVault();
+    }
+    
+    let finalId = id;
+    const exists = notes.value.find(n => n.id === id) || notes.value.find(n => n.id.endsWith(id));
+    if (exists) {
+        finalId = exists.id;
+        currentNoteId.value = finalId; // Update with resolved path
+    }
+    
+    await loadNoteFile(finalId);
 };
 defineExpose({ openNoteById, scanVault, notes, tabContents, loadNoteFile, currentNoteId });
 
@@ -781,7 +836,19 @@ onMounted(async () => {
               </button>
             </div>
             <div class="flex gap-2">
-              <button v-if="currentNoteId" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
+              <button v-if="currentNoteId && viewMode === 'editor'" @click="editorFullWidth = !editorFullWidth" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="editorFullWidth ? 'Standard Width' : 'Full Width'">
+                <!-- Shrink Icon -->
+                <div v-if="editorFullWidth" class="flex items-center space-x-[1px]">
+                  <ArrowRight class="w-3 h-3" />
+                  <ArrowLeft class="w-3 h-3" />
+                </div>
+                <!-- Expand Icon -->
+                <div v-else class="flex items-center space-x-[1px]">
+                  <ArrowLeft class="w-3 h-3" />
+                  <ArrowRight class="w-3 h-3" />
+                </div>
+              </button>
+              <button v-if="currentNoteId && viewMode === 'editor'" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
                 <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
                 <PanelRight v-else class="w-4 h-4" />
               </button>
@@ -795,7 +862,7 @@ onMounted(async () => {
                 <div v-if="tabContents[tabId] === undefined" class="absolute inset-0 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#242424]">
                     <div class="w-8 h-8 rounded-full border-2 border-gray-200 border-t-gray-400 animate-spin"></div>
                 </div>
-                <div v-else class="px-4 md:px-12 pb-12 max-w-4xl mx-auto w-full cursor-text">
+                <div v-else class="px-4 md:px-12 pb-12 mx-auto w-full cursor-text transition-all duration-300" :class="editorFullWidth ? 'max-w-none' : 'max-w-4xl'">
                 <div class="mb-4 pt-4">
                    <div class="flex gap-2 mb-4 flex-wrap items-center">
                       <span v-for="tag in notes.find(n => n.id === tabId)?.tags" :key="tag" class="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 group/tag">
@@ -840,8 +907,11 @@ onMounted(async () => {
                    <button @click="viewMode = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500">
                       <ArrowLeft class="w-5 h-5" />
                    </button>
-                   <h1 class="text-xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5]">
+                   <h1 class="text-xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
                       {{ managerFilter === 'tags' && !managerSearchQuery ? 'All Tags' : managerSearchQuery ? 'Search Results' : managerFilter === 'notes' || !managerFilter ? 'All Notes' : managerFilter === 'pinned' ? 'Pinned Notes' : 'Tag: ' + managerFilter.split('/').pop() }}
+                      <span class="text-[12px] font-medium px-2 py-0.5 mt-0.5 rounded-full bg-gray-100 dark:bg-[#333] text-gray-500">
+                        {{ managerFilter === 'tags' && !managerSearchQuery ? allTags.length : managerFilteredNotes.length }}
+                      </span>
                    </h1>
                 </div>
              </div>
@@ -883,7 +953,7 @@ onMounted(async () => {
                             </tr>
                          </thead>
                          <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
-                            <tr v-for="note in managerFilteredNotes" :key="note.id" @click="handleNoteSelect(note.id)" class="hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer transition-colors group">
+                            <tr v-for="note in managerPaginatedNotes" :key="note.id" @click="handleNoteSelect(note.id)" class="hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer transition-colors group">
                                <td class="py-3 px-4 w-8">
                                   <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20" />
                                   <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50" />
@@ -915,6 +985,16 @@ onMounted(async () => {
                          </tbody>
                       </table>
                    </div>
+                   
+                   <!-- Pagination Controls -->
+                   <div v-if="managerTotalPages > 1" class="mt-4 flex items-center justify-between text-[13px] text-gray-500">
+                      <div>Showing {{ (managerCurrentPage - 1) * managerItemsPerPage + 1 }} to {{ Math.min(managerCurrentPage * managerItemsPerPage, managerFilteredNotes.length) }} of {{ managerFilteredNotes.length }} notes</div>
+                      <div class="flex items-center gap-2">
+                         <button @click="managerPrevPage" :disabled="managerCurrentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">Previous</button>
+                         <span class="font-medium px-2 text-[#1c1c1e] dark:text-[#f4f4f5]">Page {{ managerCurrentPage }} of {{ managerTotalPages }}</span>
+                         <button @click="managerNextPage" :disabled="managerCurrentPage === managerTotalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">Next</button>
+                      </div>
+                   </div>
                  </div>
              </div>
           </div>
@@ -922,7 +1002,7 @@ onMounted(async () => {
     </main>
 
     <!-- Right Sidebar: Graph & Backlinks -->
-    <aside v-if="currentNoteId && !isFloatingView" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: wRightSidebar + 'px' }">
+    <aside v-if="currentNoteId && !isFloatingView && viewMode === 'editor'" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: wRightSidebar + 'px' }">
       <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragRightSidebar"></div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
           <Globe class="w-4 h-4 text-gray-500 mr-2" />

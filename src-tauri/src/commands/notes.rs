@@ -63,6 +63,7 @@ pub fn scan_vault_path(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
                                 let mut title = String::new();
                                 let mut tags = Vec::new();
                                 let mut pinned = false;
+                                let mut full_width = false;
                                 let summary;
                                 let date_time: chrono::DateTime<chrono::Local> = modified.into();
                                 let date = date_time.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -72,6 +73,7 @@ pub fn scan_vault_path(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
                                         title = frontmatter.title;
                                         tags = frontmatter.tags;
                                         pinned = frontmatter.pinned;
+                                        full_width = frontmatter.full_width.unwrap_or(false);
                                     }
                                     let body_text: String = parsed.content.chars().take(120).collect();
                                     summary = body_text.replace('\n', " ");
@@ -96,6 +98,7 @@ pub fn scan_vault_path(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
                                     timestamp, // We temporarily use timestamp from metadata as u64
                                     tags,
                                     pinned,
+                                    full_width,
                                     content: content.clone(),
                                     is_task: false,
                                     is_event: false,
@@ -381,6 +384,7 @@ pub async fn get_note_backlinks(vault_path: String, target_id: String) -> AppRes
                         timestamp: 0,
                         tags,
                         pinned,
+                        full_width: false,
                         summary,
                         content: content.clone(),
                         is_task: false,

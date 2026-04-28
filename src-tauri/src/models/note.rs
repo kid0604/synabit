@@ -8,6 +8,7 @@ pub struct FrontMatter {
     pub tags: Vec<String>,
     #[serde(default)]
     pub pinned: bool,
+    pub full_width: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -20,6 +21,7 @@ pub struct NoteMetadata {
     pub tags: Vec<String>,
     pub path: String,
     pub pinned: bool,
+    pub full_width: bool,
     pub content: String,
     #[serde(default)]
     pub is_task: bool,

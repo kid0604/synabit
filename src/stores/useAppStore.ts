@@ -59,7 +59,7 @@ export const useAppStore = defineStore('app', () => {
     
     const nestedListStyle = await storeInstance.get('nestedNumberListStyle');
     if (nestedListStyle) nestedNumberListStyle.value = nestedListStyle as 'decimal' | 'alpha' | 'nested';
-    
+        
     const defApp = await storeInstance.get('defaultApp');
     if (defApp) defaultApp.value = defApp as any;
     
@@ -91,6 +91,7 @@ export const useAppStore = defineStore('app', () => {
       watch(nestedNumberListStyle, async (v) => {
         if (storeInstance) await storeInstance.set('nestedNumberListStyle', v);
       });
+
       watch(defaultApp, async (v) => {
         if (storeInstance) await storeInstance.set('defaultApp', v);
       });
