@@ -20,7 +20,14 @@ pub mod browse;
 // ──────────────────────────────────────────────
 // Shared Constants
 // ──────────────────────────────────────────────
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const CLIENT_ID: &str = env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time");
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_ANDROID_CLIENT_ID") {
+    Some(val) => val,
+    None => env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"),
+};
 pub(crate) const CLIENT_SECRET: &str = env!("SYNABIT_GOOGLE_CLIENT_SECRET", "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time");
 pub(crate) const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 pub(crate) const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
@@ -88,22 +95,21 @@ pub(crate) struct TokenResponse {
 // Shared Path Helpers
 // ──────────────────────────────────────────────
 
-pub(crate) fn config_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.synabit.desktop")
+pub(crate) fn config_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+    use tauri::Manager;
+    app_handle.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-pub(crate) fn tokens_path() -> PathBuf {
-    config_dir().join("gdrive_tokens.json")
+pub(crate) fn tokens_path(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir(app_handle).join("gdrive_tokens.json")
 }
 
 pub(crate) fn manifest_path(vault_path: &str) -> PathBuf {
     Path::new(vault_path).join(".synabit_sync_manifest.json")
 }
 
-pub fn gdrive_cache_dir() -> PathBuf {
-    config_dir().join("gdrive-cache")
+pub fn gdrive_cache_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir(app_handle).join("gdrive-cache")
 }
 
 pub(crate) fn file_sha256(path: &Path) -> String {

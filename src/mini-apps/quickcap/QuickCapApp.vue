@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 import { emit as emitTauri } from '@tauri-apps/api/event';
 import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
-import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText } from 'lucide-vue-next';
+import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from 'tiptap-markdown';
@@ -38,6 +38,25 @@ const taggingCapId = ref<string | null>(null);
 const colorPickerCapId = ref<string | null>(null);
 const tagInputText = ref('');
 const searchQuery = ref('');
+const mobileViewMode = ref<'list' | 'grid'>('list');
+
+const isMobileModalOpen = ref(false);
+const mobileInputRef = ref<HTMLTextAreaElement | null>(null);
+
+watch(isMobileModalOpen, (isOpen) => {
+    if (isOpen) {
+        nextTick(() => {
+            mobileInputRef.value?.focus();
+        });
+    }
+});
+
+const submitCapMobile = async () => {
+    await submitCap();
+    if (!isSubmitting.value && !newCapText.value.trim()) {
+        isMobileModalOpen.value = false;
+    }
+};
 
 const PALETTE = [
    { name: 'Default', value: '' },
@@ -483,7 +502,7 @@ const confirmTurnIntoNote = async (payload: any) => {
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_note', { vaultPath: props.vaultPath, path: cap.path });
+            await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path: cap.path });
             quickCaps.value.splice(index, 1);
         }
         
@@ -522,7 +541,7 @@ const confirmTurnIntoTask = async (payload: any) => {
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_note', { vaultPath: props.vaultPath, path: cap.path });
+            await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path: cap.path });
             quickCaps.value.splice(index, 1);
         }
         
@@ -670,13 +689,18 @@ const renderPreview = (content: string) => {
     return DOMPurify.sanitize(html, { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: /^(?:(?:https?|asset):)|(?:data:image\/)/i });
 };
 
-const deleteCap = async (path: string, index: number) => {
+const deleteCap = async (path: string, id: string) => {
+    const index = quickCaps.value.findIndex(c => c.id === id);
+    if (index === -1) return;
     const isConfirmed = await confirm('Bạn có chắc chắn muốn xoá ghi chú này không?', { title: 'Xác nhận xoá', kind: 'warning' });
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_note', { vaultPath: props.vaultPath, path });
+        await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path });
         quickCaps.value.splice(index, 1);
+        if (selectedCap.value?.id === id) {
+            selectedCap.value = null;
+        }
     } catch(e) {
         console.error(e);
     }
@@ -685,8 +709,8 @@ const deleteCap = async (path: string, index: number) => {
 
 <template>
   <div class="h-full bg-[#fdfdfc] dark:bg-[#242424] overflow-y-auto w-full pt-12 pb-16 px-4">
-    <!-- Input Bar -->
-    <div class="mx-auto w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all relative mb-12">
+    <!-- Input Bar (Desktop Only) -->
+    <div class="hidden md:block mx-auto w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all relative mb-12">
         <textarea
            ref="inputRef"
            v-model="newCapText"
@@ -731,11 +755,29 @@ const deleteCap = async (path: string, index: number) => {
                 <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
             </button>
         </div>
+        <div class="ml-4 flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm md:hidden">
+            <button 
+                @click="mobileViewMode = 'list'" 
+                class="p-1.5 rounded-md transition-colors" 
+                :class="mobileViewMode === 'list' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                title="List View"
+            >
+                <List class="w-4 h-4" />
+            </button>
+            <button 
+                @click="mobileViewMode = 'grid'" 
+                class="p-1.5 rounded-md transition-colors" 
+                :class="mobileViewMode === 'grid' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                title="Grid View"
+            >
+                <LayoutGrid class="w-4 h-4" />
+            </button>
+        </div>
     </div>
 
     <!-- Masonry Grid -->
-    <div class="w-full max-w-7xl px-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 mx-auto">
-        <div v-for="cap in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
+    <div class="w-full max-w-7xl px-4 gap-4 sm:gap-6 mx-auto transition-all" :class="mobileViewMode === 'grid' ? 'columns-2 sm:columns-2 lg:columns-3 xl:columns-4' : 'columns-1 sm:columns-2 lg:columns-3 xl:columns-4'">
+        <div v-for="cap in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-4 sm:mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
             <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="getCapColor(cap.content) || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
                <!-- Text Content Wrapper -->
                <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
@@ -757,10 +799,10 @@ const deleteCap = async (path: string, index: number) => {
                <!-- Bottom Actions Bar (Fixed at bottom of card) -->
                <div class="absolute bottom-0 left-0 w-full px-4 py-2 border-t border-transparent group-hover:border-black/5 dark:group-hover:border-white/5 flex items-center justify-between z-10 transition-colors">
                    <!-- Date (visible by default, hidden on hover) -->
-                  <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none">{{ cap.date }}</span>
+                  <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none" :class="mobileViewMode === 'grid' ? 'opacity-100' : 'opacity-0 md:opacity-100'">{{ cap.date }}</span>
                   
                   <!-- Actions (hidden by default, visible on hover) -->
-                  <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity w-full justify-between" @click.stop>
+                  <div class="flex items-center transition-opacity w-full justify-between" :class="mobileViewMode === 'grid' ? 'opacity-0 group-hover:opacity-100' : 'opacity-100 md:opacity-0 group-hover:opacity-100'" @click.stop>
                       <div v-if="taggingCapId === cap.id" class="flex items-center w-full bg-gray-50 dark:bg-[#1a1a1a] rounded px-2 py-0.5 mr-2">
                           <span class="text-gray-400 text-xs mr-1">#</span>
                           <input 
@@ -774,7 +816,7 @@ const deleteCap = async (path: string, index: number) => {
                           <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
                       </div>
                       <template v-else>
-                          <button @click.stop="deleteCap(cap.path, quickCaps.findIndex(c => c.id === cap.id))" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
+                          <button @click.stop="deleteCap(cap.path, cap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
                               <Trash2 class="w-3.5 h-3.5"/>
                           </button>
                           <div class="flex items-center gap-0.5 relative">
@@ -819,6 +861,45 @@ const deleteCap = async (path: string, index: number) => {
         <p class="text-lg">No quick caps yet. Jot down your thoughts!</p>
     </div>
 
+    <!-- Mobile FAB -->
+    <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-[0_8px_16px_rgba(37,99,235,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);">
+        <Plus class="w-6 h-6" />
+    </button>
+
+    <!-- Mobile QuickCap Compose Modal -->
+    <div v-if="isMobileModalOpen" class="md:hidden fixed inset-0 z-[110] bg-white dark:bg-[#1e1e1e] flex flex-col" style="padding-top: max(env(safe-area-inset-top), 36px);">
+        <!-- Header -->
+        <div class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
+            <button @click="isMobileModalOpen = false" class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+                Cancel
+            </button>
+            <button @click="submitCapMobile" :disabled="isSubmitting || !newCapText.trim()" class="font-semibold text-blue-500 disabled:opacity-50">
+                Save
+            </button>
+        </div>
+        
+        <!-- Textarea -->
+        <textarea
+           ref="mobileInputRef"
+           v-model="newCapText"
+           placeholder="Take a quick note..."
+           class="flex-1 w-full bg-transparent p-5 resize-none outline-none text-[1.1rem] text-[#1c1c1e] dark:text-[#f4f4f5]"
+        ></textarea>
+        
+        <!-- Bottom Actions (above keyboard) -->
+        <div class="p-3 border-t border-gray-100 dark:border-[#2c2c2c] flex items-center gap-2 bg-gray-50 dark:bg-[#191919]" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
+            <button title="Lists coming soon" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                <CheckSquare class="w-5 h-5"/>
+            </button>
+            <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                <ImageIcon class="w-5 h-5"/>
+            </button>
+            <button @click="appendTagToInput" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                <Tag class="w-5 h-5"/>
+            </button>
+        </div>
+    </div>
+
     <!-- Full View Modal -->
     <div v-if="selectedCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
         <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
@@ -835,11 +916,61 @@ const deleteCap = async (path: string, index: number) => {
                    </span>
                 </div>
             </div>
-            <div class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-between mt-auto shrink-0">
-                <span class="text-xs text-gray-500 font-mono tracking-tight">{{ selectedCap.date }}</span>
-                <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer">
-                    Close
-                </button>
+            <div class="py-3 px-4 sm:px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-wrap items-center justify-between mt-auto shrink-0 gap-3">
+                <div class="flex items-center w-full sm:w-auto justify-between sm:justify-start order-2 sm:order-1" @click.stop>
+                    <div v-if="taggingCapId === selectedCap.id" class="flex items-center w-full sm:w-auto bg-gray-100 dark:bg-[#2a2a2a] rounded px-2 py-0.5 mr-2 border border-gray-200 dark:border-gray-700">
+                        <span class="text-gray-400 text-xs mr-1">#</span>
+                        <input 
+                            v-model="tagInputText" 
+                            @keydown.enter.prevent="saveInlineTag(selectedCap)"
+                            @keydown.esc="taggingCapId = null"
+                            class="bg-transparent border-none outline-none text-xs w-full text-[#1c1c1e] dark:text-[#f4f4f5]"
+                            placeholder="tag..."
+                            autofocus
+                        />
+                        <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
+                    </div>
+                    <template v-else>
+                        <button @click.stop="deleteCap(selectedCap.path, selectedCap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
+                            <Trash2 class="w-4 h-4"/>
+                        </button>
+                        <div class="flex items-center gap-1 sm:gap-2 relative ml-auto sm:ml-4">
+                            <div class="relative">
+                                <button @click.stop="toggleColorPicker(selectedCap.id)" title="Change Color" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                    <Palette class="w-4 h-4"/>
+                                </button>
+                                <!-- Color Picker Popup -->
+                                <div v-if="colorPickerCapId === selectedCap.id" class="absolute bottom-[calc(100%+12px)] left-0 sm:left-auto sm:right-0 p-2 bg-white dark:bg-[#2a2a2a] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-[70] w-[140px]" @click.stop>
+                                    <button v-for="color in PALETTE" :key="color.name" 
+                                        @click="changeCapColor(selectedCap, color.value)"
+                                        class="w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110 cursor-pointer"
+                                        :class="color.value || 'bg-[#fdfdfc] dark:bg-[#1e1e1e]'"
+                                        :title="color.name"
+                                    ></button>
+                                </div>
+                            </div>
+                            <button @click.stop="openConvertNoteModal(selectedCap)" title="Convert to Note" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <FileText class="w-4 h-4" />
+                            </button>
+                            <button @click.stop="openConvertTaskModal(selectedCap)" title="Capture to Task" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <CheckSquare class="w-4 h-4"/>
+                            </button>
+                            <button @click.stop="pickImageForExistingCap(selectedCap)" title="Add Image" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <ImageIcon class="w-4 h-4"/>
+                            </button>
+                            <button @click="openTagInput(selectedCap)" title="Add Tag" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <Tag class="w-4 h-4"/>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+                
+                <div class="flex items-center justify-between w-full sm:w-auto order-1 sm:order-2">
+                    <span class="text-xs text-gray-500 font-mono tracking-tight sm:hidden">{{ selectedCap.date }}</span>
+                    <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer ml-auto">
+                        Close
+                    </button>
+                </div>
             </div>
         </div>
     </div>

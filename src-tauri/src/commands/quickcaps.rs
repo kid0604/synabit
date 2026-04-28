@@ -5,10 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::models::quickcap::QuickCapMetadata;
 use crate::error::{AppError, AppResult};
 use crate::path_utils;
-use crate::db::DbBridge;
+use crate::db::DbState;
 
 #[tauri::command]
-pub fn scan_quick_caps(vault_path: String) -> AppResult<Vec<QuickCapMetadata>> {
+pub fn scan_quick_caps(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<QuickCapMetadata>> {
     let mut caps = Vec::new();
     let qc_dir = Path::new(&vault_path).join("QuickCaps");
     
@@ -16,7 +16,7 @@ pub fn scan_quick_caps(vault_path: String) -> AppResult<Vec<QuickCapMetadata>> {
         return Ok(caps);
     }
 
-    let db = DbBridge::new(&vault_path).ok();
+    let db = state.lock().ok();
     let mut current_disk_files = std::collections::HashSet::new();
 
     for entry in fs::read_dir(&qc_dir)?.filter_map(|e| e.ok()) {
@@ -60,7 +60,7 @@ pub fn scan_quick_caps(vault_path: String) -> AppResult<Vec<QuickCapMetadata>> {
 }
 
 #[tauri::command]
-pub fn create_quick_cap(vault_path: String, content: String) -> AppResult<QuickCapMetadata> {
+pub fn create_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, content: String) -> AppResult<QuickCapMetadata> {
     let qc_dir = Path::new(&vault_path).join("QuickCaps");
     if !qc_dir.exists() {
         fs::create_dir_all(&qc_dir)?;
@@ -82,30 +82,28 @@ pub fn create_quick_cap(vault_path: String, content: String) -> AppResult<QuickC
         path: rel_path,
     };
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_quickcap(&qc_meta);
     }
     Ok(qc_meta)
 }
 
 #[tauri::command]
-pub fn delete_quick_cap(vault_path: String, path: String) -> AppResult<()> {
-    path_utils::enforce_no_traversal(&path)?;
-    let abs_path = Path::new(&vault_path).join(&path);
+pub fn delete_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<()> {
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     fs::remove_file(&abs_path)?;
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_quickcap(&path);
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn update_quick_cap(vault_path: String, path: String, content: String) -> AppResult<()> {
-    path_utils::enforce_no_traversal(&path)?;
-    let abs_path = Path::new(&vault_path).join(&path);
+pub fn update_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String, content: String) -> AppResult<()> {
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     fs::write(&abs_path, content.clone())?;
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(file_meta) = fs::metadata(&abs_path) {
             let created = file_meta.created().unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
             let created_date: chrono::DateTime<chrono::Local> = created.into();
@@ -124,8 +122,8 @@ pub fn update_quick_cap(vault_path: String, path: String, content: String) -> Ap
 #[tauri::command]
 pub fn copy_asset_to_vault(vault_path: String, source_path: String) -> AppResult<String> {
     let source = Path::new(&source_path);
-    if !source.exists() {
-        return Err(AppError::InvalidPath("Source file does not exist".to_string()));
+    if !source.exists() || !source.is_file() {
+        return Err(AppError::InvalidPath("Source file does not exist or is not a regular file".to_string()));
     }
     
     let assets_dir = Path::new(&vault_path).join("assets");
@@ -138,6 +136,9 @@ pub fn copy_asset_to_vault(vault_path: String, source_path: String) -> AppResult
         .map_err(|e| AppError::General(format!("System time error: {}", e)))?
         .as_millis();
     let original_name = source.file_name().unwrap_or_default().to_string_lossy();
+    if !path_utils::is_safe_filename(&original_name) {
+        return Err(AppError::InvalidPath("Unsafe filename".to_string()));
+    }
     let filename = format!("img-{}-{}", timestamp, original_name);
     let target = assets_dir.join(&filename);
     

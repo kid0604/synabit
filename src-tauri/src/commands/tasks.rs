@@ -8,10 +8,10 @@ use walkdir::WalkDir;
 use crate::models::task::{TaskFrontMatter, TaskMetadata};
 use crate::error::{AppError, AppResult};
 use crate::path_utils;
-use crate::db::DbBridge;
+use crate::db::DbState;
 
 #[tauri::command]
-pub fn scan_tasks(vault_path: String) -> AppResult<Vec<TaskMetadata>> {
+pub fn scan_tasks(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<TaskMetadata>> {
     let mut tasks = Vec::new();
     let matter = Matter::<YAML>::new();
     
@@ -21,7 +21,7 @@ pub fn scan_tasks(vault_path: String) -> AppResult<Vec<TaskMetadata>> {
     }
 
     let archived_dir = tasks_dir.join("archived");
-    let db = DbBridge::new(&vault_path).ok();
+    let db = state.lock().ok();
     let mut current_disk_files = std::collections::HashSet::new();
 
     for entry in WalkDir::new(&tasks_dir).into_iter().filter_map(|e| e.ok()) {
@@ -127,6 +127,7 @@ pub fn scan_tasks(vault_path: String) -> AppResult<Vec<TaskMetadata>> {
 
 #[tauri::command]
 pub fn create_task(
+    _app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>,
     vault_path: String, metadata: TaskFrontMatter, content: String
 ) -> AppResult<TaskMetadata> {
     let tasks_dir = Path::new(&vault_path).join("Tasks");
@@ -170,7 +171,7 @@ pub fn create_task(
         updated_at: date_str,
     };
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_task(&task_meta);
     }
     Ok(task_meta)
@@ -178,6 +179,7 @@ pub fn create_task(
 
 #[tauri::command]
 pub fn update_task(
+    _app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>,
     vault_path: String, path: String, metadata: TaskFrontMatter, content: String
 ) -> AppResult<()> {
     path_utils::enforce_no_traversal(&path)?;
@@ -187,7 +189,7 @@ pub fn update_task(
         
     fs::write(&abs_path, full_content)?;
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(file_meta) = fs::metadata(&abs_path) {
             let created = file_meta.created().unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
             let modified = file_meta.modified().unwrap_or(created);
@@ -222,18 +224,18 @@ pub fn update_task(
 }
 
 #[tauri::command]
-pub fn delete_task(vault_path: String, path: String) -> AppResult<()> {
+pub fn delete_task(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<()> {
     path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::remove_file(&abs_path)?;
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_task(&path);
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn archive_done_tasks(vault_path: String, days: u64) -> AppResult<u32> {
+pub fn archive_done_tasks(_app_handle: tauri::AppHandle, vault_path: String, days: u64) -> AppResult<u32> {
     use chrono::NaiveDate;
     
     let tasks_dir = Path::new(&vault_path).join("Tasks");

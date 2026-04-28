@@ -15,32 +15,65 @@ fn get_vault_sync_keyring() -> Result<keyring::Entry, String> {
         .map_err(|e| format!("Keyring error: {}", e))
 }
 
-pub(crate) fn load_tokens() -> Option<GDriveTokens> {
-    let entry = get_vault_sync_keyring().ok()?;
-    let content = entry.get_password().ok()?;
-    serde_json::from_str(&content).ok()
+pub(crate) fn load_tokens(_app_handle: &tauri::AppHandle) -> Option<GDriveTokens> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let entry = get_vault_sync_keyring().ok()?;
+        let content = entry.get_password().ok()?;
+        serde_json::from_str(&content).ok()
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let path = tokens_path(app_handle);
+        if let Ok(content) = fs::read_to_string(&path) {
+            serde_json::from_str(&content).ok()
+        } else {
+            None
+        }
+    }
 }
 
-pub(crate) fn save_tokens(tokens: &GDriveTokens) -> Result<(), String> {
+pub(crate) fn save_tokens(_app_handle: &tauri::AppHandle, tokens: &GDriveTokens) -> Result<(), String> {
     let content = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    let entry = get_vault_sync_keyring()?;
-    entry.set_password(&content).map_err(|e| format!("Failed to save tokens to keychain: {}", e))
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let entry = get_vault_sync_keyring()?;
+        entry.set_password(&content).map_err(|e| format!("Failed to save tokens to keychain: {}", e))
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let path = tokens_path(app_handle);
+        if let Some(p) = path.parent() {
+            let _ = fs::create_dir_all(p);
+        }
+        fs::write(&path, content).map_err(|e| format!("Failed to save tokens: {}", e))
+    }
 }
 
-pub(crate) async fn get_valid_token() -> Result<String, String> {
-    let mut tokens = load_tokens().ok_or("Not authenticated with Google Drive")?;
+pub(crate) async fn get_valid_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    let mut tokens = load_tokens(app_handle).ok_or("Not authenticated with Google Drive")?;
     let now = chrono::Utc::now().timestamp();
 
     if now >= tokens.expires_at - 60 {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        let form_data = vec![
+            ("client_id", CLIENT_ID),
+            ("client_secret", CLIENT_SECRET),
+            ("refresh_token", tokens.refresh_token.as_str()),
+            ("grant_type", "refresh_token"),
+        ];
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let form_data = vec![
+            ("client_id", CLIENT_ID),
+            ("refresh_token", tokens.refresh_token.as_str()),
+            ("grant_type", "refresh_token"),
+        ];
+
         let client = reqwest::Client::new();
         let resp = client
             .post(TOKEN_URI)
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("client_secret", CLIENT_SECRET),
-                ("refresh_token", tokens.refresh_token.as_str()),
-                ("grant_type", "refresh_token"),
-            ])
+            .form(&form_data)
             .send()
             .await
             .map_err(|e| format!("Token refresh request failed: {}", e))?;
@@ -48,10 +81,13 @@ pub(crate) async fn get_valid_token() -> Result<String, String> {
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
             if err_text.contains("invalid_grant") {
-                if let Ok(entry) = get_vault_sync_keyring() {
-                    let _ = entry.delete_credential();
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    if let Ok(entry) = get_vault_sync_keyring() {
+                        let _ = entry.delete_credential();
+                    }
                 }
-                let _ = fs::remove_file(tokens_path()); // Cleanup old JSON file if present
+                let _ = fs::remove_file(tokens_path(app_handle)); // Cleanup JSON file
                 return Err("Google Drive session expired. Please reconnect.".to_string());
             }
             return Err(format!("Token refresh failed: {}", err_text));
@@ -67,7 +103,7 @@ pub(crate) async fn get_valid_token() -> Result<String, String> {
         if let Some(new_refresh) = token_resp.refresh_token {
             tokens.refresh_token = new_refresh;
         }
-        save_tokens(&tokens)?;
+        save_tokens(app_handle, &tokens)?;
     }
 
     Ok(tokens.access_token)
@@ -78,17 +114,19 @@ pub(crate) async fn get_valid_token() -> Result<String, String> {
 // ──────────────────────────────────────────────
 
 #[tauri::command]
-pub fn gdrive_auth_status() -> Result<bool, String> {
-    Ok(load_tokens().is_some())
+pub fn gdrive_auth_status(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    Ok(load_tokens(&app_handle).is_some())
 }
 
 #[tauri::command]
-pub fn gdrive_disconnect() -> Result<(), String> {
-    if let Ok(entry) = get_vault_sync_keyring() {
-        let _ = entry.delete_credential();
+pub fn gdrive_disconnect(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if let Ok(entry) = get_vault_sync_keyring() {
+            let _ = entry.delete_credential();
+        }
     }
-    // Cleanup old legacy JSON file if present
-    let path = tokens_path();
+    let path = tokens_path(&app_handle);
     if path.exists() {
         let _ = fs::remove_file(&path);
     }
@@ -97,7 +135,7 @@ pub fn gdrive_disconnect() -> Result<(), String> {
 
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub async fn gdrive_auth_start() -> Result<String, String> {
+pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -209,14 +247,15 @@ pub async fn gdrive_auth_start() -> Result<String, String> {
         expires_at: now + token_resp.expires_in.unwrap_or(3600),
     };
 
-    save_tokens(&tokens)?;
+    save_tokens(&app_handle, &tokens)?;
     Ok("Authentication successful".to_string())
 }
 
 #[tauri::command]
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub async fn gdrive_auth_start() -> Result<String, String> {
-    let redirect_uri = "synabit://oauth2callback";
+pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let redirect_uri = "com.synabit.app:/oauth2callback";
     let auth_url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
         AUTH_URI,
@@ -225,13 +264,13 @@ pub async fn gdrive_auth_start() -> Result<String, String> {
         urlencoding::encode(SCOPE),
     );
 
-    let _ = opener::open(&auth_url);
+    app_handle.opener().open_url(auth_url, None::<String>).map_err(|e| format!("Failed to open browser: {}", e))?;
     Ok("WAITING_DEEP_LINK".to_string())
 }
 
 #[tauri::command]
-pub async fn gdrive_auth_complete(auth_code: String) -> Result<String, String> {
-    let redirect_uri = "synabit://oauth2callback";
+pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: String) -> Result<String, String> {
+    let redirect_uri = "com.synabit.app:/oauth2callback";
     
     let client = reqwest::Client::new();
     let resp = client
@@ -239,7 +278,6 @@ pub async fn gdrive_auth_complete(auth_code: String) -> Result<String, String> {
         .form(&[
             ("code", auth_code.as_str()),
             ("client_id", CLIENT_ID),
-            ("client_secret", CLIENT_SECRET),
             ("redirect_uri", redirect_uri),
             ("grant_type", "authorization_code"),
         ])
@@ -264,6 +302,6 @@ pub async fn gdrive_auth_complete(auth_code: String) -> Result<String, String> {
         expires_at: now + token_resp.expires_in.unwrap_or(3600),
     };
 
-    save_tokens(&tokens)?;
+    save_tokens(&app_handle, &tokens)?;
     Ok("Authentication successful".to_string())
 }

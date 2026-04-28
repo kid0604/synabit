@@ -16,6 +16,9 @@ export const useAppStore = defineStore('app', () => {
   // Editor Settings
   const nestedNumberListStyle = ref<'decimal' | 'alpha' | 'nested'>('decimal');
   
+  // App Settings
+  const defaultApp = ref<'nexus' | 'note' | 'task' | 'quickcap' | 'file' | 'calendar'>('nexus');
+  
   // Theme
   const themeMode = ref<'light' | 'dark' | 'system'>('system');
   
@@ -57,6 +60,9 @@ export const useAppStore = defineStore('app', () => {
     const nestedListStyle = await storeInstance.get('nestedNumberListStyle');
     if (nestedListStyle) nestedNumberListStyle.value = nestedListStyle as 'decimal' | 'alpha' | 'nested';
     
+    const defApp = await storeInstance.get('defaultApp');
+    if (defApp) defaultApp.value = defApp as any;
+    
     const autoSync = await storeInstance.get('gdriveAutoSyncEnabled');
     if (autoSync !== null && autoSync !== undefined) gdriveAutoSyncEnabled.value = autoSync as boolean;
     
@@ -84,6 +90,9 @@ export const useAppStore = defineStore('app', () => {
       });
       watch(nestedNumberListStyle, async (v) => {
         if (storeInstance) await storeInstance.set('nestedNumberListStyle', v);
+      });
+      watch(defaultApp, async (v) => {
+        if (storeInstance) await storeInstance.set('defaultApp', v);
       });
       watch(themeMode, async (v) => {
         if (storeInstance) await storeInstance.set('themeMode', v);
@@ -129,6 +138,7 @@ export const useAppStore = defineStore('app', () => {
     dailyNoteFormat,
     dailyNoteTag,
     nestedNumberListStyle,
+    defaultApp,
     themeMode,
     gdriveAutoSyncEnabled,
     gdriveAutoSyncInterval,

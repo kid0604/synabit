@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-
-use crate::models::nexus::{NexusItem, TagStat, VaultStats};
-use crate::db::DbBridge;
+use crate::models::nexus::NexusItem;
+use crate::db::DbState;
 use crate::error::AppResult;
 use serde::Serialize;
 
@@ -25,51 +24,13 @@ pub struct GraphData {
     pub links: Vec<GraphLink>,
 }
 
-#[tauri::command]
-pub fn get_nexus_stats(vault_path: String) -> AppResult<VaultStats> {
-    let items = get_nexus_items(vault_path)?;
-    let mut type_distribution = HashMap::new();
-    let mut tag_map: HashMap<String, TagStat> = HashMap::new();
-    
-    let total_items = items.len();
-    
-    for item in items {
-        *type_distribution.entry(item.item_type.clone()).or_insert(0) += 1;
-        
-        for mut tag in item.tags {
-            if tag.starts_with("#") {
-                tag = tag[1..].to_string();
-            }
-            let t = tag.trim().to_lowercase();
-            if t.is_empty() { continue; }
-            
-            let entry = tag_map.entry(t.clone()).or_insert_with(|| TagStat {
-                name: t.clone(),
-                total_count: 0,
-                distribution: HashMap::new(),
-            });
-            
-            entry.total_count += 1;
-            *entry.distribution.entry(item.item_type.clone()).or_insert(0) += 1;
-        }
-    }
-    
-    let mut tags_vec: Vec<TagStat> = tag_map.into_values().collect();
-    tags_vec.sort_by(|a, b| b.total_count.cmp(&a.total_count));
-    
-    Ok(VaultStats {
-        total_items,
-        type_distribution,
-        tags: tags_vec,
-    })
-}
 
 #[tauri::command]
-pub fn get_nexus_items(vault_path: String) -> AppResult<Vec<NexusItem>> {
+pub fn get_nexus_items(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<Vec<NexusItem>> {
     let mut items = Vec::new();
 
     // ─── Query indexed data from SQLite (fast) ─────────────
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(rows) = db.get_all_nexus_items() {
             for r in rows {
                 let title = if r.title.is_empty() {
@@ -100,8 +61,33 @@ pub fn get_nexus_items(vault_path: String) -> AppResult<Vec<NexusItem>> {
 }
 
 #[tauri::command]
-pub fn get_nexus_item(vault_path: String, id: String) -> AppResult<NexusItem> {
-    let db = DbBridge::new(&vault_path)?;
+pub fn get_nexus_item(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, id: String) -> AppResult<NexusItem> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Fast path: targeted single-table query by ID prefix
+    if let Some(r) = db.get_nexus_item_by_id(&id)? {
+        let title = if r.title.is_empty() {
+            match r.item_type.as_str() {
+                "note" => "Untitled Note".to_string(),
+                "task" => "Untitled Task".to_string(),
+                _ => r.title,
+            }
+        } else { r.title };
+
+        return Ok(NexusItem {
+            id: r.id,
+            item_type: r.item_type,
+            title: title.clone(),
+            preview: r.preview,
+            tags: r.tags,
+            date: r.date,
+            path: r.path,
+            content: format!("{} {}", title, r.content),
+            status: r.status,
+        });
+    }
+
+    // Fallback: full scan (handles edge cases like unexpected ID formats)
     let rows = db.get_all_nexus_items()?;
     for r in rows {
         if r.id == id {
@@ -130,8 +116,29 @@ pub fn get_nexus_item(vault_path: String, id: String) -> AppResult<NexusItem> {
 }
 
 #[tauri::command]
-pub fn search_nexus(vault_path: String, query: String) -> AppResult<Vec<NexusItem>> {
-    let all_items = get_nexus_items(vault_path)?;
+pub fn search_nexus(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, query: String) -> AppResult<Vec<NexusItem>> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all_items = Vec::new();
+    if let Ok(rows) = db.get_all_nexus_items() {
+        for r in rows {
+            let title = if r.title.is_empty() {
+                match r.item_type.as_str() {
+                    "note" => "Untitled Note".to_string(),
+                    "task" => "Untitled Task".to_string(),
+                    _ => r.title,
+                }
+            } else { r.title };
+            all_items.push(NexusItem {
+                id: r.id, item_type: r.item_type,
+                title: title.clone(), preview: r.preview, tags: r.tags,
+                date: r.date, path: r.path,
+                content: format!("{} {}", title, r.content),
+                status: r.status,
+            });
+        }
+    }
+    drop(db); // Release lock before filtering
+    all_items.sort_by(|a, b| b.date.cmp(&a.date));
     if query.trim().is_empty() {
         return Ok(all_items.into_iter().take(50).collect()); // return top 50 recent
     }
@@ -215,8 +222,8 @@ pub fn search_nexus(vault_path: String, query: String) -> AppResult<Vec<NexusIte
 }
 
 #[tauri::command]
-pub fn get_nexus_graph_data(vault_path: String) -> AppResult<GraphData> {
-    let db = DbBridge::new(&vault_path)?;
+pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<GraphData> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let items = db.get_all_nexus_items()?;
     let edges = db.get_all_edges()?;
 

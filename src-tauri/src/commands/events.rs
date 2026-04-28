@@ -8,10 +8,10 @@ use walkdir::WalkDir;
 use crate::models::event::{EventFrontMatter, EventMetadata};
 use crate::error::{AppError, AppResult};
 use crate::path_utils;
-use crate::db::DbBridge;
+use crate::db::DbState;
 
 #[tauri::command]
-pub fn scan_events(vault_path: String) -> AppResult<Vec<EventMetadata>> {
+pub fn scan_events(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<EventMetadata>> {
     let mut events = Vec::new();
     let matter = Matter::<YAML>::new();
     
@@ -20,7 +20,7 @@ pub fn scan_events(vault_path: String) -> AppResult<Vec<EventMetadata>> {
         fs::create_dir_all(&events_dir)?;
     }
 
-    let db = DbBridge::new(&vault_path).ok();
+    let db = state.lock().ok();
     let mut current_disk_files = std::collections::HashSet::new();
 
     for entry in WalkDir::new(&events_dir).into_iter().filter_map(|e| e.ok()) {
@@ -90,6 +90,7 @@ pub fn scan_events(vault_path: String) -> AppResult<Vec<EventMetadata>> {
 
 #[tauri::command]
 pub fn create_event(
+    _app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>,
     vault_path: String, metadata: EventFrontMatter, content: String
 ) -> AppResult<EventMetadata> {
     let events_dir = Path::new(&vault_path).join("Events");
@@ -125,7 +126,7 @@ pub fn create_event(
         created_at: date_str,
     };
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_event(&event_meta);
     }
     Ok(event_meta)
@@ -133,15 +134,16 @@ pub fn create_event(
 
 #[tauri::command]
 pub fn update_event(
+    _app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>,
     vault_path: String, path: String, metadata: EventFrontMatter, content: String
 ) -> AppResult<()> {
-    let abs_path = Path::new(&vault_path).join(&path);
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     let yaml_string = serde_yaml::to_string(&metadata).map_err(|e| AppError::General(e.to_string()))?;
     let full_content = format!("---\n{}\n---\n\n{}", yaml_string.trim(), content);
         
     fs::write(&abs_path, full_content)?;
     
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(file_meta) = fs::metadata(&abs_path) {
             let created = file_meta.created().unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
             let created_date: chrono::DateTime<chrono::Local> = created.into();
@@ -164,10 +166,10 @@ pub fn update_event(
 }
 
 #[tauri::command]
-pub fn delete_event(vault_path: String, path: String) -> AppResult<()> {
-    let abs_path = Path::new(&vault_path).join(&path);
+pub fn delete_event(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<()> {
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     fs::remove_file(&abs_path)?;
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_event(&path);
     }
     Ok(())

@@ -6,7 +6,7 @@ import { getVersion } from '@tauri-apps/api/app';
 
 const {
   showSettingsModal, settingsTab,
-  themeMode,
+  themeMode, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
   nestedNumberListStyle,
@@ -50,40 +50,40 @@ const emit = defineEmits<{
         <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @mousedown="showSettingsModal = false"></div>
         
         <!-- Modal Container -->
-        <div class="relative w-[720px] max-w-[90vw] h-[520px] max-h-[85vh] bg-[#fdfdfc] dark:bg-[#242424] rounded-2xl shadow-2xl border border-[#e0e0e0] dark:border-[#333] flex overflow-hidden" @mousedown.stop>
+        <div class="relative w-[95vw] md:w-[720px] md:max-w-[90vw] h-[90vh] md:h-[520px] md:max-h-[85vh] bg-[#fdfdfc] dark:bg-[#242424] rounded-2xl shadow-2xl border border-[#e0e0e0] dark:border-[#333] flex flex-col md:flex-row overflow-hidden" @mousedown.stop>
           
-          <!-- Left Tab Navigation -->
-          <nav class="w-[200px] shrink-0 bg-[#f5f5f5] dark:bg-[#1a1a1a] border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col py-5 px-3">
-            <h2 class="text-[13px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5] mb-5 px-2">Settings</h2>
+          <!-- Top/Left Tab Navigation -->
+          <nav class="w-full md:w-[200px] shrink-0 bg-[#f5f5f5] dark:bg-[#1a1a1a] border-b md:border-b-0 md:border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col py-2 md:py-5 px-2 md:px-3 z-10">
+            <h2 class="hidden md:block text-[13px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5] mb-5 px-2">Settings</h2>
             
-            <div class="space-y-0.5">
+            <div class="flex flex-row md:flex-col gap-1 md:gap-0 md:space-y-0.5 overflow-x-auto no-scrollbar">
               <button @click="settingsTab = 'general'" 
-                :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'general' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
-                <Settings class="w-4 h-4 opacity-70" />
-                General
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'general' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <Settings class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">General</span>
               </button>
               <button @click="settingsTab = 'notes'" 
-                :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'notes' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
-                <FileText class="w-4 h-4 opacity-70" />
-                Notes
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'notes' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <FileText class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">Notes</span>
               </button>
               <button @click="settingsTab = 'tasks'" 
-                :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'tasks' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
-                <CheckSquare class="w-4 h-4 opacity-70" />
-                Tasks
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'tasks' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <CheckSquare class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">Tasks</span>
               </button>
               <button @click="settingsTab = 'about'" 
-                :class="['w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center gap-2.5', settingsTab === 'about' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
-                <Globe class="w-4 h-4 opacity-70" />
-                About
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'about' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <Globe class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">About</span>
               </button>
             </div>
           </nav>
           
-          <!-- Right Content Area -->
-          <div class="flex-1 flex flex-col overflow-hidden">
+          <!-- Content Area -->
+          <div class="flex-1 flex flex-col overflow-hidden min-h-0 relative">
             <!-- Header -->
-            <div class="h-12 shrink-0 flex items-center justify-between px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
+            <div class="h-12 shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c] sticky top-0 bg-[#fdfdfc]/90 dark:bg-[#242424]/90 backdrop-blur-sm z-10">
               <h3 class="text-[15px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] capitalize">{{ settingsTab }}</h3>
               <button @click="showSettingsModal = false" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                 <X class="w-4 h-4" />
@@ -156,6 +156,27 @@ const emit = defineEmits<{
                       <button @click="emit('disconnect-gdrive')" class="px-4 py-2 rounded-lg text-[12px] font-medium border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all flex items-center gap-2">
                         <CloudOff class="w-3.5 h-3.5" /> Disconnect Google Drive
                       </button>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Behavior -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Behavior</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <div class="flex items-center justify-between">
+                      <div>
+                        <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Startup App</p>
+                        <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Which mini-app to open when Synabit starts.</p>
+                      </div>
+                      <select v-model="defaultApp" class="appearance-none px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-colors cursor-pointer text-center pr-8 bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%239ca3af%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_10px] bg-[right_10px_center] bg-no-repeat">
+                        <option value="nexus">Nexus</option>
+                        <option value="quickcap">QuickCap</option>
+                        <option value="note">Notes</option>
+                        <option value="task">Tasks</option>
+                        <option value="calendar">Calendar</option>
+                        <option value="file">Files</option>
+                      </select>
                     </div>
                   </div>
                 </section>

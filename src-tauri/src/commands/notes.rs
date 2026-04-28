@@ -8,11 +8,11 @@ use walkdir::WalkDir;
 
 use crate::models::note::{FrontMatter, NoteMetadata};
 use crate::error::{AppError, AppResult};
-use crate::db::DbBridge;
+use crate::db::DbState;
 use crate::path_utils;
 
 #[tauri::command]
-pub fn scan_vault_path(vault_path: String) -> AppResult<Vec<NoteMetadata>> {
+pub fn scan_vault_path(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<NoteMetadata>> {
     let matter = Matter::<YAML>::new();
     
     let notes_dir = Path::new(&vault_path).join("Notes");
@@ -37,7 +37,7 @@ pub fn scan_vault_path(vault_path: String) -> AppResult<Vec<NoteMetadata>> {
         }
     }
     
-    let db = DbBridge::new(&vault_path)?;
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let existing_timestamps = db.get_all_note_timestamps()?;
     let mut current_disk_files = HashSet::new();
 
@@ -212,7 +212,7 @@ pub fn delete_note(vault_path: String, path: String) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn rename_note(vault_path: String, old_path: String, new_name: String) -> AppResult<String> {
+pub fn rename_note(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, old_path: String, new_name: String) -> AppResult<String> {
     path_utils::enforce_no_traversal(&old_path)?;
     let base_dir = Path::new(&vault_path);
     let old = base_dir.join(&old_path);
@@ -235,7 +235,7 @@ pub fn rename_note(vault_path: String, old_path: String, new_name: String) -> Ap
     fs::rename(&old, &new_path)?;
 
     // Auto-Rename Links in other files
-    if let Ok(db) = DbBridge::new(&vault_path) {
+    { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let old_title = old.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let new_title = new_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         
@@ -292,6 +292,7 @@ pub fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> AppRe
     Ok(format!("assets/{}", safe_filename))
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn spawn_note_window(app_handle: tauri::AppHandle, note_id: String) -> AppResult<()> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -314,6 +315,13 @@ pub fn spawn_note_window(app_handle: tauri::AppHandle, note_id: String) -> AppRe
         .map_err(|e| AppError::General(e.to_string()))?;
 
     Ok(())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+pub fn spawn_note_window(_app_handle: tauri::AppHandle, _note_id: String) -> AppResult<()> {
+    // Multiple windows are not supported on mobile. The UI should use routing instead.
+    Err(AppError::General("Multiple windows are not supported on mobile".to_string()))
 }
 
 #[tauri::command]

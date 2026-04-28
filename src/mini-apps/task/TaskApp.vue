@@ -12,10 +12,7 @@ const props = defineProps<{
   vaultPath: string;
 }>();
 
-export interface ChecklistItem {
-    content: string;
-    completed: boolean;
-}
+
 
 export interface TaskMetadata {
     id: string;
@@ -30,7 +27,6 @@ export interface TaskMetadata {
     comment: string;
     source_link: string;
     tags: string[];
-    checklist: ChecklistItem[];
     content: string;
     path: string;
     created_at: string;
@@ -338,7 +334,6 @@ const editingTaskParams = ref({
     due_date: '',
     comment: '',
     tags: '',
-    checklist: [] as ChecklistItem[],
     status: 'todo',
     completed_at: ''
 });
@@ -357,7 +352,6 @@ const openEditModal = (task: TaskMetadata) => {
         due_date: task.due_date,
         comment: task.comment,
         tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
-        checklist: JSON.parse(JSON.stringify(task.checklist || [])),
         status: task.status,
         completed_at: task.completed_at || ''
     };
@@ -389,7 +383,6 @@ const openCreateModal = () => {
         comment: '',
         source_link: '',
         tags: [],
-        checklist: [],
         content: '',
         path: '',
         created_at: '',
@@ -409,7 +402,6 @@ const openCreateModal = () => {
         due_date: '',
         comment: '',
         tags: '',
-        checklist: [],
         status: 'todo',
         completed_at: ''
     };
@@ -469,7 +461,6 @@ const saveTask = async () => {
                     comment: editingTaskParams.value.comment,
                     source_link: '',
                     tags: tagArray,
-                    checklist: editingTaskParams.value.checklist,
                     completed_at: '',
                     ...updatedCustomFields
                 },
@@ -492,7 +483,6 @@ const saveTask = async () => {
                     comment: editingTaskParams.value.comment,
                     source_link: editingTask.value.source_link,
                     tags: tagArray,
-                    checklist: editingTaskParams.value.checklist,
                     completed_at: editingTask.value.completed_at || '',
                     ...updatedCustomFields
                 },
@@ -509,7 +499,6 @@ const saveTask = async () => {
             editingTask.value.due_date = editingTaskParams.value.due_date;
             editingTask.value.comment = editingTaskParams.value.comment;
             editingTask.value.tags = tagArray;
-            editingTask.value.checklist = editingTaskParams.value.checklist;
             editingTask.value.custom_fields = updatedCustomFields;
         }
         
@@ -565,7 +554,14 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
 };
 
 const deleteTask = async (task: TaskMetadata) => {
-    const isConfirmed = await confirm('Xoá công việc này?', { title: 'Xoá Task', kind: 'warning' });
+    let isConfirmed = false;
+    try {
+        isConfirmed = await confirm('Xoá công việc này?', { title: 'Xoá Task', kind: 'warning' });
+    } catch (e) {
+        console.warn("Tauri confirm failed, falling back to window.confirm", e);
+        isConfirmed = window.confirm('Xoá công việc này?');
+    }
+    
     if (!isConfirmed) return;
     
     try {
@@ -577,6 +573,18 @@ const deleteTask = async (task: TaskMetadata) => {
     }
 };
 
+const handleModalDelete = async () => {
+    if (!editingTask.value || editingTask.value.isNew) {
+        editingTask.value = null;
+        return;
+    }
+    const currentId = editingTask.value.id;
+    await deleteTask(editingTask.value);
+    const stillExists = tasks.value.find(t => t.id === currentId);
+    if (!stillExists) {
+        editingTask.value = null;
+    }
+};
 
 
 onMounted(() => {
@@ -855,8 +863,10 @@ watch(() => props.vaultPath, () => {
   <TaskEditModal 
       v-if="editingTask" 
       :task="editingTaskParams" 
+      :vaultPath="vaultPath"
       @save="handleModalSave" 
       @close="editingTask = null" 
+      @delete="handleModalDelete"
   />
 
   <!-- Mobile Floating Action Button (FAB) -->

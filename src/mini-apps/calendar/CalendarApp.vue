@@ -294,30 +294,32 @@ const deleteEvent = async (ev: EventMetadata) => {
 <template>
   <div class="h-full flex relative text-[#1c1c1e] dark:text-[#f4f4f5] bg-[#fdfdfc] dark:bg-[#242424]">
      
-     <div class="flex-1 flex flex-col h-full overflow-hidden px-6 py-4 transition-all duration-300" :class="{ 'pr-96': showRightPanel }">
+     <div class="flex-1 flex flex-col h-full overflow-hidden px-3 py-3 md:px-6 md:py-4 transition-all duration-300" :class="{ 'md:pr-96': showRightPanel }">
          <!-- Header -->
-         <header class="flex items-center justify-between mb-6 h-12 flex-shrink-0" data-tauri-drag-region>
-             <div class="flex items-center gap-4">
-                 <CalendarIcon class="w-6 h-6 text-purple-500" />
-                 <h1 class="text-2xl font-bold tracking-tight select-none">
-                     {{ headerDisplayString }}
-                 </h1>
+         <header class="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 flex-shrink-0 gap-3" data-tauri-drag-region>
+             <div class="flex items-center justify-between w-full md:w-auto">
+                 <div class="flex items-center gap-3">
+                     <CalendarIcon class="w-5 h-5 md:w-6 md:h-6 text-purple-500" />
+                     <h1 class="text-xl md:text-2xl font-bold tracking-tight select-none">
+                         {{ headerDisplayString }}
+                     </h1>
+                 </div>
              </div>
              
-             <div class="flex items-center gap-4 select-none">
+             <div class="flex items-center gap-2 md:gap-4 select-none w-full md:w-auto overflow-x-auto no-scrollbar">
                  <!-- View Switcher -->
-                 <div class="flex bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333]">
+                 <div class="flex bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333] shrink-0">
                     <button v-for="v in (['day','week','month','year'] as ViewMode[])" :key="v"
                             @click="viewMode = v"
-                            class="px-4 py-1.5 text-xs font-semibold rounded-lg capitalize transition-all"
+                            class="px-3 py-1.5 md:px-4 md:py-1.5 text-[11px] md:text-xs font-semibold rounded-lg capitalize transition-all"
                             :class="viewMode === v ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-purple-600 dark:bg-[#333] dark:text-purple-400' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'">
                         {{ v }}
                     </button>
                  </div>
 
                  <!-- Nav Controls -->
-                 <div class="flex items-center gap-2">
-                     <button @click="goToToday" class="px-3 py-1.5 text-xs font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-[#2c2c2c] dark:hover:bg-[#3a3a3a] rounded-lg transition-colors border border-transparent dark:border-gray-700">
+                 <div class="flex items-center gap-2 shrink-0">
+                     <button @click="goToToday" class="px-2 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-[#2c2c2c] dark:hover:bg-[#3a3a3a] rounded-lg transition-colors border border-transparent dark:border-gray-700">
                          Today
                      </button>
                      <div class="flex bg-gray-100 dark:bg-[#2c2c2c] rounded-lg p-0.5 border border-transparent dark:border-gray-700">
@@ -356,12 +358,20 @@ const deleteEvent = async (ev: EventMetadata) => {
                                  {{ dayObj.date.getDate() }}
                              </span>
                          </div>
-                         <div class="flex-1 px-2 pb-2 overflow-y-auto w-full no-scrollbar space-y-1">
-                             <div v-for="ev in getEventsForDate(formatDateString(dayObj.date))" :key="'evt-'+ev.id" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
-                                 {{ ev.event_time }} {{ ev.title }}
+                         <div class="flex-1 px-1 md:px-2 pb-1 md:pb-2 overflow-y-auto w-full no-scrollbar md:space-y-1">
+                             <!-- Mobile Dots -->
+                             <div class="flex flex-wrap gap-1 md:hidden pt-1 px-1">
+                                 <div v-for="ev in getEventsForDate(formatDateString(dayObj.date))" :key="'evt-dot-'+ev.id" class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                                 <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-dot-'+tk.id" class="w-1.5 h-1.5 rounded-full" :class="tk.status === 'done' ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-500'"></div>
                              </div>
-                             <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-'+tk.id" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1">
-                                 <CheckSquare class="w-2.5 h-2.5" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                             <!-- Desktop Text -->
+                             <div class="hidden md:block">
+                                 <div v-for="ev in getEventsForDate(formatDateString(dayObj.date))" :key="'evt-'+ev.id" class="w-full text-left truncate mb-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
+                                     {{ ev.event_time }} {{ ev.title }}
+                                 </div>
+                                 <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-'+tk.id" class="w-full text-left truncate mb-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1">
+                                     <CheckSquare class="w-2.5 h-2.5" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                                 </div>
                              </div>
                          </div>
                      </div>
@@ -460,7 +470,7 @@ const deleteEvent = async (ev: EventMetadata) => {
 
              <!-- YEAR VIEW -->
              <div v-if="viewMode === 'year'" class="h-full overflow-y-auto no-scrollbar pb-6 pr-2 select-none">
-                <div class="grid grid-cols-3 gap-6 lg:gap-8">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6 lg:gap-8">
                     <div v-for="monthObj in yearMonths" :key="monthObj.monthIndex" class="bg-white dark:bg-[#232323] border border-gray-100 dark:border-[#333] rounded-2xl p-4 shadow-sm">
                         <!-- Month Title -->
                         <div class="text-sm font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 mb-3 px-1 cursor-pointer hover:underline" @click="(currentDate = new Date(currentDate.getFullYear(), monthObj.monthIndex, 1)), (viewMode='month')">
@@ -488,11 +498,16 @@ const deleteEvent = async (ev: EventMetadata) => {
          </div>
      </div>
      
-     <!-- RIGHT PANEL: DAY DETAILS -->
-     <div v-show="showRightPanel" class="w-96 absolute right-0 top-0 bottom-0 border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-white/95 dark:bg-[#1a1a1a]/95 backdrop-blur shadow-2xl flex flex-col transition-transform z-20">
-         <div class="h-16 flex items-center justify-between px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c] flex-shrink-0" data-tauri-drag-region>
-             <h2 class="font-bold text-lg text-purple-600 dark:text-purple-400 select-none">{{ selectedDateDisplay }}</h2>
-             <button @click="showRightPanel = false" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-500 transition-colors">
+     <!-- RIGHT PANEL / BOTTOM SHEET: DAY DETAILS -->
+     <!-- Mobile Overlay -->
+     <div v-if="showRightPanel" class="md:hidden fixed inset-0 bg-black/20 dark:bg-black/40 z-30" @click="showRightPanel = false"></div>
+     
+     <div v-show="showRightPanel" 
+          class="fixed md:absolute z-40 flex flex-col bg-white dark:bg-[#1a1a1a] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] md:shadow-2xl border-[#e6e6e6] dark:border-[#2c2c2c] bottom-0 left-0 right-0 h-[75vh] rounded-t-3xl md:rounded-none md:h-auto md:top-0 md:bottom-0 md:left-auto md:w-96 md:border-l">
+         <div class="h-16 flex items-center justify-between px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c] flex-shrink-0 relative" data-tauri-drag-region>
+             <div class="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full md:hidden"></div>
+             <h2 class="font-bold text-lg text-purple-600 dark:text-purple-400 select-none mt-2 md:mt-0">{{ selectedDateDisplay }}</h2>
+             <button @click="showRightPanel = false" class="mt-2 md:mt-0 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-500 transition-colors">
                  <X class="w-5 h-5" />
              </button>
          </div>
@@ -513,7 +528,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                      <div v-for="ev in selectedEvents" :key="ev.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group">
                          <div class="flex justify-between items-start mb-1">
                              <h4 class="font-bold text-base text-gray-900 dark:text-gray-100 line-clamp-1">{{ ev.title }}</h4>
-                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                             <div class="flex items-center gap-1 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity">
                                 <button @click="openEditEventModal(ev)" class="p-1 hover:bg-gray-100 dark:hover:bg-[#333] rounded text-gray-500"><Edit2 class="w-3 h-3"/></button>
                                 <button @click="deleteEvent(ev)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
                              </div>
@@ -556,9 +571,9 @@ const deleteEvent = async (ev: EventMetadata) => {
      </div>
 
      <!-- Event Modal Overlay -->
-     <div v-if="showEventForm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="closeEventForm">
-        <div class="bg-white dark:bg-[#1e1e1e] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col">
-            <div class="flex items-center justify-between px-6 py-4 border-b border-[#e6e6e6] dark:border-[#333] select-none text-black dark:text-white">
+     <div v-if="showEventForm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" @click.self="closeEventForm">
+        <div class="bg-white dark:bg-[#1e1e1e] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col max-h-[90vh]">
+            <div class="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#e6e6e6] dark:border-[#333] select-none text-black dark:text-white">
                 <h3 class="font-bold text-lg">{{ eventForm.isEdit ? 'Edit Event' : 'New Event' }}</h3>
                 <button @click="closeEventForm" class="text-gray-400 hover:text-red-500"><X class="w-5 h-5"/></button>
             </div>

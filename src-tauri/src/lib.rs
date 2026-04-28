@@ -1,23 +1,32 @@
-mod gdrive;
-pub mod watcher;
-pub mod models;
 pub mod commands;
-pub mod error;
 pub mod db;
+pub mod error;
+mod gdrive;
+pub mod models;
 pub mod path_utils;
 pub mod utils;
+pub mod watcher;
 
-use commands::{notes, tasks, events, quickcaps, files, nexus};
+use commands::{events, files, nexus, notes, quickcaps, tasks};
+use db::DbBridge;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .manage(watcher::WatcherState::default())
+        .setup(|app| {
+            use tauri::Manager;
+            let db = DbBridge::init(app.handle())
+                .expect("Failed to initialize database");
+            app.manage(std::sync::Mutex::new(db));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Notes
             notes::scan_vault_path,
@@ -45,6 +54,7 @@ pub fn run() {
             quickcaps::scan_quick_caps,
             quickcaps::create_quick_cap,
             quickcaps::update_quick_cap,
+            quickcaps::delete_quick_cap,
             quickcaps::copy_asset_to_vault,
             // Files
             files::add_file_source,
@@ -64,7 +74,6 @@ pub fn run() {
             nexus::get_nexus_item,
             nexus::get_nexus_graph_data,
             nexus::search_nexus,
-            nexus::get_nexus_stats,
             // Google Drive
             gdrive::auth::gdrive_auth_start,
             gdrive::auth::gdrive_auth_complete,
@@ -78,6 +87,7 @@ pub fn run() {
             gdrive::browse::is_gdrive_connected,
             gdrive::browse::get_gdrive_user_info,
             gdrive::browse::connect_gdrive,
+            gdrive::browse::connect_gdrive_complete,
             gdrive::browse::disconnect_gdrive,
             gdrive::browse::get_gdrive_files,
         ])

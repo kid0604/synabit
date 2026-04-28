@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue';
-import { CheckCircle2, ListTodo, Calendar, Tag, Flag, X, Send, Eye, EyeOff } from 'lucide-vue-next';
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
+import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2 } from 'lucide-vue-next';
+import TiptapEditor from '../note/TiptapEditor.vue';
 
 const props = defineProps<{
     task: any;
+    vaultPath?: string;
     showActions?: boolean;
 }>();
 
-const emit = defineEmits(['save', 'close']);
+const emit = defineEmits(['save', 'close', 'delete']);
 
 // Create a reactive clone of the passed task params
 const editingTaskParams = ref({
@@ -21,7 +23,6 @@ const editingTaskParams = ref({
     due_date: props.task?.due_date || '',
     comment: props.task?.comment || '',
     tags: props.task?.tags || '',
-    checklist: props.task?.checklist ? JSON.parse(JSON.stringify(props.task.checklist)) : [],
     status: props.task?.status || 'todo'
 });
 
@@ -30,22 +31,19 @@ const todayStr = computed(() => {
     return today.toISOString().split('T')[0];
 });
 
-const addChecklistItem = () => {
-    editingTaskParams.value.checklist.push({ content: '', completed: false });
+const activeDropdown = ref<string | null>(null);
+
+const handleGlobalClick = () => {
+    activeDropdown.value = null;
 };
 
-const focusLastChecklistItem = () => {
-    nextTick(() => {
-        const inputs = document.querySelectorAll('.checklist-input');
-        if (inputs.length > 0) {
-            (inputs[inputs.length - 1] as HTMLInputElement).focus();
-        }
-    });
-};
+onMounted(() => {
+    document.addEventListener('click', handleGlobalClick);
+});
 
-const removeChecklistItem = (index: number) => {
-    editingTaskParams.value.checklist.splice(index, 1);
-};
+onUnmounted(() => {
+    document.removeEventListener('click', handleGlobalClick);
+});
 
 const save = () => {
     if (editingTaskParams.value.is_transferred && !editingTaskParams.value.transferred_to.trim()) {
@@ -70,9 +68,18 @@ const handleBackgroundClick = () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/10 dark:bg-black/40 backdrop-blur-[2px]" @mousedown.self="handleBackgroundClick">
-      <div class="w-full max-w-lg bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.4)] border border-gray-100 dark:border-[#2c2c2c] overflow-hidden flex flex-col" @mousedown.stop>
-          <div class="p-5 flex flex-col pt-6">
+  <div class="fixed inset-0 z-[110] flex items-center justify-center md:p-4 bg-black/10 dark:bg-black/40 backdrop-blur-[2px]" @mousedown.self="handleBackgroundClick">
+      <div class="w-full h-full md:h-auto md:max-w-lg bg-white dark:bg-[#1e1e1e] md:rounded-2xl shadow-none md:shadow-[0_20px_40px_rgba(0,0,0,0.1)] md:dark:shadow-[0_20px_40px_rgba(0,0,0,0.4)] border-none md:border md:border-gray-100 md:dark:border-[#2c2c2c] overflow-hidden flex flex-col" @mousedown.stop>
+          
+          <!-- Mobile Header -->
+          <div class="flex justify-between items-center px-5 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-[#2c2c2c]" style="padding-top: max(env(safe-area-inset-top), 36px);">
+              <h3 class="font-semibold text-lg text-[#1c1c1e] dark:text-[#f4f4f5]">{{ props.showActions ? 'New Task' : 'Edit Task' }}</h3>
+              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]">
+                  <X class="w-4 h-4" />
+              </button>
+          </div>
+
+          <div class="p-5 flex flex-col pt-5 md:pt-6 flex-1 overflow-y-auto">
               
               <!-- Title & Checkbox -->
               <div class="flex items-start gap-4 mb-3">
@@ -90,48 +97,20 @@ const handleBackgroundClick = () => {
               </div>
               
               <!-- Notes -->
-              <div class="pl-9 mb-4">
-                  <textarea 
+              <div class="pl-9 mb-4 flex-1 flex flex-col min-h-[40px] max-h-[300px] overflow-y-auto overflow-x-hidden custom-scrollbar">
+                  <TiptapEditor 
                        v-model="editingTaskParams.content" 
-                       class="w-full bg-transparent border-none outline-none text-[15px] leading-relaxed text-gray-500 dark:text-gray-400 placeholder-gray-300 focus:ring-0 p-0 resize-none min-h-[40px]"
-                       placeholder="Notes"
-                  ></textarea>
+                       :vaultPath="props.vaultPath || ''"
+                       class="w-full flex-1"
+                  />
               </div>
               
-              <!-- Checklist -->
-              <div class="pl-9 mb-2 space-y-2">
-                  <div v-for="(item, i) in editingTaskParams.checklist" :key="i" class="flex items-start gap-3 group relative">
-                      <button @click="item.completed = !item.completed" class="shrink-0 mt-[5px] cursor-pointer">
-                           <div class="w-[14px] h-[14px] rounded-full border-2 transition-colors border-blue-500 flex items-center justify-center p-[2px]" v-if="item.completed">
-                               <div class="w-full h-full bg-blue-500 rounded-full"></div>
-                           </div>
-                           <div class="w-[14px] h-[14px] rounded-full border-2 border-gray-300 dark:border-gray-600 transition-colors" v-else></div>
-                      </button>
-                      
-                      <input 
-                          v-model="item.content" 
-                          class="flex-1 bg-transparent border-none outline-none text-[15px] focus:ring-0 p-0 checklist-input pb-1.5 border-b border-gray-100 dark:border-[#2c2c2c] bg-white dark:bg-[#1c1c1e]"
-                          :class="item.completed ? 'text-gray-400 line-through' : 'text-[#1c1c1e] dark:text-[#f4f4f5]'"
-                          placeholder=""
-                          @keydown.enter.prevent="addChecklistItem(); focusLastChecklistItem()"
-                          @keydown.backspace="item.content === '' ? removeChecklistItem(i) : null"
-                      />
-                      <button @click="removeChecklistItem(i)" class="absolute right-0 top-0 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-0.5 cursor-pointer bg-white dark:bg-[#1c1c1e]">
-                          <X class="w-4 h-4" />
-                      </button>
-                  </div>
-              </div>
           </div>
           
           <!-- Footer Meta Bar -->
-          <div class="px-5 py-3 border-t border-gray-50 dark:border-[#2c2c2c] bg-white dark:bg-[#1c1c1e] flex items-center justify-start gap-2 flex-wrap">
-              <!-- Checklist -->
-              <div v-if="editingTaskParams.checklist.length === 0" class="relative flex items-center justify-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer text-gray-400" title="Add Checklist" @click="addChecklistItem(); focusLastChecklistItem()">
-                  <ListTodo class="w-[18px] h-[18px]"/>
-              </div>
-              
+          <div class="px-5 pt-3 border-t border-gray-50 dark:border-[#2c2c2c] bg-white dark:bg-[#1c1c1e] flex items-center justify-start gap-2 flex-wrap relative" :style="!props.showActions ? 'padding-bottom: max(env(safe-area-inset-bottom), 12px);' : 'padding-bottom: 12px;'">
               <!-- Dates -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Dates">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Dates" @click.stop="activeDropdown = activeDropdown === 'dates' ? null : 'dates'">
                   <Calendar class="w-[18px] h-[18px]" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'text-blue-500 mr-2' : ''"/>
                   
                   <span v-if="editingTaskParams.start_date || editingTaskParams.due_date" class="text-xs font-semibold">
@@ -146,7 +125,7 @@ const handleBackgroundClick = () => {
                       </template>
                   </span>
                   
-                  <div class="absolute bottom-full left-0 pb-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'dates' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
                       <div class="w-48 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
                           <label class="block text-xs font-semibold text-gray-500 mb-1">Start Date</label>
                           <input type="date" v-model="editingTaskParams.start_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
@@ -158,12 +137,12 @@ const handleBackgroundClick = () => {
               </div>
 
               <!-- Tags -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.tags.length > 0 ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Manage Tags">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.tags.length > 0 ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Manage Tags" @click.stop="activeDropdown = activeDropdown === 'tags' ? null : 'tags'">
                   <Tag class="w-[18px] h-[18px]" :class="editingTaskParams.tags.length > 0 ? 'text-blue-500 mr-2' : ''"/>
                   
                   <span v-if="editingTaskParams.tags.length > 0" class="text-xs font-semibold max-w-[150px] truncate">{{ editingTaskParams.tags }}</span>
                   
-                  <div class="absolute bottom-full left-0 pb-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'tags' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
                       <div class="w-56 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
                           <label class="block text-xs font-semibold text-gray-500 mb-1">Tags (comma separated)</label>
                           <input v-model="editingTaskParams.tags" placeholder="e.g. work, urgent" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-2 outline-none focus:ring-1 focus:ring-blue-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
@@ -189,7 +168,7 @@ const handleBackgroundClick = () => {
               <!-- Transfer -->
               <div class="relative flex items-center group">
                   <button 
-                      @click="editingTaskParams.is_transferred = !editingTaskParams.is_transferred"
+                      @click.stop="editingTaskParams.is_transferred = !editingTaskParams.is_transferred; if(editingTaskParams.is_transferred) activeDropdown = 'transfer'; else activeDropdown = null;"
                       class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer flex items-center transition-colors" 
                       :class="editingTaskParams.is_transferred ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" 
                       title="Transfer Task"
@@ -200,7 +179,7 @@ const handleBackgroundClick = () => {
                       </span>
                   </button>
                   
-                  <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                  <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 transition-all z-50" :class="activeDropdown === 'transfer' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
                       <div class="w-52 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
                           <label class="block text-[10px] font-semibold text-gray-400 mb-1 w-full text-left ml-1">Transfer to:</label>
                           <div class="flex items-center gap-1.5 w-full">
@@ -219,10 +198,15 @@ const handleBackgroundClick = () => {
                       </div>
                   </div>
               </div>
+
+              <!-- Delete Button (Only when editing existing task, i.e., !props.showActions) -->
+              <div v-if="!props.showActions" class="ml-auto relative flex items-center p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 hover:text-red-500 cursor-pointer transition-colors" title="Delete Task" @click.stop="emit('delete')">
+                  <Trash2 class="w-[18px] h-[18px]" />
+              </div>
           </div>
 
           <!-- Bottom Actions (Only for Convert mode) -->
-          <div v-if="props.showActions" class="py-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-end gap-3 shrink-0">
+          <div v-if="props.showActions" class="pt-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-end gap-3 shrink-0" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
               <button @click="close" class="px-5 py-2 hover:bg-gray-200 dark:hover:bg-[#2c2c2c] text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-all cursor-pointer border border-transparent">
                   Cancel
               </button>

@@ -60,8 +60,8 @@ fn conflict_copy_path(original: &Path) -> PathBuf {
 }
 
 #[tauri::command]
-pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> {
-    let token = get_valid_token().await?;
+pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) -> Result<SyncResult, String> {
+    let token = get_valid_token(&app_handle).await?;
     let mut manifest = load_manifest(&vault_path);
     let mut result = SyncResult {
         pulled: 0,
@@ -342,8 +342,8 @@ pub async fn gdrive_sync_full(vault_path: String) -> Result<SyncResult, String> 
 }
 
 #[tauri::command]
-pub fn gdrive_get_cache_path() -> Result<String, String> {
-    let cache = gdrive_cache_dir();
+pub fn gdrive_get_cache_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let cache = gdrive_cache_dir(&app_handle);
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     Ok(cache.to_string_lossy().to_string())
 }

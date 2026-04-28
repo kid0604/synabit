@@ -33,7 +33,12 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
     for cap in wiki_re.captures_iter(text) {
         if let Some(m) = cap.get(1) {
             let inner = m.as_str().trim();
-            let target_title = inner.split('|').next().unwrap_or(inner).trim().to_lowercase();
+            let target_title = inner
+                .split('|')
+                .next()
+                .unwrap_or(inner)
+                .trim()
+                .to_lowercase();
             if seen.insert(target_title.clone()) {
                 edges.push(GraphEdge {
                     source_id: source_id.to_string(),
@@ -49,7 +54,9 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
     for cap in md_link_re.captures_iter(text) {
         if let Some(m) = cap.get(2) {
             let encoded_path = m.as_str().trim();
-            let path = urlencoding::decode(encoded_path).unwrap_or(std::borrow::Cow::Borrowed(encoded_path)).to_string();
+            let path = urlencoding::decode(encoded_path)
+                .unwrap_or(std::borrow::Cow::Borrowed(encoded_path))
+                .to_string();
             // Path is usually relative or absolute. We just store it as the target_title_or_path
             if seen.insert(path.clone()) {
                 edges.push(GraphEdge {
@@ -69,50 +76,60 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
 pub fn rename_links_in_text(text: &str, old_name: &str, new_name: &str) -> String {
     let wiki_re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
     let old_lower = old_name.to_lowercase();
-    
-    let text_with_wiki_links = wiki_re.replace_all(text, |caps: &regex::Captures| {
-        let inner = caps.get(1).unwrap().as_str();
-        let mut parts = inner.splitn(2, '|');
-        let title = parts.next().unwrap_or("").trim();
-        let alias = parts.next().map(|s| s.trim());
-        
-        if title.to_lowercase() == old_lower {
-            if let Some(a) = alias {
-                format!("[[{}|{}]]", new_name, a)
+
+    let text_with_wiki_links = wiki_re
+        .replace_all(text, |caps: &regex::Captures| {
+            let inner = caps.get(1).unwrap().as_str();
+            let mut parts = inner.splitn(2, '|');
+            let title = parts.next().unwrap_or("").trim();
+            let alias = parts.next().map(|s| s.trim());
+
+            if title.to_lowercase() == old_lower {
+                if let Some(a) = alias {
+                    format!("[[{}|{}]]", new_name, a)
+                } else {
+                    format!("[[{}]]", new_name)
+                }
             } else {
-                format!("[[{}]]", new_name)
+                caps.get(0).unwrap().as_str().to_string()
             }
-        } else {
-            caps.get(0).unwrap().as_str().to_string()
-        }
-    }).to_string();
+        })
+        .to_string();
 
     // 2. Replace Tiptap internal links: [Anything](synabit://note/OldName)
     let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://note/([^)]+)\)").unwrap();
-    let text_with_md_links = md_link_re.replace_all(&text_with_wiki_links, |caps: &regex::Captures| {
-        let label = caps.get(1).unwrap().as_str();
-        let encoded_path = caps.get(2).unwrap().as_str();
-        let decoded_path = urlencoding::decode(encoded_path).unwrap_or(std::borrow::Cow::Borrowed(encoded_path)).to_string();
-        
-        let file_stem = std::path::Path::new(&decoded_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(&decoded_path);
+    let text_with_md_links = md_link_re
+        .replace_all(&text_with_wiki_links, |caps: &regex::Captures| {
+            let label = caps.get(1).unwrap().as_str();
+            let encoded_path = caps.get(2).unwrap().as_str();
+            let decoded_path = urlencoding::decode(encoded_path)
+                .unwrap_or(std::borrow::Cow::Borrowed(encoded_path))
+                .to_string();
 
-        if file_stem.to_lowercase() == old_lower {
-            // Re-encode the new name
-            let new_path = decoded_path.replacen(file_stem, new_name, 1);
-            let new_label = if label.trim().to_lowercase() == old_lower {
-                new_name
+            let file_stem = std::path::Path::new(&decoded_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&decoded_path);
+
+            if file_stem.to_lowercase() == old_lower {
+                // Re-encode the new name
+                let new_path = decoded_path.replacen(file_stem, new_name, 1);
+                let new_label = if label.trim().to_lowercase() == old_lower {
+                    new_name
+                } else {
+                    label
+                };
+                // Replace spaces to be safe
+                format!(
+                    "[{}](synabit://note/{})",
+                    new_label,
+                    urlencoding::encode(&new_path)
+                )
             } else {
-                label
-            };
-            // Replace spaces to be safe
-            format!("[{}](synabit://note/{})", new_label, urlencoding::encode(&new_path))
-        } else {
-            caps.get(0).unwrap().as_str().to_string()
-        }
-    }).to_string();
+                caps.get(0).unwrap().as_str().to_string()
+            }
+        })
+        .to_string();
 
     text_with_md_links
 }

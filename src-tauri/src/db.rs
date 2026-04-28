@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
-use std::path::Path;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::models::note::NoteMetadata;
 use crate::models::task::TaskMetadata;
@@ -14,10 +14,24 @@ pub struct DbBridge {
     conn: Connection,
 }
 
+/// Thread-safe wrapper for Tauri managed state.
+pub type DbState = Mutex<DbBridge>;
+
 impl DbBridge {
-    pub fn new(vault_path: &str) -> AppResult<Self> {
-        let db_path = Path::new(vault_path).join("vault_cache.db");
-        let conn = Connection::open(db_path).map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
+    /// Initialize the database once at app startup. Runs all migrations.
+    pub fn init(app_handle: &tauri::AppHandle) -> AppResult<Self> {
+        use tauri::Manager;
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| AppError::General(format!("Could not determine app data dir: {}", e)))?;
+            
+        std::fs::create_dir_all(&app_data_dir)
+            .map_err(|e| AppError::General(format!("Failed to create app data dir: {}", e)))?;
+            
+        let db_path = app_data_dir.join("vault_cache.db");
+        let conn = Connection::open(db_path)
+            .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
         
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
@@ -609,6 +623,109 @@ impl DbBridge {
         for r in rows.flatten() { items.push(r); }
 
         Ok(items)
+    }
+
+    /// Fast single-item lookup: determines the correct table from the ID prefix
+    /// and runs a targeted `WHERE id = ?` query instead of scanning all tables.
+    pub fn get_nexus_item_by_id(&self, id: &str) -> AppResult<Option<NexusRow>> {
+        if id.starts_with("Notes/") {
+            let mut stmt = self.conn
+                .prepare("SELECT id, title, summary, tags, date, id, content FROM notes WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let tags_str: String = row.get(3)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "note".to_string(),
+                    title: row.get(1)?, preview: row.get(2)?, tags,
+                    date: row.get(4)?, path: row.get(5)?,
+                    content: row.get(6)?, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            return Ok(rows.next().and_then(|r| r.ok()));
+        }
+        if id.starts_with("Tasks/") {
+            let mut stmt = self.conn
+                .prepare("SELECT id, title, content, tags, created_at, path, status FROM tasks WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let tags_str: String = row.get(3)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                let content: String = row.get(2)?;
+                let preview: String = content.chars().take(150).collect();
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "task".to_string(),
+                    title: row.get(1)?, preview, tags,
+                    date: row.get(4)?, path: row.get(5)?,
+                    content, status: Some(row.get(6)?),
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            return Ok(rows.next().and_then(|r| r.ok()));
+        }
+        if id.starts_with("Events/") {
+            let mut stmt = self.conn
+                .prepare("SELECT id, title, content, tags, event_date, path FROM events WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let tags_str: String = row.get(3)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                let content: String = row.get(2)?;
+                let preview: String = content.chars().take(150).collect();
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "event".to_string(),
+                    title: row.get(1)?, preview, tags,
+                    date: row.get(4)?, path: row.get(5)?,
+                    content, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            return Ok(rows.next().and_then(|r| r.ok()));
+        }
+        if id.starts_with("QuickCaps/") {
+            let mut stmt = self.conn
+                .prepare("SELECT id, content, date, path FROM quickcaps WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let content: String = row.get(1)?;
+                let preview: String = content.chars().take(150).collect();
+                let extracted_tags: Vec<String> = content
+                    .split_whitespace()
+                    .filter(|w| w.starts_with('#') && w.len() > 1)
+                    .map(|w| w[1..].to_string())
+                    .collect();
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "quickcap".to_string(),
+                    title: "⚡ QuickCap".to_string(), preview, tags: extracted_tags,
+                    date: row.get(2)?, path: row.get(3)?,
+                    content, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            return Ok(rows.next().and_then(|r| r.ok()));
+        }
+        // Files (UUID-based IDs)
+        {
+            let mut stmt = self.conn
+                .prepare("SELECT id, path, filename, extension, size, modified_at, tags FROM files WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let tags_str: String = row.get(6)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                let filename: String = row.get(2)?;
+                let extension: String = row.get(3)?;
+                let size: i64 = row.get(4)?;
+                let size_mb = size as f64 / 1024.0 / 1024.0;
+                let preview = format!("{} • {:.2}MB", extension, size_mb);
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "file".to_string(),
+                    title: filename.clone(), preview, tags,
+                    date: row.get(5)?, path: row.get(1)?,
+                    content: filename, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            if let Some(Ok(row)) = rows.next() {
+                return Ok(Some(row));
+            }
+        }
+        Ok(None)
     }
 
     pub fn clear_all(&self) -> AppResult<()> {

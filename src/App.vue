@@ -21,6 +21,10 @@ const SettingsModal = defineAsyncComponent(() => import('./shared/components/Set
 // Composables
 import { useSettings } from './composables/useSettings';
 import { useGDrive } from './composables/useGDrive';
+import { usePlatform } from './composables/usePlatform';
+
+import DesktopLayout from './layouts/DesktopLayout.vue';
+import MobileLayout from './layouts/MobileLayout.vue';
 
 // Stores
 import { useAppStore } from './stores/useAppStore';
@@ -28,11 +32,13 @@ import { storeToRefs } from 'pinia';
 
 // ─── Settings ─────────────────────────────────────────────
 const {
-  showSettingsModal, openSettings, initSettings, applyTheme
+  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp
 } = useSettings();
 
 const appStore = useAppStore();
 const { vaultPath, vaultType } = storeToRefs(appStore);
+
+const { useMobileLayout, isMac, isWindows, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
 const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file'>('nexus');
@@ -62,9 +68,19 @@ watch(() => noteAppRef.value?.currentNoteId, (v) => { dummyCurrentNoteId.value =
 
 const gdrive = useGDrive(vaultPath, vaultType, dummyScanVault, dummyTabContents, dummyLoadNoteFile, dummyCurrentNoteId);
 
-// ─── Vault Selection ──────────────────────────────────────
+import { appDataDir } from '@tauri-apps/api/path';
+
 const selectVault = async () => {
     try {
+        if (isMobileOS.value) {
+            // On mobile, directory picker is not supported. Use app data dir implicitly.
+            const dataDir = await appDataDir();
+            const vaultDir = `${dataDir}/vault`;
+            await appStore.setVaultPath(vaultDir, 'local');
+            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
+            return;
+        }
+
         const defaultPath = await documentDir().catch(() => undefined);
         const selected = await open({ 
             title: 'Select Note Vault Directory', 
@@ -117,6 +133,8 @@ onMounted(async () => {
       isFloatingView.value = true;
       floatingNoteId.value = floatingId;
       activeTool.value = 'note';
+  } else {
+      activeTool.value = defaultApp.value;
   }
 
   if (vaultPath.value) {
@@ -224,87 +242,99 @@ onUnmounted(() => {
 
     <!-- Application State 2: Vault Selected -->
     <template v-else>
-      <!-- GLOBAL NAVIGATION SIDEBAR -->
-      <nav v-if="!isFloatingView" class="w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-20" data-tauri-drag-region>
-         <div class="flex-1 flex flex-col items-center gap-3 mt-4 w-full" @mousedown.stop>
-            <button @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <Globe class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
-            </button>
-            <div class="w-8 h-px bg-border dark:bg-border-dark my-1 rounded"></div>
-            <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <Zap class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
-            </button>
-            <button @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <FileText class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Notes</span>
-            </button>
-            <button @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <CheckSquare class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Tasks</span>
-            </button>
-            <button @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <Calendar class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Calendar</span>
-            </button>
-            <button @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <FolderOpen class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
-            </button>
-         </div>
-         <div class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
-            <button v-if="vaultType === 'gdrive'" @click="gdrive.syncGDrive()" :disabled="gdrive.gdriveSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', gdrive.gdriveSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="gdrive.gdriveSyncing.value ? 'Syncing...' : gdrive.lastSyncTime.value ? `Last sync: ${gdrive.lastSyncTime.value}` : 'Sync with Google Drive'">
-               <RefreshCw v-if="gdrive.gdriveSyncing.value" class="w-5 h-5 animate-spin" />
-               <CloudOff v-else-if="gdrive.gdriveSyncError.value" class="w-5 h-5" />
-               <Cloud v-else class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ gdrive.gdriveSyncing.value ? 'Syncing…' : gdrive.gdriveSyncError.value ? 'Sync Error' : gdrive.lastSyncTime.value ? `Synced ${gdrive.lastSyncTime.value}` : 'Sync Now' }}</span>
-            </button>
-            <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-               <Settings class="w-5 h-5" />
-               <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
-            </button>
-         </div>
-      </nav>
+      <component :is="useMobileLayout ? MobileLayout : DesktopLayout" :activeTool="activeTool" @update:activeTool="activeTool = $event">
+        
+        <!-- SIDEBAR / BOTTOMBAR -->
+        <template v-if="!isFloatingView" #[useMobileLayout?'bottombar':'sidebar']>
+          <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-20 h-full'" data-tauri-drag-region>
+             <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
+                <button @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Globe class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
+                </button>
+                <div v-if="!useMobileLayout" class="w-8 h-px bg-border dark:bg-border-dark my-1 rounded"></div>
+                <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Zap class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
+                </button>
+                <button @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <FileText class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Notes</span>
+                </button>
+                <button @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <CheckSquare class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Tasks</span>
+                </button>
+                <button @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Calendar class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Calendar</span>
+                </button>
+                <button v-if="!useMobileLayout" @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <FolderOpen class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
+                </button>
+                
+                <button v-if="useMobileLayout" @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Settings class="w-5 h-5" />
+                </button>
+             </div>
+             
+             <!-- Settings & Sync bottom icons for desktop -->
+             <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
+                <button v-if="vaultType === 'gdrive'" @click="gdrive.syncGDrive()" :disabled="gdrive.gdriveSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', gdrive.gdriveSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="gdrive.gdriveSyncing.value ? 'Syncing...' : gdrive.lastSyncTime.value ? `Last sync: ${gdrive.lastSyncTime.value}` : 'Sync with Google Drive'">
+                   <RefreshCw v-if="gdrive.gdriveSyncing.value" class="w-5 h-5 animate-spin" />
+                   <CloudOff v-else-if="gdrive.gdriveSyncError.value" class="w-5 h-5" />
+                   <Cloud v-else class="w-5 h-5" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ gdrive.gdriveSyncing.value ? 'Syncing…' : gdrive.gdriveSyncError.value ? 'Sync Error' : gdrive.lastSyncTime.value ? `Synced ${gdrive.lastSyncTime.value}` : 'Sync Now' }}</span>
+                </button>
+                <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Settings class="w-5 h-5" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
+                </button>
+             </div>
+          </nav>
+        </template>
 
-      <!-- MINI APP CONTENT AREA -->
-      <template v-if="activeTool === 'note'">
-        <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" />
-      </template>
-      <template v-else-if="activeTool === 'quickcap'">
-         <main class="flex-1 overflow-hidden relative"><QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" /></main>
-      </template>
-      <template v-else-if="activeTool === 'nexus'">
-         <main class="flex-1 overflow-hidden relative"><Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" /></main>
-      </template>
-      <template v-else-if="activeTool === 'task'">
-         <main class="flex-1 overflow-hidden relative"><Tasks ref="taskAppRef" :vaultPath="vaultPath" /></main>
-      </template>
-      <template v-else-if="activeTool === 'calendar'">
-        <main class="flex-1 overflow-hidden relative"><CalendarApp :vaultPath="vaultPath" /></main>
-      </template>
-      <template v-else-if="activeTool === 'file'">
-         <main class="flex-1 overflow-hidden relative"><FileManager :vaultPath="vaultPath" /></main>
-      </template>
+        <!-- MINI APP CONTENT AREA -->
+        <template v-if="activeTool === 'note'">
+          <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" />
+        </template>
+        <template v-else-if="activeTool === 'quickcap'">
+           <QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" />
+        </template>
+        <template v-else-if="activeTool === 'nexus'">
+           <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
+        </template>
+        <template v-else-if="activeTool === 'task'">
+           <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
+        </template>
+        <template v-else-if="activeTool === 'calendar'">
+          <CalendarApp :vaultPath="vaultPath" />
+        </template>
+        <template v-else-if="activeTool === 'file'">
+           <FileManager :vaultPath="vaultPath" />
+        </template>
 
-      <!-- SETTINGS MODAL -->
-      <SettingsModal
-        :vault-path="vaultPath"
-        :vault-type="vaultType"
-        :gdrive-connected="gdrive.gdriveConnected.value"
-        :gdrive-syncing="gdrive.gdriveSyncing.value"
-        :gdrive-sync-error="gdrive.gdriveSyncError.value"
-        :last-sync-time="gdrive.lastSyncTime.value"
-        :gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value"
-        :gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value"
-        @clear-vault="clearVault"
-        @sync-gdrive="gdrive.syncGDrive()"
-        @connect-gdrive="gdrive.connectGDrive()"
-        @disconnect-gdrive="gdrive.disconnectGDrive().then(clearVault)"
-        @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
-        @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"
-      />
-      
+        <!-- SETTINGS MODAL -->
+        <template #modal>
+          <SettingsModal
+            :vault-path="vaultPath"
+            :vault-type="vaultType"
+            :gdrive-connected="gdrive.gdriveConnected.value"
+            :gdrive-syncing="gdrive.gdriveSyncing.value"
+            :gdrive-sync-error="gdrive.gdriveSyncError.value"
+            :last-sync-time="gdrive.lastSyncTime.value"
+            :gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value"
+            :gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value"
+            @clear-vault="clearVault"
+            @sync-gdrive="gdrive.syncGDrive()"
+            @connect-gdrive="gdrive.connectGDrive()"
+            @disconnect-gdrive="gdrive.disconnectGDrive().then(clearVault)"
+            @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
+            @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"
+          />
+        </template>
+      </component>
     </template>
   </div>
 </template>

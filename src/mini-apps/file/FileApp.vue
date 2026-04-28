@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { open, confirm, message } from '@tauri-apps/plugin-dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -8,7 +9,7 @@ import { useVirtualList, useWindowSize } from '@vueuse/core';
 import { 
     FolderOpen, FolderSync, X, Search, FileText,
     Video, Music, FileArchive, Code, Plus, Trash2,
-    ImageIcon, LayoutGrid, List, HardDrive, FileType, Unlink
+    ImageIcon, LayoutGrid, List, HardDrive, FileType, Unlink, Menu
 } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -37,13 +38,14 @@ const files = ref<FileMetadata[]>([]);
 const sources = ref<FileSource[]>([]);
 const isLoading = ref(true);
 const isScanning = ref(false);
+const isSidebarOpen = ref(false);
 
 const selectedFile = ref<FileMetadata | null>(null);
 const activeSourceId = ref<string | null>(null);
 const activeType = ref<string | null>(null);
 
 const searchQuery = ref('');
-const viewMode = ref<'grid' | 'list'>('grid');
+const viewMode = ref<'grid' | 'list'>('list');
 
 const editFileName = ref('');
 const newTagInput = ref('');
@@ -330,8 +332,13 @@ const connectGDrive = async () => {
     if (isConnectingGDrive.value) return;
     isConnectingGDrive.value = true;
     try {
-        const success = await invoke('connect_gdrive', { vaultPath: props.vaultPath });
-        if (success) {
+        const resp = await invoke<string>('connect_gdrive', { vaultPath: props.vaultPath });
+        if (resp === 'WAITING_DEEP_LINK') {
+            // Keep spinning until the deep link event listener handles it
+            return;
+        }
+        
+        if (resp === 'SUCCESS') {
             isGDriveConnected.value = true;
             gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: props.vaultPath });
             // Fetch the files, which will auto-insert into DB
@@ -344,9 +351,11 @@ const connectGDrive = async () => {
         console.error("Failed to connect GDrive", JSON.stringify(e));
         const errStr = typeof e === 'object' ? JSON.stringify(e) : String(e);
         await message(`Failed to connect Google Drive: ${errStr}`, { title: 'Error', kind: 'error' });
-    } finally {
         isConnectingGDrive.value = false;
     }
+    
+    // Only reset loading if not waiting for deep link
+    isConnectingGDrive.value = false;
 };
 
 const syncGDrive = async () => {
@@ -456,26 +465,61 @@ const formatSize = (bytes: number) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+let unlistenAuthEvent: (() => void) | null = null;
+
 onMounted(async () => {
     await fetchSources();
     await checkGDriveStatus();
     await fetchFiles();
     // Silently sync in background on load
     syncAllSources();
+
+    listen('omnidrive-auth-code', async (e: any) => {
+        const code = e.payload.code;
+        try {
+            const success = await invoke('connect_gdrive_complete', { authCode: code, vaultPath: props.vaultPath });
+            if (success) {
+                isGDriveConnected.value = true;
+                gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: props.vaultPath });
+                await invoke('get_gdrive_files', { vaultPath: props.vaultPath });
+                await fetchFiles();
+                activeSourceId.value = 'gdrive';
+            }
+        } catch (err: any) {
+             console.error("OmniDrive auth complete failed", err);
+             const errStr = typeof err === 'object' ? JSON.stringify(err) : String(err);
+             await message(`Failed to connect Google Drive: ${errStr}`, { title: 'Error', kind: 'error' });
+        } finally {
+            isConnectingGDrive.value = false;
+        }
+    }).then(fn => unlistenAuthEvent = fn);
+});
+
+onUnmounted(() => {
+    if (unlistenAuthEvent) unlistenAuthEvent();
 });
 
 </script>
 
 <template>
-  <div class="h-full w-full flex bg-[#f5f5f7] dark:bg-[#0a0a0a] font-sans text-gray-900 dark:text-gray-100 overflow-hidden">
+  <div class="h-full w-full flex relative bg-[#f5f5f7] dark:bg-[#0a0a0a] font-sans text-gray-900 dark:text-gray-100 overflow-hidden">
     
+    <!-- Mobile Sidebar Overlay -->
+    <div v-if="isSidebarOpen" @click="isSidebarOpen = false" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-30 transition-opacity"></div>
+
     <!-- Sidebar -->
-    <div class="w-64 flex-shrink-0 bg-white/40 dark:bg-white/[0.02] backdrop-blur-xl border-r border-gray-200/50 dark:border-white/5 flex flex-col z-20">
-        <div class="p-6 flex items-center gap-3">
-            <button @click="syncAllSources" :class="{'animate-spin text-white': isScanning, 'shadow-lg shadow-indigo-500/20 text-white hover:scale-105 active:scale-95': !isScanning}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer group" title="Sync Files">
-                <FolderSync class="w-4 h-4" />
+    <div class="absolute md:relative inset-y-0 left-0 w-64 flex-shrink-0 bg-white/95 md:bg-white/40 dark:bg-[#1a1a1a]/95 md:dark:bg-white/[0.02] backdrop-blur-xl border-r border-gray-200/50 dark:border-white/5 flex flex-col z-40 transition-transform duration-300 md:translate-x-0"
+         :class="isSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'">
+        <div class="p-4 md:p-6 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <button @click="syncAllSources" :class="{'animate-spin text-white': isScanning, 'shadow-lg shadow-indigo-500/20 text-white hover:scale-105 active:scale-95': !isScanning}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer group" title="Sync Files">
+                    <FolderSync class="w-4 h-4" />
+                </button>
+                <h1 class="font-bold text-lg tracking-tight">OmniDrive</h1>
+            </div>
+            <button @click="isSidebarOpen = false" class="md:hidden p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-500 transition-colors">
+                <X class="w-5 h-5" />
             </button>
-            <h1 class="font-bold text-lg tracking-tight">OmniDrive</h1>
         </div>
         
         <div class="flex-1 overflow-y-auto px-4 pb-6 space-y-8">
@@ -500,7 +544,7 @@ onMounted(async () => {
                                 :class="activeSourceId === source.id ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
                             <FolderOpen class="w-4 h-4" /> <span class="truncate">{{ source.name }}</span>
                         </button>
-                        <button @click="removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
+                        <button @click="removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
                             <Trash2 class="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -532,7 +576,7 @@ onMounted(async () => {
                                 <span v-if="gdriveEmail" class="text-[10px] opacity-70 truncate">{{ gdriveEmail }}</span>
                             </div>
                         </button>
-                        <button @click.stop="disconnectGDrive" title="Disconnect" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
+                        <button @click.stop="disconnectGDrive" title="Disconnect" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all">
                             <Unlink class="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -558,13 +602,16 @@ onMounted(async () => {
     <!-- Main Content -->
     <div class="flex-1 flex flex-col relative z-10 min-w-0">
         <!-- Header -->
-        <div class="h-20 px-8 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
+        <div class="h-16 md:h-20 px-4 md:px-8 flex items-center gap-3 md:gap-4 justify-between border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
+            <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 transition-colors">
+                <Menu class="w-5 h-5" />
+            </button>
             <div class="flex-1 max-w-xl relative group">
-                <Search class="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
-                <input v-model="searchQuery" placeholder="Search files, tags, extensions..." class="w-full pl-10 pr-4 py-2.5 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
+                <Search class="w-4 h-4 absolute left-3 md:left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
+                <input v-model="searchQuery" placeholder="Search files, tags..." class="w-full pl-9 md:pl-10 pr-4 py-2 md:py-2.5 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
             </div>
             
-            <div class="flex items-center gap-2 ml-4 bg-white/50 dark:bg-white/5 p-1 rounded-lg border border-gray-200/50 dark:border-white/10">
+            <div class="flex items-center gap-1 md:gap-2 bg-white/50 dark:bg-white/5 p-1 rounded-lg border border-gray-200/50 dark:border-white/10 flex-shrink-0">
                 <button @click="viewMode = 'grid'" class="p-1.5 rounded-md transition-colors" :class="viewMode === 'grid' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'">
                     <LayoutGrid class="w-4 h-4" />
                 </button>
@@ -580,21 +627,21 @@ onMounted(async () => {
         </div>
 
         <!-- File List/Grid -->
-        <div class="flex-1 overflow-y-auto p-8 custom-scrollbar">
+        <div class="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
             <div v-if="isLoading" class="flex justify-center py-20">
                 <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
             
             <div v-else-if="filteredFiles.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
-                <FileArchive class="w-16 h-16 mb-4 opacity-20" />
-                <p class="text-lg font-medium text-gray-500">No files found</p>
-                <p class="text-sm">Try adjusting your filters or adding a new source.</p>
+                <FileArchive class="w-12 h-12 md:w-16 md:h-16 mb-4 opacity-20" />
+                <p class="text-base md:text-lg font-medium text-gray-500">No files found</p>
+                <p class="text-xs md:text-sm text-center">Try adjusting your filters or adding a new source.</p>
             </div>
 
             <!-- Grid View (Virtual) -->
             <div v-else-if="viewMode === 'grid'" v-bind="gridContainerProps" class="h-full overflow-y-auto custom-scrollbar">
                 <div v-bind="gridWrapperProps">
-                    <div v-for="{ index, data: row } in virtualGridRows" :key="index" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mb-4">
+                    <div v-for="{ index, data: row } in virtualGridRows" :key="index" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 mb-4">
                         <div v-for="file in row" :key="file.id" 
                              @click="selectedFile = file"
                              class="group bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl p-4 cursor-pointer hover:bg-white dark:hover:bg-white/10 transition-all hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1"
@@ -614,8 +661,8 @@ onMounted(async () => {
 
             <!-- List View -->
             <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm flex flex-col h-full">
-                <!-- List Header -->
-                <div class="grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-4 bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5 sticky top-0 z-10 text-sm">
+                <!-- List Header (Desktop Only) -->
+                <div class="hidden md:grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-4 bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5 sticky top-0 z-10 text-sm">
                     <div>Name</div>
                     <div>Size</div>
                     <div>Modified</div>
@@ -627,20 +674,24 @@ onMounted(async () => {
                     <div v-bind="wrapperProps">
                         <div v-for="{ data: file } in virtualListItems" :key="file.id" 
                             @click="selectedFile = file"
-                            class="grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-3 items-center hover:bg-white dark:hover:bg-white/5 cursor-pointer transition-colors border-b border-gray-100/50 dark:border-white/5 text-sm"
+                            class="flex flex-col md:grid md:grid-cols-[2fr_1fr_1fr_2fr] gap-1 md:gap-4 px-4 md:px-6 py-3 hover:bg-white dark:hover:bg-white/5 cursor-pointer transition-colors border-b border-gray-100/50 dark:border-white/5 text-sm"
                             :class="{'bg-indigo-50/50 dark:bg-indigo-500/10': selectedFile?.id === file.id}">
                             
+                            <!-- Name & Icon -->
                             <div class="flex items-center gap-3 overflow-hidden">
-                                <component :is="getFileIcon(file.extension)" class="w-5 h-5 flex-shrink-0 text-indigo-500" />
-                                <span class="font-medium truncate">{{ file.filename }}</span>
+                                <component :is="getFileIcon(file.extension)" class="w-6 h-6 md:w-5 md:h-5 flex-shrink-0 text-indigo-500" />
+                                <span class="font-medium truncate text-base md:text-sm">{{ file.filename }}</span>
                             </div>
                             
-                            <div class="text-gray-500 truncate">{{ formatSize(file.size) }}</div>
-                            <div class="text-gray-500 truncate">{{ file.modified_at.split(' ')[0] }}</div>
-                            
-                            <div class="flex gap-1 overflow-hidden">
-                                <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300 truncate">#{{ t }}</span>
-                                <span v-if="file.tags.length > 2" class="px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-xs text-gray-600 dark:text-gray-300 flex-shrink-0">+{{file.tags.length - 2}}</span>
+                            <!-- Metadata (Second line on mobile, Columns on desktop) -->
+                            <div class="flex items-center gap-3 md:contents text-xs md:text-sm pl-9 md:pl-0">
+                                <div class="text-gray-500 truncate font-mono md:font-sans">{{ formatSize(file.size) }}</div>
+                                <div class="text-gray-400 md:text-gray-500 truncate">{{ file.modified_at.split(' ')[0] }}</div>
+                                
+                                <div class="flex gap-1 overflow-hidden ml-auto md:ml-0">
+                                    <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs text-gray-600 dark:text-gray-300 truncate">#{{ t }}</span>
+                                    <span v-if="file.tags.length > 2" class="px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs text-gray-600 dark:text-gray-300 flex-shrink-0">+{{file.tags.length - 2}}</span>
+                                </div>
                             </div>
                             
                         </div>
@@ -725,7 +776,7 @@ onMounted(async () => {
                     <div class="flex flex-wrap items-center gap-2">
                         <span v-for="tag in selectedFile.tags" :key="tag" class="group relative px-2.5 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-medium border border-indigo-100 dark:border-indigo-500/20 shadow-sm flex items-center gap-1">
                             #{{ tag }}
-                            <button @click="removeTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity ml-0.5" :disabled="isSavingTags">
+                            <button @click="removeTag(tag)" class="md:opacity-0 opacity-100 group-hover:opacity-100 hover:text-red-500 transition-opacity ml-0.5" :disabled="isSavingTags">
                                 <X class="w-3 h-3" />
                             </button>
                         </span>

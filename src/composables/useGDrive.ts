@@ -89,31 +89,46 @@ export function useGDrive(
       }
   }
 
+  // --- Global Deep Link Listener (For Android Cold Starts) ---
+  onOpenUrl(async (urls) => {
+      const url = urls[0] || '';
+      if (url.includes('?code=') || url.includes('&code=')) {
+          const codeMatch = url.match(/[?&]code=([^&]+)/);
+          const stateMatch = url.match(/[?&]state=([^&]+)/);
+          
+          if (codeMatch && codeMatch[1]) {
+              const code = decodeURIComponent(codeMatch[1]);
+              const state = stateMatch ? decodeURIComponent(stateMatch[1]) : '';
+              
+              if (state === 'omnidrive') {
+                  // Forward to OmniDrive (File Manager)
+                  import('@tauri-apps/api/event').then(({ emit }) => {
+                      emit('omnidrive-auth-code', { code });
+                  });
+              } else {
+                  // Vault Sync flow
+                  gdriveAuthLoading.value = true;
+                  gdriveSyncError.value = '';
+                  try {
+                      await invoke('gdrive_auth_complete', { authCode: code });
+                      await finishConnect();
+                  } catch(err: any) {
+                      gdriveSyncError.value = err?.toString() || 'OAuth Exchange failed';
+                      gdriveAuthLoading.value = false;
+                  }
+              }
+          }
+      }
+  }).catch(console.error);
+
   async function connectGDrive() {
     gdriveAuthLoading.value = true;
     gdriveSyncError.value = '';
     try {
       const resp = await invoke<string>('gdrive_auth_start');
       if (resp === 'WAITING_DEEP_LINK') {
-          // Listen for Deep Link from Google Auth
-          const unlisten = await onOpenUrl(async (urls) => {
-              const url = urls[0] || '';
-              if (url.includes('?code=')) {
-                  const codeMatch = url.match(/[?&]code=([^&]+)/);
-                  if (codeMatch && codeMatch[1]) {
-                      const code = decodeURIComponent(codeMatch[1]);
-                      try {
-                          await invoke('gdrive_auth_complete', { authCode: code });
-                          await finishConnect();
-                      } catch(err: any) {
-                          gdriveSyncError.value = err?.toString() || 'OAuth Exchange failed';
-                          gdriveAuthLoading.value = false;
-                      }
-                  }
-              }
-              // Cleanup listener after single use
-              unlisten();
-          });
+          // We wait for the global onOpenUrl listener to catch the redirect.
+          // Don't set gdriveAuthLoading to false here.
       } else {
           // Loopback success on Desktop
           await finishConnect();

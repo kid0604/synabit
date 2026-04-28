@@ -85,9 +85,9 @@ const loadNoteFile = async (id: string) => {
 
 // ─── Size & Toggle State ───────────────────────────────────
 const wNoteSidebar = ref(300);
-const showNoteSidebar = ref(true);
+const showNoteSidebar = ref(window.innerWidth >= 768);
 const wRightSidebar = ref(288);
-const showRightSidebar = ref(true);
+const showRightSidebar = ref(window.innerWidth >= 768);
 
 const isDraggingNoteSidebar = ref(false);
 const startDragNoteSidebar = () => { isDraggingNoteSidebar.value = true; };
@@ -137,6 +137,14 @@ const buildFrontmatter = (n: NoteMetadata) => {
 };
 
 // ─── Note CRUD Operations ──────────────────────────────────
+const handleNoteSelect = (id: string) => {
+    currentNoteId.value = id;
+    viewMode.value = 'editor';
+    if (window.innerWidth < 768) {
+        showNoteSidebar.value = false;
+    }
+};
+
 const togglePin = async (id: string) => {
     const note = notes.value.find(n => n.id === id);
     if (!note) return;
@@ -517,6 +525,9 @@ const recentNotes = computed(() => filteredNotes.value.filter(n => !n.pinned).sl
 const openNoteManager = (filterType: string) => {
     managerFilter.value = filterType;
     viewMode.value = 'manager';
+    if (window.innerWidth < 768) {
+        showNoteSidebar.value = false;
+    }
 };
 
 const managerFilteredNotes = computed(() => {
@@ -630,18 +641,23 @@ onMounted(async () => {
     <!-- Note Sidebar -->
     <aside 
       v-show="showNoteSidebar && !isFloatingView" 
-      class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0"
+      class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0 max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-50"
       :style="{ width: wNoteSidebar + 'px' }"
     >
-      <div class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragNoteSidebar"></div>
+      <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragNoteSidebar"></div>
 
-      <div class="h-14 flex-shrink-0 flex items-center justify-end px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
-         <div class="flex gap-1" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="openDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
+      <div class="h-14 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
+         <!-- Close button for mobile -->
+         <button @click="showNoteSidebar = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" title="Close Sidebar">
+            <X class="w-4 h-4" />
+         </button>
+
+         <div class="flex gap-1 ml-auto" @mousedown.stop>
+           <button v-if="enableDailyNotes" @click="openDailyNote; if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
              <Sun class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">Today</span>
            </button>
-           <button @click="createNewNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
+           <button @click="createNewNote; if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
              <Plus class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">New</span>
            </button>
@@ -666,7 +682,7 @@ onMounted(async () => {
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Top Tags</span>
-                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium">Show all</button>
+                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
              <div class="px-2 space-y-0.5" v-if="topTags.length > 0">
                  <div v-for="tag in topTags" :key="tag.name"
@@ -687,14 +703,14 @@ onMounted(async () => {
          <div class="mb-4" v-if="topPinnedNotes.length > 0">
              <div class="flex justify-between items-center px-4 mb-2">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Pinned Notes</span>
-                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium">Show all</button>
+                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in topPinnedNotes" :key="note.id"
-                    @click="currentNoteId = note.id; viewMode = 'editor'"
+                    @click="handleNoteSelect(note.id)"
                     class="px-3 py-2 border border-transparent rounded-lg cursor-pointer transition-colors relative group"
                     :class="currentNoteId === note.id ? 'bg-white dark:bg-[#2a2a2a] shadow-sm border-[#e6e6e6] dark:border-[#3a3a3a]' : 'hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f]'">
-                    <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-10" :class="{'opacity-100': activeContextMenu === note.id}">
+                    <div class="absolute right-2 top-2 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity z-10" :class="{'md:opacity-100': activeContextMenu === note.id}">
                        <button @click.stop="(e) => toggleContext(note.id, e)" class="p-1 rounded bg-white dark:bg-[#2a2a2a] shadow-sm hover:bg-gray-100 border border-gray-200 dark:border-gray-600">
                           <MoreVertical class="w-3.5 h-3.5 text-gray-500"/>
                        </button>
@@ -720,14 +736,14 @@ onMounted(async () => {
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Recent Notes</span>
-                 <button @click="openNoteManager('notes')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium">Show all</button>
+                 <button @click="openNoteManager('notes')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in recentNotes" :key="note.id"
-                    @click="currentNoteId = note.id; viewMode = 'editor'"
+                    @click="handleNoteSelect(note.id)"
                     class="px-3 py-2 border border-transparent rounded-lg cursor-pointer transition-colors relative group"
                     :class="currentNoteId === note.id ? 'bg-white dark:bg-[#2a2a2a] shadow-sm border-[#e6e6e6] dark:border-[#3a3a3a]' : 'hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f]'">
-                    <div class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-10" :class="{'opacity-100': activeContextMenu === note.id}">
+                    <div class="absolute right-2 top-2 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity z-10" :class="{'md:opacity-100': activeContextMenu === note.id}">
                        <button @click.stop="(e) => toggleContext(note.id, e)" class="p-1 rounded bg-white dark:bg-[#2a2a2a] shadow-sm hover:bg-gray-100 border border-gray-200 dark:border-gray-600">
                           <MoreVertical class="w-3.5 h-3.5 text-gray-500"/>
                        </button>
@@ -755,7 +771,7 @@ onMounted(async () => {
     </aside>
 
     <!-- Main Area: Editor / Manager -->
-    <main class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] min-w-[300px]" @mousedown.stop>
+    <main class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] min-w-[300px] max-md:min-w-0" @mousedown.stop>
       <template v-if="viewMode === 'editor'">
           <div v-if="!isFloatingView" class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
             <div class="flex gap-2">
@@ -779,7 +795,7 @@ onMounted(async () => {
                 <div v-if="tabContents[tabId] === undefined" class="absolute inset-0 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#242424]">
                     <div class="w-8 h-8 rounded-full border-2 border-gray-200 border-t-gray-400 animate-spin"></div>
                 </div>
-                <div v-else class="px-12 pb-12 max-w-4xl mx-auto w-full cursor-text">
+                <div v-else class="px-4 md:px-12 pb-12 max-w-4xl mx-auto w-full cursor-text">
                 <div class="mb-4 pt-4">
                    <div class="flex gap-2 mb-4 flex-wrap items-center">
                       <span v-for="tag in notes.find(n => n.id === tabId)?.tags" :key="tag" class="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 group/tag">
@@ -867,7 +883,7 @@ onMounted(async () => {
                             </tr>
                          </thead>
                          <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
-                            <tr v-for="note in managerFilteredNotes" :key="note.id" @click="currentNoteId = note.id; viewMode = 'editor'" class="hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer transition-colors group">
+                            <tr v-for="note in managerFilteredNotes" :key="note.id" @click="handleNoteSelect(note.id)" class="hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer transition-colors group">
                                <td class="py-3 px-4 w-8">
                                   <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20" />
                                   <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50" />
@@ -883,7 +899,7 @@ onMounted(async () => {
                                <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ note.date }}</td>
                                <td class="py-3 px-4 w-12 text-center" @click.stop>
                                   <div class="relative flex justify-center">
-                                     <button @click="(e) => toggleContext('manager_'+note.id, e)" class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
+                                     <button @click="(e) => toggleContext('manager_'+note.id, e)" class="p-1 rounded md:opacity-0 opacity-100 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
                                         <MoreVertical class="w-4 h-4 text-gray-500" />
                                      </button>
                                      <div v-if="activeContextMenu === 'manager_'+note.id" class="absolute right-6 top-0 w-32 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden">
@@ -906,8 +922,8 @@ onMounted(async () => {
     </main>
 
     <!-- Right Sidebar: Graph & Backlinks -->
-    <aside v-if="currentNoteId && !isFloatingView" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden" :style="{ width: wRightSidebar + 'px' }">
-      <div class="absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragRightSidebar"></div>
+    <aside v-if="currentNoteId && !isFloatingView" v-show="showRightSidebar" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: wRightSidebar + 'px' }">
+      <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragRightSidebar"></div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
           <Globe class="w-4 h-4 text-gray-500 mr-2" />
           <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">Graph View</span>
