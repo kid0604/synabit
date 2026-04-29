@@ -33,6 +33,13 @@
     },
     "store:default",
     "deep-link:default",
-    "os:default"
+    "os:default",
+    "log:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "**" }
+      ]
+    }
   ]
 }

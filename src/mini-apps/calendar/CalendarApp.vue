@@ -64,10 +64,10 @@ const loadData = async () => {
     if (!props.vaultPath) return;
     try {
         allTasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
-    } catch(e) { console.error("Error loading tasks:", e); }
+    } catch(e) { logger.error("Error loading tasks:", e); }
     try {
         allEvents.value = await invoke('scan_events', { vaultPath: props.vaultPath });
-    } catch(e) { console.error("Error loading events:", e); }
+    } catch(e) { logger.error("Error loading events:", e); }
 };
 
 onMounted(() => { loadData(); });
@@ -275,18 +275,24 @@ const submitEvent = async () => {
         }
         closeEventForm();
         await loadData();
-    } catch(e) { console.error("Failed to save event:", e); }
+    } catch(e) { logger.error("Failed to save event:", e); }
 };
 
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { ask } from '@tauri-apps/plugin-dialog';
+import { logger } from '../../utils/logger';
 
 const deleteEvent = async (ev: EventMetadata) => {
-    const isConfirmed = await confirm(`Delete event '${ev.title}'?`, { title: 'Delete Event', kind: 'warning' });
+    const isConfirmed = await ask('This action cannot be undone. The event will be permanently removed from your calendar.', { 
+        title: `Delete event '${ev.title}'?`, 
+        kind: 'warning',
+        okLabel: 'Delete',
+        cancelLabel: 'Cancel'
+    });
     if (isConfirmed) {
         try {
             await invoke('delete_event', { vaultPath: props.vaultPath, path: ev.path });
             await loadData();
-        } catch(e) { console.error("Failed to delete event:", e); }
+        } catch(e) { logger.error("Failed to delete event:", e); }
     }
 };
 </script>

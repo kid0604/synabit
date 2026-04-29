@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
+use std::time::Instant;
 use std::sync::Mutex;
 
 use crate::models::note::NoteMetadata;
@@ -156,6 +157,26 @@ impl DbBridge {
             )",
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (graph_edges): {}", e)))?;
+
+        // ─── FTS5 Full-Text Search Index ────────────────────────
+        // DROP + CREATE to ensure schema includes the `properties` column.
+        // Data is repopulated by reindex_search() on every app startup.
+        conn.execute_batch("DROP TABLE IF EXISTS search_index;")
+            .map_err(|e| AppError::General(format!("DB Schema Error (drop search_index): {}", e)))?;
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE search_index USING fts5(
+                item_id,
+                item_type,
+                title,
+                tags,
+                content,
+                properties,
+                status UNINDEXED,
+                date UNINDEXED,
+                path UNINDEXED,
+                tokenize = 'unicode61 remove_diacritics 0'
+            );"
+        ).map_err(|e| AppError::General(format!("DB Schema Error (search_index): {}", e)))?;
 
         Ok(Self { conn })
     }
@@ -788,6 +809,316 @@ impl DbBridge {
             edges.push(edge);
         }
         Ok(edges)
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  FULL-TEXT SEARCH (FTS5)
+    // ═══════════════════════════════════════════════════════════
+
+    /// Rebuild the entire FTS5 search index from all data tables.
+    /// Called on app startup or when the user requests a reindex.
+    pub fn reindex_search(&self) -> AppResult<()> {
+        // Clear existing index
+        self.conn.execute("DELETE FROM search_index", [])
+            .map_err(|e| AppError::General(format!("FTS Clear Error: {}", e)))?;
+
+        // Index notes
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, tags, content, date FROM notes"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let tags_json: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let content: String = row.get(3)?;
+            let date: String = row.get(4)?;
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'note', ?2, ?3, ?4, '', NULL, ?5, ?1)",
+                params![id, title, tags.join(" "), content, date],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        // Index tasks (with properties)
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, tags, content, created_at, path, status, priority FROM tasks"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let tags_json: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let content: String = row.get(3)?;
+            let date: String = row.get(4)?;
+            let path: String = row.get(5)?;
+            let status: String = row.get(6)?;
+            let priority: String = row.get::<_, String>(7).unwrap_or_default();
+            let props = format!("priority:{}", priority);
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'task', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![id, title, tags.join(" "), content, props, status, date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        // Index events (with properties)
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, tags, content, event_date, path, location, event_time FROM events"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let tags_json: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let content: String = row.get(3)?;
+            let date: String = row.get(4)?;
+            let path: String = row.get(5)?;
+            let location: String = row.get::<_, String>(6).unwrap_or_default();
+            let event_time: String = row.get::<_, String>(7).unwrap_or_default();
+            let mut props_parts: Vec<String> = Vec::new();
+            if !location.is_empty() { props_parts.push(format!("location:{}", location)); }
+            if !event_time.is_empty() { props_parts.push(format!("time:{}", event_time)); }
+            let props = props_parts.join(" ");
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'event', ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+                params![id, title, tags.join(" "), content, props, date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        // Index quickcaps
+        let mut stmt = self.conn.prepare(
+            "SELECT id, content, date, path FROM quickcaps"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let content: String = row.get(1)?;
+            let date: String = row.get(2)?;
+            let path: String = row.get(3)?;
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'quickcap', '⚡ QuickCap', '', ?2, '', NULL, ?3, ?4)",
+                params![id, content, date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        // Index files (with properties)
+        let mut stmt = self.conn.prepare(
+            "SELECT id, filename, tags, extension, modified_at, path, source_type FROM files"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let filename: String = row.get(1)?;
+            let tags_json: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let extension: String = row.get(3)?;
+            let date: String = row.get(4)?;
+            let path: String = row.get(5)?;
+            let source_type: String = row.get::<_, String>(6).unwrap_or_default();
+            let props = format!("ext:{} source:{}", extension, source_type);
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'file', ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+                params![id, filename, tags.join(" "), extension, props, date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        Ok(())
+    }
+
+    /// Insert or update a single entry in the FTS5 search index.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_search_entry(&self, item_id: &str, item_type: &str, title: &str, tags: &str, content: &str, properties: &str, status: Option<&str>, date: &str, path: &str) {
+        // FTS5 doesn't support ON CONFLICT, so delete + insert
+        let _ = self.conn.execute(
+            "DELETE FROM search_index WHERE item_id = ?1",
+            params![item_id],
+        );
+        let _ = self.conn.execute(
+            "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![item_id, item_type, title, tags, content, properties, status.unwrap_or(""), date, path],
+        );
+    }
+
+    /// Remove an entry from the FTS5 search index.
+    pub fn delete_search_entry(&self, item_id: &str) {
+        let _ = self.conn.execute(
+            "DELETE FROM search_index WHERE item_id = ?1",
+            params![item_id],
+        );
+    }
+
+    /// Perform a full-text search using FTS5 with BM25 ranking.
+    pub fn search_fts(&self, parsed: &crate::search::ParsedQuery, page: u32, per_page: u32) -> AppResult<crate::search::SearchResponse> {
+        let start = Instant::now();
+        let offset = (page.saturating_sub(1)) * per_page;
+
+        let has_fts_terms = !parsed.fts_terms.is_empty();
+        let has_exclude = !parsed.exclude_terms.is_empty();
+        let has_tag_filter = !parsed.tag_filters.is_empty();
+        let has_type_filter = parsed.type_filter.is_some();
+        let has_status_filter = parsed.status_filter.is_some();
+
+        // Build the SQL query dynamically
+        let mut sql;
+        let mut count_sql;
+        let mut param_values: Vec<String> = Vec::new();
+
+        if has_fts_terms || has_exclude {
+            // Build FTS5 MATCH expression
+            let mut match_parts: Vec<String> = Vec::new();
+            for term in &parsed.fts_terms {
+                if term.starts_with('"') && term.ends_with('"') {
+                    // Phrase query — pass directly
+                    match_parts.push(term.clone());
+                } else if parsed.title_only {
+                    // Restrict to title column
+                    match_parts.push(format!("title : \"{}\"", term));
+                } else {
+                    // Search across title (boosted), tags, content with column weighting
+                    // FTS5: {col1 col2} : term
+                    match_parts.push(format!("\"{}\"", term));
+                }
+            }
+            for term in &parsed.exclude_terms {
+                match_parts.push(format!("NOT \"{}\"", term));
+            }
+
+            let fts_expr = match_parts.join(" AND ");
+            param_values.push(fts_expr);
+
+            // Main query with BM25 ranking
+            // bm25(search_index, weight_item_id, weight_item_type, weight_title, weight_tags, weight_content)
+            // We want: title=10.0, tags=5.0, content=1.0, item_id and item_type have 0 weight
+            // bm25 weights: item_id=0, item_type=0, title=10, tags=5, content=1, properties=3
+            sql = "SELECT item_id, item_type, title, snippet(search_index, 4, '<mark>', '</mark>', '…', 48) as snip, tags, date, path, bm25(search_index, 0.0, 0.0, 10.0, 5.0, 1.0, 3.0) as rank, status FROM search_index WHERE search_index MATCH ?1".to_string();
+            count_sql = "SELECT COUNT(*) FROM search_index WHERE search_index MATCH ?1".to_string();
+        } else {
+            // No FTS terms — browse mode (filter only)
+            sql = "SELECT item_id, item_type, title, substr(content, 1, 200) as snip, tags, date, path, 0.0 as rank, status FROM search_index WHERE 1=1".to_string();
+            count_sql = "SELECT COUNT(*) FROM search_index WHERE 1=1".to_string();
+        }
+
+        // Apply filters
+        if has_type_filter {
+            let type_val = parsed.type_filter.as_ref().unwrap();
+            sql.push_str(&format!(" AND item_type = '{}'", type_val));
+            count_sql.push_str(&format!(" AND item_type = '{}'", type_val));
+        }
+
+        if has_tag_filter {
+            for tag in &parsed.tag_filters {
+                let escaped = tag.replace('\'', "''");
+                sql.push_str(&format!(" AND tags LIKE '%{}%'", escaped));
+                count_sql.push_str(&format!(" AND tags LIKE '%{}%'", escaped));
+            }
+        }
+
+        if has_status_filter {
+            let status_val = parsed.status_filter.as_ref().unwrap();
+            sql.push_str(&format!(" AND status = '{}'", status_val));
+            count_sql.push_str(&format!(" AND status = '{}'", status_val));
+        }
+
+        // Apply generic property filters
+        for (key, val) in &parsed.property_filters {
+            let filter = format!("{}:{}", key, val).replace('\'', "''");
+            sql.push_str(&format!(" AND properties LIKE '%{}%'", filter));
+            count_sql.push_str(&format!(" AND properties LIKE '%{}%'", filter));
+        }
+
+        // Ordering
+        if has_fts_terms {
+            sql.push_str(" ORDER BY rank"); // BM25 returns negative values, lower = better
+        } else {
+            sql.push_str(" ORDER BY date DESC");
+        }
+
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", per_page, offset));
+
+        // Execute count query
+        let total_count: u32 = if !param_values.is_empty() {
+            self.conn.query_row(&count_sql, params![param_values[0]], |row| row.get(0))
+                .unwrap_or(0)
+        } else {
+            self.conn.query_row(&count_sql, [], |row| row.get(0))
+                .unwrap_or(0)
+        };
+
+        // Execute search query
+        let mut results = Vec::new();
+
+        if !param_values.is_empty() {
+            let mut stmt = self.conn.prepare(&sql)
+                .map_err(|e| AppError::General(format!("FTS Search Prepare Error: {}", e)))?;
+            let rows = stmt.query_map(params![param_values[0]], |row| {
+                let tags_str: String = row.get(4)?;
+                let tags: Vec<String> = tags_str.split_whitespace()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                let rank: f64 = row.get(7)?;
+                Ok(crate::search::SearchResult {
+                    id: row.get(0)?,
+                    item_type: row.get(1)?,
+                    title: row.get(2)?,
+                    snippet: row.get(3)?,
+                    tags,
+                    date: row.get(5)?,
+                    path: row.get(6)?,
+                    score: -rank, // BM25 returns negative; negate for display
+                    status: row.get(8)?,
+                })
+            }).map_err(|e| AppError::General(format!("FTS Search Map Error: {}", e)))?;
+
+            for row in rows.flatten() {
+                results.push(row);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(&sql)
+                .map_err(|e| AppError::General(format!("FTS Search Prepare Error: {}", e)))?;
+            let rows = stmt.query_map([], |row| {
+                let tags_str: String = row.get(4)?;
+                let tags: Vec<String> = tags_str.split_whitespace()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                Ok(crate::search::SearchResult {
+                    id: row.get(0)?,
+                    item_type: row.get(1)?,
+                    title: row.get(2)?,
+                    snippet: row.get(3)?,
+                    tags,
+                    date: row.get(5)?,
+                    path: row.get(6)?,
+                    score: 0.0,
+                    status: row.get(8)?,
+                })
+            }).map_err(|e| AppError::General(format!("FTS Search Map Error: {}", e)))?;
+
+            for row in rows.flatten() {
+                results.push(row);
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        Ok(crate::search::SearchResponse {
+            results,
+            total_count,
+            query_time_ms: elapsed,
+        })
     }
 }
 

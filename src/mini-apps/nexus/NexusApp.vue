@@ -5,6 +5,7 @@ import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calenda
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
+import { logger } from '../../utils/logger';
 
 const emit = defineEmits<{
     (e: 'edit-item', id: string, type: string): void
@@ -26,6 +27,24 @@ interface NexusItem {
     status?: string;
 }
 
+interface SearchResult {
+    id: string;
+    item_type: string;
+    title: string;
+    snippet: string;
+    tags: string[];
+    date: string;
+    path: string;
+    score: number;
+    status?: string;
+}
+
+interface SearchResponse {
+    results: SearchResult[];
+    total_count: number;
+    query_time_ms: number;
+}
+
 interface GraphNode {
     id: string;
     item_type: string;
@@ -45,9 +64,18 @@ interface GraphData {
 
 const allItems = ref<NexusItem[]>([]);
 const graphData = ref<GraphData | null>(null);
-const searchResults = ref<NexusItem[]>([]);
+const searchResults = ref<SearchResult[]>([]);
 const searchQuery = ref('');
 const isSearching = ref(false);
+const queryTimeMs = ref(0);
+const totalCount = ref(0);
+const showSyntaxHints = ref(false);
+
+const hideSyntaxHints = () => {
+    setTimeout(() => {
+        showSyntaxHints.value = false;
+    }, 200);
+};
 
 const selectedItem = ref<NexusItem | null>(null);
 
@@ -62,7 +90,7 @@ const loadAllData = async () => {
         allItems.value = items;
         graphData.value = data;
     } catch (e) {
-        console.error("Failed to load nexus data", e);
+        logger.error("Failed to load nexus data", e);
     }
 };
 
@@ -71,21 +99,25 @@ let currentSearchId = 0;
 const performSearch = async () => {
     if (!searchQuery.value.trim()) {
         searchResults.value = [];
+        totalCount.value = 0;
+        queryTimeMs.value = 0;
         return;
     }
 
     isSearching.value = true;
     const searchId = ++currentSearchId;
     try {
-        const results = await invoke<NexusItem[]>('search_nexus', { 
+        const response = await invoke<SearchResponse>('search_nexus', { 
             vaultPath: props.vaultPath, 
             query: searchQuery.value 
         });
         if (searchId === currentSearchId) {
-            searchResults.value = results;
+            searchResults.value = response.results;
+            totalCount.value = response.total_count;
+            queryTimeMs.value = response.query_time_ms;
         }
     } catch(e) {
-        console.error(e);
+        logger.error(e);
     } finally {
         if (searchId === currentSearchId) {
             isSearching.value = false;
@@ -124,16 +156,22 @@ const getTypeColor = (type: string) => {
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
-const openPreview = async (item: NexusItem) => {
+const openPreview = async (item: NexusItem | SearchResult) => {
     if (item.item_type === 'file') {
         try {
             await invoke('open_local_file', { vaultPath: props.vaultPath, path: item.path });
         } catch(e) {
-            console.error("Failed to open file", e);
+            logger.error("Failed to open file", e);
         }
         return;
     }
-    selectedItem.value = item;
+    // Fetch full item data for preview (search results have snippets, not full content)
+    try {
+        const fullItem = await invoke<NexusItem>('get_nexus_item', { vaultPath: props.vaultPath, id: item.id });
+        selectedItem.value = fullItem;
+    } catch (e) {
+        logger.error("Failed to load full item", e);
+    }
 };
 
 const openPreviewFromGraph = async (node: GraphNode) => {
@@ -142,7 +180,7 @@ const openPreviewFromGraph = async (node: GraphNode) => {
         const item = await invoke<NexusItem>('get_nexus_item', { vaultPath: props.vaultPath, id: node.id });
         await openPreview(item);
     } catch (e) {
-        console.error("Failed to load item from graph", e);
+        logger.error("Failed to load item from graph", e);
     }
 };
 
@@ -201,12 +239,27 @@ const renderMarkdownPreview = (text: string, type: string) => {
                    <input 
                        v-model="searchQuery" 
                        type="text" 
+                       @focus="showSyntaxHints = true"
+                       @blur="hideSyntaxHints"
                        class="block w-full pl-12 pr-12 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-lg" 
                        placeholder="Universal Search... (e.g. is:task #urgent)" 
                    />
                    <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-4 flex items-center cursor-pointer">
                        <X class="h-5 w-5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
                    </button>
+
+                   <!-- Search Syntax Hints Dropdown -->
+                   <div v-if="showSyntaxHints && !searchQuery" class="absolute top-full left-0 right-0 mt-2 p-4 bg-white dark:bg-[#242426] border border-gray-200 dark:border-[#2c2c2e] rounded-xl shadow-xl z-50">
+                       <p class="text-xs font-bold text-gray-500 dark:text-gray-400 mb-3 tracking-wider uppercase">Search Syntax</p>
+                       <div class="grid grid-cols-2 gap-2 text-xs">
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">is:note</code><span class="text-gray-500">Filter by type</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">#tag</code><span class="text-gray-500">Filter by tag</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">"exact phrase"</code><span class="text-gray-500">Phrase match</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">-word</code><span class="text-gray-500">Exclude term</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">in:title</code><span class="text-gray-500">Title only</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">status:done</code><span class="text-gray-500">Task status</span></div>
+                       </div>
+                   </div>
                 </div>
             </div>
         </div>
@@ -228,7 +281,10 @@ const renderMarkdownPreview = (text: string, type: string) => {
                 <div v-else class="space-y-3">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">Search Results</h3>
-                        <span class="text-xs font-semibold text-gray-400">{{ searchResults.length }} items</span>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-500/20">{{ queryTimeMs }}ms</span>
+                            <span class="text-xs font-semibold text-gray-400">{{ totalCount }} items</span>
+                        </div>
                     </div>
 
                     <div v-for="item in searchResults" :key="item.id"
@@ -251,8 +307,8 @@ const renderMarkdownPreview = (text: string, type: string) => {
                                 </span>
                             </div>
                             
-                            <p v-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="renderMarkdownPreview(item.preview, item.item_type)"></p>
-                            <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono">{{ item.preview }}</p>
+                            <p v-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="item.snippet"></p>
+                            <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono">{{ item.snippet }}</p>
                             
                             <div class="flex items-center gap-2 mt-3" v-if="item.tags.length > 0">
                                 <span v-for="tag in item.tags" :key="tag" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-[#1a1a1c] border border-gray-200 dark:border-[#2c2c2e] text-gray-600 dark:text-gray-400 flex items-center gap-1">
@@ -328,5 +384,17 @@ const renderMarkdownPreview = (text: string, type: string) => {
 .preview-markdown :deep(input[type="checkbox"]) {
     margin-right: 6px;
     accent-color: #10b981;
+}
+/* FTS5 search highlight */
+.preview-markdown :deep(mark) {
+    background: rgba(250, 204, 21, 0.3);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+@media (prefers-color-scheme: dark) {
+    .preview-markdown :deep(mark) {
+        background: rgba(250, 204, 21, 0.2);
+    }
 }
 </style>

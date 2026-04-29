@@ -173,6 +173,8 @@ pub fn create_task(
     
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_task(&task_meta);
+        let props = format!("priority:{}", task_meta.priority);
+        db.upsert_search_entry(&task_meta.id, "task", &task_meta.title, &task_meta.tags.join(" "), &task_meta.content, &props, Some(&task_meta.status), &task_meta.created_at, &task_meta.path);
     }
     Ok(task_meta)
 }
@@ -210,7 +212,7 @@ pub fn update_task(
                 source_link: metadata.source_link,
                 tags: metadata.tags,
                 checklist: metadata.checklist,
-                content: content,
+                content,
                 path: path.clone(),
                 created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
                 updated_at: modified_date.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -218,6 +220,8 @@ pub fn update_task(
                 custom_fields: metadata.custom_fields,
             };
             let _ = db.upsert_task(&task_meta);
+            let props = format!("priority:{}", task_meta.priority);
+            db.upsert_search_entry(&task_meta.id, "task", &task_meta.title, &task_meta.tags.join(" "), &task_meta.content, &props, Some(&task_meta.status), &task_meta.created_at, &task_meta.path);
         }
     }
     Ok(())
@@ -230,6 +234,7 @@ pub fn delete_task(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbStat
     fs::remove_file(&abs_path)?;
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_task(&path);
+        db.delete_search_entry(&path);
     }
     Ok(())
 }

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { ask } from '@tauri-apps/plugin-dialog';
 
 import TiptapEditor from './TiptapEditor.vue';
 import NoteGraph from './NoteGraph.vue';
@@ -13,6 +13,7 @@ import { storeToRefs } from 'pinia';
 import { useSettings } from '../../composables/useSettings';
 
 import type { NoteMetadata } from '../../types/ipc';
+import { logger } from '../../utils/logger';
 
 const props = defineProps<{
   vaultPath: string;
@@ -79,7 +80,7 @@ const loadNoteFile = async (id: string) => {
             }
             tabContents.value[id] = body;
         } catch(e) {
-            console.error("Failed to read note:", e);
+            logger.error("Failed to read note:", e);
         }
     }
 };
@@ -117,6 +118,8 @@ const activeContextMenu = ref<string | null>(null);
 const searchQuery = ref('');
 const newTagInput = ref('');
 const isCaseSensitiveSearch = ref(false);
+const backendSearchIds = ref<string[] | null>(null); // null = no active backend search
+let searchTimeout: ReturnType<typeof setTimeout>;
 
 // ─── Rename Modal (replaces window.prompt for mobile compat) ──
 const renameModal = ref<{ show: boolean; noteId: string; value: string }>({ show: false, noteId: '', value: '' });
@@ -176,11 +179,16 @@ const togglePin = async (id: string) => {
         }
         await invoke('update_note', { vaultPath: props.vaultPath, path: id, content: `${buildFrontmatter(note)}\n\n${body}` });
         scanVault();
-    } catch(e) { console.error('Pin fail:', e); }
+    } catch(e) { logger.error('Pin fail:', e); }
 };
 
 const deleteNote = async (id: string) => {
-    const isConfirmed = await confirm('Are you sure you want to delete this note irreversibly?', { title: 'Delete Note', kind: 'warning' });
+    const isConfirmed = await ask('This action cannot be undone. The note and its contents will be permanently deleted.', { 
+        title: 'Delete this note?', 
+        kind: 'warning',
+        okLabel: 'Delete',
+        cancelLabel: 'Cancel'
+    });
     if (!isConfirmed) return;
     try {
         if (saveTimeouts.has(id)) {
@@ -195,11 +203,11 @@ const deleteNote = async (id: string) => {
            currentNoteId.value = null;
         }
         scanVault();
-    } catch(e) { console.error('Delete fail:', e); }
+    } catch(e) { logger.error('Delete fail:', e); }
 };
 
 const openInNewWindow = async (id: string) => {
-    try { await invoke('spawn_note_window', { noteId: id }); } catch(e) { console.error("Failed to open note in new window", e); }
+    try { await invoke('spawn_note_window', { noteId: id }); } catch(e) { logger.error("Failed to open note in new window", e); }
     activeContextMenu.value = null;
 };
 
@@ -417,7 +425,7 @@ async function scanVault() {
        } else if (scannedNotes.length === 0) {
            currentNoteId.value = null;
        }
-   } catch(e) { console.error("Failed to scan vault:", e); }
+   } catch(e) { logger.error("Failed to scan vault:", e); }
 }
 
 const createNewNote = async () => {
@@ -440,7 +448,7 @@ const createNewNote = async () => {
                 titleInput.select();
             }
         }
-    } catch(e) { console.error("Failed to create note:", e); }
+    } catch(e) { logger.error("Failed to create note:", e); }
     finally { isCreatingNote = false; }
 }
 
@@ -452,7 +460,7 @@ async function openDailyNote() {
         const dailyPath = await invoke<string>('open_daily_note', { vaultPath: props.vaultPath, formatStr: finalFormat, tag });
         await scanVault();
         if (dailyPath) { currentNoteId.value = dailyPath; viewMode.value = 'editor'; }
-    } catch(e) { console.error("Failed to open daily note:", e); }
+    } catch(e) { logger.error("Failed to open daily note:", e); }
 }
 
 // ─── Save & Editor ─────────────────────────────────────────
@@ -462,7 +470,7 @@ const saveNoteForTab = (rawTabId: string) => {
         tabId = renamedTabs.get(tabId)!;
     }
     const note = notes.value.find(n => n.id === tabId);
-    if (!note) { console.warn('[NoteApp] saveNoteForTab: note not found for', tabId); return; }
+    if (!note) { logger.warn('[NoteApp] saveNoteForTab: note not found for', tabId); return; }
     const existing = saveTimeouts.get(tabId);
     if (existing) clearTimeout(existing);
     saveTimeouts.set(tabId, setTimeout(async () => {
@@ -475,7 +483,7 @@ const saveNoteForTab = (rawTabId: string) => {
             await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: fullRaw });
             note.summary = content.substring(0, 150).trim();
             emit('note-updated', { id: note.id, content });
-        } catch(e) { console.error("Failed to save note:", e); }
+        } catch(e) { logger.error("Failed to save note:", e); }
     }, 600));
 }
 
@@ -516,7 +524,7 @@ watch(currentNoteId, async (newId) => {
         await loadNoteFile(newId);
         try {
             currentBacklinks.value = await invoke('get_note_backlinks', { vaultPath: props.vaultPath, targetId: newId.split(/[\\/]/).pop() || newId });
-        } catch (e) { console.error(e); currentBacklinks.value = []; }
+        } catch (e) { logger.error(e); currentBacklinks.value = []; }
     } else { currentBacklinks.value = []; }
 });
 
@@ -548,21 +556,33 @@ const openNoteManager = (filterType: string) => {
     }
 };
 
+const managerBackendSearchIds = ref<string[] | null>(null);
+let managerSearchTimeout: ReturnType<typeof setTimeout>;
+
 const managerFilteredNotes = computed(() => {
    let result = notes.value;
    if (managerSearchQuery.value.trim()) {
-      const q = managerSearchQuery.value.trim();
-      const isTagSearch = q.startsWith('#');
-      const searchTerm = isTagSearch ? q.slice(1) : q;
-      const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
-      const match = (text: string) => {
-         if (!text) return false;
-         return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
-      };
-      result = result.filter(n => {
-         if (isTagSearch) return n.tags.some(t => match(t));
-         return match(n.title) || n.tags.some(t => match(t)) || match(n.content);
-      });
+      // Backend FTS5 results available
+      if (managerBackendSearchIds.value !== null) {
+          const idSet = new Set(managerBackendSearchIds.value);
+          result = result.filter(n => idSet.has(n.id));
+          const orderMap = new Map(managerBackendSearchIds.value.map((id, i) => [id, i]));
+          result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+      } else {
+          // Fallback: local search while backend is loading
+          const q = managerSearchQuery.value.trim();
+          const isTagSearch = q.startsWith('#');
+          const searchTerm = isTagSearch ? q.slice(1) : q;
+          const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
+          const match = (text: string) => {
+             if (!text) return false;
+             return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
+          };
+          result = result.filter(n => {
+             if (isTagSearch) return n.tags.some(t => match(t));
+             return match(n.title) || n.tags.some(t => match(t)) || match(n.content);
+          });
+      }
    }
    if (managerFilter.value === 'notes' || !managerFilter.value || managerFilter.value === 'tags') return result;
    else if (managerFilter.value === 'pinned') return result.filter(n => n.pinned);
@@ -574,6 +594,28 @@ const managerItemsPerPage = 50;
 
 watch([managerSearchQuery, managerFilter], () => {
     managerCurrentPage.value = 1;
+});
+
+// Debounced backend search for Note Manager
+watch(managerSearchQuery, (q) => {
+    clearTimeout(managerSearchTimeout);
+    if (!q.trim()) {
+        managerBackendSearchIds.value = null;
+        return;
+    }
+    managerSearchTimeout = setTimeout(async () => {
+        try {
+            const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_notes', {
+                vaultPath: props.vaultPath,
+                query: q
+            });
+            if (managerSearchQuery.value === q) {
+                managerBackendSearchIds.value = resp.results.map(r => r.id);
+            }
+        } catch (e) {
+            logger.error('Manager backend search error', e);
+        }
+    }, 200);
 });
 
 const managerTotalPages = computed(() => Math.ceil(managerFilteredNotes.value.length / managerItemsPerPage));
@@ -593,7 +635,15 @@ const managerPrevPage = () => {
 
 const filteredNotes = computed(() => {
   let result = notes.value;
-  if (searchQuery.value.trim()) {
+  // Use backend FTS5 search results when available
+  if (searchQuery.value.trim() && backendSearchIds.value !== null) {
+      const idSet = new Set(backendSearchIds.value);
+      result = result.filter(n => idSet.has(n.id));
+      // Preserve the order from backend (BM25 ranked)
+      const orderMap = new Map(backendSearchIds.value.map((id, i) => [id, i]));
+      result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+  } else if (searchQuery.value.trim()) {
+      // Fallback: local search while backend is loading
       const q = searchQuery.value.trim();
       const isTagSearch = q.startsWith('#');
       const searchTerm = isTagSearch ? q.slice(1) : q;
@@ -615,6 +665,29 @@ const filteredNotes = computed(() => {
       if (!a.pinned && b.pinned) return 1;
       return b.date.localeCompare(a.date);
   });
+});
+
+// Debounced backend search
+watch(searchQuery, (q) => {
+    clearTimeout(searchTimeout);
+    if (!q.trim()) {
+        backendSearchIds.value = null;
+        return;
+    }
+    searchTimeout = setTimeout(async () => {
+        try {
+            const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_notes', {
+                vaultPath: props.vaultPath,
+                query: q
+            });
+            // Only apply if query hasn't changed
+            if (searchQuery.value === q) {
+                backendSearchIds.value = resp.results.map(r => r.id);
+            }
+        } catch (e) {
+            logger.error('Backend search error', e);
+        }
+    }, 200);
 });
 
 // ─── Public API for parent (Nexus cross-navigation) ────────

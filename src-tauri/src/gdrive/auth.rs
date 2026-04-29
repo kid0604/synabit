@@ -139,6 +139,8 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    log::info!("Starting Google Drive OAuth2 flow (Desktop)...");
+
     // Find an available port
     let mut port = 0u16;
     let mut listener_opt = None;
@@ -190,9 +192,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
                     path.split('?').nth(1).and_then(|qs| {
                         qs.split('&')
                             .find_map(|pair| {
-                                let mut kv = pair.splitn(2, '=');
-                                let key = kv.next()?;
-                                let val = kv.next()?;
+                                let (key, val) = pair.split_once('=')?;
                                 if key == "code" { Some(val.to_string()) } else { None }
                             })
                     })
@@ -248,6 +248,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     };
 
     save_tokens(&app_handle, &tokens)?;
+    log::info!("Google Drive authentication successful (Desktop).");
     Ok("Authentication successful".to_string())
 }
 
@@ -255,6 +256,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_opener::OpenerExt;
+    log::info!("Starting Google Drive OAuth2 flow (Mobile)...");
     let redirect_uri = "com.synabit.app:/oauth2callback";
     let auth_url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
@@ -303,5 +305,6 @@ pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: Strin
     };
 
     save_tokens(&app_handle, &tokens)?;
+    log::info!("Google Drive authentication complete (Mobile).");
     Ok("Authentication successful".to_string())
 }

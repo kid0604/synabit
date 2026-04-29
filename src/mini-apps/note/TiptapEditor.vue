@@ -56,6 +56,7 @@ import {
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { useSettings } from '../../composables/useSettings';
+import { logger } from '../../utils/logger';
 
 const { nestedNumberListStyle } = useSettings();
 
@@ -213,7 +214,7 @@ const selectLocalVideo = async () => {
       editor.value?.commands.setVideo({ src: renderUrl });
     }
   } catch (e) {
-    console.error("Failed to insert local video", e);
+    logger.error("Failed to insert local video", e);
   }
 };
 
@@ -258,7 +259,7 @@ const selectLocalAudio = async () => {
       editor.value?.commands.setAudio({ src: renderUrl });
     }
   } catch (e) {
-    console.error("Failed to insert local audio", e);
+    logger.error("Failed to insert local audio", e);
   }
 };
 
@@ -573,7 +574,7 @@ const slashCommandItems = (): SlashCommandItem[] => [
           editor.commands.setImage({ src: renderUrl, alt: filename });
         }
       } catch (e) {
-        console.error("Failed to insert image", e);
+        logger.error("Failed to insert image", e);
       }
     },
   },
@@ -918,7 +919,7 @@ const editor = useEditor({
                   } else {
                      editor.value?.commands.setImage({ src: renderUrl, alt: file.name });
                   }
-              } catch(e) { console.error("Failed to save dropped asset", e); }
+              } catch(e) { logger.error("Failed to save dropped asset", e); }
            });
         }
         return true; 
@@ -947,7 +948,7 @@ const editor = useEditor({
                      const renderUrl = convertFileSrc(absPath);
                      
                      editor.value?.commands.setImage({ src: renderUrl, alt: file.name || 'Pasted Image' });
-                 } catch(e) { console.error("Paste image failed", e); }
+                 } catch(e) { logger.error("Paste image failed", e); }
               });
             }
           }

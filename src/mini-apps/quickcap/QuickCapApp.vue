@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 import { emit as emitTauri } from '@tauri-apps/api/event';
-import { confirm, message, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { ask, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
@@ -12,6 +12,7 @@ import TiptapImage from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import TaskEditModal from '../task/TaskEditModal.vue';
 import NoteEditModal from '../note/NoteEditModal.vue';
+import { logger } from '../../utils/logger';
 
 const props = defineProps<{
   vaultPath: string;
@@ -39,6 +40,8 @@ const colorPickerCapId = ref<string | null>(null);
 const tagInputText = ref('');
 const searchQuery = ref('');
 const mobileViewMode = ref<'list' | 'grid'>('list');
+const backendSearchIds = ref<string[] | null>(null);
+let qcSearchTimeout: ReturnType<typeof setTimeout>;
 
 const isMobileModalOpen = ref(false);
 const mobileInputRef = ref<HTMLTextAreaElement | null>(null);
@@ -73,6 +76,15 @@ const filteredCaps = computed(() => {
     const q = searchQuery.value.trim().toLowerCase();
     if (!q) return quickCaps.value;
     
+    // Backend FTS5 results available
+    if (backendSearchIds.value !== null) {
+        const idSet = new Set(backendSearchIds.value);
+        const filtered = quickCaps.value.filter(cap => idSet.has(cap.id));
+        const orderMap = new Map(backendSearchIds.value.map((id, i) => [id, i]));
+        return filtered.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+    }
+    
+    // Fallback: local search while backend is loading
     const isTagSearch = q.startsWith('#');
     const tagQuery = isTagSearch ? q.substring(1) : q;
     
@@ -84,6 +96,28 @@ const filteredCaps = computed(() => {
             return cap.content.toLowerCase().includes(q);
         }
     });
+});
+
+// Debounced backend search for QuickCap
+watch(searchQuery, (q) => {
+    clearTimeout(qcSearchTimeout);
+    if (!q.trim()) {
+        backendSearchIds.value = null;
+        return;
+    }
+    qcSearchTimeout = setTimeout(async () => {
+        try {
+            const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_quickcaps', {
+                vaultPath: props.vaultPath,
+                query: q
+            });
+            if (searchQuery.value === q) {
+                backendSearchIds.value = resp.results.map(r => r.id);
+            }
+        } catch (e) {
+            logger.error('QuickCap backend search error', e);
+        }
+    }, 200);
 });
 
 const activeTags = computed(() => {
@@ -115,8 +149,15 @@ const saveInlineTag = async (cap: QuickCapMetadata) => {
         cap.content = updatedContent;
         taggingCapId.value = null;
         tagInputText.value = '';
+        
+        // Update currentTags if this cap is currently open in the modal
+        if (selectedCap.value && selectedCap.value.id === cap.id) {
+            if (!currentTags.value.includes(rawTag)) {
+                currentTags.value.push(rawTag);
+            }
+        }
     } catch(e) {
-        console.error("Failed to update note", e);
+        logger.error("Failed to update note", e);
     }
 };
 
@@ -145,7 +186,7 @@ const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
         await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
-        console.error("Failed to update color", e);
+        logger.error("Failed to update color", e);
     }
     colorPickerCapId.value = null;
 };
@@ -155,7 +196,7 @@ const loadCaps = async () => {
     try {
         quickCaps.value = await invoke('scan_quick_caps', { vaultPath: props.vaultPath });
     } catch (e) {
-        console.error("Failed to load quick caps", e);
+        logger.error("Failed to load quick caps", e);
     }
 };
 
@@ -187,7 +228,7 @@ const saveSelectedCap = async () => {
         await invoke('update_note', { vaultPath: props.vaultPath, path: selectedCap.value.path, content: finalPayload });
         selectedCap.value.content = finalPayload;
     } catch(e) {
-        console.error("Failed to update note", e);
+        logger.error("Failed to update note", e);
     }
 };
 
@@ -268,7 +309,7 @@ const editor = useEditor({
                      const renderUrl = convertFileSrc(absPath);
                      
                      editor.value?.commands.insertContent(`\n![Image](${renderUrl})\n`);
-                 } catch(e) { console.error("Paste image failed", e); }
+                 } catch(e) { logger.error("Paste image failed", e); }
               });
             }
           }
@@ -342,7 +383,7 @@ const submitCap = async () => {
             inputRef.value.style.height = 'auto';
         }
     } catch (e) {
-        console.error("Failed to create quick cap", e);
+        logger.error("Failed to create quick cap", e);
     } finally {
         isSubmitting.value = false;
     }
@@ -375,7 +416,7 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
              
              newCapText.value = newCapText.value.substring(0, start) + "\n" + imgMd + "\n" + newCapText.value.substring(end);
           } catch(err) {
-             console.error("Paste image save error:", err);
+             logger.error("Paste image save error:", err);
           } finally {
              isSubmitting.value = false;
              if (targetRef) targetRef.placeholder = oldPlaceholder || "Take a quick note...";
@@ -400,7 +441,7 @@ const pickImageForNewCap = async () => {
             inputRef.value?.focus();
         }
     } catch(e) {
-        console.error("Failed to pick image", e);
+        logger.error("Failed to pick image", e);
     }
 };
 
@@ -421,7 +462,7 @@ const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
             cap.content = updatedContent;
         }
     } catch(e) {
-        console.error("Failed to pick image", e);
+        logger.error("Failed to pick image", e);
     }
 };
 
@@ -514,7 +555,7 @@ const confirmTurnIntoNote = async (payload: any) => {
         await emitTauri('vault-changed');
         closeNoteModal();
     } catch(e) {
-        console.error("Failed to convert to note", e);
+        logger.error("Failed to convert to note", e);
         await message('Lỗi khi chuyển thành Note.', { title: 'Synabit', kind: 'error' });
     }
 };
@@ -552,7 +593,7 @@ const confirmTurnIntoTask = async (payload: any) => {
         
         closeTaskModal();
     } catch(e) {
-        console.error("Failed to create task", e);
+        logger.error("Failed to create task", e);
         await message('Lỗi khi tạo Task.', { title: 'Synabit', kind: 'error' });
     }
 };
@@ -590,7 +631,12 @@ const extractTags = (content: string) => {
 };
 
 const removeTag = async (cap: QuickCapMetadata, tag: string) => {
-    const isConfirmed = await confirm(`Bạn có chắc chắn muốn xoá tag [${tag}]?`, { title: 'Xoá tag', kind: 'warning' });
+    const isConfirmed = await ask(`This will remove the tag #${tag} from this quickcap.`, { 
+        title: `Remove tag #${tag}?`, 
+        kind: 'warning',
+        okLabel: 'Remove tag',
+        cancelLabel: 'Cancel'
+    });
     if (!isConfirmed) return;
     
     // Escape tag to safely use in regex
@@ -611,7 +657,7 @@ const removeTag = async (cap: QuickCapMetadata, tag: string) => {
         await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
-        console.error("Failed to remove tag", e);
+        logger.error("Failed to remove tag", e);
     }
 };
 
@@ -697,7 +743,12 @@ const renderPreview = (content: string) => {
 const deleteCap = async (path: string, id: string) => {
     const index = quickCaps.value.findIndex(c => c.id === id);
     if (index === -1) return;
-    const isConfirmed = await confirm('Bạn có chắc chắn muốn xoá ghi chú này không?', { title: 'Xác nhận xoá', kind: 'warning' });
+    const isConfirmed = await ask('This action cannot be undone. The content will be permanently deleted.', { 
+        title: 'Delete this quickcap?', 
+        kind: 'warning',
+        okLabel: 'Delete',
+        cancelLabel: 'Cancel'
+    });
     if (!isConfirmed) return;
     
     try {
@@ -707,7 +758,7 @@ const deleteCap = async (path: string, id: string) => {
             selectedCap.value = null;
         }
     } catch(e) {
-        console.error(e);
+        logger.error(e);
     }
 };
 </script>

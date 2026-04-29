@@ -84,6 +84,7 @@ pub fn create_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, D
     
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_quickcap(&qc_meta);
+        db.upsert_search_entry(&qc_meta.id, "quickcap", "⚡ QuickCap", "", &qc_meta.content, "", None, &qc_meta.date, &qc_meta.path);
     }
     Ok(qc_meta)
 }
@@ -94,6 +95,7 @@ pub fn delete_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, D
     fs::remove_file(&abs_path)?;
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_quickcap(&path);
+        db.delete_search_entry(&path);
     }
     Ok(())
 }
@@ -114,6 +116,7 @@ pub fn update_quick_cap(_app_handle: tauri::AppHandle, state: tauri::State<'_, D
                 path: path.clone(),
             };
             let _ = db.upsert_quickcap(&qc_meta);
+            db.upsert_search_entry(&qc_meta.id, "quickcap", "⚡ QuickCap", "", &qc_meta.content, "", None, &qc_meta.date, &qc_meta.path);
         }
     }
     Ok(())
@@ -142,7 +145,7 @@ pub fn copy_asset_to_vault(vault_path: String, source_path: String) -> AppResult
     let filename = format!("img-{}-{}", timestamp, original_name);
     let target = assets_dir.join(&filename);
     
-    fs::copy(&source, &target)?;
+    fs::copy(source, target)?;
     
     Ok(format!("assets/{}", filename))
 }

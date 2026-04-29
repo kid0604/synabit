@@ -3,6 +3,9 @@ import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff,
 import { useSettings } from '../../composables/useSettings';
 import { ref, onMounted } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
+import { type } from '@tauri-apps/plugin-os';
+import { logger } from '../../utils/logger';
 
 const {
   showSettingsModal, settingsTab,
@@ -13,13 +16,25 @@ const {
 } = useSettings();
 
 const appVersion = ref('');
+const isDesktop = ref(true);
+
 onMounted(async () => {
   try {
     appVersion.value = await getVersion();
+    const osType = type();
+    isDesktop.value = osType === 'macos' || osType === 'windows' || osType === 'linux';
   } catch(e) {
-    console.error("Failed to get version", e);
+    logger.error("Failed to get version/os", e);
   }
 });
+
+const openLogFolder = async () => {
+  try {
+    await invoke('open_app_log_folder');
+  } catch (e) {
+    logger.error("Failed to open log folder", e);
+  }
+};
 
 defineProps<{
   vaultPath: string;
@@ -279,6 +294,12 @@ const emit = defineEmits<{
                     <h3 class="text-[18px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5]">Synabit</h3>
                     <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">Version {{ appVersion || '...' }}</p>
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mt-4 max-w-xs mx-auto leading-relaxed">A unified, local-first productivity workspace for notes, tasks, quick captures, and more.</p>
+                    
+                    <div v-if="isDesktop" class="mt-8 flex justify-center">
+                      <button @click="openLogFolder" class="px-4 py-2 rounded-lg text-[12px] font-medium border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] transition-all flex items-center gap-2">
+                        <FolderOpen class="w-4 h-4" /> Open Application Logs
+                      </button>
+                    </div>
                   </div>
                 </section>
               </div>

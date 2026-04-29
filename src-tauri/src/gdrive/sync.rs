@@ -61,6 +61,7 @@ fn conflict_copy_path(original: &Path) -> PathBuf {
 
 #[tauri::command]
 pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) -> Result<SyncResult, String> {
+    log::info!("Starting full Google Drive sync for vault: {}", vault_path);
     let token = get_valid_token(&app_handle).await?;
     let mut manifest = load_manifest(&vault_path);
     let mut result = SyncResult {
@@ -337,6 +338,11 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
 
     // 7. Save manifest
     save_manifest(&vault_path, &manifest)?;
+
+    log::info!(
+        "Google Drive sync complete. Pulled: {}, Pushed: {}, Deleted: {}, Errors: {}",
+        result.pulled, result.pushed, result.deleted, result.errors.len()
+    );
 
     Ok(result)
 }

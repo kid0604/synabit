@@ -110,6 +110,12 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<(
                 tags: vec![], source_type: "local".to_string(),
             };
             let _ = db.upsert_file(&file_meta);
+            let props = format!("ext:{} source:local", file_meta.extension);
+            db.upsert_search_entry(
+                &file_meta.id, "file", &file_meta.filename,
+                &file_meta.tags.join(" "), &file_meta.extension,
+                &props, None, &file_meta.modified_at, &file_meta.path,
+            );
         }
     }
     Ok(())
@@ -237,6 +243,17 @@ pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'
         }
     }
 
+    // Sync search index after any changes
+    if let Ok(files) = db.get_all_files() {
+        if let Some(f) = files.iter().find(|f| f.path == final_path) {
+            let props = format!("ext:{} source:{}", f.extension, f.source_type);
+            db.upsert_search_entry(
+                &f.id, "file", &f.filename, &f.tags.join(" "),
+                &f.extension, &props, None, &f.modified_at, &f.path,
+            );
+        }
+    }
+
     Ok(final_path)
 }
 
@@ -284,6 +301,12 @@ pub fn reindex_sources(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
                     tags: vec![], source_type: "local".to_string(),
                 };
                 let _ = db.upsert_file(&file_meta);
+                let props = format!("ext:{} source:local", file_meta.extension);
+                db.upsert_search_entry(
+                    &file_meta.id, "file", &file_meta.filename,
+                    &file_meta.tags.join(" "), &file_meta.extension,
+                    &props, None, &file_meta.modified_at, &file_meta.path,
+                );
             }
         }
     }

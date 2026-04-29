@@ -199,18 +199,41 @@ pub fn read_note(vault_path: String, path: String) -> AppResult<String> {
 }
 
 #[tauri::command]
-pub fn update_note(vault_path: String, path: String, content: String) -> AppResult<()> {
+pub fn update_note(state: tauri::State<'_, DbState>, vault_path: String, path: String, content: String) -> AppResult<()> {
     path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
-    fs::write(&abs_path, content)?;
+    fs::write(&abs_path, &content)?;
+
+    // Update FTS5 search index
+    let matter = Matter::<YAML>::new();
+    let mut title = String::new();
+    let mut tags: Vec<String> = Vec::new();
+    let mut body = content.clone();
+    if let Ok(parsed) = matter.parse::<FrontMatter>(&content) {
+        if let Some(fm) = parsed.data {
+            title = fm.title;
+            tags = fm.tags;
+        }
+        body = parsed.content;
+    }
+    if title.is_empty() {
+        title = Path::new(&path).file_stem().unwrap_or_default().to_string_lossy().to_string();
+    }
+    let date = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.upsert_search_entry(&path, "note", &title, &tags.join(" "), &body, "", None, &date, &path);
+
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_note(vault_path: String, path: String) -> AppResult<()> {
+pub fn delete_note(state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<()> {
     path_utils::enforce_no_traversal(&path)?;
     let abs_path = Path::new(&vault_path).join(&path);
     fs::remove_file(&abs_path)?;
+    // Remove from FTS5 search index
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.delete_search_entry(&path);
     Ok(())
 }
 

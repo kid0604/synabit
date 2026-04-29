@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import { useSettings } from '../../composables/useSettings';
+import { logger } from '../../utils/logger';
 
 const { taskArchiveDays } = useSettings();
 
@@ -42,12 +43,68 @@ const searchQuery = ref('');
 const activeCategory = ref<'all' | 'today' | 'upcoming' | 'someday' | 'transferred'>('today');
 const isMobileSidebarOpen = ref(false);
 
+const backendSearchIds = ref<string[] | null>(null);
+let taskSearchTimeout: ReturnType<typeof setTimeout>;
+
+// Extract only the free-text portion from a task search query (strip domain-specific filters)
+function extractTextQuery(query: string): string {
+    return query
+        .replace(/is:[^\s]+/g, '')
+        .replace(/not:[^\s]+/g, '')
+        .replace(/(?:p|priority):[1-4]/g, '')
+        .replace(/status:[a-z_]+/g, '')
+        .replace(/(?:#|tag:)[^\s]+/g, '')
+        .replace(/@[^\s]+/g, '')
+        .replace(/prop:[^:=\s]+(?:=[^\s]+)?/g, '')
+        .trim();
+}
+
+// Debounced backend search for Tasks
+watch(searchQuery, (q) => {
+    clearTimeout(taskSearchTimeout);
+    const textPart = extractTextQuery(q.toLowerCase());
+    if (!textPart) {
+        backendSearchIds.value = null;
+        return;
+    }
+    taskSearchTimeout = setTimeout(async () => {
+        try {
+            const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_tasks', {
+                vaultPath: props.vaultPath,
+                query: textPart
+            });
+            if (extractTextQuery(searchQuery.value.toLowerCase()) === textPart) {
+                backendSearchIds.value = resp.results.map(r => r.id);
+            }
+        } catch (e) {
+            console.error('Task backend search error', e);
+        }
+    }, 200);
+});
+
 const searchedTasks = computed(() => {
     let result = tasks.value;
     
     if (searchQuery.value.trim()) {
         const query = searchQuery.value.toLowerCase();
+        const textQuery = extractTextQuery(query);
         
+        // Layer 1: Backend FTS5 text search (tokenized, BM25 ranked)
+        if (textQuery && backendSearchIds.value !== null) {
+            const idSet = new Set(backendSearchIds.value);
+            result = result.filter(t => idSet.has(t.id));
+            const orderMap = new Map(backendSearchIds.value.map((id, i) => [id, i]));
+            result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+        } else if (textQuery && backendSearchIds.value === null) {
+            // Fallback: local text search while backend is loading
+            result = result.filter(t =>
+                t.title.toLowerCase().includes(textQuery) || 
+                t.content.toLowerCase().includes(textQuery) ||
+                t.tags.some(tag => tag.toLowerCase().includes(textQuery))
+            );
+        }
+        
+        // Layer 2: Local domain-specific post-filters
         const isQuery = (prop: string) => query.includes(`is:${prop}`);
         const notQuery = (prop: string) => query.includes(`not:${prop}`);
         const pQueryMatch = query.match(/(?:p|priority):([1-4])/);
@@ -55,54 +112,44 @@ const searchedTasks = computed(() => {
         const tagQueryMatch = query.match(/(?:#|tag:)([^\s]+)/);
         const assignQueryMatch = query.match(/@([^\s]+)/);
         const customPropMatches = [...query.matchAll(/prop:([^:=\s]+)(?:=([^\s]+))?/g)];
-
-        result = result.filter(t => {
-            if (isQuery('transferred') && !t.is_transferred) return false;
-            if (notQuery('transferred') && t.is_transferred) return false;
-            if (isQuery('tracked') && !t.track_progress) return false;
-            if (notQuery('tracked') && t.track_progress) return false;
-            
-            if (isQuery('completed') && t.status !== 'done') return false;
-            if (isQuery('todo') && t.status !== 'todo') return false;
-            if (isQuery('in_progress') && t.status !== 'in_progress') return false;
-            
-            if (pQueryMatch && t.priority !== `P${pQueryMatch[1]}`) return false;
-            if (statusQueryMatch && t.status !== statusQueryMatch[1]) return false;
-            
-            if (tagQueryMatch) {
-               const searchTag = tagQueryMatch[1];
-               if (!t.tags.some(tag => tag.toLowerCase() === searchTag || tag.toLowerCase().includes(searchTag))) return false;
-            }
-            
-            if (assignQueryMatch) {
-               const searchName = assignQueryMatch[1];
-               if (!t.transferred_to?.toLowerCase().includes(searchName)) return false;
-            }
-            
-            for (const match of customPropMatches) {
-                const key = match[1];
-                const expectedValue = match[2];
-                if (!t.custom_fields || t.custom_fields[key] === undefined) return false;
-                if (expectedValue && String(t.custom_fields[key]).toLowerCase() !== expectedValue) return false;
-            }
-            
-            let textQuery = query
-                .replace(/is:[^\s]+/g, '')
-                .replace(/not:[^\s]+/g, '')
-                .replace(/(?:p|priority):[1-4]/g, '')
-                .replace(/status:[a-z_]+/g, '')
-                .replace(/(?:#|tag:)[^\s]+/g, '')
-                .replace(/@[^\s]+/g, '')
-                .replace(/prop:[^:=\s]+(?:=[^\s]+)?/g, '')
-                .trim();
+        
+        const hasDomainFilters = isQuery('transferred') || isQuery('tracked') || isQuery('completed') || isQuery('todo') || isQuery('in_progress') ||
+            notQuery('transferred') || notQuery('tracked') ||
+            pQueryMatch || statusQueryMatch || tagQueryMatch || assignQueryMatch || customPropMatches.length > 0;
+        
+        if (hasDomainFilters) {
+            result = result.filter(t => {
+                if (isQuery('transferred') && !t.is_transferred) return false;
+                if (notQuery('transferred') && t.is_transferred) return false;
+                if (isQuery('tracked') && !t.track_progress) return false;
+                if (notQuery('tracked') && t.track_progress) return false;
                 
-            if (textQuery) {
-                return t.title.toLowerCase().includes(textQuery) || 
-                       t.content.toLowerCase().includes(textQuery) ||
-                       t.tags.some(tag => tag.toLowerCase().includes(textQuery));
-            }
-            return true;
-        });
+                if (isQuery('completed') && t.status !== 'done') return false;
+                if (isQuery('todo') && t.status !== 'todo') return false;
+                if (isQuery('in_progress') && t.status !== 'in_progress') return false;
+                
+                if (pQueryMatch && t.priority !== `P${pQueryMatch[1]}`) return false;
+                if (statusQueryMatch && t.status !== statusQueryMatch[1]) return false;
+                
+                if (tagQueryMatch) {
+                   const searchTag = tagQueryMatch[1];
+                   if (!t.tags.some(tag => tag.toLowerCase() === searchTag || tag.toLowerCase().includes(searchTag))) return false;
+                }
+                
+                if (assignQueryMatch) {
+                   const searchName = assignQueryMatch[1];
+                   if (!t.transferred_to?.toLowerCase().includes(searchName)) return false;
+                }
+                
+                for (const match of customPropMatches) {
+                    const key = match[1];
+                    const expectedValue = match[2];
+                    if (!t.custom_fields || t.custom_fields[key] === undefined) return false;
+                    if (expectedValue && String(t.custom_fields[key]).toLowerCase() !== expectedValue) return false;
+                }
+                return true;
+            });
+        }
     }
     return result;
 });
@@ -318,7 +365,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
             content: task.content
         });
     } catch (err) {
-        console.error("Drag update failed", err);
+        logger.error("Drag update failed", err);
     }
 };
 
@@ -510,7 +557,7 @@ const saveTask = async () => {
         
         closeEditModal();
     } catch (e) {
-        console.error("Failed to update/create task", e);
+        logger.error("Failed to update/create task", e);
     }
 };
 
@@ -522,7 +569,7 @@ const loadTasks = async () => {
         await invoke('archive_done_tasks', { vaultPath: props.vaultPath, days: archiveDays });
         tasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
     } catch (e) {
-        console.error("Failed to load tasks", e);
+        logger.error("Failed to load tasks", e);
     }
 };
 
@@ -555,17 +602,22 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
         task.status = newStatus;
         task.completed_at = newCompletedAt;
     } catch (e) {
-        console.error("Failed to update task", e);
+        logger.error("Failed to update task", e);
     }
 };
 
 const deleteTask = async (task: TaskMetadata) => {
     let isConfirmed = false;
     try {
-        isConfirmed = await confirm('Xoá công việc này?', { title: 'Xoá Task', kind: 'warning' });
+        isConfirmed = await ask('This action cannot be undone. The task will be permanently deleted.', { 
+            title: 'Delete this task?', 
+            kind: 'warning',
+            okLabel: 'Delete',
+            cancelLabel: 'Cancel'
+        });
     } catch (e) {
-        console.warn("Tauri confirm failed, falling back to window.confirm", e);
-        isConfirmed = window.confirm('Xoá công việc này?');
+        logger.warn("Tauri confirm failed, falling back to window.confirm", e);
+        isConfirmed = window.confirm('Delete this task?');
     }
     
     if (!isConfirmed) return;
@@ -575,7 +627,7 @@ const deleteTask = async (task: TaskMetadata) => {
         const idx = tasks.value.findIndex(t => t.id === task.id);
         if (idx !== -1) tasks.value.splice(idx, 1);
     } catch (e) {
-        console.error("Failed to delete task", e);
+        logger.error("Failed to delete task", e);
     }
 };
 

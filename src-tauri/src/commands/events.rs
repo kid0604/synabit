@@ -128,6 +128,11 @@ pub fn create_event(
     
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_event(&event_meta);
+        let mut props_parts: Vec<String> = Vec::new();
+        if !event_meta.location.is_empty() { props_parts.push(format!("location:{}", event_meta.location)); }
+        if !event_meta.event_time.is_empty() { props_parts.push(format!("time:{}", event_meta.event_time)); }
+        let props = props_parts.join(" ");
+        db.upsert_search_entry(&event_meta.id, "event", &event_meta.title, &event_meta.tags.join(" "), &event_meta.content, &props, None, &event_meta.event_date, &event_meta.path);
     }
     Ok(event_meta)
 }
@@ -155,11 +160,16 @@ pub fn update_event(
                 event_time: metadata.event_time,
                 location: metadata.location,
                 tags: metadata.tags,
-                content: content,
+                content,
                 path: path.clone(),
                 created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
             };
             let _ = db.upsert_event(&event_meta);
+            let mut props_parts: Vec<String> = Vec::new();
+            if !event_meta.location.is_empty() { props_parts.push(format!("location:{}", event_meta.location)); }
+            if !event_meta.event_time.is_empty() { props_parts.push(format!("time:{}", event_meta.event_time)); }
+            let props = props_parts.join(" ");
+            db.upsert_search_entry(&event_meta.id, "event", &event_meta.title, &event_meta.tags.join(" "), &event_meta.content, &props, None, &event_meta.event_date, &event_meta.path);
         }
     }
     Ok(())
@@ -171,6 +181,7 @@ pub fn delete_event(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbSta
     fs::remove_file(&abs_path)?;
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.delete_event(&path);
+        db.delete_search_entry(&path);
     }
     Ok(())
 }

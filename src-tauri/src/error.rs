@@ -46,6 +46,8 @@ impl Serialize for AppError {
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
         };
 
+        log::error!("Backend Error [{}]: {}", code, message);
+
         let detail = ErrorDetail { code, message };
         detail.serialize(serializer)
     }

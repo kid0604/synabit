@@ -4,11 +4,33 @@ pub mod error;
 mod gdrive;
 pub mod models;
 pub mod path_utils;
+pub mod search;
 pub mod utils;
 pub mod watcher;
 
 use commands::{events, files, nexus, notes, quickcaps, tasks};
 use db::DbBridge;
+
+#[tauri::command]
+fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let log_file = log_dir.join("Synabit.log");
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("-R").arg(&log_file).spawn().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer").arg("/select,").arg(&log_file).spawn().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let parent = log_file.parent().unwrap_or(&log_file);
+        std::process::Command::new("xdg-open").arg(parent).spawn().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,12 +41,29 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new()
+            .level(log::LevelFilter::Info)
+            .build())
         .manage(watcher::WatcherState::default())
         .setup(|app| {
             use tauri::Manager;
+            log::info!("Starting Synabit Backend...");
             let db = DbBridge::init(app.handle())
                 .expect("Failed to initialize database");
+            log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
+
+            // Build FTS5 search index on startup
+            {
+                let state: tauri::State<'_, db::DbState> = app.state();
+                let db = state.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = db.reindex_search() {
+                    log::error!("Failed to build search index: {}", e);
+                } else {
+                    log::info!("Search index built successfully.");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -74,6 +113,10 @@ pub fn run() {
             nexus::get_nexus_item,
             nexus::get_nexus_graph_data,
             nexus::search_nexus,
+            nexus::search_notes,
+            nexus::search_quickcaps,
+            nexus::search_tasks,
+            nexus::search_files,
             // Google Drive
             gdrive::auth::gdrive_auth_start,
             gdrive::auth::gdrive_auth_complete,
@@ -90,6 +133,8 @@ pub fn run() {
             gdrive::browse::connect_gdrive_complete,
             gdrive::browse::disconnect_gdrive,
             gdrive::browse::get_gdrive_files,
+            // System
+            open_app_log_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

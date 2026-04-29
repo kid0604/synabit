@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open, confirm, message } from '@tauri-apps/plugin-dialog';
+import { open, ask, message } from '@tauri-apps/plugin-dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { useVirtualList, useWindowSize } from '@vueuse/core';
@@ -45,6 +45,8 @@ const activeSourceId = ref<string | null>(null);
 const activeType = ref<string | null>(null);
 
 const searchQuery = ref('');
+const fileBackendSearchIds = ref<string[] | null>(null);
+let fileSearchTimeout: ReturnType<typeof setTimeout>;
 const viewMode = ref<'grid' | 'list'>('list');
 
 const editFileName = ref('');
@@ -81,6 +83,7 @@ const isTextFile = computed(() => {
 });
 
 import { watch } from 'vue';
+import { logger } from '../../utils/logger';
 
 watch(selectedFile, async (newVal) => {
     if (newVal) {
@@ -100,7 +103,7 @@ watch(selectedFile, async (newVal) => {
             try {
                 previewContent.value = await invoke<string>('read_local_file_content', { path: newVal.path });
             } catch (e) {
-                console.error("Failed to read text preview", e);
+                logger.error("Failed to read text preview", e);
                 previewContent.value = "Unable to load preview or file is too large.";
             } finally {
                 isLoadingPreview.value = false;
@@ -154,7 +157,7 @@ const saveFileName = async () => {
             files.value[idx].path = newPath;
         }
     } catch(e) {
-        console.error("Failed to rename file", e);
+        logger.error("Failed to rename file", e);
         editFileName.value = selectedFile.value.filename;
     } finally {
         isSavingTags.value = false;
@@ -189,7 +192,7 @@ const addTag = async () => {
         const idx = files.value.findIndex(f => f.id === selectedFile.value!.id);
         if (idx !== -1) files.value[idx].tags = updatedTags;
     } catch(e) {
-        console.error("Failed to add tag", e);
+        logger.error("Failed to add tag", e);
     } finally {
         isSavingTags.value = false;
     }
@@ -212,7 +215,7 @@ const removeTag = async (tag: string) => {
         const idx = files.value.findIndex(f => f.id === selectedFile.value!.id);
         if (idx !== -1) files.value[idx].tags = updatedTags;
     } catch(e) {
-        console.error("Failed to remove tag", e);
+        logger.error("Failed to remove tag", e);
     } finally {
         isSavingTags.value = false;
     }
@@ -222,7 +225,7 @@ const fetchSources = async () => {
     try {
         sources.value = await invoke<FileSource[]>('get_file_sources', { vaultPath: props.vaultPath });
     } catch (e) {
-        console.error("Failed to load sources", e);
+        logger.error("Failed to load sources", e);
     }
 };
 
@@ -231,7 +234,7 @@ const fetchFiles = async () => {
     try {
         files.value = await invoke<FileMetadata[]>('query_files', { vaultPath: props.vaultPath });
     } catch (e) {
-        console.error("Failed to load files", e);
+        logger.error("Failed to load files", e);
     } finally {
         isLoading.value = false;
     }
@@ -247,7 +250,7 @@ const syncAllSources = async () => {
         }
         await fetchFiles();
     } catch(e) {
-        console.error("Failed to sync sources", e);
+        logger.error("Failed to sync sources", e);
     } finally {
         isScanning.value = false;
     }
@@ -277,7 +280,7 @@ const addNewSource = async () => {
             isScanning.value = false;
         }
     } catch (e) {
-        console.error("Failed to add source", e);
+        logger.error("Failed to add source", e);
         isScanning.value = false;
     }
 };
@@ -289,7 +292,7 @@ const removeSource = async (id: string) => {
         await fetchSources();
         await fetchFiles(); // Refresh to remove files from that source (if backend supports it later)
     } catch (e) {
-        console.error("Failed to remove source", e);
+        logger.error("Failed to remove source", e);
     }
 };
 
@@ -297,7 +300,7 @@ const openLocalFile = async (path: string) => {
     try {
         await invoke('open_local_file', { vaultPath: props.vaultPath, path });
     } catch(e) {
-        console.error("Failed to open file", e);
+        logger.error("Failed to open file", e);
     }
 };
 
@@ -324,7 +327,7 @@ const checkGDriveStatus = async () => {
             gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: props.vaultPath });
         }
     } catch (e) {
-        console.error("Failed to check GDrive status", e);
+        logger.error("Failed to check GDrive status", e);
     }
 };
 
@@ -348,7 +351,7 @@ const connectGDrive = async () => {
             activeSourceId.value = 'gdrive';
         }
     } catch (e: any) {
-        console.error("Failed to connect GDrive", JSON.stringify(e));
+        logger.error("Failed to connect GDrive", JSON.stringify(e));
         const errStr = typeof e === 'object' ? JSON.stringify(e) : String(e);
         await message(`Failed to connect Google Drive: ${errStr}`, { title: 'Error', kind: 'error' });
         isConnectingGDrive.value = false;
@@ -364,14 +367,19 @@ const syncGDrive = async () => {
         await invoke('get_gdrive_files', { vaultPath: props.vaultPath });
         await fetchFiles();
     } catch (e: any) {
-        console.error("GDrive sync failed", e);
+        logger.error("GDrive sync failed", e);
     } finally {
         isScanning.value = false;
     }
 };
 
 const disconnectGDrive = async () => {
-    const isConfirmed = await confirm('Are you sure you want to disconnect Google Drive? This will remove all cloud files from your view.', { title: 'Disconnect Google Drive', kind: 'warning' });
+    const isConfirmed = await ask('All cloud files will be removed from your view. Your actual files on Google Drive will not be deleted.', { 
+        title: 'Disconnect Google Drive?', 
+        kind: 'warning',
+        okLabel: 'Disconnect',
+        cancelLabel: 'Cancel'
+    });
     if (!isConfirmed) return;
     try {
         await invoke('disconnect_gdrive', { vaultPath: props.vaultPath });
@@ -380,7 +388,7 @@ const disconnectGDrive = async () => {
         if (activeSourceId.value === 'gdrive') activeSourceId.value = null;
         await fetchFiles();
     } catch (e: any) {
-        console.error("Failed to disconnect", e);
+        logger.error("Failed to disconnect", e);
     }
 };
 
@@ -420,7 +428,14 @@ const filteredFiles = computed(() => {
         if (isTagSearch) {
             q = q.slice(1);
             result = result.filter(f => f.tags.some(t => t.toLowerCase().includes(q)));
+        } else if (fileBackendSearchIds.value !== null) {
+            // Backend FTS5 results available
+            const idSet = new Set(fileBackendSearchIds.value);
+            result = result.filter(f => idSet.has(f.id));
+            const orderMap = new Map(fileBackendSearchIds.value.map((id, i) => [id, i]));
+            result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
         } else {
+            // Fallback: local search while backend is loading
             result = result.filter(f => 
                 f.filename.toLowerCase().includes(q) || 
                 f.tags.some(t => t.toLowerCase().includes(q)) ||
@@ -430,6 +445,29 @@ const filteredFiles = computed(() => {
     }
     
     return result;
+});
+
+// Debounced backend search for Files
+watch(searchQuery, (q) => {
+    clearTimeout(fileSearchTimeout);
+    const trimmed = q.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+        fileBackendSearchIds.value = null;
+        return;
+    }
+    fileSearchTimeout = setTimeout(async () => {
+        try {
+            const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_files', {
+                vaultPath: props.vaultPath,
+                query: trimmed
+            });
+            if (searchQuery.value.trim() === trimmed) {
+                fileBackendSearchIds.value = resp.results.map(r => r.id);
+            }
+        } catch (e) {
+            console.error('File backend search error', e);
+        }
+    }, 200);
 });
 
 const { width } = useWindowSize();
@@ -486,7 +524,7 @@ onMounted(async () => {
                 activeSourceId.value = 'gdrive';
             }
         } catch (err: any) {
-             console.error("OmniDrive auth complete failed", err);
+             logger.error("OmniDrive auth complete failed", err);
              const errStr = typeof err === 'object' ? JSON.stringify(err) : String(err);
              await message(`Failed to connect Google Drive: ${errStr}`, { title: 'Error', kind: 'error' });
         } finally {

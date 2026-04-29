@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
+import { logger } from '../utils/logger';
 
 /**
  * Composable for Google Drive sync state and operations.
@@ -119,7 +120,7 @@ export function useGDrive(
               }
           }
       }
-  }).catch(console.error);
+  }).catch(logger.error);
 
   async function connectGDrive() {
     gdriveAuthLoading.value = true;
@@ -145,7 +146,7 @@ export function useGDrive(
       gdriveConnected.value = false;
       // Clear vault handled by caller
     } catch (e) {
-      console.error('Disconnect failed:', e);
+      logger.error('Disconnect failed:', e);
     }
   }
 
@@ -167,7 +168,7 @@ export function useGDrive(
       }
       if (result.errors.length > 0) {
         gdriveSyncError.value = `${result.errors.length} error(s)`;
-        console.warn('Sync errors:', result.errors);
+        logger.warn('Sync errors:', result.errors);
       }
       // Re-scan vault after sync to pick up pulled changes
       if (result.pulled > 0) {
@@ -187,7 +188,7 @@ export function useGDrive(
       }
     } catch (e: any) {
       gdriveSyncError.value = e?.toString() || 'Sync failed';
-      console.error('Sync failed:', e);
+      logger.error('Sync failed:', e);
     } finally {
       gdriveSyncing.value = false;
     }

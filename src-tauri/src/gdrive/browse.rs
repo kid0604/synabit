@@ -272,7 +272,7 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
     })
     .await
     .map_err(|_| AppError::General("Authentication timed out (120s). Please try again.".to_string()))?
-    .map_err(|e| AppError::General(e))?;
+    .map_err(AppError::General)?;
 
     let code = auth_code;
 
@@ -459,7 +459,7 @@ pub async fn get_gdrive_files(app_handle: tauri::AppHandle, state: tauri::State<
     for gfile in file_list.files {
         let mime = gfile.mime_type.unwrap_or_default();
         let ext = if gfile.name.contains('.') {
-            gfile.name.split('.').last().unwrap_or("").to_string()
+            gfile.name.split('.').next_back().unwrap_or("").to_string()
         } else if mime.contains("folder") {
             "folder".to_string()
         } else if mime.contains("document") {

@@ -327,6 +327,7 @@ pub(crate) async fn ensure_drive_folder_path(
 }
 
 /// Recursively collect all files from Drive folder tree.
+#[allow(clippy::type_complexity)]
 pub(crate) fn collect_drive_files<'a>(
     token: &'a str,
     folder_id: &'a str,

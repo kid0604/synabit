@@ -125,7 +125,7 @@ mod desktop {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Watcher error: {:?}", e);
+                    log::error!("Watcher error: {:?}", e);
                 }
             }
         })
@@ -137,7 +137,7 @@ mod desktop {
 
         *watcher_lock = Some(watcher);
         *debounce_lock = Some(debounce_state);
-        println!("File System Watcher started for: {}", vault_path);
+        log::info!("File System Watcher started for: {}", vault_path);
 
         Ok(())
     }

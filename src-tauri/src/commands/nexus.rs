@@ -115,110 +115,81 @@ pub fn get_nexus_item(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
     Err(crate::error::AppError::General("Item not found".to_string()))
 }
 
+/// FTS5-powered universal search across all item types.
+/// Supports advanced query syntax: is:, #tag, "phrase", -exclude, in:title, status:, date:
 #[tauri::command]
-pub fn search_nexus(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, query: String) -> AppResult<Vec<NexusItem>> {
+pub fn search_nexus(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+    page: Option<u32>,
+    per_page: Option<u32>,
+) -> AppResult<crate::search::SearchResponse> {
+    let parsed = crate::search::parse_query(&query);
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let mut all_items = Vec::new();
-    if let Ok(rows) = db.get_all_nexus_items() {
-        for r in rows {
-            let title = if r.title.is_empty() {
-                match r.item_type.as_str() {
-                    "note" => "Untitled Note".to_string(),
-                    "task" => "Untitled Task".to_string(),
-                    _ => r.title,
-                }
-            } else { r.title };
-            all_items.push(NexusItem {
-                id: r.id, item_type: r.item_type,
-                title: title.clone(), preview: r.preview, tags: r.tags,
-                date: r.date, path: r.path,
-                content: format!("{} {}", title, r.content),
-                status: r.status,
-            });
-        }
-    }
-    drop(db); // Release lock before filtering
-    all_items.sort_by(|a, b| b.date.cmp(&a.date));
-    if query.trim().is_empty() {
-        return Ok(all_items.into_iter().take(50).collect()); // return top 50 recent
-    }
+    db.search_fts(&parsed, page.unwrap_or(1), per_page.unwrap_or(50))
+}
 
-    let mut type_filter = None;
-    let mut clean_query = query.trim().to_lowercase();
-    
-    // Simple filter syntax parsing
-    let prefixes = ["is:task", "is:note", "is:quickcap", "is:file"];
-    for p in prefixes.iter() {
-        if clean_query.contains(*p) {
-            type_filter = Some(p[3..].to_string());
-            clean_query = clean_query.replace(*p, "").trim().to_string();
-        }
-    }
+/// FTS5-powered search scoped to notes only.
+/// Used by the Note mini-app sidebar search.
+#[tauri::command]
+pub fn search_notes(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+) -> AppResult<crate::search::SearchResponse> {
+    // Force type filter to "note" regardless of user input
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.type_filter = Some("note".to_string());
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.search_fts(&parsed, 1, 100)
+}
 
-    let terms: Vec<String> = clean_query.split_whitespace().map(|s| s.to_string()).collect();
-    let mut scored_items: Vec<(NexusItem, i32)> = Vec::new();
+/// FTS5-powered search scoped to quickcaps only.
+/// Used by the QuickCap mini-app search.
+#[tauri::command]
+pub fn search_quickcaps(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+) -> AppResult<crate::search::SearchResponse> {
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.type_filter = Some("quickcap".to_string());
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.search_fts(&parsed, 1, 200)
+}
 
-    for item in all_items {
-        if let Some(ref t) = type_filter {
-            if item.item_type != *t { continue; }
-        }
+/// FTS5-powered search scoped to tasks only.
+/// Used by the Task mini-app search.
+#[tauri::command]
+pub fn search_tasks(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+) -> AppResult<crate::search::SearchResponse> {
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.type_filter = Some("task".to_string());
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.search_fts(&parsed, 1, 200)
+}
 
-        let mut score = 0;
-        let title_lower = item.title.to_lowercase();
-        let content_lower = item.content.to_lowercase();
-        
-        let mut matches_all_terms = true;
-        for term in &terms {
-            let mut term_matched = false;
-            let is_tag_term = term.starts_with("#");
-            let tag_name = if is_tag_term { term[1..].to_string() } else { String::new() };
-
-            if is_tag_term {
-                if item.tags.iter().any(|t| t.to_lowercase() == tag_name) {
-                    score += 50;
-                    term_matched = true;
-                } else if item.tags.iter().any(|t| t.to_lowercase().contains(&tag_name)) {
-                    score += 10;
-                    term_matched = true;
-                }
-            } else {
-                if title_lower.contains(term) {
-                    score += 30;
-                    term_matched = true;
-                } else if item.tags.iter().any(|t| t.to_lowercase().contains(term)) {
-                    score += 10;
-                    term_matched = true;
-                } else if content_lower.contains(term) {
-                    score += 5;
-                    term_matched = true;
-                }
-            }
-
-            if !term_matched && !clean_query.is_empty() {
-                matches_all_terms = false;
-                break; // must contain all terms (AND logic)
-            }
-        }
-
-        if matches_all_terms && (score > 0 || clean_query.is_empty()) {
-            // Bonus for exact phrase match
-            if clean_query.len() > 3 && content_lower.contains(&clean_query) {
-                score += 20;
-            }
-            if clean_query.len() > 3 && title_lower.contains(&clean_query) {
-                score += 50;
-            }
-            scored_items.push((item, score));
-        }
-    }
-
-    // Sort by score first, then by date descending
-    scored_items.sort_by(|a, b| {
-        b.1.cmp(&a.1).then_with(|| b.0.date.cmp(&a.0.date))
-    });
-
-    let result = scored_items.into_iter().map(|(item, _)| item).take(100).collect();
-    Ok(result)
+/// FTS5-powered search scoped to files only.
+/// Used by the File Manager mini-app search.
+#[tauri::command]
+pub fn search_files(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+) -> AppResult<crate::search::SearchResponse> {
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.type_filter = Some("file".to_string());
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.search_fts(&parsed, 1, 200)
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { type, platform, version } from '@tauri-apps/plugin-os';
 import { useWindowSize } from '@vueuse/core';
+import { logger } from '../utils/logger';
 
 export function usePlatform() {
   const osType = ref<string>('');
@@ -23,7 +24,7 @@ export function usePlatform() {
       // tauri-plugin-os type() returns 'ios' or 'android' for mobile
       isMobileOS.value = ['ios', 'android'].includes(osType.value.toLowerCase());
     } catch (e) {
-      console.warn("Failed to get OS info, falling back to screen size", e);
+      logger.warn("Failed to get OS info, falling back to screen size", e);
       // Fallback if not running in Tauri or plugin fails
       const ua = navigator.userAgent.toLowerCase();
       isMobileOS.value = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);

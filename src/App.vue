@@ -43,6 +43,12 @@ const { useMobileLayout, isMac, isWindows, isMobileOS } = usePlatform();
 // ─── App View State ───────────────────────────────────────
 const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file'>('nexus');
 
+watch(activeTool, (newTool, oldTool) => {
+  if (oldTool !== newTool) {
+    logger.info(`Navigated to mini-app: ${newTool} (from ${oldTool})`);
+  }
+});
+
 // ─── Mini App Refs for cross-app navigation ─────────────────
 const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
 const quickCapAppRef = ref<any>(null);
@@ -77,7 +83,7 @@ const selectVault = async () => {
             const dataDir = await appDataDir();
             const vaultDir = `${dataDir}/vault`;
             await appStore.setVaultPath(vaultDir, 'local');
-            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
+            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
             return;
         }
 
@@ -90,9 +96,9 @@ const selectVault = async () => {
         });
         if (selected) {
             await appStore.setVaultPath(selected as string, 'local');
-            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
+            invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
         }
-    } catch(err) { console.error(err); }
+    } catch(err) { logger.error(err); }
 };
 
 const clearVault = () => {
@@ -119,9 +125,11 @@ const handleEditFromNexus = (id: string, type: string) => {
 };
 
 import { nextTick } from 'vue';
+import { logger } from './utils/logger';
 
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
+  logger.info("Synabit Frontend App Mounting...");
   await appStore.initialize();
   await initSettings();
   applyTheme();
@@ -138,12 +146,12 @@ onMounted(async () => {
   }
 
   if (vaultPath.value) {
-     invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(console.error);
+     invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Force sync all data types on startup so Nexus sees fresh Indexed DB data
-     invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(console.error);
-     invoke('scan_events', { vaultPath: vaultPath.value }).catch(console.error);
-     invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(console.error);
+     invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
+     invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
+     invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
 
@@ -153,9 +161,9 @@ onMounted(async () => {
 
   listen('vault-file-created-deleted', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(console.error);
-      invoke('scan_events', { vaultPath: vaultPath.value }).catch(console.error);
-      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(console.error);
+      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
       
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
@@ -164,9 +172,9 @@ onMounted(async () => {
 
   listen('vault-file-modified', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(console.error);
-      invoke('scan_events', { vaultPath: vaultPath.value }).catch(console.error);
-      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(console.error);
+      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
   }).then(fn => unlistenFns.push(fn));
 
   onUnmounted(() => {
@@ -187,11 +195,13 @@ onMounted(async () => {
                   try {
                       await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: `${fm}\n\n${nApp.tabContents[noteId]}` });
                       emit('note-updated', { id: note.id, content: nApp.tabContents[noteId] });
-                  } catch(e) { console.error('Save before close failed', e); }
+                  } catch(e) { logger.error('Save before close failed', e); }
               }
           }
       }
   });
+
+  logger.info("Synabit Frontend App Mount Complete.");
 });
 
 onUnmounted(() => {
