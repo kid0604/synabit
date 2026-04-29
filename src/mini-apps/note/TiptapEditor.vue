@@ -640,6 +640,29 @@ const SlashCommands = Extension.create({
   },
 });
 
+// --- Tab Indent Extension ---
+const TabIndentExtension = Extension.create({
+  name: 'tabIndent',
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => {
+        if (this.editor.commands.sinkListItem('listItem')) return true;
+        if (this.editor.commands.sinkListItem('taskItem')) return true;
+        // Fallback for regular paragraph (insert spaces), BUT NOT IN A TABLE
+        if (this.editor.isActive('paragraph') && !this.editor.isActive('table')) {
+          return this.editor.commands.insertContent('    ');
+        }
+        return false;
+      },
+      'Shift-Tab': () => {
+        if (this.editor.commands.liftListItem('listItem')) return true;
+        if (this.editor.commands.liftListItem('taskItem')) return true;
+        return false;
+      },
+    };
+  },
+});
+
 // --- Editor ---
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
@@ -647,6 +670,7 @@ const editor = useEditor({
     StarterKit.configure({
       codeBlock: false, // replaced by CodeBlockLowlight
     }),
+    TabIndentExtension,
     Markdown,
     ImageResize,
     TaskList,
@@ -843,6 +867,13 @@ const editor = useEditor({
     setTimeout(() => { showBubble.value = false; }, 200);
   },
   editorProps: {
+    transformPastedHTML(html) {
+      return html
+        .replace(/color\s*:\s*[^;"]+;?/gi, '')
+        .replace(/background-color\s*:\s*[^;"]+;?/gi, '')
+        .replace(/color="[^"]*"/gi, '')
+        .replace(/bgcolor="[^"]*"/gi, '');
+    },
     attributes: {
       class: 'prose focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
     },

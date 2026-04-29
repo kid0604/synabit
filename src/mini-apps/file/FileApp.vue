@@ -649,7 +649,7 @@ onUnmounted(() => {
                             <div class="aspect-square rounded-xl bg-gray-100/50 dark:bg-black/20 mb-4 flex items-center justify-center border border-gray-200/30 dark:border-white/5">
                                 <component :is="getFileIcon(file.extension)" class="w-12 h-12 text-gray-400 dark:text-gray-500 group-hover:text-indigo-500 transition-colors" />
                             </div>
-                            <h4 class="text-sm font-bold truncate mb-1" :title="file.filename">{{ file.filename }}</h4>
+                            <h4 class="file-name text-sm font-bold truncate mb-1" :title="file.filename">{{ file.filename }}</h4>
                             <div class="flex items-center justify-between text-xs text-gray-500">
                                 <span>{{ file.extension.toUpperCase() || 'FILE' }}</span>
                                 <span>{{ formatSize(file.size) }}</span>
@@ -680,7 +680,7 @@ onUnmounted(() => {
                             <!-- Name & Icon -->
                             <div class="flex items-center gap-3 overflow-hidden">
                                 <component :is="getFileIcon(file.extension)" class="w-6 h-6 md:w-5 md:h-5 flex-shrink-0 text-indigo-500" />
-                                <span class="font-medium truncate text-base md:text-sm">{{ file.filename }}</span>
+                                <span class="file-name font-medium truncate text-base md:text-sm">{{ file.filename }}</span>
                             </div>
                             
                             <!-- Metadata (Second line on mobile, Columns on desktop) -->
@@ -689,8 +689,8 @@ onUnmounted(() => {
                                 <div class="text-gray-400 md:text-gray-500 truncate">{{ file.modified_at.split(' ')[0] }}</div>
                                 
                                 <div class="flex gap-1 overflow-hidden ml-auto md:ml-0">
-                                    <span v-for="t in file.tags.slice(0,2)" :key="t" class="px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs text-gray-600 dark:text-gray-300 truncate">#{{ t }}</span>
-                                    <span v-if="file.tags.length > 2" class="px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs text-gray-600 dark:text-gray-300 flex-shrink-0">+{{file.tags.length - 2}}</span>
+                                    <span v-for="t in file.tags.slice(0,2)" :key="t" class="file-tag px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs truncate">#{{ t }}</span>
+                                    <span v-if="file.tags.length > 2" class="file-tag px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs flex-shrink-0">+{{file.tags.length - 2}}</span>
                                 </div>
                             </div>
                             
@@ -822,5 +822,25 @@ onUnmounted(() => {
 }
 .dark .custom-scrollbar::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* Forced text visibility — fixes Tailwind v4 oklch() rendering in Tauri WebView */
+.file-name {
+    color: #1c1c1e;
+}
+:global(.dark) .file-name {
+    color: #f4f4f5;
+}
+.file-tag {
+    color: #52525b;
+}
+:global(.dark) .file-tag {
+    color: #d4d4d8;
+}
+.file-meta {
+    color: #6b7280;
+}
+:global(.dark) .file-meta {
+    color: #9ca3af;
 }
 </style>
