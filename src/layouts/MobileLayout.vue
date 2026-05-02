@@ -10,7 +10,7 @@ const emit = defineEmits<{
   (e: 'update:activeTool', val: string): void;
 }>();
 
-const tools = ['nexus', 'quickcap', 'note', 'task', 'calendar'];
+const tools = ['nexus', 'quickcap', 'note', 'task', 'calendar', 'whiteboard'];
 
 const mainRef = ref<HTMLElement | null>(null);
 

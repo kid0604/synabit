@@ -16,6 +16,7 @@ const Tasks = defineAsyncComponent(() => import('./mini-apps/task/TaskApp.vue'))
 const CalendarApp = defineAsyncComponent(() => import('./mini-apps/calendar/CalendarApp.vue'));
 const Nexus = defineAsyncComponent(() => import('./mini-apps/nexus/NexusApp.vue'));
 const FileManager = defineAsyncComponent(() => import('./mini-apps/file/FileApp.vue'));
+const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
 
 // Composables
@@ -41,7 +42,7 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 const { useMobileLayout, isMac, isWindows, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file'>('nexus');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard'>('nexus');
 
 watch(activeTool, (newTool, oldTool) => {
   if (oldTool !== newTool) {
@@ -283,6 +284,14 @@ onUnmounted(() => {
                    <FolderOpen class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
                 </button>
+                <button @click="activeTool = 'whiteboard'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'whiteboard' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                     <rect x="2" y="4" width="20" height="16" rx="3" />
+                     <path d="M6 14 C 7 11, 9 11, 10 14 C 11 17, 13 10, 14 13" />
+                     <path d="M15.5 4 L 20 8.5 M 14 10.5 L 18.5 6" />
+                   </svg>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Whiteboard</span>
+                </button>
                 
                 <button v-if="useMobileLayout" @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
@@ -323,6 +332,9 @@ onUnmounted(() => {
         </template>
         <template v-else-if="activeTool === 'file'">
            <FileManager :vaultPath="vaultPath" />
+        </template>
+        <template v-else-if="activeTool === 'whiteboard'">
+           <WhiteboardApp :vaultPath="vaultPath" />
         </template>
 
         <!-- SETTINGS MODAL -->

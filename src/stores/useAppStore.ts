@@ -17,7 +17,7 @@ export const useAppStore = defineStore('app', () => {
   const nestedNumberListStyle = ref<'decimal' | 'alpha' | 'nested'>('decimal');
   
   // App Settings
-  const defaultApp = ref<'nexus' | 'note' | 'task' | 'quickcap' | 'file' | 'calendar'>('nexus');
+  const defaultApp = ref<'nexus' | 'note' | 'task' | 'quickcap' | 'file' | 'calendar' | 'whiteboard'>('nexus');
   
   // Theme
   const themeMode = ref<'light' | 'dark' | 'system'>('system');

@@ -152,6 +152,20 @@ export interface VaultStats {
 }
 
 // ──────────────────────────────────────────────
+// Whiteboards
+// ──────────────────────────────────────────────
+
+export interface WhiteboardMetadata {
+  id: string;
+  title: string;
+  tags: string[];
+  content: string;
+  path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ──────────────────────────────────────────────
 // Google Drive Sync
 // ──────────────────────────────────────────────
 

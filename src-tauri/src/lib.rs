@@ -8,7 +8,7 @@ pub mod search;
 pub mod utils;
 pub mod watcher;
 
-use commands::{events, files, nexus, notes, quickcaps, tasks};
+use commands::{events, files, nexus, notes, quickcaps, tasks, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -126,6 +126,12 @@ pub fn run() {
             gdrive::sync::gdrive_get_cache_path,
             // Watcher
             watcher::start_vault_watcher,
+            // Whiteboards
+            whiteboards::scan_whiteboards,
+            whiteboards::create_whiteboard,
+            whiteboards::update_whiteboard,
+            whiteboards::delete_whiteboard,
+            whiteboards::read_whiteboard,
             // GDrive File Manager (OmniDrive — independent auth via Keychain)
             gdrive::browse::is_gdrive_connected,
             gdrive::browse::get_gdrive_user_info,
