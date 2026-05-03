@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { onClickOutside } from '@vueuse/core';
-import { MousePointer2, Pencil, Shapes, Type, Brain, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square } from 'lucide-vue-next';
+import { MousePointer2, Pencil, Shapes, Type, Network, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square } from 'lucide-vue-next';
 import { SHAPES } from '../shapes';
 import type { ToolMode, DrawSubTool } from '../composables/useWhiteboardStore';
 
@@ -243,7 +243,7 @@ function selectDrawSub(sub: DrawSubTool) {
       :class="['wb-toolbar-btn', activeTool === 'mindmap' && 'wb-toolbar-btn--active']"
       title="Mindmap (M)"
     >
-      <Brain class="w-4 h-4" />
+      <Network class="w-4 h-4" />
     </button>
     <button
       @click="selectTool('text')"

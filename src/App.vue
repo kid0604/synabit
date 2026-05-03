@@ -54,6 +54,7 @@ watch(activeTool, (newTool, oldTool) => {
 const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
+const whiteboardAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isFloatingView = ref(false);
@@ -122,6 +123,10 @@ const handleEditFromNexus = (id: string, type: string) => {
     else if (type === 'task') { 
         activeTool.value = 'task'; 
         nextTick(() => taskAppRef.value?.openEditById(id)); 
+    }
+    else if (type === 'whiteboard') {
+        activeTool.value = 'whiteboard';
+        nextTick(() => whiteboardAppRef.value?.openBoardById(id));
     }
 };
 
@@ -334,7 +339,7 @@ onUnmounted(() => {
            <FileManager :vaultPath="vaultPath" />
         </template>
         <template v-else-if="activeTool === 'whiteboard'">
-           <WhiteboardApp :vaultPath="vaultPath" />
+           <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
         </template>
 
         <!-- SETTINGS MODAL -->

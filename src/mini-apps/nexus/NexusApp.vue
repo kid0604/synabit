@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
@@ -70,6 +70,7 @@ const isSearching = ref(false);
 const queryTimeMs = ref(0);
 const totalCount = ref(0);
 const showSyntaxHints = ref(false);
+const caseSensitive = ref(false);
 
 const hideSyntaxHints = () => {
     setTimeout(() => {
@@ -109,7 +110,8 @@ const performSearch = async () => {
     try {
         const response = await invoke<SearchResponse>('search_nexus', { 
             vaultPath: props.vaultPath, 
-            query: searchQuery.value 
+            query: searchQuery.value,
+            caseSensitive: caseSensitive.value,
         });
         if (searchId === currentSearchId) {
             searchResults.value = response.results;
@@ -132,6 +134,10 @@ watch(searchQuery, () => {
     }, 250);
 });
 
+watch(caseSensitive, () => {
+    if (searchQuery.value.trim()) performSearch();
+});
+
 onMounted(() => {
     loadAllData();
 });
@@ -143,6 +149,7 @@ const getTypeIcon = (type: string) => {
     if (type === 'file') return File;
     if (type === 'event') return Calendar;
     if (type === 'tag') return Tag;
+    if (type === 'whiteboard') return PenTool;
     return FileText;
 };
 
@@ -153,6 +160,7 @@ const getTypeColor = (type: string) => {
     if (type === 'file') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     if (type === 'event') return 'text-rose-600 bg-rose-100 dark:bg-rose-500/20 dark:text-rose-400';
     if (type === 'tag') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
+    if (type === 'whiteboard') return 'text-violet-600 bg-violet-100 dark:bg-violet-500/20 dark:text-violet-400';
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
@@ -241,12 +249,24 @@ const renderMarkdownPreview = (text: string, type: string) => {
                        type="text" 
                        @focus="showSyntaxHints = true"
                        @blur="hideSyntaxHints"
-                       class="block w-full pl-12 pr-12 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-lg" 
+                       class="block w-full pl-12 pr-20 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-lg" 
                        placeholder="Universal Search... (e.g. is:task #urgent)" 
                    />
-                   <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-4 flex items-center cursor-pointer">
-                       <X class="h-5 w-5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
-                   </button>
+                   <div class="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-3">
+                       <button
+                           @click="caseSensitive = !caseSensitive"
+                           :class="[
+                               'w-7 h-7 flex items-center justify-center rounded-md text-xs font-bold font-mono transition-all',
+                               caseSensitive
+                                   ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                                   : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'
+                           ]"
+                           title="Case Sensitive"
+                       >Aa</button>
+                       <button v-if="searchQuery" @click="searchQuery = ''" class="w-7 h-7 flex items-center justify-center cursor-pointer">
+                           <X class="h-4 w-4 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
+                       </button>
+                   </div>
 
                    <!-- Search Syntax Hints Dropdown -->
                    <div v-if="showSyntaxHints && !searchQuery" class="absolute top-full left-0 right-0 mt-2 p-4 bg-white dark:bg-[#242426] border border-gray-200 dark:border-[#2c2c2e] rounded-xl shadow-xl z-50">

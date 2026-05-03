@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick, toRef } from 'vue';
-import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core';
+import { ref, computed, onMounted, watch, toRef, nextTick } from 'vue';
+import { VueFlow, useVueFlow, ConnectionMode, MarkerType } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
-import { Plus, Trash2, PenTool, Save, PanelLeftClose, PanelLeft } from 'lucide-vue-next';
+import { Plus, Trash2, PenTool, PanelLeftClose, PanelLeft, Tag, X } from 'lucide-vue-next';
+
+// Edge, Shape, Text & Multi-select menus
+import EdgeMenu from './components/EdgeMenu.vue';
+import ShapeMenu from './components/ShapeMenu.vue';
+import TextMenu from './components/TextMenu.vue';
+import MultiSelectMenu from './components/MultiSelectMenu.vue';
 import { toPng } from 'html-to-image';
 import { ask } from '@tauri-apps/plugin-dialog';
 
@@ -19,7 +25,7 @@ import WhiteboardToolbar from './components/WhiteboardToolbar.vue';
 // Composables
 import { useWhiteboardStore } from './composables/useWhiteboardStore';
 import { useFreeDrawing, getStroke, getSvgPathFromStroke } from './composables/useFreeDrawing';
-import type { ToolMode, ShapeType, WBNode, WBEdge } from './composables/useWhiteboardStore';
+import type { WBNode, WBEdge } from './composables/useWhiteboardStore';
 import { SHAPES_MAP } from './shapes';
 import { logger } from '../../utils/logger';
 
@@ -40,6 +46,20 @@ const store = useWhiteboardStore(vaultPathRef);
 const vfNodes = ref<any[]>([]);
 const vfEdges = ref<any[]>([]);
 
+// ─── Clipboard for Ctrl+C / Ctrl+V ──────────────────────
+let clipboard: { type: string; data: any; position: { x: number; y: number } } | null = null;
+
+/**
+ * Compute z-index for shape nodes based on area.
+ * Smaller shapes get higher z-index so they are always clickable
+ * above larger shapes that contain them (like Miro).
+ */
+function computeShapeZIndex(w: number, h: number): number {
+  const area = w * h;
+  // Max area ~1000×1000 = 1_000_000. Invert so small = high z.
+  return Math.max(1, Math.round(10000 - area / 100));
+}
+
 // Sync store → VueFlow refs
 function syncToVueFlow() {
   if (!store.currentBoardData.value) {
@@ -57,22 +77,45 @@ function syncToVueFlow() {
     };
     // Shape nodes need explicit dimensions on the wrapper for NodeResizer
     if (n.type === 'shape') {
+      const w = n.data.width || 160;
+      const h = n.data.height || 80;
       node.style = {
-        width: `${n.data.width || 160}px`,
-        height: `${n.data.height || 80}px`,
+        width: `${w}px`,
+        height: `${h}px`,
       };
+      node.zIndex = computeShapeZIndex(w, h);
     }
     return node;
   });
-  vfEdges.value = store.currentBoardData.value.edges.map(e => ({
-    id: e.id,
-    source: e.source,
-    sourceHandle: e.sourceHandle,
-    target: e.target,
-    targetHandle: e.targetHandle,
-    type: e.type || 'smoothstep',
-    data: e.data || {},
-  }));
+  vfEdges.value = store.currentBoardData.value.edges.map(e => {
+    const d = e.data || {};
+    const edgeObj: any = {
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      targetHandle: e.targetHandle,
+      type: e.type || 'default',
+      animated: !!d.animated,
+      label: d.label || '',
+      style: {
+        stroke: d.color || undefined,
+        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
+        strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
+      },
+      data: d,
+    };
+    // Apply markers
+    if (d.markerEnd === 'arrow') {
+      edgeObj.markerEnd = { type: MarkerType.ArrowClosed, color: d.color || undefined };
+    }
+    if (d.markerStart === 'arrow') {
+      edgeObj.markerStart = { type: MarkerType.ArrowClosed, color: d.color || undefined };
+    }
+    // Set edge z-index ABOVE all shape z-indices so edges are always clickable
+    edgeObj.zIndex = 10001;
+    return edgeObj;
+  });
 }
 
 // Only sync on board switch — NOT on every data mutation.
@@ -81,7 +124,7 @@ watch(
   () => syncToVueFlow(),
 );
 
-const { viewport, screenToFlowCoordinate } = useVueFlow({ id: 'whiteboard-flow' });
+const { viewport, screenToFlowCoordinate, removeEdges, addEdges, addSelectedNodes, updateNodeData: vfUpdateNodeData } = useVueFlow({ id: 'whiteboard-flow' });
 
 // ─── VueFlow change handlers ────────────────────────────
 // Handles all node changes from VueFlow: position (drag), remove (delete key)
@@ -113,6 +156,8 @@ function handleEdgesChange(changes: any[]) {
   let dirty = false;
   for (const change of changes) {
     if (change.type === 'remove') {
+      // Skip remove if we're just re-creating the edge for a marker update
+      if (updatingEdgeId === change.id) continue;
       store.currentBoardData.value.edges = store.currentBoardData.value.edges.filter(
         (e: WBEdge) => e.id !== change.id
       );
@@ -123,18 +168,254 @@ function handleEdgesChange(changes: any[]) {
 }
 
 function handleConnect(params: any) {
-  const edge = {
+  const edge: any = {
     id: store.generateId('e'),
     source: params.source,
     sourceHandle: params.sourceHandle,
     target: params.target,
     targetHandle: params.targetHandle,
-    type: 'smoothstep',
+    type: 'default',
     data: {},
+    zIndex: 10001,
   };
   store.addEdge(edge);
   vfEdges.value = [...vfEdges.value, edge];
   scheduleSave();
+}
+
+// ─── Edge Menu ──────────────────────────────────────────
+const selectedEdgeId = ref<string | null>(null);
+const edgeMenuPos = ref({ x: 0, y: 0 });
+
+const selectedEdgeData = computed(() => {
+  if (!selectedEdgeId.value || !store.currentBoardData.value) return null;
+  const edge = store.currentBoardData.value.edges.find((e: WBEdge) => e.id === selectedEdgeId.value);
+  if (!edge) return null;
+  return {
+    type: edge.type || 'default',
+    color: edge.data?.color || '',
+    strokeWidth: edge.data?.strokeWidth || 2,
+    animated: edge.data?.animated || false,
+    label: edge.data?.label || '',
+    markerEnd: edge.data?.markerEnd || 'none',
+    markerStart: edge.data?.markerStart || 'none',
+    dashStyle: edge.data?.dashStyle || 'solid',
+  };
+});
+
+function handleEdgeClick({ edge, event }: any) {
+  if (store.activeTool.value !== 'select') return;
+  selectedEdgeId.value = edge.id;
+  edgeMenuPos.value = { x: event.clientX, y: event.clientY };
+}
+
+// Guard flag to prevent handleEdgesChange from deleting the edge during update
+let updatingEdgeId: string | null = null;
+
+function handleEdgeUpdate(edgeId: string, data: Record<string, any>) {
+  if (!store.currentBoardData.value) return;
+  const wbEdge = store.currentBoardData.value.edges.find((e: WBEdge) => e.id === edgeId);
+  if (!wbEdge) return;
+
+  // Update store
+  wbEdge.type = data.type || wbEdge.type;
+  wbEdge.data = { ...wbEdge.data, ...data };
+
+  // Rebuild the full VueFlow edge object
+  const d = wbEdge.data || {};
+  const newVfEdge: any = {
+    id: wbEdge.id,
+    source: wbEdge.source,
+    sourceHandle: wbEdge.sourceHandle,
+    target: wbEdge.target,
+    targetHandle: wbEdge.targetHandle,
+    type: wbEdge.type || 'default',
+    animated: !!d.animated,
+    label: d.label || '',
+    style: {
+      stroke: d.color || undefined,
+      strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
+      strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
+    },
+    data: d,
+    zIndex: 10001,
+  };
+  if (d.markerEnd === 'arrow') {
+    newVfEdge.markerEnd = { type: MarkerType.ArrowClosed, color: d.color || undefined };
+  }
+  if (d.markerStart === 'arrow') {
+    newVfEdge.markerStart = { type: MarkerType.ArrowClosed, color: d.color || undefined };
+  }
+
+  // Set guard flag, remove old edge, add new edge, clear flag
+  updatingEdgeId = edgeId;
+  removeEdges([edgeId]);
+  addEdges([newVfEdge]);
+  updatingEdgeId = null;
+
+  scheduleSave();
+}
+
+function handleEdgeDelete(edgeId: string) {
+  store.removeEdge(edgeId);
+  vfEdges.value = vfEdges.value.filter((e: any) => e.id !== edgeId);
+  selectedEdgeId.value = null;
+  scheduleSave();
+}
+
+function closeEdgeMenu() {
+  selectedEdgeId.value = null;
+}
+
+// ─── Shape Menu ─────────────────────────────────────────
+const selectedShapeNodeId = ref<string | null>(null);
+const shapeMenuPos = ref({ x: 0, y: 0 });
+
+const selectedShapeData = computed(() => {
+  if (!selectedShapeNodeId.value || !store.currentBoardData.value) return null;
+  const node = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === selectedShapeNodeId.value);
+  if (!node || node.type !== 'shape') return null;
+  return {
+    shapeType: node.data.shapeType || 'rectangle',
+    label: node.data.label || '',
+    color: node.data.color || '#7c3aed',
+    fillColor: node.data.fillColor || '',
+    borderWidth: node.data.borderWidth || 2,
+    dashStyle: node.data.dashStyle || 'solid',
+    opacity: node.data.opacity ?? 100,
+    fontSize: node.data.fontSize || 13,
+  };
+});
+
+function handleShapeUpdate(nodeId: string, data: Record<string, any>) {
+  if (!store.currentBoardData.value) return;
+  const wbNode = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === nodeId);
+  if (!wbNode) return;
+  wbNode.data = { ...wbNode.data, ...data };
+
+  // Sync to VueFlow
+  const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
+  if (vfNode) {
+    vfNode.data = { ...vfNode.data, ...data };
+    vfNodes.value = [...vfNodes.value];
+  }
+  scheduleSave();
+}
+
+function handleShapeDelete(nodeId: string) {
+  store.removeNode(nodeId);
+  vfNodes.value = vfNodes.value.filter((n: any) => n.id !== nodeId);
+  vfEdges.value = vfEdges.value.filter((e: any) => e.source !== nodeId && e.target !== nodeId);
+  selectedShapeNodeId.value = null;
+  scheduleSave();
+}
+
+function closeShapeMenu() {
+  selectedShapeNodeId.value = null;
+}
+
+// ─── Text Menu ──────────────────────────────────────────
+const selectedTextNodeId = ref<string | null>(null);
+
+const selectedTextData = computed(() => {
+  if (!selectedTextNodeId.value || !store.currentBoardData.value) return null;
+  const node = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === selectedTextNodeId.value);
+  if (!node || node.type !== 'text') return null;
+  return {
+    label: node.data.label || '',
+    fontSize: node.data.fontSize || 14,
+    fontWeight: node.data.fontWeight || 'normal',
+    fontStyle: node.data.fontStyle || 'normal',
+    textAlign: node.data.textAlign || 'left',
+    color: node.data.color || '#1e1e1e',
+    backgroundColor: node.data.backgroundColor || '',
+    opacity: node.data.opacity ?? 100,
+    width: node.data.width || 240,
+  };
+});
+
+function handleTextUpdate(nodeId: string, data: Record<string, any>) {
+  if (!store.currentBoardData.value) return;
+  const wbNode = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === nodeId);
+  if (!wbNode) return;
+  wbNode.data = { ...wbNode.data, ...data };
+  const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
+  if (vfNode) {
+    vfNode.data = { ...vfNode.data, ...data };
+    vfNodes.value = [...vfNodes.value];
+  }
+  scheduleSave();
+}
+
+function handleTextDelete(nodeId: string) {
+  store.removeNode(nodeId);
+  vfNodes.value = vfNodes.value.filter((n: any) => n.id !== nodeId);
+  vfEdges.value = vfEdges.value.filter((e: any) => e.source !== nodeId && e.target !== nodeId);
+  selectedTextNodeId.value = null;
+  scheduleSave();
+}
+
+function closeTextMenu() {
+  selectedTextNodeId.value = null;
+}
+
+// ─── Multi-Select Menu ──────────────────────────────────
+const multiSelectedNodes = computed(() =>
+  vfNodes.value.filter((n: any) => n.selected)
+);
+const showMultiSelectMenu = computed(() =>
+  multiSelectedNodes.value.length >= 2
+);
+
+function handleMultiGroup() {
+  const selected = [...multiSelectedNodes.value];
+  if (selected.length < 2) return;
+  const groupId = `grp_${Date.now()}`;
+  for (const n of selected) {
+    // Use VueFlow's native API — doesn't reset selection
+    vfUpdateNodeData(n.id, { groupId });
+    store.updateNodeData(n.id, { groupId });
+  }
+  scheduleSave();
+}
+
+function handleMultiUngroup() {
+  const selected = [...multiSelectedNodes.value];
+  for (const n of selected) {
+    if (n.data?.groupId) {
+      const { groupId, ...rest } = n.data;
+      vfUpdateNodeData(n.id, rest, { replace: true });
+      store.updateNodeData(n.id, rest);
+    }
+  }
+  scheduleSave();
+}
+
+function handleMultiDelete() {
+  const ids = multiSelectedNodes.value.map((n: any) => n.id);
+  for (const id of ids) {
+    store.removeNode(id);
+  }
+  vfNodes.value = vfNodes.value.filter((n: any) => !ids.includes(n.id));
+  vfEdges.value = vfEdges.value.filter((e: any) => !ids.includes(e.source) && !ids.includes(e.target));
+  scheduleSave();
+}
+
+function handleMultiUpdateAll(data: Record<string, any>) {
+  const selected = [...multiSelectedNodes.value];
+  for (const n of selected) {
+    vfUpdateNodeData(n.id, data);
+    store.updateNodeData(n.id, data);
+  }
+  scheduleSave();
+}
+
+function closeMultiSelectMenu() {
+  // Deselect all nodes
+  for (const n of vfNodes.value) {
+    n.selected = false;
+  }
+  vfNodes.value = [...vfNodes.value];
 }
 
 // ─── Auto-save (debounced 2s) ───────────────────────────
@@ -294,16 +575,24 @@ function addNodeToCanvas(node: WBNode) {
   const vfNode: any = { ...node, position: { ...node.position }, data: { ...node.data }, draggable: true };
   // Shape nodes need explicit dimensions on the wrapper for NodeResizer
   if (node.type === 'shape') {
+    const w = node.data.width || 160;
+    const h = node.data.height || 80;
     vfNode.style = {
-      width: `${node.data.width || 160}px`,
-      height: `${node.data.height || 80}px`,
+      width: `${w}px`,
+      height: `${h}px`,
     };
+    vfNode.zIndex = computeShapeZIndex(w, h);
   }
   vfNodes.value = [...vfNodes.value, vfNode];
   scheduleSave();
 }
 
 function handlePaneClick(event: any) {
+  // Close menus when clicking on empty canvas
+  selectedEdgeId.value = null;
+  selectedShapeNodeId.value = null;
+  selectedTextNodeId.value = null;
+
   const pos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
 
   if (store.activeTool.value === 'shape') {
@@ -348,26 +637,148 @@ function handlePaneClick(event: any) {
   }
 }
 
-// ─── Node Events ────────────────────────────────────────
-function handleNodeClick({ node }: any) {
+// ─── Mindmap subtree drag (XMind-style) ─────────────────
+let mindmapDragState: {
+  nodeId: string;
+  startPos: { x: number; y: number };
+  descendants: { id: string; startX: number; startY: number }[];
+} | null = null;
+
+function handleNodeDragStart({ node }: any) {
+  // Auto-select all group members BEFORE drag starts
+  if (node.data?.groupId) {
+    const groupId = node.data.groupId;
+    const groupMembers = vfNodes.value.filter(
+      (n: any) => n.data?.groupId === groupId && n.id !== node.id
+    );
+    if (groupMembers.length > 0) {
+      addSelectedNodes(groupMembers);
+    }
+  }
+
+  // Mindmap: record initial positions of all descendants
+  if (node.type === 'mindmap') {
+    const descendantIds = new Set<string>();
+    const findDescendants = (parentId: string) => {
+      for (const edge of vfEdges.value) {
+        if (edge.source === parentId && !descendantIds.has(edge.target)) {
+          descendantIds.add(edge.target);
+          findDescendants(edge.target);
+        }
+      }
+    };
+    findDescendants(node.id);
+
+    if (descendantIds.size > 0) {
+      mindmapDragState = {
+        nodeId: node.id,
+        startPos: { x: node.position.x, y: node.position.y },
+        descendants: [...descendantIds].map(id => {
+          const n = vfNodes.value.find((nd: any) => nd.id === id);
+          return { id, startX: n?.position?.x || 0, startY: n?.position?.y || 0 };
+        }),
+      };
+    }
+  }
+}
+
+function handleNodeDrag({ node }: any) {
+  // Mindmap: apply delta to all descendants
+  if (mindmapDragState && node.id === mindmapDragState.nodeId) {
+    const dx = node.position.x - mindmapDragState.startPos.x;
+    const dy = node.position.y - mindmapDragState.startPos.y;
+    for (const desc of mindmapDragState.descendants) {
+      const vfNode = vfNodes.value.find((n: any) => n.id === desc.id);
+      if (vfNode) {
+        vfNode.position = {
+          x: desc.startX + dx,
+          y: desc.startY + dy,
+        };
+      }
+    }
+  }
+}
+
+function handleNodeDragStop({ node }: any) {
+  if (mindmapDragState && node.id === mindmapDragState.nodeId) {
+    // Sync final positions to store
+    for (const desc of mindmapDragState.descendants) {
+      const vfNode = vfNodes.value.find((n: any) => n.id === desc.id);
+      if (vfNode) {
+        const wbNode = store.currentBoardData.value?.nodes.find((n: any) => n.id === desc.id);
+        if (wbNode) {
+          wbNode.position = { ...vfNode.position };
+        }
+      }
+    }
+    mindmapDragState = null;
+    scheduleSave();
+  }
+}
+
+function handleNodeClick({ node, event }: any) {
+  // Close edge menu when clicking a node
+  selectedEdgeId.value = null;
+
   if (store.activeTool.value === 'eraser') {
     store.removeNode(node.id);
     vfNodes.value = vfNodes.value.filter((n: any) => n.id !== node.id);
     vfEdges.value = vfEdges.value.filter((e: any) => e.source !== node.id && e.target !== node.id);
+    selectedShapeNodeId.value = null;
     scheduleSave();
+    return;
+  }
+
+  // Auto-select all group members when clicking a grouped node
+  if (store.activeTool.value === 'select' && node.data?.groupId) {
+    const groupId = node.data.groupId;
+    const groupMembers = vfNodes.value.filter(
+      (n: any) => n.data?.groupId === groupId && n.id !== node.id
+    );
+    if (groupMembers.length > 0) {
+      addSelectedNodes(groupMembers);
+    }
+  }
+
+  // Show property menu for the clicked node type
+  if (store.activeTool.value === 'select') {
+    if (node.type === 'shape') {
+      selectedShapeNodeId.value = node.id;
+      selectedTextNodeId.value = null;
+      shapeMenuPos.value = { x: event.clientX, y: event.clientY };
+    } else if (node.type === 'text') {
+      selectedTextNodeId.value = node.id;
+      selectedShapeNodeId.value = null;
+    } else {
+      selectedShapeNodeId.value = null;
+      selectedTextNodeId.value = null;
+    }
   }
 }
 
 function handleNodeDataUpdate(nodeId: string, data: any) {
   store.updateNodeData(nodeId, data);
+  // Sync updated data into VueFlow node (critical for copy-paste accuracy)
+  const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
+  if (vfNode) {
+    vfNode.data = { ...vfNode.data, ...data };
+    // Update wrapper dimensions & z-index for shape nodes on resize
+    if (vfNode.type === 'shape' && (data.width || data.height)) {
+      const w = data.width || vfNode.data.width || 160;
+      const h = data.height || vfNode.data.height || 80;
+      vfNode.style = { ...vfNode.style, width: `${w}px`, height: `${h}px` };
+      vfNode.zIndex = computeShapeZIndex(w, h);
+    }
+    vfNodes.value = [...vfNodes.value];
+  }
   scheduleSave();
 }
 
-function handleMindmapAddChild({ parentId, direction }: { parentId: string; direction: 'right' | 'bottom' }) {
+function handleMindmapAddChild({ parentId, direction }: { parentId: string; direction: 'right' | 'left' }) {
   const childId = store.addMindmapChild(parentId, direction);
-  // Sync new child node + edge to VueFlow
   syncToVueFlow();
   scheduleSave();
+  if (childId) focusMindmapNode(childId);
 }
 
 function handleMindmapRemoveNode(nodeId: string) {
@@ -378,9 +789,33 @@ function handleMindmapRemoveNode(nodeId: string) {
 }
 
 function handleMindmapAddSibling(nodeId: string) {
-  store.addMindmapSibling(nodeId);
+  const siblingId = store.addMindmapSibling(nodeId);
   syncToVueFlow();
   scheduleSave();
+  if (siblingId) focusMindmapNode(siblingId);
+}
+
+/** Focus the input inside a newly created mindmap node after VueFlow renders it */
+function focusMindmapNode(nodeId: string) {
+  let attempts = 0;
+  const maxAttempts = 10; // 10 × 50ms = 500ms max
+  const tryFocus = () => {
+    const nodeEl = document.querySelector(`[data-id="${nodeId}"]`);
+    if (nodeEl) {
+      const input = nodeEl.querySelector('input') as HTMLInputElement | null;
+      if (input) {
+        input.focus();
+        input.select();
+        return;
+      }
+    }
+    attempts++;
+    if (attempts < maxAttempts) {
+      setTimeout(tryFocus, 50);
+    }
+  };
+  // Start after a short delay to let VueFlow begin processing
+  setTimeout(tryFocus, 50);
 }
 
 // ─── Keyboard Shortcuts ─────────────────────────────────
@@ -395,7 +830,8 @@ function handleKeydown(e: KeyboardEvent) {
     if (selectedNode) {
       e.preventDefault();
       if (e.key === 'Tab') {
-        handleMindmapAddChild({ parentId: selectedNode.id, direction: 'right' });
+        const dir = selectedNode.data?.direction || 'right';
+        handleMindmapAddChild({ parentId: selectedNode.id, direction: dir });
       } else {
         handleMindmapAddSibling(selectedNode.id);
       }
@@ -403,12 +839,15 @@ function handleKeydown(e: KeyboardEvent) {
     }
   }
 
-  if (e.key === 'v' || e.key === 'V') { store.activeTool.value = 'select'; return; }
-  if (e.key === 'd' || e.key === 'D') { store.activeTool.value = 'draw'; return; }
-  if (e.key === 's' && !e.ctrlKey && !e.metaKey) { store.activeTool.value = 'shape'; return; }
-  if (e.key === 't' || e.key === 'T') { store.activeTool.value = 'text'; return; }
-  if (e.key === 'e' || e.key === 'E') { store.activeTool.value = 'draw'; store.drawSubTool.value = 'eraser'; return; }
-  if (e.key === 'm' || e.key === 'M') { store.activeTool.value = 'mindmap'; return; }
+  // Tool shortcuts — only when no modifier key is held
+  if (!e.ctrlKey && !e.metaKey) {
+    if (e.key === 'v' || e.key === 'V') { store.activeTool.value = 'select'; return; }
+    if (e.key === 'd' || e.key === 'D') { store.activeTool.value = 'draw'; return; }
+    if (e.key === 's') { store.activeTool.value = 'shape'; return; }
+    if (e.key === 't' || e.key === 'T') { store.activeTool.value = 'text'; return; }
+    if (e.key === 'e' || e.key === 'E') { store.activeTool.value = 'draw'; store.drawSubTool.value = 'eraser'; return; }
+    if (e.key === 'm' || e.key === 'M') { store.activeTool.value = 'mindmap'; return; }
+  }
 
   if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
     e.preventDefault();
@@ -427,6 +866,56 @@ function handleKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
     store.saveCurrentBoard();
+    return;
+  }
+
+  // Ctrl+C → copy selected node
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C') && !e.shiftKey) {
+    const selectedNode = vfNodes.value.find((n: any) => n.selected);
+    if (selectedNode) {
+      e.preventDefault();
+      clipboard = {
+        type: selectedNode.type,
+        data: JSON.parse(JSON.stringify(selectedNode.data)),
+        position: { ...selectedNode.position },
+      };
+    }
+    return;
+  }
+
+  // Ctrl+V → paste copied node with offset
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V') && !e.shiftKey) {
+    if (clipboard) {
+      e.preventDefault();
+      const offset = 30;
+      const newNode: WBNode = {
+        id: store.generateId(clipboard.type === 'shape' ? 'sh' : 'n'),
+        type: clipboard.type,
+        position: {
+          x: clipboard.position.x + offset,
+          y: clipboard.position.y + offset,
+        },
+        data: JSON.parse(JSON.stringify(clipboard.data)),
+      };
+      addNodeToCanvas(newNode);
+      // Move clipboard position so next paste offsets further
+      clipboard.position.x += offset;
+      clipboard.position.y += offset;
+    }
+    return;
+  }
+
+  // Ctrl+G → group selected nodes
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G') && !e.shiftKey) {
+    e.preventDefault();
+    handleMultiGroup();
+    return;
+  }
+
+  // Ctrl+Shift+G → ungroup selected nodes
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G') && e.shiftKey) {
+    e.preventDefault();
+    handleMultiUngroup();
     return;
   }
 }
@@ -469,6 +958,30 @@ function finishEditTitle() {
     store.currentBoardData.value.title = titleInput.value.trim();
     store.saveCurrentBoard(); // Save immediately so sidebar updates
   }
+}
+
+// ─── Tags ────────────────────────────────────────────────
+const isAddingTag = ref(false);
+const newTagInput = ref('');
+
+function addBoardTag() {
+  if (!store.currentBoardData.value || !newTagInput.value.trim()) return;
+  const tag = newTagInput.value.trim().toLowerCase();
+  if (store.currentBoardData.value.tags.includes(tag)) {
+    newTagInput.value = '';
+    isAddingTag.value = false;
+    return;
+  }
+  store.currentBoardData.value.tags.push(tag);
+  newTagInput.value = '';
+  isAddingTag.value = false;
+  store.saveCurrentBoard();
+}
+
+function removeBoardTag(tag: string) {
+  if (!store.currentBoardData.value) return;
+  store.currentBoardData.value.tags = store.currentBoardData.value.tags.filter(t => t !== tag);
+  store.saveCurrentBoard();
 }
 
 async function confirmDeleteBoard(boardId: string) {
@@ -517,6 +1030,16 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove);
   window.removeEventListener('mouseup', onMouseUp);
 });
+
+// ─── Cross-app navigation ────────────────────────────────
+async function openBoardById(boardId: string) {
+  if (!store.boards.value.length) {
+    await store.loadBoards();
+  }
+  await store.loadBoardData(boardId);
+}
+
+defineExpose({ openBoardById });
 </script>
 
 <template>
@@ -619,9 +1142,37 @@ onUnmounted(() => {
             </h1>
           </div>
           <div class="flex items-center gap-1">
-            <span v-if="store.isSaving.value" class="text-[10px] text-muted dark:text-muted-dark">Saving…</span>
-            <button @click="store.saveCurrentBoard()" class="wb-icon-btn" title="Save (Ctrl+S)">
-              <Save class="w-3.5 h-3.5" />
+            <span v-if="store.isSaving.value" class="text-[10px] text-muted dark:text-muted-dark font-medium px-2">Saving…</span>
+          </div>
+        </div>
+
+        <!-- Tags row -->
+        <div class="wb-tags-bar">
+          <Tag class="w-3 h-3 text-muted dark:text-muted-dark flex-shrink-0" />
+          <div class="flex items-center gap-1 flex-wrap min-w-0">
+            <span
+              v-for="tag in store.currentBoardData.value.tags"
+              :key="tag"
+              class="wb-tag group"
+            >
+              #{{ tag }}
+              <button @click.stop="removeBoardTag(tag)" class="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-danger transition-opacity">
+                <X class="w-2.5 h-2.5" />
+              </button>
+            </span>
+            <input
+              v-if="isAddingTag"
+              v-model="newTagInput"
+              @keydown.enter="addBoardTag"
+              @keydown.escape="isAddingTag = false; newTagInput = ''"
+              @blur="addBoardTag"
+              type="text"
+              placeholder="tag…"
+              class="wb-tag-input"
+              autofocus
+            />
+            <button v-else @click="isAddingTag = true" class="wb-tag-add" title="Add Tag">
+              <Plus class="w-3 h-3" />
             </button>
           </div>
         </div>
@@ -643,12 +1194,19 @@ onUnmounted(() => {
           :snap-grid="[10, 10]"
           :connection-mode="ConnectionMode.Loose"
           :delete-key-code="'Delete'"
-          :pan-on-drag="store.activeTool.value === 'select'"
+          :pan-on-drag="store.activeTool.value === 'select' ? [1, 2] : false"
+          :selection-on-drag="store.activeTool.value === 'select'"
+          :pan-on-scroll="true"
           :zoom-on-scroll="true"
           :nodes-draggable="store.activeTool.value === 'select'"
           :nodes-connectable="store.activeTool.value === 'select'"
+          :elevate-edges-on-select="true"
           @pane-click="handlePaneClick"
           @node-click="handleNodeClick"
+          @node-drag-start="handleNodeDragStart"
+          @node-drag="handleNodeDrag"
+          @node-drag-stop="handleNodeDragStop"
+          @edge-click="handleEdgeClick"
           @connect="handleConnect"
           @nodes-change="handleNodesChange"
           @edges-change="handleEdgesChange"
@@ -744,6 +1302,55 @@ onUnmounted(() => {
           @redo="() => { store.redo(); syncToVueFlow(); scheduleSave(); }"
           @export="exportPng"
         />
+
+        <!-- Edge Properties Panel (docked right side) -->
+        <Teleport to="body">
+          <EdgeMenu
+            v-if="selectedEdgeId && selectedEdgeData"
+            :edge-id="selectedEdgeId"
+            :edge-data="selectedEdgeData"
+            @update="handleEdgeUpdate"
+            @delete="handleEdgeDelete"
+            @close="closeEdgeMenu"
+          />
+        </Teleport>
+
+        <!-- Shape Properties Panel (docked right side) -->
+        <Teleport to="body">
+          <ShapeMenu
+            v-if="selectedShapeNodeId && selectedShapeData"
+            :node-id="selectedShapeNodeId"
+            :node-data="selectedShapeData"
+            @update="handleShapeUpdate"
+            @delete="handleShapeDelete"
+            @close="closeShapeMenu"
+          />
+        </Teleport>
+
+        <!-- Text Properties Panel (docked right side) -->
+        <Teleport to="body">
+          <TextMenu
+            v-if="selectedTextNodeId && selectedTextData"
+            :node-id="selectedTextNodeId"
+            :node-data="selectedTextData"
+            @update="handleTextUpdate"
+            @delete="handleTextDelete"
+            @close="closeTextMenu"
+          />
+        </Teleport>
+
+        <!-- Multi-Select Panel (docked right side) -->
+        <Teleport to="body">
+          <MultiSelectMenu
+            v-if="showMultiSelectMenu"
+            :selected-nodes="multiSelectedNodes"
+            @group="handleMultiGroup"
+            @ungroup="handleMultiUngroup"
+            @delete="handleMultiDelete"
+            @update-all="handleMultiUpdateAll"
+            @close="closeMultiSelectMenu"
+          />
+        </Teleport>
       </template>
 
       <!-- No board selected -->
@@ -795,6 +1402,75 @@ onUnmounted(() => {
 .dark .wb-title-bar {
   background: rgba(30,30,30,0.85);
   border-color: var(--color-border-dark, #2c2c2c);
+}
+.wb-tags-bar {
+  position: absolute;
+  top: 37px;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 72px;
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border, #e6e6e6);
+}
+.dark .wb-tags-bar {
+  background: rgba(30,30,30,0.85);
+  border-color: var(--color-border-dark, #2c2c2c);
+}
+.wb-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(124, 58, 237, 0.1);
+  color: var(--color-accent, #7c3aed);
+  cursor: default;
+}
+.dark .wb-tag {
+  background: rgba(167, 139, 250, 0.12);
+  color: #a78bfa;
+}
+.wb-tag-input {
+  width: 60px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--color-accent, #7c3aed);
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+.wb-tag-add {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border, #d4d4d8);
+  background: transparent;
+  color: var(--color-text-secondary, #a1a1aa);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.wb-tag-add:hover {
+  border-color: var(--color-accent, #7c3aed);
+  color: var(--color-accent, #7c3aed);
+}
+.dark .wb-tag-add {
+  border-color: var(--color-border-dark, #3f3f46);
+  color: var(--color-text-secondary-dark, #71717a);
+}
+.dark .wb-tag-add:hover {
+  border-color: #a78bfa;
+  color: #a78bfa;
 }
 .wb-icon-btn {
   width: 28px;
@@ -895,5 +1571,25 @@ onUnmounted(() => {
   border: 2px solid rgba(100, 100, 100, 0.7);
   background: rgba(200, 200, 200, 0.15);
   transform: translate(-50%, -50%);
+}
+:deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+  stroke: var(--color-accent, #7c3aed) !important;
+  filter: drop-shadow(0 0 3px rgba(124, 58, 237, 0.4));
+}
+:deep(.vue-flow__edge-interaction) {
+  stroke-width: 20px;
+}
+/*
+ * Make shape node fills click-through so edges underneath can be selected.
+ * pointer-events: none on the wrapper makes the fill area transparent to clicks.
+ * Children (SVG stroke, handles, label) re-enable pointer-events so they're
+ * still interactive. VueFlow drag still works via event bubbling from children.
+ */
+:deep(.vue-flow__node-shape) {
+  pointer-events: none !important;
+}
+/* Re-enable pointer-events on resize handles so they remain interactive */
+:deep(.vue-flow__node-shape .vue-flow__resize-control) {
+  pointer-events: auto !important;
 }
 </style>

@@ -125,8 +125,10 @@ pub fn search_nexus(
     query: String,
     page: Option<u32>,
     per_page: Option<u32>,
+    case_sensitive: Option<bool>,
 ) -> AppResult<crate::search::SearchResponse> {
-    let parsed = crate::search::parse_query(&query);
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.case_sensitive = case_sensitive.unwrap_or(false);
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.search_fts(&parsed, page.unwrap_or(1), per_page.unwrap_or(50))
 }

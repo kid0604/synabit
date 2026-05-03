@@ -546,7 +546,7 @@ onUnmounted(() => {
     <div v-if="isSidebarOpen" @click="isSidebarOpen = false" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-30 transition-opacity"></div>
 
     <!-- Sidebar -->
-    <div class="absolute md:relative inset-y-0 left-0 w-64 flex-shrink-0 bg-white/95 md:bg-white/40 dark:bg-[#1a1a1a]/95 md:dark:bg-white/[0.02] backdrop-blur-xl border-r border-gray-200/50 dark:border-white/5 flex flex-col z-40 transition-transform duration-300 md:translate-x-0"
+    <div class="absolute md:relative inset-y-0 left-0 w-64 flex-shrink-0 bg-[#fbfbfc] dark:bg-[#191919] border-r border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-col z-40 transition-transform duration-300 md:translate-x-0"
          :class="isSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'">
         <div class="p-4 md:p-6 flex items-center justify-between">
             <div class="flex items-center gap-3">

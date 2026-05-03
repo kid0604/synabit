@@ -702,6 +702,38 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
         for r in rows.flatten() { items.push(r); }
 
+        // Whiteboards
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, tags, content, path, created_at, updated_at FROM whiteboards"
+        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
+        let rows = stmt.query_map([], |row| {
+            let tags_str: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+            let content_json: String = row.get(3)?;
+            let node_count = content_json.matches("\"id\"").count();
+            let preview = format!("Whiteboard • {} nodes", node_count);
+            // Extract text labels from nodes for searchable content
+            let node_texts: String = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content_json) {
+                parsed.get("nodes")
+                    .and_then(|n| n.as_array())
+                    .map(|nodes| {
+                        nodes.iter()
+                            .filter_map(|n| n.get("data").and_then(|d| d.get("label").and_then(|l| l.as_str())))
+                            .collect::<Vec<_>>()
+                            .join(" • ")
+                    })
+                    .unwrap_or_default()
+            } else { String::new() };
+            Ok(NexusRow {
+                id: row.get(0)?, item_type: "whiteboard".to_string(),
+                title: row.get(1)?, preview, tags,
+                date: row.get(6)?, path: row.get(4)?,
+                content: node_texts,
+                status: None,
+            })
+        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
+        for r in rows.flatten() { items.push(r); }
+
         Ok(items)
     }
 
@@ -777,6 +809,38 @@ impl DbBridge {
                     title: "⚡ QuickCap".to_string(), preview, tags: extracted_tags,
                     date: row.get(2)?, path: row.get(3)?,
                     content, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            return Ok(rows.next().and_then(|r| r.ok()));
+        }
+        // Whiteboards
+        if id.starts_with("Whiteboards/") || id.starts_with("whiteboard-") {
+            let mut stmt = self.conn
+                .prepare("SELECT id, title, tags, content, path, created_at, updated_at FROM whiteboards WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let tags_str: String = row.get(2)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                let content_json: String = row.get(3)?;
+                let node_count = content_json.matches("\"id\"").count();
+                let preview = format!("Whiteboard • {} nodes", node_count);
+                let node_texts: String = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content_json) {
+                    parsed.get("nodes")
+                        .and_then(|n| n.as_array())
+                        .map(|nodes| {
+                            nodes.iter()
+                                .filter_map(|n| n.get("data").and_then(|d| d.get("label").and_then(|l| l.as_str())))
+                                .collect::<Vec<_>>()
+                                .join(" • ")
+                        })
+                        .unwrap_or_default()
+                } else { String::new() };
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: "whiteboard".to_string(),
+                    title: row.get(1)?, preview, tags,
+                    date: row.get(6)?, path: row.get(4)?,
+                    content: node_texts,
+                    status: None,
                 })
             }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
             return Ok(rows.next().and_then(|r| r.ok()));
@@ -986,6 +1050,26 @@ impl DbBridge {
         .filter_map(|r| r.ok())
         .count();
 
+        // Index whiteboards
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, tags, path, updated_at FROM whiteboards"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let tags_json: String = row.get(2)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let path: String = row.get(3)?;
+            let date: String = row.get(4)?;
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'whiteboard', ?2, ?3, ?2, '', NULL, ?4, ?5)",
+                params![id, title, tags.join(" "), date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
         Ok(())
     }
 
@@ -1165,6 +1249,25 @@ impl DbBridge {
         }
 
         let elapsed = start.elapsed().as_millis() as u64;
+
+        // Case-sensitive post-filter: FTS5 is case-insensitive, so we filter results here
+        if parsed.case_sensitive && !parsed.fts_terms.is_empty() {
+            let original_terms: Vec<&str> = parsed.fts_terms.iter()
+                .map(|t| t.trim_matches('"'))
+                .filter(|t| !t.is_empty())
+                .collect();
+
+            results.retain(|r| {
+                let haystack = format!("{} {} {}", r.title, r.snippet.replace("<mark>", "").replace("</mark>", ""), r.tags.join(" "));
+                original_terms.iter().all(|term| haystack.contains(term))
+            });
+            let filtered_count = results.len() as u32;
+            return Ok(crate::search::SearchResponse {
+                results,
+                total_count: filtered_count,
+                query_time_ms: elapsed,
+            });
+        }
 
         Ok(crate::search::SearchResponse {
             results,

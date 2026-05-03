@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { NodeResizer } from '@vue-flow/node-resizer';
 
 const props = defineProps<{
   id: string;
+  selected?: boolean;
   data: {
     label: string;
     fontSize?: number;
+    fontWeight?: string;
+    fontStyle?: string;
+    textAlign?: string;
+    color?: string;
+    backgroundColor?: string;
+    opacity?: number;
+    width?: number;
   };
 }>();
 
@@ -25,27 +34,55 @@ function finishEdit() {
   isEditing.value = false;
   emit('update:data', { ...props.data, label: editText.value });
 }
+
+function onResizeEnd(event: any) {
+  emit('update:data', { ...props.data, width: Math.round(event.params.width) });
+}
 </script>
 
 <template>
   <div
     class="wb-text-node"
+    :class="{ 'wb-text-node--editing': isEditing }"
+    :style="{
+      fontSize: (data.fontSize || 14) + 'px',
+      fontWeight: data.fontWeight || 'normal',
+      fontStyle: data.fontStyle || 'normal',
+      textAlign: data.textAlign || 'left',
+      color: data.color || undefined,
+      backgroundColor: data.backgroundColor || 'transparent',
+      opacity: (data.opacity ?? 100) / 100,
+      width: (data.width || 240) + 'px',
+    }"
     @dblclick.stop="startEdit"
   >
+    <NodeResizer
+      :is-visible="!!selected && !isEditing"
+      :min-width="80"
+      :min-height="24"
+      color="var(--color-accent, #7c3aed)"
+      @resize-end="onResizeEnd"
+    />
+
     <textarea
       v-if="isEditing"
       v-model="editText"
       @blur="finishEdit"
       @keydown.escape="isEditing = false"
       class="wb-text-input"
-      :style="{ fontSize: (data.fontSize || 14) + 'px' }"
+      :style="{
+        fontSize: (data.fontSize || 14) + 'px',
+        fontWeight: data.fontWeight || 'normal',
+        fontStyle: data.fontStyle || 'normal',
+        textAlign: data.textAlign || 'left',
+        color: 'inherit',
+      }"
       autofocus
       rows="3"
     />
     <div
       v-else
-      class="wb-text-content text-text dark:text-text-dark"
-      :style="{ fontSize: (data.fontSize || 14) + 'px' }"
+      class="wb-text-content"
     >
       {{ data.label || 'Type here...' }}
     </div>
@@ -54,26 +91,38 @@ function finishEdit() {
 
 <style scoped>
 .wb-text-node {
-  min-width: 120px;
-  max-width: 400px;
+  width: 240px;
+  min-width: 80px;
+  height: 100%;
   padding: 8px 12px;
+  border-radius: 8px;
   cursor: grab;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, background-color 0.15s, opacity 0.15s, box-shadow 0.15s;
+}
+.wb-text-node--editing {
+  border-color: var(--color-accent, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+.dark .wb-text-node--editing {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2);
 }
 .wb-text-content {
   white-space: pre-wrap;
   word-break: break-word;
-  opacity: 0.85;
+  overflow-wrap: break-word;
 }
 .wb-text-input {
   width: 100%;
-  min-width: 200px;
+  height: 100%;
+  min-height: 60px;
   background: transparent;
-  border: 1px dashed var(--color-border, #e6e6e6);
-  border-radius: 6px;
-  padding: 4px;
+  border: none;
+  padding: 0;
   outline: none;
   color: inherit;
-  resize: both;
+  resize: none;
   font-family: inherit;
 }
 </style>

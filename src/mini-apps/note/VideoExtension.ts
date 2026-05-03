@@ -14,9 +14,9 @@ function getYouTubeEmbedUrl(url: string): string {
       }
       
       if (videoId) {
-        // Retain other params like list, t
         const params = new URLSearchParams(urlObj.search);
         params.delete('v');
+        params.set('autoplay', '0');
         const paramStr = params.toString();
         return `https://www.youtube.com/embed/${videoId}${paramStr ? '?' + paramStr : ''}`;
       }
@@ -82,15 +82,24 @@ export const VideoExtension = Node.create<VideoOptions>({
           src: embedSrc,
           frameborder: '0',
           allowfullscreen: 'true',
-          allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+          allow: 'accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
           class: 'w-full h-full rounded-lg shadow-sm border border-gray-200 dark:border-zinc-700'
         })]
       ];
     } else {
-      return ['video', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+      const attrs = mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         controls: 'true',
+        preload: 'metadata',
         class: 'w-full rounded-lg shadow-sm border border-gray-200 dark:border-zinc-700 max-h-[600px] object-contain bg-black/5'
-      })];
+      });
+      delete attrs.autoplay;
+      
+      // WebKit/WebView first-frame rendering hack
+      if (attrs.src && !attrs.src.includes('#t=')) {
+        attrs.src = attrs.src + '#t=0.001';
+      }
+      
+      return ['video', attrs];
     }
   },
 

@@ -248,26 +248,32 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     return MINDMAP_COLORS[level % MINDMAP_COLORS.length];
   }
 
-  function addMindmapChild(parentId: string, direction: 'right' | 'bottom' = 'right') {
+  function addMindmapChild(parentId: string, direction: 'right' | 'left' = 'right') {
     if (!currentBoardData.value) return;
     const parent = currentBoardData.value.nodes.find(n => n.id === parentId);
     if (!parent) return;
 
     const parentLevel = parent.data.level || 0;
     const childLevel = parentLevel + 1;
-    const siblings = currentBoardData.value.edges.filter(e => e.source === parentId);
-    const offsetIndex = siblings.length;
+
+    // Count only siblings in the same direction
+    const allChildEdges = currentBoardData.value.edges.filter(e => e.source === parentId);
+    const sameDirectionChildren = allChildEdges.filter(e => {
+      const childNode = currentBoardData.value!.nodes.find(n => n.id === e.target);
+      return childNode?.data?.direction === direction;
+    });
+    const offsetIndex = sameDirectionChildren.length;
 
     let childPos: { x: number; y: number };
-    if (direction === 'right') {
+    if (direction === 'left') {
       childPos = {
-        x: parent.position.x + 220,
+        x: parent.position.x - 220,
         y: parent.position.y + offsetIndex * 80,
       };
     } else {
       childPos = {
-        x: parent.position.x,
-        y: parent.position.y + 100 + offsetIndex * 80,
+        x: parent.position.x + 220,
+        y: parent.position.y + offsetIndex * 80,
       };
     }
 
@@ -281,6 +287,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
         color: getMindmapColor(childLevel),
         level: childLevel,
         editing: true,
+        direction, // preserve direction for sub-children
       },
     };
 
@@ -288,6 +295,8 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       id: generateId('e'),
       source: parentId,
       target: childId,
+      sourceHandle: direction === 'left' ? 'left-source' : 'right-source',
+      targetHandle: direction === 'left' ? 'right-target' : 'left-target',
       type: 'default',
       data: {},
     };
@@ -307,11 +316,11 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
 
   function addMindmapSibling(nodeId: string) {
     if (!currentBoardData.value) return;
+    const node = currentBoardData.value.nodes.find(n => n.id === nodeId);
+    if (!node) return;
     const parentId = findParentId(nodeId);
     if (!parentId) {
       // Root node — create sibling as another root below
-      const node = currentBoardData.value.nodes.find(n => n.id === nodeId);
-      if (!node) return;
       const siblingId = generateId('mind');
       const siblingNode: WBNode = {
         id: siblingId,
@@ -328,8 +337,9 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       currentBoardData.value.nodes.push(siblingNode);
       return siblingId;
     }
-    // Has parent — add another child to the same parent
-    return addMindmapChild(parentId, 'right');
+    // Has parent — add another child to the same parent, preserving direction
+    const direction = node.data?.direction || 'right';
+    return addMindmapChild(parentId, direction);
   }
 
   return {

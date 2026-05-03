@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch, nextTick, onMounted, computed } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
 
 const props = defineProps<{
@@ -9,18 +9,51 @@ const props = defineProps<{
     color: string;
     level: number;
     editing?: boolean;
+    direction?: 'left' | 'right';
   };
 }>();
 
 const emit = defineEmits<{
   (e: 'update:data', data: any): void;
-  (e: 'add-child', payload: { parentId: string; direction: 'right' | 'bottom' }): void;
+  (e: 'add-child', payload: { parentId: string; direction: 'right' | 'left' }): void;
   (e: 'add-sibling', nodeId: string): void;
   (e: 'remove-node', nodeId: string): void;
 }>();
 
 const isEditing = ref(props.data.editing || false);
 const editText = ref(props.data.label);
+const inputRef = ref<HTMLInputElement | null>(null);
+
+// Root node (level 0) shows + on both sides
+// Non-root: show + only on its direction side
+const isRoot = computed(() => (props.data.level || 0) === 0);
+const nodeDirection = computed(() => props.data.direction || 'right');
+
+// React to external editing state changes
+watch(() => props.data.editing, (val) => {
+  if (val && !isEditing.value) {
+    isEditing.value = true;
+    editText.value = props.data.label;
+  }
+});
+
+// Auto-focus input whenever entering edit mode
+watch(isEditing, (val) => {
+  if (val) {
+    nextTick(() => {
+      inputRef.value?.focus();
+    });
+  }
+});
+
+// Handle mounting with editing already true
+onMounted(() => {
+  if (isEditing.value) {
+    nextTick(() => {
+      inputRef.value?.focus();
+    });
+  }
+});
 
 function startEdit() {
   isEditing.value = true;
@@ -30,7 +63,6 @@ function startEdit() {
 function finishEdit() {
   isEditing.value = false;
   if (editText.value.trim() === '' && props.data.label === '') {
-    // Empty new node — remove it
     emit('remove-node', props.id);
     return;
   }
@@ -41,19 +73,18 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter') {
     e.preventDefault();
     finishEdit();
-    // Enter = create sibling
     emit('add-sibling', props.id);
   } else if (e.key === 'Tab') {
     e.preventDefault();
     finishEdit();
-    // Tab = create child
-    emit('add-child', { parentId: props.id, direction: 'right' });
+    // Tab creates child in same direction as this node (or right for root)
+    emit('add-child', { parentId: props.id, direction: nodeDirection.value });
   } else if (e.key === 'Escape') {
     isEditing.value = false;
   }
 }
 
-function addChild(direction: 'right' | 'bottom') {
+function addChild(direction: 'right' | 'left') {
   emit('add-child', { parentId: props.id, direction });
 }
 </script>
@@ -71,37 +102,41 @@ function addChild(direction: 'right' | 'bottom') {
     <!-- Label or Input -->
     <input
       v-if="isEditing"
+      ref="inputRef"
       v-model="editText"
       @blur="finishEdit"
       @keydown="handleKeydown"
       class="wb-mindmap-input"
       :style="{ color: 'inherit' }"
-      autofocus
       placeholder="Type here..."
     />
     <span v-else class="wb-mindmap-label" :style="{ fontSize: data.level === 0 ? '15px' : '13px' }">
       {{ data.label || 'Idea' }}
     </span>
 
-    <!-- Add child buttons -->
+    <!-- Left + button: root or left-direction nodes -->
     <button
+      v-if="isRoot || nodeDirection === 'left'"
+      class="wb-mindmap-add wb-mindmap-add--left"
+      @click.stop="addChild('left')"
+      :style="{ backgroundColor: data.color }"
+      title="Add child left"
+    >+</button>
+
+    <!-- Right + button: root or right-direction nodes -->
+    <button
+      v-if="isRoot || nodeDirection === 'right'"
       class="wb-mindmap-add wb-mindmap-add--right"
       @click.stop="addChild('right')"
       :style="{ backgroundColor: data.color }"
-      title="Add child (Tab)"
-    >+</button>
-    <button
-      class="wb-mindmap-add wb-mindmap-add--bottom"
-      @click.stop="addChild('bottom')"
-      :style="{ backgroundColor: data.color }"
-      title="Add sibling"
+      title="Add child right (Tab)"
     >+</button>
 
-    <!-- Handles -->
-    <Handle type="source" :position="Position.Right" class="wb-mm-handle" />
-    <Handle type="target" :position="Position.Left" class="wb-mm-handle" />
-    <Handle type="source" :position="Position.Bottom" class="wb-mm-handle" />
-    <Handle type="target" :position="Position.Top" class="wb-mm-handle" />
+    <!-- Handles with IDs for directional edges -->
+    <Handle id="right-source" type="source" :position="Position.Right" class="wb-mm-handle" />
+    <Handle id="left-target"  type="target" :position="Position.Left"  class="wb-mm-handle" />
+    <Handle id="left-source"  type="source" :position="Position.Left"  class="wb-mm-handle" />
+    <Handle id="right-target" type="target" :position="Position.Right" class="wb-mm-handle" />
   </div>
 </template>
 
@@ -137,6 +172,8 @@ function addChild(direction: 'right' | 'bottom') {
 }
 .wb-mindmap-add {
   position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -152,28 +189,19 @@ function addChild(direction: 'right' | 'bottom') {
   transition: opacity 0.15s, transform 0.15s;
   z-index: 10;
 }
+.wb-mindmap-add--right {
+  right: -12px;
+}
+.wb-mindmap-add--left {
+  left: -12px;
+}
 .wb-mindmap-node:hover .wb-mindmap-add {
   opacity: 0.8;
+  transform: translateY(-50%);
 }
 .wb-mindmap-add:hover {
   opacity: 1 !important;
-  transform: scale(1.15);
-}
-.wb-mindmap-add--right {
-  right: -12px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.wb-mindmap-add--bottom {
-  bottom: -12px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.wb-mindmap-node:hover .wb-mindmap-add--right {
-  transform: translateY(-50%);
-}
-.wb-mindmap-node:hover .wb-mindmap-add--bottom {
-  transform: translateX(-50%);
+  transform: translateY(-50%) scale(1.15);
 }
 .wb-mm-handle {
   width: 6px !important;

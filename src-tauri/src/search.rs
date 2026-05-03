@@ -22,6 +22,8 @@ pub struct ParsedQuery {
     pub property_filters: Vec<(String, String)>,
     /// Whether the query is empty (no meaningful search terms)
     pub is_empty: bool,
+    /// Whether to enforce case-sensitive matching (post-filter)
+    pub case_sensitive: bool,
 }
 
 /// A single search result returned to the frontend

@@ -79,3 +79,39 @@ pub fn enforce_within_roots(path: &Path, allowed_roots: &[&str]) -> Result<(), c
     }
     Err(crate::error::AppError::InvalidPath("Path is outside allowed root directories".into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_is_safe_filename() {
+        assert!(is_safe_filename("valid_name.txt"));
+        assert!(is_safe_filename("spaced name.md"));
+        assert!(!is_safe_filename(""));
+        assert!(!is_safe_filename("."));
+        assert!(!is_safe_filename(".."));
+        assert!(!is_safe_filename("folder/file.txt"));
+        assert!(!is_safe_filename("folder\\file.txt"));
+    }
+
+    #[test]
+    fn test_enforce_no_traversal() {
+        assert!(enforce_no_traversal("safe/path/to/file.md").is_ok());
+        assert!(enforce_no_traversal("safe_file.md").is_ok());
+        assert!(enforce_no_traversal("../unsafe/path").is_err());
+        assert!(enforce_no_traversal("safe/../path").is_err());
+    }
+
+    #[test]
+    fn test_to_relative() {
+        let vault_path = "/Users/vault";
+        let full_path = PathBuf::from("/Users/vault/Notes/hello.md");
+        assert_eq!(to_relative(&full_path, vault_path), "Notes/hello.md");
+
+        // Should return the original if not in vault
+        let out_path = PathBuf::from("/Users/other/hello.md");
+        assert_eq!(to_relative(&out_path, vault_path), "/Users/other/hello.md");
+    }
+}

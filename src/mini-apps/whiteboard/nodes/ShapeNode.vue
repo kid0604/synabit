@@ -11,8 +11,13 @@ const props = defineProps<{
     shapeType: string;
     label: string;
     color: string;
+    fillColor?: string;
     width?: number;
     height?: number;
+    borderWidth?: number;
+    dashStyle?: string;   // 'solid' | 'dashed' | 'dotted'
+    opacity?: number;     // 0-100
+    fontSize?: number;
   };
 }>();
 
@@ -23,10 +28,43 @@ const emit = defineEmits<{
 const isEditing = ref(false);
 const editText = ref('');
 
-const strokeWidth = computed(() => props.selected ? 3 : 2);
+const strokeWidth = computed(() => props.data.borderWidth || 2);
 const fillOpacity = computed(() => props.selected ? '25' : '18');
+const shapeOpacity = computed(() => (props.data.opacity ?? 100) / 100);
+const labelFontSize = computed(() => `${props.data.fontSize || 13}px`);
+const strokeDasharray = computed(() => {
+  const d = props.data.dashStyle;
+  if (d === 'dashed') return '8 4';
+  if (d === 'dotted') return '2 4';
+  return 'none';
+});
+const fillColor = computed(() => {
+  if (props.data.fillColor) {
+    // User-set fill: apply with ~80% opacity so inner shapes remain visible
+    const hex = props.data.fillColor.replace('#', '');
+    // If it's a 6-char hex, append alpha; if already has alpha (8-char), use as-is
+    if (hex.length === 6) return props.data.fillColor + 'CC';
+    return props.data.fillColor;
+  }
+  return 'none';
+});
 
 const shapeDef = computed(() => SHAPES_MAP[props.data.shapeType] || SHAPES_MAP['rectangle']);
+
+// Compensate rx/ry for non-uniform SVG scaling so corners stay circular
+const CORNER_PX = 12; // desired visual corner radius in pixels
+const roundedRectRx = computed(() => {
+  const w = props.data.width || shapeDef.value.defaultWidth || 160;
+  const h = props.data.height || shapeDef.value.defaultHeight || 80;
+  // viewBox is 100x100, actual is WxH → scaleX = W/100
+  // To get CORNER_PX visual pixels: rx_vb = CORNER_PX / (W/100) = CORNER_PX * 100 / W
+  return Math.min(CORNER_PX * 100 / w, 49);
+});
+const roundedRectRy = computed(() => {
+  const w = props.data.width || shapeDef.value.defaultWidth || 160;
+  const h = props.data.height || shapeDef.value.defaultHeight || 80;
+  return Math.min(CORNER_PX * 100 / h, 49);
+});
 
 /**
  * Compute handle offsets by sampling the shape's path to find where
@@ -125,16 +163,33 @@ function onResizeEnd(event: any) {
       @resize-end="onResizeEnd"
     />
 
-    <!-- SVG Shape — renders any shape via path data -->
+    <!-- SVG Shape — all shapes rendered through same SVG pipeline for consistent stroke -->
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="wb-shape-svg">
-      <path
-        :d="shapeDef.path"
-        :fill="data.color + fillOpacity"
+      <!-- Rounded Rect: use native <rect> with compensated rx/ry for circular corners -->
+      <rect
+        v-if="data.shapeType === 'roundedRect'"
+        x="1" y="1" width="98" height="98"
+        :rx="roundedRectRx"
+        :ry="roundedRectRy"
+        :fill="fillColor"
         :stroke="data.color"
         :stroke-width="strokeWidth"
+        :stroke-dasharray="strokeDasharray"
+        vector-effect="non-scaling-stroke"
+        :opacity="shapeOpacity"
+      />
+      <!-- All other shapes: render via path -->
+      <path
+        v-else
+        :d="shapeDef.path"
+        :fill="fillColor"
+        :stroke="data.color"
+        :stroke-width="strokeWidth"
+        :stroke-dasharray="strokeDasharray"
         vector-effect="non-scaling-stroke"
         stroke-linejoin="round"
         fill-rule="evenodd"
+        :opacity="shapeOpacity"
       />
       <!-- Decoration paths (fold lines, inner lines, etc.) -->
       <path
@@ -144,8 +199,10 @@ function onResizeEnd(event: any) {
         fill="none"
         :stroke="data.color"
         :stroke-width="strokeWidth"
+        :stroke-dasharray="strokeDasharray"
         vector-effect="non-scaling-stroke"
         stroke-linejoin="round"
+        :opacity="shapeOpacity"
       />
     </svg>
 
@@ -160,7 +217,7 @@ function onResizeEnd(event: any) {
         class="wb-shape-input"
         autofocus
       />
-      <span v-else class="wb-shape-label text-text dark:text-text-dark">
+      <span v-else class="wb-shape-label text-text dark:text-text-dark" :style="{ fontSize: labelFontSize }">
         {{ data.label || '' }}
       </span>
     </div>
@@ -190,6 +247,11 @@ function onResizeEnd(event: any) {
   width: 100%;
   height: 100%;
 }
+/* Only the stroke/border captures clicks — fill area is click-through */
+.wb-shape-svg path {
+  pointer-events: visibleStroke;
+  cursor: grab;
+}
 .wb-shape-label-container {
   position: absolute;
   inset: 0;
@@ -198,6 +260,7 @@ function onResizeEnd(event: any) {
   justify-content: center;
   z-index: 10;
   padding: 0 8px;
+  pointer-events: auto;
 }
 .wb-shape-label {
   font-size: 13px;
@@ -216,6 +279,7 @@ function onResizeEnd(event: any) {
   border: none;
   outline: none;
   color: inherit;
+  pointer-events: auto;
 }
 .wb-handle {
   width: 10px !important;
@@ -226,6 +290,7 @@ function onResizeEnd(event: any) {
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 20 !important;
+  pointer-events: auto !important;
 }
 .wb-shape-node:hover .wb-handle {
   opacity: 1;

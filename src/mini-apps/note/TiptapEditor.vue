@@ -78,13 +78,13 @@ const injectLocalAssets = (md: string) => {
    if (!props.vaultPath) return md;
    let processed = md;
    
-   // Tiptap-markdown sometimes serializes images with custom attributes as raw HTML <img> tags.
-   // This causes markdown-it to crash or swallow subsequent text on reload.
-   // We force convert them back to standard Markdown before processing.
-   processed = processed.replace(/<img\s+[^>]*src="([^"]+)"[^>]*>/g, (m, src) => {
-      const altMatch = m.match(/alt="([^"]*)"/);
-      const alt = altMatch ? altMatch[1] : 'Image';
-      return `![${alt}](${src})`;
+   // Preserve <img> tags but convert src to absolute asset URL
+   processed = processed.replace(/<img\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/gi, (m, before, filename, after) => {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const decodedName = decodeURIComponent(filename);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
+      const assetUrl = convertFileSrc(absPath); 
+      return `<img ${before}src="${assetUrl}"${after}>`;
    });
    
    processed = processed.replace(/<video\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (m, before, filename, after) => {
@@ -121,11 +121,21 @@ const injectLocalAssets = (md: string) => {
 const stripLocalAssets = (md: string) => {
    let processed = md;
    
-   // Also handle HTML tags when saving, just in case tiptap-markdown output an <img> tag during edit
-   processed = processed.replace(/<img\s+[^>]*src="([^"]+)"[^>]*>/g, (m, src) => {
-      const altMatch = m.match(/alt="([^"]*)"/);
-      const alt = altMatch ? altMatch[1] : 'Image';
-      return `![${alt}](${src})`;
+   // Preserve <img> tags and their inline styles/width/height but make src relative.
+   // Ensure it ends with /> to prevent markdown-it from swallowing text.
+   processed = processed.replace(/<img\s+([^>]*)src="([^"]+)"([^>]*)>/gi, (m, before, src, after) => {
+      const match = src.match(/(?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\"]+(?:\/|%2F)assets(?:\/|%2F)([^\"]+)/);
+      let newSrc = src;
+      if (match) {
+         const decodedName = decodeURIComponent(match[1]);
+         newSrc = `assets/${encodeURI(decodedName)}`;
+      }
+      
+      let newAfter = after;
+      if (!newAfter.trim().endsWith('/')) {
+         newAfter = newAfter + '/';
+      }
+      return `<img ${before}src="${newSrc}"${newAfter}>`;
    });
 
    processed = processed.replace(/<video\s+([^>]*)src="([^"]+)"([^>]*)>/g, (m, before, src, after) => {
@@ -182,7 +192,15 @@ const confirmVideo = () => {
   const url = videoModal.value.url;
   if (!url || url === '') return;
   
-  editor.value.commands.setVideo({ src: url });
+  let finalUrl = url;
+  if (url.startsWith('assets/')) {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const filename = url.substring(7);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodeURIComponent(filename)}`;
+      finalUrl = convertFileSrc(absPath);
+  }
+  
+  editor.value.commands.setVideo({ src: finalUrl });
 };
 
 const selectLocalVideo = async () => {
@@ -227,7 +245,15 @@ const confirmAudio = () => {
   const url = audioModal.value.url;
   if (!url || url === '') return;
   
-  editor.value.commands.setAudio({ src: url });
+  let finalUrl = url;
+  if (url.startsWith('assets/')) {
+      const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+      const filename = url.substring(7);
+      const absPath = `${props.vaultPath}${sep}assets${sep}${decodeURIComponent(filename)}`;
+      finalUrl = convertFileSrc(absPath);
+  }
+  
+  editor.value.commands.setAudio({ src: finalUrl });
 };
 
 const selectLocalAudio = async () => {
@@ -276,7 +302,7 @@ const updateBubbleMenu = () => {
   if (!editor.value) return;
   const { from, to, empty } = editor.value.state.selection;
   
-  if (empty || from === to) {
+  if (empty || from === to || editor.value.isActive('imageResize')) {
     showBubble.value = false;
     return;
   }
@@ -672,7 +698,7 @@ const editor = useEditor({
       codeBlock: false, // replaced by CodeBlockLowlight
     }),
     TabIndentExtension,
-    Markdown,
+    Markdown.configure({ html: true }),
     ImageResize,
     TaskList,
     TaskItem.configure({ nested: true }),
@@ -1328,9 +1354,80 @@ onBeforeUnmount(() => {
 }
 
 /* === Images === */
+.tiptap div:has(> img) {
+  line-height: 0;
+}
 .tiptap img {
   border-radius: 0.5rem;
   max-width: 100%;
+  vertical-align: bottom;
+  display: block;
+  margin: 0 !important;
+}
+
+/* === Image Resize Plugin Overrides === */
+/* Style the dashed border container */
+.tiptap div[style*="border: 1px dashed"] {
+  border: 2px solid transparent !important;
+  border-radius: 0.5rem !important;
+  transition: border-color 0.2s;
+}
+.tiptap div[style*="border: 1px dashed"]:has(> img:hover),
+.tiptap div[style*="border: 1px dashed"]:focus-within {
+  border-color: #3b82f6 !important;
+}
+
+/* Position Controller Menu (z-index 999) */
+.tiptap div[style*="z-index: 999"] {
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important;
+  height: auto !important;
+  padding: 4px 6px !important;
+  transform: translate(-50%, -100%) translateY(-10px) !important;
+  gap: 2px !important;
+}
+.dark .tiptap div[style*="z-index: 999"] {
+  background: rgba(30, 30, 30, 0.85) !important;
+  border-color: #333 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+}
+
+/* Controller Menu Icons */
+.tiptap div[style*="z-index: 999"] img {
+  filter: opacity(0.6) !important;
+  transition: all 0.2s !important;
+  border-radius: 6px !important; 
+  padding: 4px !important;
+  margin: 0 2px !important;
+  width: 26px !important;
+  height: 26px !important;
+  box-sizing: border-box !important;
+  cursor: pointer !important;
+}
+.tiptap div[style*="z-index: 999"] img:hover {
+  filter: opacity(1) !important;
+  background: #f3f4f6 !important;
+}
+.dark .tiptap div[style*="z-index: 999"] img {
+  filter: invert(1) opacity(0.6) !important;
+}
+.dark .tiptap div[style*="z-index: 999"] img:hover {
+  filter: invert(1) opacity(1) !important;
+  background: #2a2a2a !important;
+}
+
+/* Resize Handle Dots */
+.tiptap div[style*="border: 1.5px solid"] {
+  background-color: #fff !important;
+  border: 2px solid #3b82f6 !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+}
+.dark .tiptap div[style*="border: 1.5px solid"] {
+  background-color: #1e1e1e !important;
+  border-color: #60a5fa !important;
 }
 
 /* === Prose overrides === */
