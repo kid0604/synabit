@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, toRef, nextTick } from 'vue';
-import { VueFlow, useVueFlow, ConnectionMode, MarkerType } from '@vue-flow/core';
+import { VueFlow, useVueFlow, ConnectionMode, MarkerType, getRectOfNodes } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import { Plus, Trash2, PenTool, PanelLeftClose, PanelLeft, Tag, X } from 'lucide-vue-next';
@@ -42,6 +42,8 @@ const vaultPathRef = toRef(props, 'vaultPath');
 const store = useWhiteboardStore(vaultPathRef);
 
 // ─── Vue Flow ───────────────────────────────────────────
+const { setViewport, getViewport, getNodes } = useVueFlow({ id: 'whiteboard-flow' });
+
 // Use refs (not computed) so VueFlow can track node identity for drag operations.
 const vfNodes = ref<any[]>([]);
 const vfEdges = ref<any[]>([]);
@@ -924,13 +926,67 @@ function handleKeydown(e: KeyboardEvent) {
 const vueFlowRef = ref<HTMLElement | null>(null);
 
 async function exportPng() {
-  const el = document.querySelector('.vue-flow__viewport') as HTMLElement;
-  if (!el) return;
+  const el = document.querySelector('.vue-flow') as HTMLElement;
+  const nodes = getNodes.value;
+  if (!el || nodes.length === 0) return;
   try {
-    const dataUrl = await toPng(el, {
-      backgroundColor: '#ffffff',
-      pixelRatio: 2,
+    const nodesBounds = getRectOfNodes(nodes);
+    const padding = 50;
+    const exportWidth = nodesBounds.width + padding * 2;
+    const exportHeight = nodesBounds.height + padding * 2;
+
+    const prevViewport = getViewport();
+
+    // 1. Force the viewport to perfectly fit the export area
+    setViewport({
+      x: -nodesBounds.x + padding,
+      y: -nodesBounds.y + padding,
+      zoom: 1
     });
+
+    // 2. Wait for VueFlow to apply transform to DOM
+    await nextTick();
+    await new Promise(r => setTimeout(r, 100)); // allow transitions to finish
+
+    // 3. Inject explicit styles to fix html-to-image dropping CSS variables
+    const isDark = document.documentElement.classList.contains('dark');
+    const edgeColor = isDark ? '#71717a' : '#8b8b8b';
+    const bgColor = store.backgroundColor.value === 'transparent' 
+      ? (isDark ? '#242424' : '#ffffff') 
+      : store.backgroundColor.value;
+    const textColor = isDark ? '#a1a1aa' : '#52525b';
+    
+    const styleEl = document.createElement('style');
+    styleEl.innerHTML = `
+      .vue-flow__edge-path, .vue-flow__connection-path { stroke: ${edgeColor} !important; stroke-width: 2 !important; fill: none !important; }
+      .vue-flow__edge-textbg { fill: ${bgColor} !important; }
+      .vue-flow__edge-text { fill: ${textColor} !important; }
+      .vue-flow__arrowhead { fill: ${edgeColor} !important; }
+    `;
+    el.appendChild(styleEl);
+
+    // 4. Capture
+    const dataUrl = await toPng(el, {
+      backgroundColor: store.backgroundColor.value === 'transparent' ? '#ffffff' : store.backgroundColor.value,
+      width: exportWidth,
+      height: exportHeight,
+      pixelRatio: 2,
+      style: {
+        width: `${exportWidth}px`,
+        height: `${exportHeight}px`,
+      },
+      filter: (node) => {
+        // Exclude UI controls
+        if (node.classList?.contains('vue-flow__controls')) return false;
+        if (node.classList?.contains('vue-flow__panel')) return false;
+        return true;
+      }
+    });
+
+    // 5. Cleanup and restore
+    el.removeChild(styleEl);
+    setViewport(prevViewport);
+
     // Trigger download
     const link = document.createElement('a');
     link.download = `${store.currentBoardData.value?.title || 'whiteboard'}.png`;

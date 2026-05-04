@@ -4,7 +4,8 @@ import { useEditor, EditorContent } from '@tiptap/vue-3';
 import { VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import ImageResize from 'tiptap-extension-resize-image';
+import { CustomImage } from './extensions/CustomImage';
+import { ImageGallery, type GalleryImage } from './extensions/ImageGallery';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Link from '@tiptap/extension-link';
@@ -34,7 +35,7 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
   Quote, Code2, Minus, Type, Table2,
-  Image as ImageIcon, Sigma, Video as VideoIcon,
+  Image as ImageIcon, Images, Sigma, Video as VideoIcon,
   Music as MusicIcon
 } from 'lucide-vue-next';
 import {
@@ -302,7 +303,16 @@ const updateBubbleMenu = () => {
   if (!editor.value) return;
   const { from, to, empty } = editor.value.state.selection;
   
-  if (empty || from === to || editor.value.isActive('imageResize')) {
+  if (
+    empty || 
+    from === to || 
+    editor.value.isActive('image') || 
+    editor.value.isActive('imageGallery') ||
+    editor.value.isActive('video') ||
+    editor.value.isActive('audio') ||
+    editor.value.isActive('whiteboard') ||
+    'node' in editor.value.state.selection
+  ) {
     showBubble.value = false;
     return;
   }
@@ -605,6 +615,53 @@ const slashCommandItems = (): SlashCommandItem[] => [
     },
   },
   {
+    title: 'Image Collection',
+    description: 'Upload multiple images into a grid',
+    icon: Images,
+    command: async ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      try {
+        const selectedPaths = await open({
+          multiple: true,
+          filters: [{
+            name: 'Image',
+            extensions: ['png', 'jpeg', 'jpg', 'gif', 'webp', 'svg']
+          }]
+        });
+        
+        if (selectedPaths && Array.isArray(selectedPaths) && props.vaultPath) {
+          const newImages: GalleryImage[] = [];
+          for (const pathStr of selectedPaths) {
+            const match = pathStr.match(/[\\\/]([^\\\/]+)$/);
+            const filename = match ? match[1] : `image-${Date.now()}.png`;
+            const buffer = await readFile(pathStr);
+            
+            const relativePath = await invoke<string>('save_asset', {
+                vaultPath: props.vaultPath,
+                filename: filename,
+                bytes: Array.from(buffer)
+            });
+            const sep = props.vaultPath.includes('\\') ? '\\' : '/';
+            const absPath = `${props.vaultPath}${sep}${relativePath}`;
+            const renderUrl = convertFileSrc(absPath);
+            
+            newImages.push({
+              src: renderUrl,
+              alt: filename,
+              caption: ''
+            });
+          }
+          if (newImages.length > 0) {
+            const layout = newImages.length >= 3 ? 'grid-3' : 'grid-2';
+            editor.commands.setImageGallery({ images: newImages, layout });
+          }
+        }
+      } catch (e) {
+        logger.error("Failed to insert image collection", e);
+      }
+    },
+  },
+  {
     title: 'Video',
     description: 'Embed YouTube or local video',
     icon: VideoIcon,
@@ -699,7 +756,8 @@ const editor = useEditor({
     }),
     TabIndentExtension,
     Markdown.configure({ html: true }),
-    ImageResize,
+    CustomImage,
+    ImageGallery.configure({ vaultPath: props.vaultPath }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Link.configure({
@@ -1363,71 +1421,6 @@ onBeforeUnmount(() => {
   vertical-align: bottom;
   display: block;
   margin: 0 !important;
-}
-
-/* === Image Resize Plugin Overrides === */
-/* Style the dashed border container */
-.tiptap div[style*="border: 1px dashed"] {
-  border: 2px solid transparent !important;
-  border-radius: 0.5rem !important;
-  transition: border-color 0.2s;
-}
-.tiptap div[style*="border: 1px dashed"]:has(> img:hover),
-.tiptap div[style*="border: 1px dashed"]:focus-within {
-  border-color: #3b82f6 !important;
-}
-
-/* Position Controller Menu (z-index 999) */
-.tiptap div[style*="z-index: 999"] {
-  background: rgba(255, 255, 255, 0.9) !important;
-  backdrop-filter: blur(8px) !important;
-  border: 1px solid #e5e7eb !important;
-  border-radius: 10px !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important;
-  height: auto !important;
-  padding: 4px 6px !important;
-  transform: translate(-50%, -100%) translateY(-10px) !important;
-  gap: 2px !important;
-}
-.dark .tiptap div[style*="z-index: 999"] {
-  background: rgba(30, 30, 30, 0.85) !important;
-  border-color: #333 !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
-}
-
-/* Controller Menu Icons */
-.tiptap div[style*="z-index: 999"] img {
-  filter: opacity(0.6) !important;
-  transition: all 0.2s !important;
-  border-radius: 6px !important; 
-  padding: 4px !important;
-  margin: 0 2px !important;
-  width: 26px !important;
-  height: 26px !important;
-  box-sizing: border-box !important;
-  cursor: pointer !important;
-}
-.tiptap div[style*="z-index: 999"] img:hover {
-  filter: opacity(1) !important;
-  background: #f3f4f6 !important;
-}
-.dark .tiptap div[style*="z-index: 999"] img {
-  filter: invert(1) opacity(0.6) !important;
-}
-.dark .tiptap div[style*="z-index: 999"] img:hover {
-  filter: invert(1) opacity(1) !important;
-  background: #2a2a2a !important;
-}
-
-/* Resize Handle Dots */
-.tiptap div[style*="border: 1.5px solid"] {
-  background-color: #fff !important;
-  border: 2px solid #3b82f6 !important;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
-}
-.dark .tiptap div[style*="border: 1.5px solid"] {
-  background-color: #1e1e1e !important;
-  border-color: #60a5fa !important;
 }
 
 /* === Prose overrides === */

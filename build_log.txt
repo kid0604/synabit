@@ -1,0 +1,21 @@
+
+> synabit@0.2.6 build
+> vite build
+
+vite v6.4.2 building for production...
+transforming...
+✓ 2755 modules transformed.
+✗ Build failed in 1.82s
+error during build:
+[@tailwindcss/vite:generate:build] Cannot apply unknown utility class `p-1.5`. Are you using CSS modules or similar and missing `@reference`? https://tailwindcss.com/docs/functions-and-directives#reference-directive
+file: /Users/kid0604/Desktop/Projects/synabit/src/mini-apps/note/nodes/ImageNode.vue?vue&type=style&index=0&scoped=2cdd5012&lang.css
+    at onInvalidCandidate (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:21:1314)
+    at $e (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:16:37066)
+    at file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:21:355
+    at Cr (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:3:1733)
+    at _ (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:3:1377)
+    at Ce (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:21:172)
+    at Zi (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:38:294)
+    at async ua (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:38:631)
+    at async yf (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/tailwindcss/dist/chunk-F4544Y4M.mjs:38:1406)
+    at async uu (file:///Users/kid0604/Desktop/Projects/synabit/node_modules/@tailwindcss/node/dist/index.mjs:10:3457)
