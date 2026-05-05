@@ -49,8 +49,8 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
         }
     }
 
-    // 3. Tiptap Internal Links ([Title](synabit://note/path))
-    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://note/([^)]+)\)").unwrap();
+    // 3. Tiptap Internal Links ([Title](synabit://.../path))
+    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap)/([^)]+)\)").unwrap();
     for cap in md_link_re.captures_iter(text) {
         if let Some(m) = cap.get(2) {
             let encoded_path = m.as_str().trim();
@@ -71,11 +71,49 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
     edges
 }
 
+/// Extracts edges from both content and properties of a Node
+pub fn extract_node_edges(node: &crate::models::node::NodeMetadata) -> Vec<GraphEdge> {
+    let mut edges = extract_edges(&node.id, &node.content);
+    
+    // Also parse properties
+    if let serde_json::Value::Object(map) = &node.properties {
+        for (key, val) in map {
+            if let Some(s) = val.as_str() {
+                let prop_edges = extract_edges(&node.id, s);
+                for mut e in prop_edges {
+                    if e.link_type == "wikilink" {
+                        e.link_type = key.clone();
+                    }
+                    edges.push(e);
+                }
+            } else if let serde_json::Value::Array(arr) = val {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        let prop_edges = extract_edges(&node.id, s);
+                        for mut e in prop_edges {
+                            if e.link_type == "wikilink" {
+                                e.link_type = key.clone();
+                            }
+                            edges.push(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Deduplicate
+    let mut seen = std::collections::HashSet::new();
+    edges.into_iter().filter(|e| {
+        seen.insert(format!("{}-{}", e.target_title_or_path, e.link_type))
+    }).collect()
+}
+
 /// Replaces WikiLinks targeting `old_name` with `new_name`.
 /// Retains existing aliases if present.
-pub fn rename_links_in_text(text: &str, old_name: &str, new_name: &str) -> String {
+pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target_id: Option<&str>) -> String {
     let wiki_re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
-    let old_lower = old_name.to_lowercase();
+    let old_lower = old_title.to_lowercase();
 
     let text_with_wiki_links = wiki_re
         .replace_all(text, |caps: &regex::Captures| {
@@ -86,9 +124,9 @@ pub fn rename_links_in_text(text: &str, old_name: &str, new_name: &str) -> Strin
 
             if title.to_lowercase() == old_lower {
                 if let Some(a) = alias {
-                    format!("[[{}|{}]]", new_name, a)
+                    format!("[[{}|{}]]", new_title, a)
                 } else {
-                    format!("[[{}]]", new_name)
+                    format!("[[{}]]", new_title)
                 }
             } else {
                 caps.get(0).unwrap().as_str().to_string()
@@ -96,12 +134,13 @@ pub fn rename_links_in_text(text: &str, old_name: &str, new_name: &str) -> Strin
         })
         .to_string();
 
-    // 2. Replace Tiptap internal links: [Anything](synabit://note/OldName)
-    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://note/([^)]+)\)").unwrap();
+    // 2. Replace Tiptap internal links
+    let md_link_re = Regex::new(r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event)/)([^)]+)\)").unwrap();
     let text_with_md_links = md_link_re
         .replace_all(&text_with_wiki_links, |caps: &regex::Captures| {
             let label = caps.get(1).unwrap().as_str();
-            let encoded_path = caps.get(2).unwrap().as_str();
+            let prefix = caps.get(2).unwrap().as_str();
+            let encoded_path = caps.get(3).unwrap().as_str();
             let decoded_path = urlencoding::decode(encoded_path)
                 .unwrap_or(std::borrow::Cow::Borrowed(encoded_path))
                 .to_string();
@@ -111,25 +150,31 @@ pub fn rename_links_in_text(text: &str, old_name: &str, new_name: &str) -> Strin
                 .and_then(|s| s.to_str())
                 .unwrap_or(&decoded_path);
 
-            if file_stem.to_lowercase() == old_lower {
-                // Re-encode the new name
-                let new_path = decoded_path.replacen(file_stem, new_name, 1);
+            let is_match = if let Some(id) = target_id {
+                decoded_path == id || decoded_path == old_title || file_stem.to_lowercase() == old_lower
+            } else {
+                file_stem.to_lowercase() == old_lower
+            };
+
+            if is_match {
+                let new_path = if let Some(id) = target_id {
+                    id.to_string()
+                } else {
+                    decoded_path.replacen(file_stem, new_title, 1)
+                };
+                
                 let new_label = if label.trim().to_lowercase() == old_lower {
-                    new_name
+                    new_title
                 } else {
                     label
                 };
-                // Replace spaces to be safe
-                format!(
-                    "[{}](synabit://note/{})",
-                    new_label,
-                    urlencoding::encode(&new_path)
-                )
+                
+                let safe_path = urlencoding::encode(&new_path).into_owned().replace("%2F", "/");
+                format!("[{}]({}{})", new_label, prefix, safe_path)
             } else {
                 caps.get(0).unwrap().as_str().to_string()
             }
-        })
-        .to_string();
+        });
 
-    text_with_md_links
+    text_with_md_links.to_string()
 }

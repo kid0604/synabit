@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { FileText } from 'lucide-vue-next';
+import { FileText, CheckSquare, Zap, Users, Box } from 'lucide-vue-next';
+
+const getIcon = (type: string) => {
+  if (type === 'task') return CheckSquare;
+  if (type === 'quickcap') return Zap;
+  if (type === 'person') return Users;
+  if (type === 'note') return FileText;
+  return Box;
+};
 
 export interface MentionItem {
   id: string;
   title: string;
   summary: string;
+  node_type: string;
 }
 
 const props = defineProps<{
@@ -66,7 +75,7 @@ defineExpose({ onKeyDown });
       @mouseenter="selectedIndex = index"
     >
       <div class="slash-menu-icon !bg-blue-50 dark:!bg-blue-500/20 !text-blue-600 dark:!text-blue-400 !border-blue-100 dark:!border-blue-500/30">
-        <FileText class="w-4 h-4" />
+        <component :is="getIcon(item.node_type)" class="w-4 h-4" />
       </div>
       <div class="slash-menu-text">
         <span class="slash-menu-title">{{ item.title || 'Untitled' }}</span>
@@ -75,6 +84,6 @@ defineExpose({ onKeyDown });
     </button>
   </div>
   <div class="slash-command-menu p-3 px-4 text-xs text-gray-500" v-else>
-    No matching notes found...
+    No matching items found...
   </div>
 </template>

@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, Edit2 } from 'lucide-vue-next';
 
 const props = defineProps<{ vaultPath: string }>();
+const emit = defineEmits<{ (e: 'open-node', id: string, type: string): void }>();
 
 // --- Data Models ---
 interface TaskMetadata {
@@ -25,8 +26,10 @@ interface TaskMetadata {
 interface EventMetadata {
     id: string;
     title: string;
-    event_date: string; // YYYY-MM-DD
-    event_time: string; // HH:mm
+    is_all_day: boolean;
+    start_at: string; // ISO 8601 or YYYY-MM-DD
+    end_at: string; // ISO 8601 or YYYY-MM-DD
+    timezone?: string;
     location: string;
     tags: string[];
     content: string;
@@ -51,8 +54,9 @@ const eventForm = ref({
     id: '',
     path: '',
     title: '',
-    event_date: '',
-    event_time: '',
+    isAllDay: false,
+    start_at: '',
+    end_at: '',
     isAllDay: false,
     location: '',
     description: '',
@@ -60,14 +64,114 @@ const eventForm = ref({
 });
 
 // --- Methods ---
+const mapNodeToTask = (node: any): TaskMetadata => {
+    const rawTags = node.properties?.tags;
+    const tagsArray = Array.isArray(rawTags) ? rawTags : (typeof rawTags === 'string' && rawTags.trim() !== '' ? [rawTags] : []);
+
+    return {
+        id: node.id,
+        path: node.id,
+        title: node.title,
+        content: node.content,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        status: node.properties?.status || 'todo',
+        start_date: node.properties?.start_date || '',
+        due_date: node.properties?.due_date || '',
+        comment: node.properties?.comment || '',
+        source_link: node.properties?.source_link || '',
+        tags: tagsArray,
+        custom_fields: node.properties || {}
+    };
+};
+
 const loadData = async () => {
     if (!props.vaultPath) return;
     try {
-        allTasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
+        const rawTasks: any[] = await invoke('get_nodes', { nodeType: 'task' });
+        allTasks.value = rawTasks.map(mapNodeToTask);
     } catch(e) { logger.error("Error loading tasks:", e); }
     try {
-        allEvents.value = await invoke('scan_events', { vaultPath: props.vaultPath });
+        const rawEvents: any[] = await invoke('get_nodes', { nodeType: 'event' });
+        allEvents.value = rawEvents.map(n => {
+            const props = n.properties || {};
+            
+            // Migration logic
+            let isAllDay = props.is_all_day === true;
+            let startAt = props.start_at || '';
+            let endAt = props.end_at || '';
+            
+            // Fallback for legacy data (event_date + start_time/end_time)
+            if (!startAt && props.event_date) {
+                const sTime = props.start_time || props.event_time;
+                if (sTime) {
+                    startAt = `${props.event_date}T${sTime}:00`;
+                    isAllDay = false;
+                } else {
+                    startAt = props.event_date;
+                    isAllDay = true;
+                }
+            }
+            if (!endAt && props.event_date && props.end_time) {
+                endAt = `${props.event_date}T${props.end_time}:00`;
+            }
+            if (!endAt && isAllDay) {
+                 endAt = startAt; // all day event ends on same day
+            }
+            
+            return {
+                id: n.id,
+                title: n.title,
+                is_all_day: isAllDay,
+                start_at: startAt,
+                end_at: endAt,
+                timezone: props.timezone || '',
+                location: props.location || '',
+                tags: props.tags || [],
+                content: n.content,
+                path: n.id,
+                created_at: n.created_at || ''
+            };
+        });
     } catch(e) { logger.error("Error loading events:", e); }
+};
+
+const toggleTaskStatus = async (task: TaskMetadata) => {
+    const newStatus = task.status === 'done' ? 'todo' : 'done';
+    const nowStr = new Date().toISOString().split('T')[0];
+    const newCompletedAt = newStatus === 'done' ? nowStr : '';
+    
+    // Optimistic UI update
+    task.status = newStatus;
+    
+    try {
+        const properties = {
+            ...(task.custom_fields || {}),
+            status: newStatus,
+            start_date: task.start_date,
+            due_date: task.due_date,
+            comment: task.comment,
+            source_link: task.source_link,
+            tags: task.tags,
+            completed_at: newCompletedAt
+        };
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: task.path,
+            nodeType: 'task',
+            title: task.title,
+            properties: properties,
+            content: task.content,
+            existingPath: task.path
+        });
+        
+        // Reload to ensure consistency
+        await loadData();
+    } catch (error) {
+        console.error("Failed to update task status", error);
+        // Revert UI update
+        task.status = task.status === 'done' ? 'todo' : 'done';
+    }
 };
 
 onMounted(() => { loadData(); });
@@ -91,19 +195,67 @@ const isSameDay = (d1: Date, d2: Date) => {
 };
 
 const getTasksForDate = (dateStr: string) => allTasks.value.filter(t => t.due_date === dateStr || t.start_date === dateStr);
-const getEventsForDate = (dateStr: string) => allEvents.value.filter(e => e.event_date === dateStr);
+const getEventsForDate = (dateStr: string) => {
+    return allEvents.value.filter(e => {
+        if (!e.start_at) return false;
+        const eStartStr = e.start_at.split('T')[0];
+        const eEndStr = e.end_at ? e.end_at.split('T')[0] : eStartStr;
+        return dateStr >= eStartStr && dateStr <= eEndStr;
+    });
+};
 
 const getEventsForDateAndHour = (dateStr: string, hour: number) => {
     return getEventsForDate(dateStr).filter(e => {
-        if (!e.event_time) return false;
-        const eHour = parseInt(e.event_time.split(':')[0]);
+        if (e.is_all_day) return false;
+        if (!e.start_at) return false;
+        
+        const eStartStr = e.start_at.split('T')[0];
+        const eEndStr = e.end_at ? e.end_at.split('T')[0] : eStartStr;
+        if (eStartStr !== eEndStr) return false; // Multi-day events go to "All Day"
+        
+        const timePart = e.start_at.split('T')[1];
+        if (!timePart) return false;
+        const eHour = parseInt(timePart.split(':')[0]);
         return eHour === hour;
     });
+};
+
+const getMonthViewItems = (dateStr: string) => {
+    const events = getEventsForDate(dateStr).map(e => {
+        const timePart = (e.start_at && e.start_at.includes('T')) ? e.start_at.split('T')[1].substring(0, 5) : '';
+        return { id: e.id, type: 'event' as const, title: e.title, event_time: timePart, status: '' };
+    });
+    const tasks = getTasksForDate(dateStr).map(t => ({ id: t.id, type: 'task' as const, title: t.title, event_time: '', status: t.status }));
+    const all = [...events, ...tasks];
+    return {
+        display: all.slice(0, 3),
+        moreCount: all.length > 3 ? all.length - 3 : 0
+    };
 };
 
 const hasItemsOnDate = (date: Date) => {
     const ds = formatDateString(date);
     return getTasksForDate(ds).length > 0 || getEventsForDate(ds).length > 0;
+};
+
+const isAllDayOrMultiDay = (e: EventMetadata) => {
+    if (e.is_all_day) return true;
+    if (!e.start_at) return false;
+    const s = e.start_at.split('T')[0];
+    const en = e.end_at ? e.end_at.split('T')[0] : s;
+    return s !== en;
+};
+
+const formatEventTime = (ev: EventMetadata) => {
+    if (ev.is_all_day) return '';
+    if (!ev.start_at || !ev.start_at.includes('T')) return '';
+    const start = ev.start_at.split('T')[1].substring(0, 5);
+    if (ev.end_at && ev.end_at.includes('T')) {
+        const end = ev.end_at.split('T')[1].substring(0, 5);
+        if (start === end) return start;
+        return `${start} - ${end}`;
+    }
+    return start;
 };
 
 // --- Navigation ---
@@ -232,47 +384,84 @@ const clickYearDay = (dt: Date) => {
 const selectedDateFormattedStr = computed(() => formatDateString(selectedDate.value));
 const selectedDateDisplay = computed(() => selectedDate.value.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
 const selectedTasks = computed(() => getTasksForDate(selectedDateFormattedStr.value));
-const selectedEvents = computed(() => getEventsForDate(selectedDateFormattedStr.value).sort((a,b) => a.event_time.localeCompare(b.event_time)));
+const selectedEvents = computed(() => getEventsForDate(selectedDateFormattedStr.value).sort((a,b) => (a.start_at || '').localeCompare(b.start_at || '')));
 
 // --- Event Functions ---
 const openAddEventModal = (defaultDate?: Date) => {
     const targetDateStr = defaultDate ? formatDateString(defaultDate) : selectedDateFormattedStr.value;
     eventForm.value = {
         isEdit: false, id: '', path: '', title: '',
-        event_date: targetDateStr, event_time: '12:00', isAllDay: false,
+        isAllDay: false, start_at: `${targetDateStr}T12:00`, end_at: `${targetDateStr}T13:00`,
         location: '', description: '', tagsStr: ''
     };
     showEventForm.value = true;
 };
 
 const openEditEventModal = (ev: EventMetadata) => {
+    // Convert missing seconds to be compatible with datetime-local if necessary
+    let startAt = ev.start_at || '';
+    if (startAt.includes('T') && startAt.length === 16) startAt += ':00';
+    let endAt = ev.end_at || '';
+    if (endAt.includes('T') && endAt.length === 16) endAt += ':00';
+    
     eventForm.value = {
         isEdit: true, id: ev.id, path: ev.path, title: ev.title,
-        event_date: ev.event_date, event_time: ev.event_time || '12:00', isAllDay: !ev.event_time, location: ev.location,
+        isAllDay: ev.is_all_day, start_at: startAt, end_at: endAt, location: ev.location,
         description: ev.content, tagsStr: ev.tags.join(', ')
     };
     showEventForm.value = true;
 };
 
+watch(() => eventForm.value.isAllDay, (newVal) => {
+    if (newVal) {
+        eventForm.value.start_at = eventForm.value.start_at.split('T')[0];
+        if (eventForm.value.end_at) {
+            eventForm.value.end_at = eventForm.value.end_at.split('T')[0];
+        }
+    } else {
+        if (!eventForm.value.start_at.includes('T')) {
+            eventForm.value.start_at = `${eventForm.value.start_at}T12:00:00`;
+        }
+        if (eventForm.value.end_at && !eventForm.value.end_at.includes('T')) {
+            eventForm.value.end_at = `${eventForm.value.end_at}T13:00:00`;
+        }
+    }
+});
+
 const closeEventForm = () => { showEventForm.value = false; };
 
 const submitEvent = async () => {
-    if (!eventForm.value.title || !eventForm.value.event_date) return;
+    if (!eventForm.value.title || !eventForm.value.start_at) return;
     let finalTags: string[] = [];
     if (eventForm.value.tagsStr.trim()) {
         finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
     }
-    const finalEventTime = eventForm.value.isAllDay ? '' : eventForm.value.event_time;
-    const meta = {
-        title: eventForm.value.title, event_date: eventForm.value.event_date,
-        event_time: finalEventTime, location: eventForm.value.location, tags: finalTags
-    };
+    
+    // Normalize format to drop seconds or keep ISO consistent if desired, but HTML datetime-local uses YYYY-MM-DDTHH:mm
+    
     try {
-        if (eventForm.value.isEdit) {
-            await invoke('update_event', { vaultPath: props.vaultPath, path: eventForm.value.path, metadata: meta, content: eventForm.value.description });
-        } else {
-            await invoke('create_event', { vaultPath: props.vaultPath, metadata: meta, content: eventForm.value.description });
+        let relPath = eventForm.value.path;
+        if (!eventForm.value.isEdit || !relPath) {
+            const safeName = eventForm.value.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            relPath = `Events/${safeName}_${Date.now()}.md`;
         }
+        
+        const properties = {
+            is_all_day: eventForm.value.isAllDay,
+            start_at: eventForm.value.start_at,
+            end_at: eventForm.value.end_at,
+            location: eventForm.value.location,
+            tags: finalTags
+        };
+        
+        await invoke('write_node_file', { 
+            vaultPath: props.vaultPath, 
+            relPath,
+            title: eventForm.value.title,
+            nodeType: 'event',
+            properties,
+            content: eventForm.value.description 
+        });
         closeEventForm();
         await loadData();
     } catch(e) { logger.error("Failed to save event:", e); }
@@ -290,7 +479,7 @@ const deleteEvent = async (ev: EventMetadata) => {
     });
     if (isConfirmed) {
         try {
-            await invoke('delete_event', { vaultPath: props.vaultPath, path: ev.path });
+            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: ev.path });
             await loadData();
         } catch(e) { logger.error("Failed to delete event:", e); }
     }
@@ -344,7 +533,8 @@ const deleteEvent = async (ev: EventMetadata) => {
                          {{ day }}
                      </div>
                  </div>
-                 <div class="flex-1 grid grid-cols-7 grid-rows-6 gap-2">
+                 <div class="flex-1 overflow-y-auto no-scrollbar pb-2">
+                     <div class="grid grid-cols-7 grid-rows-6 gap-2 min-h-[500px] md:min-h-[650px] h-full">
                      <div v-for="(dayObj, idx) in calendarDays" :key="idx" 
                           @click="clickDay(dayObj.date)"
                           class="relative flex flex-col rounded-xl border border-[#ececeb] dark:border-[#2f2f2f] cursor-pointer transition-all duration-200 overflow-hidden group hover:border-[#d4d4d8] dark:hover:border-[#4f4f4f] hover:shadow-sm"
@@ -371,16 +561,24 @@ const deleteEvent = async (ev: EventMetadata) => {
                                  <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-dot-'+tk.id" class="w-1.5 h-1.5 rounded-full" :class="tk.status === 'done' ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-500'"></div>
                              </div>
                              <!-- Desktop Text -->
-                             <div class="hidden md:block">
-                                 <div v-for="ev in getEventsForDate(formatDateString(dayObj.date))" :key="'evt-'+ev.id" class="w-full text-left truncate mb-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
-                                     {{ ev.event_time }} {{ ev.title }}
-                                 </div>
-                                 <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-'+tk.id" class="w-full text-left truncate mb-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1">
-                                     <CheckSquare class="w-2.5 h-2.5" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                             <div class="hidden md:flex flex-col gap-1 w-full" v-for="dayData in [getMonthViewItems(formatDateString(dayObj.date))]" :key="'ddata-'+dayObj.date.getTime()">
+                                 <template v-for="item in dayData.display" :key="item.type + '-' + item.id">
+                                     <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95">
+                                         <span v-if="item.event_time" class="opacity-70 mr-0.5">{{ item.event_time }}</span> {{ item.title }}
+                                     </div>
+                                     <div v-else class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200/80 dark:border-[#3a3a3a]/80 text-gray-700 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#252525] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer hover:brightness-95" :class="item.status === 'done' ? 'opacity-60' : ''" @click.stop="$emit('open-node', item.id, 'task')">
+                                         <CheckSquare class="w-2.5 h-2.5 shrink-0 hover:text-purple-500 transition-colors" :class="item.status === 'done' ? 'text-green-500' : 'text-gray-400'" @click.stop="toggleTaskStatus(item)" /> <span :class="item.status === 'done' ? 'line-through' : ''">{{ item.title }}</span>
+                                     </div>
+                                 </template>
+                                 <div v-if="dayData.moreCount > 0" 
+                                      class="text-[10px] font-semibold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer px-1 py-0.5 hover:bg-gray-100 dark:hover:bg-[#333] rounded transition-colors w-max" 
+                                      @click.stop="clickDay(dayObj.date)">
+                                     +{{ dayData.moreCount }} more
                                  </div>
                              </div>
                          </div>
                      </div>
+                 </div>
                  </div>
              </div>
 
@@ -392,10 +590,10 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center writing-vertical-lr rotate-180">All Day</span>
                     </div>
                     <div class="flex-1 p-2 flex flex-wrap gap-2 items-start min-h-[40px]" @dblclick="openAddEventModal(currentDate)">
-                        <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm">
-                            <CheckSquare class="w-3 h-3 flex-shrink-0" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                        <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
+                            <CheckSquare class="w-3 h-3 flex-shrink-0 hover:text-purple-500 transition-colors" :class="tk.status === 'done' ? 'text-green-500' : ''" @click.stop="toggleTaskStatus(tk)" /> {{ tk.title }}
                         </div>
-                        <div v-for="ev in getEventsForDate(formatDateString(currentDate)).filter(e => !e.event_time)" :key="'ad-ev-'+ev.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-sm" @click.stop="openEditEventModal(ev)">
+                        <div v-for="ev in getEventsForDate(formatDateString(currentDate)).filter(isAllDayOrMultiDay)" :key="'ad-ev-'+ev.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-sm" @click.stop="openEditEventModal(ev)">
                             <CalendarIcon class="w-3 h-3 flex-shrink-0" /> {{ ev.title }}
                         </div>
                     </div>
@@ -413,7 +611,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                                 @click.stop="openEditEventModal(ev)">
                                 <div class="font-bold text-xs truncate">{{ ev.title }}</div>
                                 <div class="flex gap-2 text-[10px] opacity-70 mt-0.5">
-                                    <span v-if="ev.event_time">{{ ev.event_time }}</span>
+                                    <span v-if="formatEventTime(ev)">{{ formatEventTime(ev) }}</span>
                                     <span v-if="ev.location" class="truncate hidden lg:inline">{{ ev.location }}</span>
                                 </div>
                             </div>
@@ -439,10 +637,10 @@ const deleteEvent = async (ev: EventMetadata) => {
                         </div>
                         <!-- All Day Slots -->
                         <div class="p-1 min-h-[40px] flex flex-col gap-1 bg-gray-50/20 dark:bg-[#1d1d1d]" @dblclick="openAddEventModal(dayObj.date)">
-                            <div v-for="tk in getTasksForDate(dayObj.dateStr)" :key="'wk-tsk-'+tk.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
-                                <CheckSquare class="w-2.5 h-2.5 flex-shrink-0" :class="tk.status === 'done' ? 'text-green-500' : ''" /> {{ tk.title }}
+                            <div v-for="tk in getTasksForDate(dayObj.dateStr)" :key="'wk-tsk-'+tk.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
+                                <CheckSquare class="w-2.5 h-2.5 flex-shrink-0 hover:text-purple-500 transition-colors" :class="tk.status === 'done' ? 'text-green-500' : ''" @click.stop="toggleTaskStatus(tk)" /> {{ tk.title }}
                             </div>
-                            <div v-for="ev in getEventsForDate(dayObj.dateStr).filter(e => !e.event_time)" :key="'wk-ad-ev-'+ev.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-[0_1px_2px_rgba(0,0,0,0.05)]" @click.stop="openEditEventModal(ev)">
+                            <div v-for="ev in getEventsForDate(dayObj.dateStr).filter(isAllDayOrMultiDay)" :key="'wk-ad-ev-'+ev.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-[0_1px_2px_rgba(0,0,0,0.05)]" @click.stop="openEditEventModal(ev)">
                                 <CalendarIcon class="w-2.5 h-2.5 flex-shrink-0" /> {{ ev.title }}
                             </div>
                         </div>
@@ -466,7 +664,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                                     style="height: 56px;"
                                     @click.stop="openEditEventModal(ev)">
                                     <div class="font-bold truncate">{{ ev.title }}</div>
-                                    <div class="opacity-70 truncate">{{ ev.event_time }}</div>
+                                    <div class="opacity-70 truncate" v-if="formatEventTime(ev)">{{ formatEventTime(ev) }}</div>
                                 </div>
                             </div>
                         </div>
@@ -540,7 +738,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                              </div>
                          </div>
                          <div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
-                             <div class="flex items-center gap-1" v-if="ev.event_time"><Clock class="w-3 h-3" /> {{ ev.event_time }}</div>
+                             <div class="flex items-center gap-1" v-if="formatEventTime(ev)"><Clock class="w-3 h-3" /> {{ formatEventTime(ev) }}</div>
                              <div class="flex items-center gap-1" v-if="ev.location"><MapPin class="w-3 h-3" /> {{ ev.location }}</div>
                          </div>
                          <p v-if="ev.content" class="text-sm text-gray-600 dark:text-gray-300 line-clamp-3 mb-2">{{ ev.content }}</p>
@@ -560,10 +758,11 @@ const deleteEvent = async (ev: EventMetadata) => {
                  </h3>
                  <div v-if="selectedTasks.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">No tasks due today.</div>
                  <div class="space-y-2">
-                     <div v-for="tk in selectedTasks" :key="tk.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm flex gap-3">
-                         <div class="pt-1 select-none pointer-events-none">
-                             <div class="w-4 h-4 rounded border-2 flex items-center justify-center transition-colors border-gray-300 dark:border-gray-500"
-                                  :class="{'bg-purple-500 border-purple-500 dark:border-purple-500': tk.status === 'done'}">
+                     <div v-for="tk in selectedTasks" :key="tk.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm flex gap-3 cursor-pointer hover:border-purple-300 transition-colors" @click.stop="$emit('open-node', tk.id, 'task')">
+                         <div class="pt-1 select-none pointer-events-auto">
+                             <div class="w-4 h-4 rounded border-2 flex items-center justify-center transition-colors border-gray-300 dark:border-gray-500 cursor-pointer hover:border-purple-400"
+                                  :class="{'bg-purple-500 border-purple-500 dark:border-purple-500 hover:border-purple-600': tk.status === 'done'}"
+                                  @click.stop="toggleTaskStatus(tk)">
                              </div>
                          </div>
                          <div class="flex-1">
@@ -588,22 +787,24 @@ const deleteEvent = async (ev: EventMetadata) => {
                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Event Title *</label>
                    <input v-model="eventForm.title" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="E.g., Team Meeting, John's Birthday">
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Date</label>
-                        <input v-model="eventForm.event_date" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                    <div class="flex items-center gap-4 mb-4">
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" v-model="eventForm.isAllDay" class="w-3.5 h-3.5 text-purple-600 rounded focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
+                            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">All Day Event</span>
+                        </label>
                     </div>
-                    <div>
-                        <div class="flex items-center justify-between mb-1.5">
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider">Time</label>
-                            <label class="flex items-center gap-1.5 cursor-pointer">
-                                <input type="checkbox" v-model="eventForm.isAllDay" class="w-3 h-3 text-purple-600 rounded focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
-                                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">All Day</span>
-                            </label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Start</label>
+                            <input v-if="eventForm.isAllDay" v-model="eventForm.start_at" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <input v-else v-model="eventForm.start_at" type="datetime-local" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                         </div>
-                        <input v-model="eventForm.event_time" type="time" :disabled="eventForm.isAllDay" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white disabled:opacity-50" style="color-scheme: dark;">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">End <span class="lowercase text-[9px] font-normal">(optional)</span></label>
+                            <input v-if="eventForm.isAllDay" v-model="eventForm.end_at" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <input v-else v-model="eventForm.end_at" type="datetime-local" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                        </div>
                     </div>
-                </div>
                 <div>
                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Location</label>
                    <input v-model="eventForm.location" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Zoom link, Office, etc.">

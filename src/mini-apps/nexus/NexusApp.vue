@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
@@ -150,6 +150,7 @@ const getTypeIcon = (type: string) => {
     if (type === 'event') return Calendar;
     if (type === 'tag') return Tag;
     if (type === 'whiteboard') return PenTool;
+    if (type === 'person') return Users;
     return FileText;
 };
 
@@ -161,6 +162,7 @@ const getTypeColor = (type: string) => {
     if (type === 'event') return 'text-rose-600 bg-rose-100 dark:bg-rose-500/20 dark:text-rose-400';
     if (type === 'tag') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     if (type === 'whiteboard') return 'text-violet-600 bg-violet-100 dark:bg-violet-500/20 dark:text-violet-400';
+    if (type === 'person') return 'text-orange-600 bg-orange-100 dark:bg-orange-500/20 dark:text-orange-400';
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 

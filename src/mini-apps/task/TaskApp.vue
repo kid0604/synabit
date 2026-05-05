@@ -348,6 +348,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
             vaultPath: props.vaultPath,
             path: task.path,
             metadata: {
+                ...task.custom_fields,
                 title: task.title,
                 status: newStatus,
                 is_transferred: task.is_transferred,
@@ -359,8 +360,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
                 comment: task.comment,
                 source_link: task.source_link,
                 tags: task.tags,
-                completed_at: task.completed_at,
-                ...task.custom_fields
+                completed_at: task.completed_at
             },
             content: task.content
         });
@@ -499,47 +499,55 @@ const saveTask = async () => {
              updatedCustomFields['order'] = editingTask.value.custom_fields['order'] as string;
         }
         
+        const properties = {
+            ...updatedCustomFields,
+            status: editingTask.value.status || 'todo',
+            is_transferred: editingTaskParams.value.is_transferred,
+            transferred_to: editingTaskParams.value.transferred_to,
+            track_progress: editingTaskParams.value.track_progress,
+            priority: editingTaskParams.value.priority,
+            start_date: editingTaskParams.value.start_date,
+            due_date: editingTaskParams.value.due_date,
+            comment: editingTaskParams.value.comment,
+            source_link: editingTask.value.source_link || '',
+            tags: tagArray,
+            completed_at: editingTask.value.completed_at || ''
+        };
+
         if (editingTask.value.isNew) {
-            const newTask = await invoke<TaskMetadata>('create_task', {
+            const safeName = (editingTaskParams.value.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            const relPath = `Tasks/${safeName}_${Date.now()}.md`;
+            
+            await invoke('write_node_file', {
                 vaultPath: props.vaultPath,
-                metadata: {
-                    title: editingTaskParams.value.title || 'Untitled',
-                    status: editingTask.value.status || 'todo',
-                    is_transferred: editingTaskParams.value.is_transferred,
-                    transferred_to: editingTaskParams.value.transferred_to,
-                    track_progress: editingTaskParams.value.track_progress,
-                    priority: editingTaskParams.value.priority,
-                    start_date: editingTaskParams.value.start_date,
-                    due_date: editingTaskParams.value.due_date,
-                    comment: editingTaskParams.value.comment,
-                    source_link: '',
-                    tags: tagArray,
-                    completed_at: '',
-                    ...updatedCustomFields
-                },
+                relPath: relPath,
+                nodeType: 'task',
+                title: editingTaskParams.value.title || 'Untitled',
+                properties: properties,
                 content: editingTaskParams.value.content
             });
+            
+            const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const newTask: TaskMetadata = {
+                id: relPath,
+                path: relPath,
+                title: editingTaskParams.value.title || 'Untitled',
+                content: editingTaskParams.value.content,
+                created_at: nowStr,
+                updated_at: nowStr,
+                custom_fields: updatedCustomFields,
+                ...properties
+            } as any;
             tasks.value.unshift(newTask);
         } else if (editingTask.value.path) {
-            await invoke('update_task', {
+            await invoke('write_node_file', {
                 vaultPath: props.vaultPath,
-                path: editingTask.value.path,
-                metadata: {
-                    title: editingTaskParams.value.title,
-                    status: editingTask.value.status,
-                    is_transferred: editingTaskParams.value.is_transferred,
-                    transferred_to: editingTaskParams.value.transferred_to,
-                    track_progress: editingTaskParams.value.track_progress,
-                    priority: editingTaskParams.value.priority,
-                    start_date: editingTaskParams.value.start_date,
-                    due_date: editingTaskParams.value.due_date,
-                    comment: editingTaskParams.value.comment,
-                    source_link: editingTask.value.source_link,
-                    tags: tagArray,
-                    completed_at: editingTask.value.completed_at || '',
-                    ...updatedCustomFields
-                },
-                content: editingTaskParams.value.content
+                relPath: editingTask.value.path,
+                nodeType: 'task',
+                title: editingTaskParams.value.title,
+                properties: properties,
+                content: editingTaskParams.value.content,
+                existingPath: editingTask.value.path
             });
             
             editingTask.value.title = editingTaskParams.value.title;
@@ -561,13 +569,39 @@ const saveTask = async () => {
     }
 };
 
+const mapNodeToTask = (node: any): TaskMetadata => {
+    const rawTags = node.properties?.tags;
+    const tagsArray = Array.isArray(rawTags) ? rawTags : (typeof rawTags === 'string' && rawTags.trim() !== '' ? [rawTags] : []);
+
+    return {
+        id: node.id,
+        path: node.id, // ID is the relative path in the node system
+        title: node.title,
+        content: node.content,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        status: node.properties.status || 'todo',
+        is_transferred: node.properties.is_transferred || false,
+        transferred_to: node.properties.transferred_to || '',
+        track_progress: node.properties.track_progress || false,
+        priority: node.properties.priority || '',
+        start_date: node.properties.start_date || '',
+        due_date: node.properties.due_date || '',
+        comment: node.properties.comment || '',
+        source_link: node.properties.source_link || '',
+        tags: tagsArray,
+        completed_at: node.properties.completed_at || '',
+        custom_fields: node.properties || {}
+    };
+};
+
 const loadTasks = async () => {
     if (!props.vaultPath) return;
     try {
-        // Auto-archive tasks done > configured days (default 30)
         const archiveDays = taskArchiveDays.value;
-        await invoke('archive_done_tasks', { vaultPath: props.vaultPath, days: archiveDays });
-        tasks.value = await invoke('scan_tasks', { vaultPath: props.vaultPath });
+        await invoke('archive_done_nodes', { vaultPath: props.vaultPath, nodeType: 'task', days: archiveDays });
+        const nodes = await invoke<any[]>('get_nodes', { nodeType: 'task' });
+        tasks.value = nodes.map(mapNodeToTask);
     } catch (e) {
         logger.error("Failed to load tasks", e);
     }
@@ -579,25 +613,28 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
     const newCompletedAt = newStatus === 'done' ? nowStr : '';
     
     try {
-        await invoke('update_task', {
+        const properties = {
+            ...task.custom_fields,
+            status: newStatus,
+            is_transferred: task.is_transferred,
+            transferred_to: task.transferred_to,
+            track_progress: task.track_progress,
+            priority: task.priority,
+            start_date: task.start_date,
+            due_date: task.due_date,
+            comment: task.comment,
+            source_link: task.source_link,
+            tags: task.tags,
+            completed_at: newCompletedAt
+        };
+        await invoke('write_node_file', {
             vaultPath: props.vaultPath,
-            path: task.path,
-            metadata: {
-                title: task.title,
-                status: newStatus,
-                is_transferred: task.is_transferred,
-                transferred_to: task.transferred_to,
-                track_progress: task.track_progress,
-                priority: task.priority,
-                start_date: task.start_date,
-                due_date: task.due_date,
-                comment: task.comment,
-                source_link: task.source_link,
-                tags: task.tags,
-                completed_at: newCompletedAt,
-                ...task.custom_fields
-            },
-            content: task.content
+            relPath: task.path,
+            nodeType: 'task',
+            title: task.title,
+            properties: properties,
+            content: task.content,
+            existingPath: task.path
         });
         task.status = newStatus;
         task.completed_at = newCompletedAt;
@@ -623,7 +660,7 @@ const deleteTask = async (task: TaskMetadata) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_task', { vaultPath: props.vaultPath, path: task.path });
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, path: task.path });
         const idx = tasks.value.findIndex(t => t.id === task.id);
         if (idx !== -1) tasks.value.splice(idx, 1);
     } catch (e) {

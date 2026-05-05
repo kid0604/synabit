@@ -4,9 +4,7 @@ use std::time::Instant;
 use std::sync::Mutex;
 
 use crate::models::note::NoteMetadata;
-use crate::models::task::TaskMetadata;
-use crate::models::event::EventMetadata;
-use crate::models::quickcap::QuickCapMetadata;
+
 use crate::models::file::{FileMetadata, FileSource};
 use crate::models::whiteboard::WhiteboardMetadata;
 use crate::error::{AppError, AppResult};
@@ -64,54 +62,14 @@ impl DbBridge {
         let _ = conn.execute("ALTER TABLE notes ADD COLUMN content TEXT NOT NULL DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE notes ADD COLUMN full_width BOOLEAN NOT NULL DEFAULT 0", []);
 
-        // ─── Tasks Table ───────────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'todo',
-                priority TEXT NOT NULL DEFAULT '',
-                start_date TEXT NOT NULL DEFAULT '',
-                due_date TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '[]',
-                content TEXT NOT NULL DEFAULT '',
-                path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                completed_at TEXT NOT NULL DEFAULT '',
-                timestamp INTEGER NOT NULL DEFAULT 0
-            )",
-            [],
-        ).map_err(|e| AppError::General(format!("DB Schema Error (tasks): {}", e)))?;
+        // ─── Drop Legacy Events Table ──────────────────────────
+        let _ = conn.execute("DROP TABLE IF EXISTS events", []);
 
-        // ─── Events Table ──────────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                event_date TEXT NOT NULL DEFAULT '',
-                event_time TEXT NOT NULL DEFAULT '',
-                location TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '[]',
-                content TEXT NOT NULL DEFAULT '',
-                path TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT '',
-                timestamp INTEGER NOT NULL DEFAULT 0
-            )",
-            [],
-        ).map_err(|e| AppError::General(format!("DB Schema Error (events): {}", e)))?;
+        // ─── Drop Legacy Tasks Table ───────────────────────────
+        let _ = conn.execute("DROP TABLE IF EXISTS tasks", []);
 
-        // ─── QuickCaps Table ───────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS quickcaps (
-                id TEXT PRIMARY KEY,
-                date TEXT NOT NULL,
-                content TEXT NOT NULL DEFAULT '',
-                path TEXT NOT NULL,
-                timestamp INTEGER NOT NULL DEFAULT 0
-            )",
-            [],
-        ).map_err(|e| AppError::General(format!("DB Schema Error (quickcaps): {}", e)))?;
+        // ─── Drop Legacy QuickCaps Table ───────────────────────────
+        let _ = conn.execute("DROP TABLE IF EXISTS quickcaps", []);
 
         // ─── Files Table ───────────────────────────────────────
         conn.execute(
@@ -138,6 +96,21 @@ impl DbBridge {
             )",
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (file_sources): {}", e)))?;
+
+        // ─── Nodes Table (Universal Core) ────────────────────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS nodes (
+                id TEXT PRIMARY KEY,
+                node_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                properties TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        ).map_err(|e| AppError::General(format!("DB Schema Error (nodes): {}", e)))?;
 
         // ─── Whiteboards Table ─────────────────────────────────
         conn.execute(
@@ -334,116 +307,9 @@ impl DbBridge {
         Ok(out)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  TASKS
-    // ═══════════════════════════════════════════════════════════
 
-    pub fn upsert_task(&self, task: &TaskMetadata) -> AppResult<()> {
-        let tags_json = serde_json::to_string(&task.tags)?;
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&task.created_at, "%Y-%m-%d %H:%M:%S")
-            .map(|dt| dt.and_utc().timestamp_millis())
-            .unwrap_or(0);
-        self.conn.execute(
-            "INSERT INTO tasks (id, title, status, priority, start_date, due_date, tags, content, path, created_at, updated_at, completed_at, timestamp) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT(id) DO UPDATE SET 
-                title=excluded.title, status=excluded.status, priority=excluded.priority,
-                start_date=excluded.start_date, due_date=excluded.due_date, tags=excluded.tags,
-                content=excluded.content, path=excluded.path, updated_at=excluded.updated_at,
-                completed_at=excluded.completed_at, timestamp=excluded.timestamp",
-            params![task.id, task.title, task.status, task.priority, task.start_date, task.due_date,
-                    tags_json, task.content, task.path, task.created_at, task.updated_at, task.completed_at, timestamp],
-        ).map_err(|e| AppError::General(format!("DB Upsert Task Error: {}", e)))?;
-        Ok(())
-    }
 
-    pub fn delete_task(&self, id: &str) -> AppResult<()> {
-        self.conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])
-            .map_err(|e| AppError::General(format!("DB Delete Task Error: {}", e)))?;
-        Ok(())
-    }
 
-    pub fn get_all_task_timestamps(&self) -> AppResult<HashMap<String, i64>> {
-        let mut stmt = self.conn.prepare("SELECT id, timestamp FROM tasks")
-            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-        let mut map = HashMap::new();
-        for r in rows.flatten() { map.insert(r.0, r.1); }
-        Ok(map)
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  EVENTS
-    // ═══════════════════════════════════════════════════════════
-
-    pub fn upsert_event(&self, event: &EventMetadata) -> AppResult<()> {
-        let tags_json = serde_json::to_string(&event.tags)?;
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&event.created_at, "%Y-%m-%d %H:%M:%S")
-            .map(|dt| dt.and_utc().timestamp_millis())
-            .unwrap_or(0);
-        self.conn.execute(
-            "INSERT INTO events (id, title, event_date, event_time, location, tags, content, path, created_at, timestamp) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-             ON CONFLICT(id) DO UPDATE SET 
-                title=excluded.title, event_date=excluded.event_date, event_time=excluded.event_time,
-                location=excluded.location, tags=excluded.tags, content=excluded.content,
-                path=excluded.path, created_at=excluded.created_at, timestamp=excluded.timestamp",
-            params![event.id, event.title, event.event_date, event.event_time, event.location,
-                    tags_json, event.content, event.path, event.created_at, timestamp],
-        ).map_err(|e| AppError::General(format!("DB Upsert Event Error: {}", e)))?;
-        Ok(())
-    }
-
-    pub fn delete_event(&self, id: &str) -> AppResult<()> {
-        self.conn.execute("DELETE FROM events WHERE id = ?1", params![id])
-            .map_err(|e| AppError::General(format!("DB Delete Event Error: {}", e)))?;
-        Ok(())
-    }
-
-    pub fn get_all_event_timestamps(&self) -> AppResult<HashMap<String, i64>> {
-        let mut stmt = self.conn.prepare("SELECT id, timestamp FROM events")
-            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-        let mut map = HashMap::new();
-        for r in rows.flatten() { map.insert(r.0, r.1); }
-        Ok(map)
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  QUICKCAPS
-    // ═══════════════════════════════════════════════════════════
-
-    pub fn upsert_quickcap(&self, qc: &QuickCapMetadata) -> AppResult<()> {
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&qc.date, "%Y-%m-%d %H:%M:%S")
-            .map(|dt| dt.and_utc().timestamp_millis())
-            .unwrap_or(0);
-        self.conn.execute(
-            "INSERT INTO quickcaps (id, date, content, path, timestamp) 
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(id) DO UPDATE SET 
-                date=excluded.date, content=excluded.content, path=excluded.path, timestamp=excluded.timestamp",
-            params![qc.id, qc.date, qc.content, qc.path, timestamp],
-        ).map_err(|e| AppError::General(format!("DB Upsert QuickCap Error: {}", e)))?;
-        Ok(())
-    }
-
-    pub fn delete_quickcap(&self, id: &str) -> AppResult<()> {
-        self.conn.execute("DELETE FROM quickcaps WHERE id = ?1", params![id])
-            .map_err(|e| AppError::General(format!("DB Delete QuickCap Error: {}", e)))?;
-        Ok(())
-    }
-
-    pub fn get_all_quickcap_timestamps(&self) -> AppResult<HashMap<String, i64>> {
-        let mut stmt = self.conn.prepare("SELECT id, timestamp FROM quickcaps")
-            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-        let mut map = HashMap::new();
-        for r in rows.flatten() { map.insert(r.0, r.1); }
-        Ok(map)
-    }
 
     // ═══════════════════════════════════════════════════════════
     //  WHITEBOARDS
@@ -620,64 +486,9 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
         for r in rows.flatten() { items.push(r); }
 
-        // Tasks
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, content, tags, created_at, path, status FROM tasks"
-        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            let tags_str: String = row.get(3)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            let content: String = row.get(2)?;
-            let preview: String = content.chars().take(150).collect();
-            Ok(NexusRow {
-                id: row.get(0)?, item_type: "task".to_string(),
-                title: row.get(1)?, preview, tags,
-                date: row.get(4)?, path: row.get(5)?,
-                content,
-                status: Some(row.get(6)?),
-            })
-        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
-        for r in rows.flatten() { items.push(r); }
 
-        // Events
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, content, tags, event_date, path FROM events"
-        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            let tags_str: String = row.get(3)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            let content: String = row.get(2)?;
-            let preview: String = content.chars().take(150).collect();
-            Ok(NexusRow {
-                id: row.get(0)?, item_type: "event".to_string(),
-                title: row.get(1)?, preview, tags,
-                date: row.get(4)?, path: row.get(5)?,
-                content,
-                status: None,
-            })
-        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
-        for r in rows.flatten() { items.push(r); }
 
-        // QuickCaps
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, date, path FROM quickcaps"
-        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            let content: String = row.get(1)?;
-            let preview: String = content.chars().take(150).collect();
-            let extracted_tags: Vec<String> = content.split_whitespace()
-                .filter(|w| w.starts_with('#') && w.len() > 1)
-                .map(|w| w[1..].to_string())
-                .collect();
-            Ok(NexusRow {
-                id: row.get(0)?, item_type: "quickcap".to_string(),
-                title: "⚡ QuickCap".to_string(), preview, tags: extracted_tags,
-                date: row.get(2)?, path: row.get(3)?,
-                content,
-                status: None,
-            })
-        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
-        for r in rows.flatten() { items.push(r); }
+
 
         // Files
         let mut stmt = self.conn.prepare(
@@ -734,6 +545,31 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
         for r in rows.flatten() { items.push(r); }
 
+        // Nodes (Universal Architecture)
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_type, title, content, properties, updated_at FROM nodes"
+        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
+        let rows = stmt.query_map([], |row| {
+            let props_str: String = row.get(4)?;
+            let mut tags = Vec::new();
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&props_str) {
+                if let Some(t) = json_val.get("tags").and_then(|v| v.as_array()) {
+                    tags = t.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                }
+            }
+            let content: String = row.get(3)?;
+            let preview: String = content.chars().take(150).collect();
+            let node_type: String = row.get(1)?;
+            Ok(NexusRow {
+                id: row.get(0)?, item_type: node_type,
+                title: row.get(2)?, preview, tags,
+                date: row.get(5)?, path: row.get(0)?,
+                content,
+                status: None,
+            })
+        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
+        for r in rows.flatten() { items.push(r); }
+
         Ok(items)
     }
 
@@ -756,63 +592,9 @@ impl DbBridge {
             }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
             return Ok(rows.next().and_then(|r| r.ok()));
         }
-        if id.starts_with("Tasks/") {
-            let mut stmt = self.conn
-                .prepare("SELECT id, title, content, tags, created_at, path, status FROM tasks WHERE id = ?1")
-                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-            let mut rows = stmt.query_map(params![id], |row| {
-                let tags_str: String = row.get(3)?;
-                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                let content: String = row.get(2)?;
-                let preview: String = content.chars().take(150).collect();
-                Ok(NexusRow {
-                    id: row.get(0)?, item_type: "task".to_string(),
-                    title: row.get(1)?, preview, tags,
-                    date: row.get(4)?, path: row.get(5)?,
-                    content, status: Some(row.get(6)?),
-                })
-            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-            return Ok(rows.next().and_then(|r| r.ok()));
-        }
-        if id.starts_with("Events/") {
-            let mut stmt = self.conn
-                .prepare("SELECT id, title, content, tags, event_date, path FROM events WHERE id = ?1")
-                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-            let mut rows = stmt.query_map(params![id], |row| {
-                let tags_str: String = row.get(3)?;
-                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                let content: String = row.get(2)?;
-                let preview: String = content.chars().take(150).collect();
-                Ok(NexusRow {
-                    id: row.get(0)?, item_type: "event".to_string(),
-                    title: row.get(1)?, preview, tags,
-                    date: row.get(4)?, path: row.get(5)?,
-                    content, status: None,
-                })
-            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-            return Ok(rows.next().and_then(|r| r.ok()));
-        }
-        if id.starts_with("QuickCaps/") {
-            let mut stmt = self.conn
-                .prepare("SELECT id, content, date, path FROM quickcaps WHERE id = ?1")
-                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-            let mut rows = stmt.query_map(params![id], |row| {
-                let content: String = row.get(1)?;
-                let preview: String = content.chars().take(150).collect();
-                let extracted_tags: Vec<String> = content
-                    .split_whitespace()
-                    .filter(|w| w.starts_with('#') && w.len() > 1)
-                    .map(|w| w[1..].to_string())
-                    .collect();
-                Ok(NexusRow {
-                    id: row.get(0)?, item_type: "quickcap".to_string(),
-                    title: "⚡ QuickCap".to_string(), preview, tags: extracted_tags,
-                    date: row.get(2)?, path: row.get(3)?,
-                    content, status: None,
-                })
-            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-            return Ok(rows.next().and_then(|r| r.ok()));
-        }
+
+
+
         // Whiteboards
         if id.starts_with("Whiteboards/") || id.starts_with("whiteboard-") {
             let mut stmt = self.conn
@@ -869,12 +651,41 @@ impl DbBridge {
                 return Ok(Some(row));
             }
         }
+        
+        // Fallback to Universal Nodes table
+        {
+            let mut stmt = self.conn
+                .prepare("SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE id = ?1")
+                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+            let mut rows = stmt.query_map(params![id], |row| {
+                let props_str: String = row.get(4)?;
+                let mut tags = Vec::new();
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&props_str) {
+                    if let Some(t) = json_val.get("tags").and_then(|v| v.as_array()) {
+                        tags = t.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    }
+                }
+                let content: String = row.get(3)?;
+                let preview: String = content.chars().take(150).collect();
+                let node_type: String = row.get(1)?;
+                Ok(NexusRow {
+                    id: row.get(0)?, item_type: node_type,
+                    title: row.get(2)?, preview, tags,
+                    date: row.get(5)?, path: row.get(0)?,
+                    content, status: None,
+                })
+            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+            if let Some(Ok(row)) = rows.next() {
+                return Ok(Some(row));
+            }
+        }
+        
         Ok(None)
     }
 
     pub fn clear_all(&self) -> AppResult<()> {
         self.conn.execute_batch(
-            "DELETE FROM notes; DELETE FROM tasks; DELETE FROM events; DELETE FROM quickcaps;"
+            "DELETE FROM notes;"
         ).map_err(|e| AppError::General(format!("DB Clear Error: {}", e)))?;
         Ok(())
     }
@@ -958,74 +769,11 @@ impl DbBridge {
         .filter_map(|r| r.ok())
         .count();
 
-        // Index tasks (with properties)
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, tags, content, created_at, path, status, priority FROM tasks"
-        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let tags_json: String = row.get(2)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let content: String = row.get(3)?;
-            let date: String = row.get(4)?;
-            let path: String = row.get(5)?;
-            let status: String = row.get(6)?;
-            let priority: String = row.get::<_, String>(7).unwrap_or_default();
-            let props = format!("priority:{}", priority);
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'task', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![id, title, tags.join(" "), content, props, status, date, path],
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
 
-        // Index events (with properties)
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, tags, content, event_date, path, location, event_time FROM events"
-        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let tags_json: String = row.get(2)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let content: String = row.get(3)?;
-            let date: String = row.get(4)?;
-            let path: String = row.get(5)?;
-            let location: String = row.get::<_, String>(6).unwrap_or_default();
-            let event_time: String = row.get::<_, String>(7).unwrap_or_default();
-            let mut props_parts: Vec<String> = Vec::new();
-            if !location.is_empty() { props_parts.push(format!("location:{}", location)); }
-            if !event_time.is_empty() { props_parts.push(format!("time:{}", event_time)); }
-            let props = props_parts.join(" ");
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'event', ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
-                params![id, title, tags.join(" "), content, props, date, path],
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
 
-        // Index quickcaps
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, date, path FROM quickcaps"
-        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let content: String = row.get(1)?;
-            let date: String = row.get(2)?;
-            let path: String = row.get(3)?;
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'quickcap', '⚡ QuickCap', '', ?2, '', NULL, ?3, ?4)",
-                params![id, content, date, path],
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
+
+
+
 
         // Index files (with properties)
         let mut stmt = self.conn.prepare(
@@ -1064,6 +812,43 @@ impl DbBridge {
             let _ = self.conn.execute(
                 "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'whiteboard', ?2, ?3, ?2, '', NULL, ?4, ?5)",
                 params![id, title, tags.join(" "), date, path],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
+        // Index nodes (Universal Core)
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_type, title, content, properties, updated_at FROM nodes"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let node_type: String = row.get(1)?;
+            let title: String = row.get(2)?;
+            let content: String = row.get(3)?;
+            let properties: String = row.get(4)?;
+            let date: String = row.get(5)?;
+            // Attempt to extract tags, status, and priority from properties if present
+            let mut tags_str = String::new();
+            let mut status = None;
+            let mut props_search = properties.clone();
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&properties) {
+                if let Some(tags) = json_val.get("tags").and_then(|v| v.as_array()) {
+                    let tags_vec: Vec<String> = tags.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    tags_str = tags_vec.join(" ");
+                }
+                if let Some(s) = json_val.get("status").and_then(|v| v.as_str()) {
+                    status = Some(s.to_string());
+                }
+                // Extract priority to append to properties text for BM25 search
+                if let Some(p) = json_val.get("priority").and_then(|v| v.as_str()) {
+                    props_search = format!("{} priority:{}", properties, p);
+                }
+            }
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?1)",
+                params![id, node_type, title, tags_str, content, props_search, status.unwrap_or("".to_string()), date],
             );
             Ok(())
         }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
@@ -1274,6 +1059,147 @@ impl DbBridge {
             total_count,
             query_time_ms: elapsed,
         })
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  NODES (UNIVERSAL ARCHITECTURE)
+    // ═══════════════════════════════════════════════════════════
+
+    pub fn upsert_node(&self, node: &crate::models::node::NodeMetadata) -> AppResult<()> {
+        let properties_json = serde_json::to_string(&node.properties)?;
+        self.conn.execute(
+            "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                node_type=excluded.node_type,
+                title=excluded.title,
+                content=excluded.content,
+                properties=excluded.properties,
+                updated_at=excluded.updated_at,
+                timestamp=excluded.timestamp",
+            params![node.id, node.node_type, node.title, node.content, properties_json, node.created_at, node.updated_at, node.timestamp],
+        ).map_err(|e| AppError::General(format!("DB Upsert Node Error: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn delete_node(&self, id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM nodes WHERE id = ?1", params![id])
+            .map_err(|e| AppError::General(format!("DB Delete Node Error: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn get_node(&self, id: &str) -> AppResult<Option<crate::models::node::NodeMetadata>> {
+        let mut stmt = self.conn.prepare("SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp FROM nodes WHERE id = ?1")
+            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+        
+        let mut rows = stmt.query_map(params![id], |row| {
+            let props_str: String = row.get(4)?;
+            let properties: serde_json::Value = serde_json::from_str(&props_str).unwrap_or(serde_json::Value::Null);
+            Ok(crate::models::node::NodeMetadata {
+                id: row.get(0)?,
+                node_type: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                properties,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                timestamp: row.get(7)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+
+        Ok(rows.next().and_then(|r| r.ok()))
+    }
+
+    pub fn get_nodes_by_type(&self, node_type: &str) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+        let mut stmt = self.conn.prepare("SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp FROM nodes WHERE node_type = ?1 ORDER BY updated_at DESC")
+            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+        
+        let rows = stmt.query_map(params![node_type], |row| {
+            let props_str: String = row.get(4)?;
+            let properties: serde_json::Value = serde_json::from_str(&props_str).unwrap_or(serde_json::Value::Null);
+            Ok(crate::models::node::NodeMetadata {
+                id: row.get(0)?,
+                node_type: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                properties,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                timestamp: row.get(7)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            if let Ok(node) = r {
+                results.push(node);
+            }
+        }
+        Ok(results)
+    }
+
+    pub fn get_linked_nodes(&self, target_title: &str, target_id: &str) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.node_type, n.title, n.content, n.properties, n.created_at, n.updated_at, n.timestamp 
+             FROM nodes n 
+             JOIN graph_edges e ON n.id = e.source_id 
+             WHERE LOWER(e.target_title_or_path) = LOWER(?1) OR LOWER(e.target_title_or_path) = LOWER(?2)
+             ORDER BY n.updated_at DESC"
+        ).map_err(|e| AppError::General(format!("DB Query Error (get_linked_nodes): {}", e)))?;
+        
+        let rows = stmt.query_map(params![target_title, target_id], |row| {
+            let props_str: String = row.get(4)?;
+            let properties: serde_json::Value = serde_json::from_str(&props_str).unwrap_or(serde_json::Value::Null);
+            Ok(crate::models::node::NodeMetadata {
+                id: row.get(0)?,
+                node_type: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                properties,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                timestamp: row.get(7)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Map Error (get_linked_nodes): {}", e)))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            if let Ok(node) = r {
+                results.push(node);
+            }
+        }
+        Ok(results)
+    }
+
+    pub fn get_node_title(&self, node_id: &str) -> Option<String> {
+        let mut stmt = self.conn.prepare("SELECT title FROM nodes WHERE id = ?1").ok()?;
+        stmt.query_row(params![node_id], |row| row.get::<_, String>(0)).ok()
+    }
+
+    pub fn get_all_nodes(&self) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+        let mut stmt = self.conn.prepare("SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp FROM nodes ORDER BY updated_at DESC")
+            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+        
+        let rows = stmt.query_map([], |row| {
+            let props_str: String = row.get(4)?;
+            let properties: serde_json::Value = serde_json::from_str(&props_str).unwrap_or(serde_json::Value::Null);
+            Ok(crate::models::node::NodeMetadata {
+                id: row.get(0)?,
+                node_type: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                properties,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                timestamp: row.get(7)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+
+        let mut nodes = Vec::new();
+        for n in rows.flatten() {
+            nodes.push(n);
+        }
+        Ok(nodes)
     }
 }
 

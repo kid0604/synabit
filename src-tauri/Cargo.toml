@@ -1,6 +1,6 @@
 [package]
 name = "synabit"
-version = "0.2.6"
+version = "0.2.9"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"
@@ -48,4 +48,7 @@ regex = "1.12.3"
 tauri-plugin-os = "2"
 tauri-plugin-log = "2.8.0"
 log = "0.4.29"
+
+[dev-dependencies]
+text-diff = "0.4.0"
 

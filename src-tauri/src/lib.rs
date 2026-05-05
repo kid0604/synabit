@@ -8,7 +8,7 @@ pub mod search;
 pub mod utils;
 pub mod watcher;
 
-use commands::{events, files, nexus, notes, quickcaps, tasks, whiteboards};
+use commands::{files, nexus, nodes, notes, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -67,6 +67,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Nodes (Universal Architecture)
+            nodes::scan_all_nodes,
+            nodes::get_all_nodes,
+            nodes::get_nodes,
+            nodes::get_linked_nodes,
+            nodes::write_node_file,
+            nodes::delete_node_file,
+            nodes::migrate_events_to_nodes,
+            nodes::migrate_tasks_to_nodes,
+            nodes::archive_done_nodes,
+            nodes::migrate_quickcaps_to_nodes,
+            nodes::copy_asset_to_vault,
             // Notes
             notes::scan_vault_path,
             notes::create_new_note,
@@ -78,23 +90,8 @@ pub fn run() {
             notes::spawn_note_window,
             notes::open_daily_note,
             notes::get_note_backlinks,
-            // Tasks
-            tasks::scan_tasks,
-            tasks::create_task,
-            tasks::update_task,
-            tasks::delete_task,
-            tasks::archive_done_tasks,
-            // Events
-            events::scan_events,
-            events::create_event,
-            events::update_event,
-            events::delete_event,
-            // QuickCaps
-            quickcaps::scan_quick_caps,
-            quickcaps::create_quick_cap,
-            quickcaps::update_quick_cap,
-            quickcaps::delete_quick_cap,
-            quickcaps::copy_asset_to_vault,
+
+
             // Files
             files::add_file_source,
             files::get_file_sources,

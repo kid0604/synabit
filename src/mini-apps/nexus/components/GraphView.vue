@@ -41,6 +41,7 @@ const showTasks = ref(true);
 const showEvents = ref(true);
 const showTags = ref(true);
 const showFiles = ref(false);
+const showPeople = ref(true);
 const showOrphans = ref(true);
 
 // Display
@@ -76,6 +77,7 @@ const colorMap: Record<string, string> = {
     'event': '#f43f5e',    // rose
     'tag': '#a855f7',      // purple
     'file': '#8b5cf6',     // violet
+    'person': '#f97316',   // orange
     'ghost': '#9ca3af',    // gray
 };
 
@@ -91,6 +93,7 @@ const getFilteredData = () => {
         if (!showEvents.value && node.item_type === 'event') continue;
         if (!showFiles.value && node.item_type === 'file') continue;
         if (!showTags.value && node.item_type === 'tag') continue;
+        if (!showPeople.value && node.item_type === 'person') continue;
 
         const simNode: SimNode = {
             ...node,
@@ -328,7 +331,7 @@ const draw = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
 let cleanupObserver: (() => void) | null = null;
 
 watch([
-    showNotes, showTasks, showEvents, showTags, showFiles, showOrphans, 
+    showNotes, showTasks, showEvents, showTags, showFiles, showPeople, showOrphans, 
     showLabels, nodeSize, linkThickness, repelForce, linkDist, 
     () => props.graphData
 ], () => {
@@ -434,6 +437,13 @@ onUnmounted(() => {
                             <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Files</span>
                         </div>
                         <input type="checkbox" v-model="showFiles" class="toggle-checkbox" />
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer group">
+                        <div class="flex items-center gap-3">
+                            <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showPeople ? colorMap['person'] : '#e5e7eb' }"></div>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">People</span>
+                        </div>
+                        <input type="checkbox" v-model="showPeople" class="toggle-checkbox" />
                     </label>
 
                     <div class="h-px bg-gray-200 dark:bg-[#3a3a3c] my-4"></div>

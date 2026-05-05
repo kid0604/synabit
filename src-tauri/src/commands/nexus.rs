@@ -164,6 +164,7 @@ pub fn search_quickcaps(
     db.search_fts(&parsed, 1, 200)
 }
 
+
 /// FTS5-powered search scoped to tasks only.
 /// Used by the Task mini-app search.
 #[tauri::command]

@@ -15,6 +15,8 @@ import { useSettings } from '../../composables/useSettings';
 import type { NoteMetadata } from '../../types/ipc';
 import { logger } from '../../utils/logger';
 
+const emit = defineEmits(['open-node']);
+
 const props = defineProps<{
   vaultPath: string;
   isFloatingView?: boolean;
@@ -528,12 +530,21 @@ watch(currentNoteId, async (newId) => {
     } else { currentBacklinks.value = []; }
 });
 
-const handleOpenInternalNote = (noteId: string) => {
-    const exists = notes.value.find(n => n.id === noteId);
-    if (exists) { currentNoteId.value = noteId; }
-    else {
-        const existsByName = notes.value.find(n => n.id.endsWith(noteId));
-        if (existsByName) currentNoteId.value = existsByName.id;
+const handleOpenInternalNote = (data: any) => {
+    // If we receive a string, it's legacy behavior (assume note)
+    const noteId = typeof data === 'string' ? data : data.id;
+    const type = typeof data === 'string' ? 'note' : data.type;
+
+    if (type === 'note' || type === 'node') {
+        const exists = notes.value.find(n => n.id === noteId);
+        if (exists) { currentNoteId.value = noteId; }
+        else {
+            const existsByName = notes.value.find(n => n.id.endsWith(noteId));
+            if (existsByName) currentNoteId.value = existsByName.id;
+        }
+    } else {
+        // Emit up to App.vue to switch tools and open the node
+        emit('open-node', noteId, type);
     }
 };
 

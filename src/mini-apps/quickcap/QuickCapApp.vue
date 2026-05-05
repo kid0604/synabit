@@ -18,18 +18,23 @@ const props = defineProps<{
   vaultPath: string;
 }>();
 
-export interface QuickCapMetadata {
+export interface NodeMetadata {
     id: string;
-    date: string;
+    node_type: string;
+    title: string;
     content: string;
-    path: string;
+    created_at: string;
+    updated_at: string;
+    properties: any;
+    color?: string;
+    tags?: string[];
 }
 
-const quickCaps = ref<QuickCapMetadata[]>([]);
+const quickCaps = ref<NodeMetadata[]>([]);
 const newCapText = ref('');
 const isSubmitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
-const selectedCap = ref<QuickCapMetadata | null>(null);
+const selectedCap = ref<NodeMetadata | null>(null);
 
 const editingContent = ref('');
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -130,12 +135,12 @@ const appendTagToInput = () => {
     inputRef.value?.focus();
 };
 
-const openTagInput = (cap: QuickCapMetadata) => {
+const openTagInput = (cap: NodeMetadata) => {
     taggingCapId.value = cap.id;
     tagInputText.value = '';
 };
 
-const saveInlineTag = async (cap: QuickCapMetadata) => {
+const saveInlineTag = async (cap: NodeMetadata) => {
     if (!tagInputText.value.trim()) {
         taggingCapId.value = null;
         return;
@@ -145,7 +150,7 @@ const saveInlineTag = async (cap: QuickCapMetadata) => {
     const formattedTag = isMultiWord ? `#${rawTag}#` : `#${rawTag}`;
     const updatedContent = `${cap.content}\n\n${formattedTag}`;
     try {
-        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
+        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
         taggingCapId.value = null;
         tagInputText.value = '';
@@ -161,11 +166,7 @@ const saveInlineTag = async (cap: QuickCapMetadata) => {
     }
 };
 
-const getCapColor = (content: string) => {
-    const match = content.match(/<!--color:(.*?)-->/);
-    if (match) return match[1];
-    return '';
-};
+
 
 const toggleColorPicker = (capId: string) => {
     if (colorPickerCapId.value === capId) {
@@ -175,7 +176,7 @@ const toggleColorPicker = (capId: string) => {
     }
 };
 
-const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
+const changeCapColor = async (cap: NodeMetadata, colorValue: string) => {
     let rawContent = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
     let updatedContent = rawContent;
     if (colorValue) {
@@ -183,7 +184,7 @@ const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
     }
     
     try {
-        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
+        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: { ...cap.properties, color: colorValue }, content: rawContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to update color", e);
@@ -191,10 +192,28 @@ const changeCapColor = async (cap: QuickCapMetadata, colorValue: string) => {
     colorPickerCapId.value = null;
 };
 
+const mapNodeToQuickCap = (node: any): NodeMetadata => {
+    const rawTags = node.properties?.tags;
+    const tagsArray = Array.isArray(rawTags) ? rawTags : (typeof rawTags === 'string' && rawTags.trim() !== '' ? [rawTags] : []);
+
+    return {
+        id: node.id,
+        node_type: node.node_type,
+        title: node.title,
+        content: node.content,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        properties: node.properties || {},
+        color: node.properties?.color || '',
+        tags: tagsArray
+    };
+};
+
 const loadCaps = async () => {
     if (!props.vaultPath) return;
     try {
-        quickCaps.value = await invoke('scan_quick_caps', { vaultPath: props.vaultPath });
+        const nodes: any[] = await invoke('get_nodes', { vaultPath: props.vaultPath, nodeType: 'quickcap' });
+        quickCaps.value = nodes.map(mapNodeToQuickCap);
     } catch (e) {
         logger.error("Failed to load quick caps", e);
     }
@@ -225,7 +244,7 @@ const saveSelectedCap = async () => {
     if (selectedCap.value.content === finalPayload) return;
     
     try {
-        await invoke('update_note', { vaultPath: props.vaultPath, path: selectedCap.value.path, content: finalPayload });
+        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: selectedCap.value.id, title: selectedCap.value.title, nodeType: selectedCap.value.node_type, properties: selectedCap.value.properties, content: finalPayload });
         selectedCap.value.content = finalPayload;
     } catch(e) {
         logger.error("Failed to update note", e);
@@ -321,7 +340,7 @@ const editor = useEditor({
   }
 });
 
-const openFullView = (cap: QuickCapMetadata) => {
+const openFullView = (cap: NodeMetadata) => {
     selectedCap.value = cap;
     let rawStr = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
     
@@ -373,11 +392,22 @@ const submitCap = async () => {
     if (!newCapText.value.trim() || !props.vaultPath) return;
     isSubmitting.value = true;
     try {
-        const newCap: QuickCapMetadata = await invoke('create_quick_cap', {
+        const timestamp = Date.now();
+        const safeTitle = newCapText.value.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
+        const fallbackTitle = `qc_${timestamp}`;
+        const titleToUse = safeTitle || fallbackTitle;
+        const relPath = `QuickCaps/${titleToUse}_${timestamp}.md`;
+
+        await invoke('write_node_file', {
             vaultPath: props.vaultPath,
-            content: newCapText.value
+            relPath: relPath,
+            title: newCapText.value.substring(0, 50),
+            nodeType: 'quickcap',
+            content: newCapText.value,
+            properties: { tags: [] }
         });
-        quickCaps.value.unshift(newCap);
+        
+        await loadCaps();
         newCapText.value = '';
         if (inputRef.value) {
             inputRef.value.style.height = 'auto';
@@ -445,7 +475,7 @@ const pickImageForNewCap = async () => {
     }
 };
 
-const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
+const pickImageForExistingCap = async (cap: NodeMetadata) => {
     try {
         const selected = await openDialog({
             multiple: false,
@@ -458,7 +488,7 @@ const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
             });
             const imgMd = `\n\n![Image](${relPath})`;
             const updatedContent = cap.content + imgMd;
-            await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
+            await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
             cap.content = updatedContent;
         }
     } catch(e) {
@@ -466,7 +496,7 @@ const pickImageForExistingCap = async (cap: QuickCapMetadata) => {
     }
 };
 
-const convertingTaskCap = ref<QuickCapMetadata | null>(null);
+const convertingTaskCap = ref<NodeMetadata | null>(null);
 const convertingTaskParams = ref({
     title: '',
     content: '',
@@ -482,7 +512,7 @@ const convertingTaskParams = ref({
     comment: ''
 });
 
-const openConvertTaskModal = (cap: QuickCapMetadata) => {
+const openConvertTaskModal = (cap: NodeMetadata) => {
     convertingTaskCap.value = cap;
     const cleanContent = cap.content.replace(/<!--color:.*?-->/g, '').trim();
     const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
@@ -506,14 +536,14 @@ const closeTaskModal = () => {
     convertingTaskCap.value = null;
 };
 
-const convertingNoteCap = ref<QuickCapMetadata | null>(null);
+const convertingNoteCap = ref<NodeMetadata | null>(null);
 const convertingNoteParams = ref({
     title: '',
     content: '',
     tags: ''
 });
 
-const openConvertNoteModal = (cap: QuickCapMetadata) => {
+const openConvertNoteModal = (cap: NodeMetadata) => {
     convertingNoteCap.value = cap;
     const cleanContent = cap.content.replace(/<!--color:.*?-->/g, '').trim();
     const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
@@ -548,7 +578,7 @@ const confirmTurnIntoNote = async (payload: any) => {
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path: cap.path });
+            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
             quickCaps.value.splice(index, 1);
         }
         
@@ -566,10 +596,15 @@ const confirmTurnIntoTask = async (payload: any) => {
     try {
         const tagArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
         
-        await invoke('create_task', {
+        const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const relPath = `Tasks/${safeName}_${Date.now()}.md`;
+        
+        await invoke('write_node_file', {
             vaultPath: props.vaultPath,
-            metadata: {
-                title: payload.title || 'Untitled',
+            relPath: relPath,
+            nodeType: 'task',
+            title: payload.title || 'Untitled',
+            properties: {
                 status: payload.status,
                 is_transferred: payload.is_transferred,
                 transferred_to: payload.transferred_to,
@@ -578,16 +613,15 @@ const confirmTurnIntoTask = async (payload: any) => {
                 start_date: payload.start_date,
                 due_date: payload.due_date,
                 comment: payload.comment,
-                source_link: cap.path,
-                tags: tagArray,
-                checklist: payload.checklist
+                source_link: cap.id,
+                tags: tagArray
             },
             content: payload.content
         });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path: cap.path });
+            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
             quickCaps.value.splice(index, 1);
         }
         
@@ -630,7 +664,7 @@ const extractTags = (content: string) => {
     return Array.from(new Set(tags));
 };
 
-const removeTag = async (cap: QuickCapMetadata, tag: string) => {
+const removeTag = async (cap: NodeMetadata, tag: string) => {
     const isConfirmed = await ask(`This will remove the tag #${tag} from this quickcap.`, { 
         title: `Remove tag #${tag}?`, 
         kind: 'warning',
@@ -654,7 +688,7 @@ const removeTag = async (cap: QuickCapMetadata, tag: string) => {
     updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
     
     try {
-        await invoke('update_note', { vaultPath: props.vaultPath, path: cap.path, content: updatedContent });
+        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to remove tag", e);
@@ -740,7 +774,7 @@ const renderPreview = (content: string) => {
     return DOMPurify.sanitize(html, { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: /^(?:(?:https?|asset):)|(?:data:image\/)/i });
 };
 
-const deleteCap = async (path: string, id: string) => {
+const deleteCap = async (id: string) => {
     const index = quickCaps.value.findIndex(c => c.id === id);
     if (index === -1) return;
     const isConfirmed = await ask('This action cannot be undone. The content will be permanently deleted.', { 
@@ -752,13 +786,13 @@ const deleteCap = async (path: string, id: string) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_quick_cap', { vaultPath: props.vaultPath, path });
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: id });
         quickCaps.value.splice(index, 1);
         if (selectedCap.value?.id === id) {
             selectedCap.value = null;
         }
     } catch(e) {
-        logger.error(e);
+        logger.error("Error", e);
     }
 };
 </script>
@@ -834,7 +868,7 @@ const deleteCap = async (path: string, id: string) => {
     <!-- Masonry Grid -->
     <div class="w-full max-w-7xl px-4 gap-4 sm:gap-6 mx-auto transition-all" :class="mobileViewMode === 'grid' ? 'columns-2 sm:columns-2 lg:columns-3 xl:columns-4' : 'columns-1 sm:columns-2 lg:columns-3 xl:columns-4'">
         <div v-for="cap in filteredCaps" :key="cap.id" class="break-inside-avoid relative group mb-4 sm:mb-6 inline-block w-full cursor-pointer" @click="openFullView(cap)">
-            <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="getCapColor(cap.content) || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
+            <div class="rounded-2xl shadow-sm hover:shadow-md border border-[#e6e6e6] dark:border-[#2c2c2c] transition-all relative flex flex-col" :class="cap.color || 'bg-white dark:bg-[#1e1e1e]'" style="max-height: 320px;">
                <!-- Text Content Wrapper -->
                <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
                    <div class="whitespace-pre-wrap text-[15px] font-medium leading-normal text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="renderPreview(cap.content)"></div>
@@ -855,7 +889,7 @@ const deleteCap = async (path: string, id: string) => {
                <!-- Bottom Actions Bar (Fixed at bottom of card) -->
                <div class="absolute bottom-0 left-0 w-full px-4 py-2 border-t border-transparent group-hover:border-black/5 dark:group-hover:border-white/5 flex items-center justify-between z-10 transition-colors">
                    <!-- Date (visible by default, hidden on hover) -->
-                  <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none" :class="mobileViewMode === 'grid' ? 'opacity-100' : 'opacity-0 md:opacity-100'">{{ cap.date }}</span>
+                  <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none" :class="mobileViewMode === 'grid' ? 'opacity-100' : 'opacity-0 md:opacity-100'">{{ cap.created_at }}</span>
                   
                   <!-- Actions (hidden by default, visible on hover) -->
                   <div class="flex items-center transition-opacity w-full justify-between" :class="mobileViewMode === 'grid' ? 'opacity-0 group-hover:opacity-100' : 'opacity-100 md:opacity-0 group-hover:opacity-100'" @click.stop>
@@ -872,7 +906,7 @@ const deleteCap = async (path: string, id: string) => {
                           <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
                       </div>
                       <template v-else>
-                          <button @click.stop="deleteCap(cap.path, cap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
+                          <button @click.stop="deleteCap(cap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
                               <Trash2 class="w-3.5 h-3.5"/>
                           </button>
                           <div class="flex items-center gap-0.5 relative">
@@ -958,7 +992,7 @@ const deleteCap = async (path: string, id: string) => {
 
     <!-- Full View Modal -->
     <div v-if="selectedCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
-        <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="getCapColor(selectedCap.content) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
+        <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="selectedCap.color || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
             <div class="p-8 overflow-y-auto flex-1 flex flex-col min-h-0 bg-transparent">
                 <EditorContent :editor="editor" class="w-full" />
                 
@@ -987,7 +1021,7 @@ const deleteCap = async (path: string, id: string) => {
                         <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
                     </div>
                     <template v-else>
-                        <button @click.stop="deleteCap(selectedCap.path, selectedCap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
+                        <button @click.stop="deleteCap(selectedCap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
                             <Trash2 class="w-4 h-4"/>
                         </button>
                         <div class="flex items-center gap-1 sm:gap-2 relative ml-auto sm:ml-4">
@@ -1022,7 +1056,7 @@ const deleteCap = async (path: string, id: string) => {
                 </div>
                 
                 <div class="flex items-center justify-between w-full sm:w-auto order-1 sm:order-2">
-                    <span class="text-xs text-gray-500 font-mono tracking-tight sm:hidden">{{ selectedCap.date }}</span>
+                    <span class="text-xs text-gray-500 font-mono tracking-tight sm:hidden">{{ selectedCap.created_at }}</span>
                     <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer ml-auto">
                         Close
                     </button>

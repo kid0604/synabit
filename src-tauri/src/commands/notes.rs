@@ -280,7 +280,7 @@ pub fn rename_note(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbStat
                         let source_abs_path = base_dir.join(&edge.source_id);
                         if source_abs_path.exists() {
                             if let Ok(content) = fs::read_to_string(&source_abs_path) {
-                                let updated_content = crate::utils::graph_parser::rename_links_in_text(&content, &old_title, &new_title);
+                                let updated_content = crate::utils::graph_parser::rename_links_in_text(&content, &old_title, &new_title, None);
                                 if updated_content != content {
                                     let _ = fs::write(&source_abs_path, updated_content);
                                 }

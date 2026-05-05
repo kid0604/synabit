@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -17,6 +17,7 @@ const CalendarApp = defineAsyncComponent(() => import('./mini-apps/calendar/Cale
 const Nexus = defineAsyncComponent(() => import('./mini-apps/nexus/NexusApp.vue'));
 const FileManager = defineAsyncComponent(() => import('./mini-apps/file/FileApp.vue'));
 const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
+const PeopleApp = defineAsyncComponent(() => import('./mini-apps/people/PeopleApp.vue'));
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
 
 // Composables
@@ -42,7 +43,7 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 const { useMobileLayout, isMac, isWindows, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard'>('nexus');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people'>('nexus');
 
 watch(activeTool, (newTool, oldTool) => {
   if (oldTool !== newTool) {
@@ -55,6 +56,7 @@ const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
 const whiteboardAppRef = ref<any>(null);
+const peopleAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isFloatingView = ref(false);
@@ -114,19 +116,23 @@ const clearVault = () => {
 const handleEditFromNexus = (id: string, type: string) => {
     if (type === 'note') { 
         activeTool.value = 'note'; 
-        nextTick(() => noteAppRef.value?.openNoteById(id)); 
+        setTimeout(() => noteAppRef.value?.openNoteById(id), 100); 
     }
     else if (type === 'quickcap') { 
         activeTool.value = 'quickcap'; 
-        nextTick(() => quickCapAppRef.value?.openEditById(id)); 
+        setTimeout(() => quickCapAppRef.value?.openEditById(id), 100); 
     }
     else if (type === 'task') { 
         activeTool.value = 'task'; 
-        nextTick(() => taskAppRef.value?.openEditById(id)); 
+        setTimeout(() => taskAppRef.value?.openEditById(id), 100); 
     }
     else if (type === 'whiteboard') {
         activeTool.value = 'whiteboard';
-        nextTick(() => whiteboardAppRef.value?.openBoardById(id));
+        setTimeout(() => whiteboardAppRef.value?.openBoardById(id), 100);
+    }
+    else if (type === 'person') {
+        activeTool.value = 'people';
+        setTimeout(() => peopleAppRef.value?.openPersonById(id), 100);
     }
 };
 
@@ -155,9 +161,14 @@ onMounted(async () => {
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Force sync all data types on startup so Nexus sees fresh Indexed DB data
-     invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
-     invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
-     invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
+     invoke('migrate_tasks_to_nodes', { vaultPath: vaultPath.value }).then(() => {
+         invoke('migrate_events_to_nodes', { vaultPath: vaultPath.value }).then(() => {
+             invoke('migrate_quickcaps_to_nodes', { vaultPath: vaultPath.value }).then(() => {
+                 invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+             }).catch(logger.error);
+         }).catch(logger.error);
+     }).catch(logger.error);
+     
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
 
@@ -167,9 +178,7 @@ onMounted(async () => {
 
   listen('vault-file-created-deleted', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
-      invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
-      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
       
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
@@ -178,9 +187,7 @@ onMounted(async () => {
 
   listen('vault-file-modified', () => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_tasks', { vaultPath: vaultPath.value }).catch(logger.error);
-      invoke('scan_events', { vaultPath: vaultPath.value }).catch(logger.error);
-      invoke('scan_quick_caps', { vaultPath: vaultPath.value }).catch(logger.error);
+      invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
   }).then(fn => unlistenFns.push(fn));
 
   onUnmounted(() => {
@@ -297,6 +304,10 @@ onUnmounted(() => {
                    </svg>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Whiteboard</span>
                 </button>
+                <button @click="activeTool = 'people'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'people' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Users class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">People</span>
+                </button>
                 
                 <button v-if="useMobileLayout" @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
@@ -321,7 +332,7 @@ onUnmounted(() => {
 
         <!-- MINI APP CONTENT AREA -->
         <template v-if="activeTool === 'note'">
-          <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" />
+          <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />
         </template>
         <template v-else-if="activeTool === 'quickcap'">
            <QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" />
@@ -333,13 +344,16 @@ onUnmounted(() => {
            <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
         </template>
         <template v-else-if="activeTool === 'calendar'">
-          <CalendarApp :vaultPath="vaultPath" />
+          <CalendarApp :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </template>
         <template v-else-if="activeTool === 'file'">
            <FileManager :vaultPath="vaultPath" />
         </template>
         <template v-else-if="activeTool === 'whiteboard'">
            <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
+        </template>
+        <template v-else-if="activeTool === 'people'">
+           <PeopleApp ref="peopleAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </template>
 
         <!-- SETTINGS MODAL -->

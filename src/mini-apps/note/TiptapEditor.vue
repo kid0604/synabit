@@ -59,6 +59,16 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { useSettings } from '../../composables/useSettings';
 import { logger } from '../../utils/logger';
 
+const allNodes = ref<any[]>([]);
+
+onMounted(async () => {
+    try {
+        allNodes.value = await invoke<any[]>('get_all_nodes');
+    } catch(e) {
+        logger.error('Failed to fetch all nodes for mention menu', e);
+    }
+});
+
 const { nestedNumberListStyle } = useSettings();
 
 const lowlight = createLowlight(common);
@@ -103,10 +113,9 @@ const injectLocalAssets = (md: string) => {
       const assetUrl = convertFileSrc(absPath); 
       return `<audio ${before}src="${assetUrl}"${after}>`;
    });
-   
-   processed = processed.replace(/\[([^\]]*)\]\(synabit:\/\/note\/([^)]+)\)/g, (match, label, uri) => {
+   processed = processed.replace(/\[([^\]]*)\]\(synabit:\/\/(note|node|person|task|quickcap)\/([^)]+)\)/g, (match, label, type, uri) => {
       const decoded = decodeURIComponent(uri);
-      return `[${label}](synabit://note/${encodeURIComponent(decoded)})`;
+      return `[${label}](synabit://${type}/${encodeURIComponent(decoded)})`;
    });
    
    return processed.replace(/\]\(assets\/([^\)]+)\)/g, (_m: string, filename: string) => {
@@ -859,7 +868,6 @@ const editor = useEditor({
             pluginKey: new PluginKey('noteMentionSuggestion'),
             char: '@',
             command: ({ editor, range, props }) => {
-              const basename = props.id.split('/').pop().split('\\').pop();
               editor
                 .chain()
                 .focus()
@@ -869,7 +877,7 @@ const editor = useEditor({
                   marks: [
                     {
                       type: 'link',
-                      attrs: { href: `synabit://note/${encodeURIComponent(basename)}` }
+                      attrs: { href: `synabit://${props.node_type || 'node'}/${props.id}` }
                     }
                   ],
                   text: props.title
@@ -878,15 +886,16 @@ const editor = useEditor({
                 .run();
             },
             items: ({ query }) => {
-              if (!props.notes || props.notes.length === 0) return [];
+              if (allNodes.value.length === 0) return [];
               const lowerQuery = query.toLowerCase();
-              return props.notes
-                .filter(n => n.title.toLowerCase().includes(lowerQuery) || n.summary.toLowerCase().includes(lowerQuery))
+              return allNodes.value
+                .filter(n => n.title.toLowerCase().includes(lowerQuery) || (n.content && n.content.toLowerCase().includes(lowerQuery)))
                 .slice(0, 5)
                 .map(n => ({
                   id: n.id,
                   title: n.title,
-                  summary: n.summary
+                  summary: n.content ? n.content.substring(0, 50).trim() : '',
+                  node_type: n.node_type || 'note'
                 }));
             },
             render: () => {
@@ -963,18 +972,22 @@ const editor = useEditor({
       class: 'prose focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
     },
     handleClick: (_view, _pos, event) => {
-      if (event.target instanceof HTMLElement) {
-          const anchor = event.target.closest('a');
-          if (anchor) {
-              const href = anchor.getAttribute('href');
-              if (href?.startsWith('synabit://note/')) {
-                  if (event.metaKey || event.ctrlKey) {
-                      const noteId = decodeURIComponent(href.replace('synabit://note/', ''));
-                      emit('open-internal-note', noteId);
-                      event.preventDefault();
-                      return true;
+      const target = event.target as HTMLElement;
+      const link = target.closest('a');
+      if (link) {
+          const href = link.getAttribute('href');
+          if (href?.startsWith('synabit://')) {
+              event.preventDefault();
+              if (event.metaKey || event.ctrlKey) {
+                  // Extract the type and ID from synabit://type/id
+                  const match = href.match(/synabit:\/\/([^\/]+)\/(.+)/);
+                  if (match) {
+                      const type = match[1];
+                      const nodeId = decodeURIComponent(match[2]);
+                      emit('open-internal-note', { id: nodeId, type });
                   }
               }
+              return true;
           }
       }
       return false;
@@ -1189,7 +1202,7 @@ onBeforeUnmount(() => {
         <button
           @click="editor!.chain().focus().setTextAlign('justify').run()"
           :class="{ 'is-active': editor!.isActive({ textAlign: 'justify' }) }"
-          title="Justify"
+          title="Align Justify"
         >
           <AlignJustify class="w-4 h-4" />
         </button>
@@ -1427,6 +1440,33 @@ onBeforeUnmount(() => {
 .prose {
   --tw-prose-body: var(--color-text-light);
   --tw-prose-headings: var(--color-text);
+}
+
+/* Synabit Internal Links */
+.prose a[href^="synabit://"] {
+  color: var(--color-blue-600, #2563eb);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--color-blue-300, #93c5fd);
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
+.prose a[href^="synabit://"]:hover {
+  background: var(--color-blue-50, #eff6ff);
+  border-bottom-style: solid;
+}
+
+.dark .prose a[href^="synabit://"] {
+  color: var(--color-blue-400, #60a5fa);
+  border-bottom-color: var(--color-blue-800, #1e40af);
+}
+
+.dark .prose a[href^="synabit://"]:hover {
+  background: var(--color-blue-900, #1e3a8a);
+  border-bottom-color: var(--color-blue-400, #60a5fa);
 }
 
 /* === Task List === */

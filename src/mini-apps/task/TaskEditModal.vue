@@ -37,8 +37,20 @@ const handleGlobalClick = () => {
     activeDropdown.value = null;
 };
 
+const titleInputRef = ref<HTMLTextAreaElement | null>(null);
+
+const adjustTitleHeight = () => {
+    nextTick(() => {
+        if (titleInputRef.value) {
+            titleInputRef.value.style.height = 'auto';
+            titleInputRef.value.style.height = titleInputRef.value.scrollHeight + 'px';
+        }
+    });
+};
+
 onMounted(() => {
     document.addEventListener('click', handleGlobalClick);
+    adjustTitleHeight();
 });
 
 onUnmounted(() => {
@@ -89,11 +101,14 @@ const handleBackgroundClick = () => {
                        </div>
                        <div v-else class="w-5 h-5 rounded border-[1.5px] border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition-colors"></div>
                    </button>
-                   <input 
+                   <textarea 
+                       ref="titleInputRef"
                        v-model="editingTaskParams.title" 
-                       class="flex-1 bg-transparent border-none outline-none text-[1.1rem] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 focus:ring-0 p-0"
+                       class="flex-1 bg-transparent border-none outline-none text-[1.1rem] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 focus:ring-0 p-0 resize-none overflow-hidden leading-snug"
                        placeholder="New To-Do"
-                   />
+                       rows="1"
+                       @input="adjustTitleHeight"
+                   ></textarea>
               </div>
               
               <!-- Notes -->
