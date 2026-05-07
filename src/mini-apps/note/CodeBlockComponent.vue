@@ -109,9 +109,9 @@ const renderMermaid = async () => {
     return;
   }
   
+  const id = `mermaid-diagram-${Date.now()}-${diagramIdCounter++}`;
   try {
     mermaidError.value = '';
-    const id = `mermaid-diagram-${Date.now()}-${diagramIdCounter++}`;
     const { svg } = await mermaid.render(id, content);
     mermaidSvg.value = svg;
   } catch (err: any) {

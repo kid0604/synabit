@@ -8,7 +8,7 @@ pub mod search;
 pub mod utils;
 pub mod watcher;
 
-use commands::{files, nexus, nodes, notes, whiteboards};
+use commands::{files, nexus, nodes, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -69,6 +69,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Nodes (Universal Architecture)
             nodes::scan_all_nodes,
+            nodes::scan_specific_nodes,
             nodes::get_all_nodes,
             nodes::get_nodes,
             nodes::get_linked_nodes,
@@ -78,20 +79,13 @@ pub fn run() {
             nodes::migrate_tasks_to_nodes,
             nodes::archive_done_nodes,
             nodes::migrate_quickcaps_to_nodes,
+            nodes::save_asset,
             nodes::copy_asset_to_vault,
-            // Notes
-            notes::scan_vault_path,
-            notes::create_new_note,
-            notes::read_note,
-            notes::update_note,
-            notes::delete_note,
-            notes::rename_note,
-            notes::save_asset,
-            notes::spawn_note_window,
-            notes::open_daily_note,
-            notes::get_note_backlinks,
-
-
+            nodes::rename_node_file,
+            nodes::create_node_file,
+            nodes::open_daily_note,
+            nodes::migrate_notes_to_nodes,
+            nodes::spawn_node_window,
             // Files
             files::add_file_source,
             files::get_file_sources,
@@ -111,7 +105,6 @@ pub fn run() {
             nexus::get_nexus_graph_data,
             nexus::search_nexus,
             nexus::search_notes,
-            nexus::search_quickcaps,
             nexus::search_tasks,
             nexus::search_files,
             // Google Drive

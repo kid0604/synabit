@@ -700,7 +700,7 @@ onUnmounted(() => {
             <!-- List View -->
             <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm flex flex-col h-full">
                 <!-- List Header (Desktop Only) -->
-                <div class="hidden md:grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-4 bg-gray-50/50 dark:bg-black/20 text-gray-500 font-medium border-b border-gray-200/50 dark:border-white/5 sticky top-0 z-10 text-sm">
+                <div class="hidden md:grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-4 bg-gray-50/50 dark:bg-black/20 file-meta font-medium border-b border-gray-200/50 dark:border-white/5 sticky top-0 z-10 text-sm">
                     <div>Name</div>
                     <div>Size</div>
                     <div>Modified</div>
@@ -723,8 +723,8 @@ onUnmounted(() => {
                             
                             <!-- Metadata (Second line on mobile, Columns on desktop) -->
                             <div class="flex items-center gap-3 md:contents text-xs md:text-sm pl-9 md:pl-0">
-                                <div class="text-gray-500 truncate font-mono md:font-sans">{{ formatSize(file.size) }}</div>
-                                <div class="text-gray-400 md:text-gray-500 truncate">{{ file.modified_at.split(' ')[0] }}</div>
+                                <div class="file-meta truncate font-mono md:font-sans">{{ formatSize(file.size) }}</div>
+                                <div class="file-meta truncate">{{ file.modified_at.split(' ')[0] }}</div>
                                 
                                 <div class="flex gap-1 overflow-hidden ml-auto md:ml-0">
                                     <span v-for="t in file.tags.slice(0,2)" :key="t" class="file-tag px-1.5 md:px-2 py-0.5 bg-gray-100 dark:bg-white/10 rounded text-[10px] md:text-xs truncate">#{{ t }}</span>
@@ -795,11 +795,11 @@ onUnmounted(() => {
                         <span class="font-medium uppercase">{{ selectedFile.extension || 'Unknown' }}</span>
                     </div>
                     <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Size</span>
+                        <span class="file-meta">Size</span>
                         <span class="font-medium">{{ formatSize(selectedFile.size) }}</span>
                     </div>
                     <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Modified</span>
+                        <span class="file-meta">Modified</span>
                         <span class="font-medium">{{ selectedFile.modified_at.split(' ')[0] }}</span>
                     </div>
                 </div>
@@ -866,19 +866,19 @@ onUnmounted(() => {
 .file-name {
     color: #1c1c1e;
 }
-:global(.dark) .file-name {
+html.dark .file-name {
     color: #f4f4f5;
 }
 .file-tag {
     color: #52525b;
 }
-:global(.dark) .file-tag {
+html.dark .file-tag {
     color: #d4d4d8;
 }
 .file-meta {
     color: #6b7280;
 }
-:global(.dark) .file-meta {
+html.dark .file-meta {
     color: #9ca3af;
 }
 </style>

@@ -29,7 +29,7 @@ const isEditing = ref(false);
 const editText = ref('');
 
 const strokeWidth = computed(() => props.data.borderWidth || 2);
-const fillOpacity = computed(() => props.selected ? '25' : '18');
+
 const shapeOpacity = computed(() => (props.data.opacity ?? 100) / 100);
 const labelFontSize = computed(() => `${props.data.fontSize || 13}px`);
 const strokeDasharray = computed(() => {
@@ -55,13 +55,9 @@ const shapeDef = computed(() => SHAPES_MAP[props.data.shapeType] || SHAPES_MAP['
 const CORNER_PX = 12; // desired visual corner radius in pixels
 const roundedRectRx = computed(() => {
   const w = props.data.width || shapeDef.value.defaultWidth || 160;
-  const h = props.data.height || shapeDef.value.defaultHeight || 80;
-  // viewBox is 100x100, actual is WxH → scaleX = W/100
-  // To get CORNER_PX visual pixels: rx_vb = CORNER_PX / (W/100) = CORNER_PX * 100 / W
   return Math.min(CORNER_PX * 100 / w, 49);
 });
 const roundedRectRy = computed(() => {
-  const w = props.data.width || shapeDef.value.defaultWidth || 160;
   const h = props.data.height || shapeDef.value.defaultHeight || 80;
   return Math.min(CORNER_PX * 100 / h, 49);
 });

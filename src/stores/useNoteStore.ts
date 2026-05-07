@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { NoteMetadata } from '../types/ipc';
+import type { NodeMetadata } from '../types/ipc';
 
 export const useNoteStore = defineStore('note', () => {
-  const notes = ref<NoteMetadata[]>([]);
+  const notes = ref<NodeMetadata[]>([]);
   const currentNoteId = ref<string | null>(null);
 
   // Tab management equivalent from App.vue

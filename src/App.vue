@@ -40,7 +40,7 @@ const {
 const appStore = useAppStore();
 const { vaultPath, vaultType } = storeToRefs(appStore);
 
-const { useMobileLayout, isMac, isWindows, isMobileOS } = usePlatform();
+const { useMobileLayout, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
 const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people'>('nexus');
@@ -102,7 +102,7 @@ const selectVault = async () => {
             await appStore.setVaultPath(selected as string, 'local');
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
         }
-    } catch(err) { logger.error(err); }
+    } catch(err) { logger.error(String(err)); }
 };
 
 const clearVault = () => {
@@ -136,7 +136,6 @@ const handleEditFromNexus = (id: string, type: string) => {
     }
 };
 
-import { nextTick } from 'vue';
 import { logger } from './utils/logger';
 
 // ─── Lifecycle ────────────────────────────────────────────
@@ -176,18 +175,28 @@ onMounted(async () => {
 
   let unlistenFns: (() => void)[] = [];
 
-  listen('vault-file-created-deleted', () => {
+  listen('vault-file-created-deleted', (event) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+      const paths = event.payload as string[];
+      if (paths && paths.length > 0) {
+          invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+      } else {
+          invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+      }
       
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
   }).then(fn => unlistenFns.push(fn));
 
-  listen('vault-file-modified', () => {
+  listen('vault-file-modified', (event) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+      const paths = event.payload as string[];
+      if (paths && paths.length > 0) {
+          invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+      } else {
+          invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+      }
   }).then(fn => unlistenFns.push(fn));
 
   onUnmounted(() => {
@@ -275,7 +284,7 @@ onUnmounted(() => {
                    <Globe class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
-                <div v-if="!useMobileLayout" class="w-8 h-px bg-border dark:bg-border-dark my-1 rounded"></div>
+
                 <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Zap class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>

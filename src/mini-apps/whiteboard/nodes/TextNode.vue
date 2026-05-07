@@ -45,15 +45,15 @@ function onResizeEnd(event: any) {
     class="wb-text-node"
     :class="{ 'wb-text-node--editing': isEditing }"
     :style="{
-      fontSize: (data.fontSize || 14) + 'px',
+      fontSize: (data.fontSize || 16) + 'px',
       fontWeight: data.fontWeight || 'normal',
       fontStyle: data.fontStyle || 'normal',
       textAlign: data.textAlign || 'left',
-      color: data.color || undefined,
+      color: data.color || 'inherit',
       backgroundColor: data.backgroundColor || 'transparent',
-      opacity: (data.opacity ?? 100) / 100,
-      width: (data.width || 240) + 'px',
-    }"
+      opacity: data.opacity || 1,
+      width: (data.width || 200) + 'px'
+    } as any"
     @dblclick.stop="startEdit"
   >
     <NodeResizer
@@ -71,12 +71,12 @@ function onResizeEnd(event: any) {
       @keydown.escape="isEditing = false"
       class="wb-text-input"
       :style="{
-        fontSize: (data.fontSize || 14) + 'px',
+        fontSize: (data.fontSize || 16) + 'px',
         fontWeight: data.fontWeight || 'normal',
         fontStyle: data.fontStyle || 'normal',
         textAlign: data.textAlign || 'left',
-        color: 'inherit',
-      }"
+        color: 'inherit'
+      } as any"
       autofocus
       rows="3"
     />

@@ -7,10 +7,12 @@
 mod desktop {
     use crate::error::{AppError, AppResult};
     use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+    use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Emitter};
+    use crate::path_utils;
 
     pub struct WatcherState {
         pub watcher: Mutex<Option<RecommendedWatcher>>,
@@ -84,7 +86,8 @@ mod desktop {
                 // Create/Delete debounce — 500ms of quiet time
                 if let Some(last) = s.last_create_delete {
                     if !s.fired_create_delete && last.elapsed() >= Duration::from_millis(500) {
-                        let _ = poll_handle.emit("vault-file-created-deleted", ());
+                        let payload: Vec<String> = s.created_deleted_paths.drain().collect();
+                        let _ = poll_handle.emit("vault-file-created-deleted", payload);
                         s.fired_create_delete = true;
                     }
                 }
@@ -92,7 +95,8 @@ mod desktop {
                 // Modify debounce — 2s of quiet time
                 if let Some(last) = s.last_modify {
                     if !s.fired_modify && last.elapsed() >= Duration::from_secs(2) {
-                        let _ = poll_handle.emit("vault-file-modified", ());
+                        let payload: Vec<String> = s.modified_paths.drain().collect();
+                        let _ = poll_handle.emit("vault-file-modified", payload);
                         s.fired_modify = true;
                     }
                 }
@@ -100,6 +104,7 @@ mod desktop {
         });
 
         let ds = debounce_state.clone();
+        let watch_vault_path = vault_path.clone();
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             match res {
                 Ok(event) => {
@@ -115,6 +120,17 @@ mod desktop {
                         matches!(event.kind, EventKind::Create(_) | EventKind::Remove(_));
 
                     let mut state = ds.lock().unwrap_or_else(|e| e.into_inner());
+
+                    for p in event.paths {
+                        if !should_ignore(&p.to_string_lossy()) {
+                            let rel_path = path_utils::to_relative(&p, &watch_vault_path);
+                            if is_create_delete {
+                                state.created_deleted_paths.insert(rel_path);
+                            } else {
+                                state.modified_paths.insert(rel_path);
+                            }
+                        }
+                    }
 
                     if is_create_delete {
                         state.last_create_delete = Some(Instant::now());
@@ -149,6 +165,8 @@ mod desktop {
         fired_create_delete: bool,
         fired_modify: bool,
         shutdown: bool,
+        modified_paths: HashSet<String>,
+        created_deleted_paths: HashSet<String>,
     }
 }
 

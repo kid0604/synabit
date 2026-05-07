@@ -121,7 +121,7 @@ export const AudioExtension = Node.create<AudioOptions>({
           }
         },
         parse: {
-          setup(markdownit: any) {
+          setup(_markdownit: any) {
             // markdown-it parses HTML automatically, so parseHTML will pick it up
           }
         }

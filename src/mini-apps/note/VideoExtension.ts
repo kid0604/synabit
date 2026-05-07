@@ -129,7 +129,7 @@ export const VideoExtension = Node.create<VideoOptions>({
           }
         },
         parse: {
-          setup(markdownit: any) {
+          setup(_markdownit: any) {
             // markdown-it parses HTML automatically, so parseHTML will pick it up
           }
         }

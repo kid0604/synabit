@@ -392,11 +392,7 @@ const submitCap = async () => {
     if (!newCapText.value.trim() || !props.vaultPath) return;
     isSubmitting.value = true;
     try {
-        const timestamp = Date.now();
-        const safeTitle = newCapText.value.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
-        const fallbackTitle = `qc_${timestamp}`;
-        const titleToUse = safeTitle || fallbackTitle;
-        const relPath = `QuickCaps/${titleToUse}_${timestamp}.md`;
+        const relPath = `QuickCaps/${crypto.randomUUID()}.md`;
 
         await invoke('write_node_file', {
             vaultPath: props.vaultPath,

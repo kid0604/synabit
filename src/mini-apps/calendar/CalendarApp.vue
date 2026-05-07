@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, Edit2 } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2 } from 'lucide-vue-next';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ (e: 'open-node', id: string, type: string): void }>();
@@ -35,6 +35,7 @@ interface EventMetadata {
     content: string;
     path: string;
     created_at: string;
+    relations?: string[];
 }
 
 type ViewMode = 'day' | 'week' | 'month' | 'year';
@@ -57,10 +58,10 @@ const eventForm = ref({
     isAllDay: false,
     start_at: '',
     end_at: '',
-    isAllDay: false,
     location: '',
     description: '',
-    tagsStr: ''
+    tagsStr: '',
+    relations: [] as string[]
 });
 
 // --- Methods ---
@@ -130,13 +131,16 @@ const loadData = async () => {
                 tags: props.tags || [],
                 content: n.content,
                 path: n.id,
-                created_at: n.created_at || ''
+                created_at: n.created_at || '',
+                relations: props.relations || props.related_notes || []
             };
         });
     } catch(e) { logger.error("Error loading events:", e); }
 };
 
-const toggleTaskStatus = async (task: TaskMetadata) => {
+const toggleTaskStatus = async (partialTask: { id: string, status: string }) => {
+    const task = allTasks.value.find(t => t.id === partialTask.id);
+    if (!task) return;
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     const nowStr = new Date().toISOString().split('T')[0];
     const newCompletedAt = newStatus === 'done' ? nowStr : '';
@@ -244,6 +248,48 @@ const isAllDayOrMultiDay = (e: EventMetadata) => {
     const s = e.start_at.split('T')[0];
     const en = e.end_at ? e.end_at.split('T')[0] : s;
     return s !== en;
+};
+
+const deleteRelationNode = async (bl: any) => {
+    const isConfirmed = await ask(`This will permanently delete the ${bl.node_type} "${bl.title}". This action cannot be undone.`, { 
+        title: 'Delete Item', 
+        kind: 'warning' 
+    });
+    if (!isConfirmed) return;
+    
+    try {
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: bl.id });
+        
+        if (eventForm.value.relations) {
+            const originalLength = eventForm.value.relations.length;
+            eventForm.value.relations = eventForm.value.relations.filter(link => !link.includes(bl.id));
+            if (eventForm.value.relations.length < originalLength && eventForm.value.id) {
+                // Background save without closing modal
+                let finalTags: string[] = [];
+                if (eventForm.value.tagsStr.trim()) {
+                    finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
+                }
+                await invoke('write_node_file', { 
+                    vaultPath: props.vaultPath, 
+                    relPath: eventForm.value.path,
+                    title: eventForm.value.title,
+                    nodeType: 'event',
+                    properties: {
+                        is_all_day: eventForm.value.isAllDay,
+                        start_at: eventForm.value.start_at,
+                        end_at: eventForm.value.end_at,
+                        location: eventForm.value.location,
+                        tags: finalTags,
+                        relations: eventForm.value.relations
+                    },
+                    content: eventForm.value.description 
+                });
+            }
+        }
+        eventBacklinks.value = eventBacklinks.value.filter(n => n.id !== bl.id);
+    } catch (e) {
+        console.error(`Failed to delete ${bl.node_type}:`, e);
+    }
 };
 
 const formatEventTime = (ev: EventMetadata) => {
@@ -387,29 +433,165 @@ const selectedTasks = computed(() => getTasksForDate(selectedDateFormattedStr.va
 const selectedEvents = computed(() => getEventsForDate(selectedDateFormattedStr.value).sort((a,b) => (a.start_at || '').localeCompare(b.start_at || '')));
 
 // --- Event Functions ---
-const openAddEventModal = (defaultDate?: Date) => {
+const openAddEventModal = (defaultDate?: Date, hr?: number) => {
     const targetDateStr = defaultDate ? formatDateString(defaultDate) : selectedDateFormattedStr.value;
+    const startHour = hr !== undefined ? hr.toString().padStart(2, '0') : '12';
+    const endHour = hr !== undefined ? (hr + 1).toString().padStart(2, '0') : '13';
     eventForm.value = {
         isEdit: false, id: '', path: '', title: '',
-        isAllDay: false, start_at: `${targetDateStr}T12:00`, end_at: `${targetDateStr}T13:00`,
-        location: '', description: '', tagsStr: ''
+        isAllDay: false, start_at: `${targetDateStr}T${startHour}:00`, end_at: `${targetDateStr}T${endHour}:00`,
+        location: '', description: '', tagsStr: '', relations: [] as string[]
     };
+    eventBacklinks.value = [];
+    isCreatingNote.value = false;
     showEventForm.value = true;
 };
 
-const openEditEventModal = (ev: EventMetadata) => {
-    // Convert missing seconds to be compatible with datetime-local if necessary
+const hourOptions = Array.from({length: 24}, (_, i) => i.toString().padStart(2, '0'));
+const minuteOptions = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
+
+const startAtDate = computed({
+    get: () => eventForm.value.start_at.split('T')[0],
+    set: (v) => eventForm.value.start_at = `${v}T${eventForm.value.start_at.split('T')[1] || '12:00'}`
+});
+const startAtHour = computed({
+    get: () => (eventForm.value.start_at.split('T')[1] || '12:00').split(':')[0],
+    set: (v) => eventForm.value.start_at = `${eventForm.value.start_at.split('T')[0] || new Date().toISOString().split('T')[0]}T${v}:${startAtMinute.value}`
+});
+const startAtMinute = computed({
+    get: () => (eventForm.value.start_at.split('T')[1] || '12:00').split(':')[1],
+    set: (v) => eventForm.value.start_at = `${eventForm.value.start_at.split('T')[0] || new Date().toISOString().split('T')[0]}T${startAtHour.value}:${v}`
+});
+const startAtMinuteOptions = computed(() => {
+    const opts = [...minuteOptions];
+    if (startAtMinute.value && !opts.includes(startAtMinute.value)) {
+        opts.push(startAtMinute.value);
+        opts.sort();
+    }
+    return opts;
+});
+
+const endAtDate = computed({
+    get: () => (eventForm.value.end_at || '').split('T')[0],
+    set: (v) => eventForm.value.end_at = `${v}T${(eventForm.value.end_at || '').split('T')[1] || '13:00'}`
+});
+const endAtHour = computed({
+    get: () => (eventForm.value.end_at || 'T13:00').split('T')[1].split(':')[0],
+    set: (v) => eventForm.value.end_at = `${(eventForm.value.end_at || '').split('T')[0] || new Date().toISOString().split('T')[0]}T${v}:${endAtMinute.value}`
+});
+const endAtMinute = computed({
+    get: () => (eventForm.value.end_at || 'T13:00').split('T')[1].split(':')[1],
+    set: (v) => eventForm.value.end_at = `${(eventForm.value.end_at || '').split('T')[0] || new Date().toISOString().split('T')[0]}T${endAtHour.value}:${v}`
+});
+const endAtMinuteOptions = computed(() => {
+    const opts = [...minuteOptions];
+    if (endAtMinute.value && !opts.includes(endAtMinute.value)) {
+        opts.push(endAtMinute.value);
+        opts.sort();
+    }
+    return opts;
+});
+
+const eventBacklinks = ref<{ id: string, title: string, node_type: string }[]>([]);
+const isCreatingNote = ref(false);
+const newNoteTitle = ref('');
+
+const loadEventBacklinks = async (title: string, id: string) => {
+    try {
+        eventBacklinks.value = await invoke('get_linked_nodes', { targetTitle: title, targetId: id });
+    } catch (e) {
+        console.error("Failed to load event backlinks", e);
+        eventBacklinks.value = [];
+    }
+};
+
+const eventRelations = computed(() => {
+    const items = [...eventBacklinks.value];
+    if (eventForm.value.relations && eventForm.value.relations.length > 0) {
+        const mdLinkRe = /\[([^\]]+)\]\(synabit:\/\/(note|node|person|task|quickcap|event)\/([^)]+)\)/;
+        for (const link of eventForm.value.relations) {
+            const match = mdLinkRe.exec(link);
+            if (match) {
+                const title = match[1];
+                const type = match[2];
+                const id = match[3];
+                if (!items.find(n => n.id === id)) {
+                    items.push({ id, title, node_type: type });
+                }
+            }
+        }
+    }
+    return items;
+});
+
+const createMeetingNote = async () => {
+    if (!newNoteTitle.value.trim() || !eventForm.value.title) return;
+    try {
+        const relPath = `Notes/note_${Date.now()}.md`;
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath,
+            nodeType: 'note',
+            title: newNoteTitle.value.trim(),
+            properties: {},
+            content: ``,
+            existingPath: ''
+        });
+        
+        const noteMention = `[${newNoteTitle.value.trim()}](synabit://note/${relPath})`;
+        eventForm.value.relations = eventForm.value.relations || [];
+        eventForm.value.relations.push(noteMention);
+        
+        isCreatingNote.value = false;
+        newNoteTitle.value = '';
+        
+        if (eventForm.value.id && eventForm.value.path) {
+            // Auto-save the event so the graph edge is created immediately
+            let finalTags: string[] = [];
+            if (eventForm.value.tagsStr.trim()) {
+                finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
+            }
+            await invoke('write_node_file', { 
+                vaultPath: props.vaultPath, 
+                relPath: eventForm.value.path,
+                title: eventForm.value.title,
+                nodeType: 'event',
+                properties: {
+                    is_all_day: eventForm.value.isAllDay,
+                    start_at: eventForm.value.start_at,
+                    end_at: eventForm.value.end_at,
+                    location: eventForm.value.location,
+                    tags: finalTags,
+                    relations: eventForm.value.relations || []
+                },
+                content: eventForm.value.description 
+            });
+            await loadEventBacklinks(eventForm.value.title, eventForm.value.id);
+        }
+    } catch (e) {
+        console.error("Failed to create note", e);
+    }
+};
+
+const openEditEventModal = async (ev: EventMetadata) => {
+    // Ensure format is YYYY-MM-DDThh:mm for datetime-local native input compatibility
     let startAt = ev.start_at || '';
-    if (startAt.includes('T') && startAt.length === 16) startAt += ':00';
+    if (startAt.includes('T')) startAt = startAt.slice(0, 16);
     let endAt = ev.end_at || '';
-    if (endAt.includes('T') && endAt.length === 16) endAt += ':00';
+    if (endAt.includes('T')) endAt = endAt.slice(0, 16);
     
     eventForm.value = {
         isEdit: true, id: ev.id, path: ev.path, title: ev.title,
         isAllDay: ev.is_all_day, start_at: startAt, end_at: endAt, location: ev.location,
-        description: ev.content, tagsStr: ev.tags.join(', ')
+        description: ev.content, tagsStr: ev.tags.join(', '),
+        relations: ev.relations || []
     };
+    eventBacklinks.value = [];
+    isCreatingNote.value = false;
     showEventForm.value = true;
+    if (ev.title && ev.id) {
+        loadEventBacklinks(ev.title, ev.id);
+    }
 };
 
 watch(() => eventForm.value.isAllDay, (newVal) => {
@@ -430,6 +612,11 @@ watch(() => eventForm.value.isAllDay, (newVal) => {
 
 const closeEventForm = () => { showEventForm.value = false; };
 
+const openLinkedNote = (id: string, type: string) => {
+    closeEventForm();
+    emit('open-node', id, type);
+};
+
 const submitEvent = async () => {
     if (!eventForm.value.title || !eventForm.value.start_at) return;
     let finalTags: string[] = [];
@@ -442,17 +629,20 @@ const submitEvent = async () => {
     try {
         let relPath = eventForm.value.path;
         if (!eventForm.value.isEdit || !relPath) {
-            const safeName = eventForm.value.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            relPath = `Events/${safeName}_${Date.now()}.md`;
+            relPath = `Events/${crypto.randomUUID()}.md`;
         }
         
-        const properties = {
+        const properties: any = {
             is_all_day: eventForm.value.isAllDay,
             start_at: eventForm.value.start_at,
             end_at: eventForm.value.end_at,
             location: eventForm.value.location,
             tags: finalTags
         };
+        
+        if (eventForm.value.relations && eventForm.value.relations.length > 0) {
+            properties.relations = eventForm.value.relations;
+        }
         
         await invoke('write_node_file', { 
             vaultPath: props.vaultPath, 
@@ -604,7 +794,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <div class="w-16 flex justify-center pt-2 border-r border-gray-100 dark:border-[#2f2f2f] text-xs font-medium text-gray-400 shrink-0 select-none">
                             {{ hr === 0 ? '12 AM' : hr < 12 ? hr + ' AM' : hr === 12 ? '12 PM' : (hr - 12) + ' PM' }}
                         </div>
-                        <div class="flex-1 p-1 flex gap-2 relative">
+                        <div class="flex-1 p-1 flex gap-2 relative" @dblclick.self="openAddEventModal(currentDate, hr)">
                             <!-- Events in this hour block -->
                             <div v-for="ev in getEventsForDateAndHour(formatDateString(currentDate), hr)" :key="'ev-'+ev.id" 
                                 class="absolute top-1 left-1 right-1 lg:static lg:flex-1 p-2 rounded-lg bg-blue-100/80 text-blue-900 border border-blue-200 dark:bg-blue-900/30 dark:border-blue-800/50 dark:text-blue-200 shadow-sm transition-transform hover:scale-[1.01] cursor-pointer"
@@ -658,7 +848,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                     <!-- 7 Columns Grid -->
                     <div class="flex-1 flex">
                         <div v-for="dayObj in currentWeekDays" :key="'col-'+dayObj.dateStr" class="flex-1 flex flex-col border-r last:border-0 border-gray-100 dark:border-[#2f2f2f] hover:bg-gray-50/50 dark:hover:bg-[#252525]/30 transition-colors" @click="clickDay(dayObj.date)">
-                            <div v-for="hr in hours" :key="'col-'+dayObj.dateStr+'-'+hr" class="h-[60px] border-b border-gray-100/50 dark:border-[#2f2f2f]/50 p-0.5 relative group" @dblclick="openAddEventModal(dayObj.date)">
+                            <div v-for="hr in hours" :key="'col-'+dayObj.dateStr+'-'+hr" class="h-[60px] border-b border-gray-100/50 dark:border-[#2f2f2f]/50 p-0.5 relative group cursor-pointer" @dblclick.self="openAddEventModal(dayObj.date, hr)">
                                 <div v-for="ev in getEventsForDateAndHour(dayObj.dateStr, hr)" :key="'ev-'+ev.id" 
                                     class="w-full absolute inset-x-0.5 top-0.5 p-1 rounded bg-blue-100/90 text-blue-900 border border-blue-200/50 dark:bg-blue-900/40 dark:border-blue-800/50 dark:text-blue-200 shadow-sm cursor-pointer hover:z-10 truncate text-[10px]"
                                     style="height: 56px;"
@@ -729,12 +919,11 @@ const deleteEvent = async (ev: EventMetadata) => {
                  </h3>
                  <div v-if="selectedEvents.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">No events scheduled.</div>
                  <div class="space-y-2">
-                     <div v-for="ev in selectedEvents" :key="ev.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group">
+                     <div v-for="ev in selectedEvents" :key="ev.id" @click="openEditEventModal(ev)" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group cursor-pointer hover:border-purple-300 dark:hover:border-purple-500/50 transition-colors">
                          <div class="flex justify-between items-start mb-1">
                              <h4 class="font-bold text-base text-gray-900 dark:text-gray-100 line-clamp-1">{{ ev.title }}</h4>
                              <div class="flex items-center gap-1 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity">
-                                <button @click="openEditEventModal(ev)" class="p-1 hover:bg-gray-100 dark:hover:bg-[#333] rounded text-gray-500"><Edit2 class="w-3 h-3"/></button>
-                                <button @click="deleteEvent(ev)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
+                                <button @click.stop="deleteEvent(ev)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
                              </div>
                          </div>
                          <div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -796,13 +985,35 @@ const deleteEvent = async (ev: EventMetadata) => {
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Start</label>
-                            <input v-if="eventForm.isAllDay" v-model="eventForm.start_at" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
-                            <input v-else v-model="eventForm.start_at" type="datetime-local" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <input v-if="eventForm.isAllDay" v-model="eventForm.start_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <div v-else class="flex flex-col gap-2">
+                                <input v-model="startAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                                <div class="flex items-center gap-1 w-full">
+                                    <select v-model="startAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                        <option v-for="h in hourOptions" :key="h" :value="h">{{ h }}</option>
+                                    </select>
+                                    <span class="text-gray-400 font-bold">:</span>
+                                    <select v-model="startAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                        <option v-for="m in startAtMinuteOptions" :key="m" :value="m">{{ m }}</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">End <span class="lowercase text-[9px] font-normal">(optional)</span></label>
-                            <input v-if="eventForm.isAllDay" v-model="eventForm.end_at" type="date" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
-                            <input v-else v-model="eventForm.end_at" type="datetime-local" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <input v-if="eventForm.isAllDay" v-model="eventForm.end_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                            <div v-else class="flex flex-col gap-2">
+                                <input v-model="endAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                                <div class="flex items-center gap-1 w-full">
+                                    <select v-model="endAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                        <option v-for="h in hourOptions" :key="h" :value="h">{{ h }}</option>
+                                    </select>
+                                    <span class="text-gray-400 font-bold">:</span>
+                                    <select v-model="endAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                        <option v-for="m in endAtMinuteOptions" :key="m" :value="m">{{ m }}</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 <div>
@@ -817,6 +1028,42 @@ const deleteEvent = async (ev: EventMetadata) => {
                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Tags</label>
                    <input v-model="eventForm.tagsStr" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="meeting, urgent (comma separated)">
                 </div>
+
+                <!-- Relations Section -->
+                <div v-if="eventForm.isEdit" class="pt-4 border-t border-gray-100 dark:border-[#333]">
+                   <div class="flex items-center justify-between mb-2">
+                       <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider">Relations ({{ eventRelations.length }})</label>
+                       <button v-if="!isCreatingNote" @click="isCreatingNote = true; newNoteTitle = `Meeting Note: ${eventForm.title}`" class="text-[11px] font-medium text-purple-600 hover:text-purple-700 flex items-center">
+                           <Plus class="w-3 h-3 mr-0.5" /> Create Note
+                       </button>
+                   </div>
+                   
+                   <div v-if="isCreatingNote" class="mb-3 flex items-center gap-2">
+                       <input v-model="newNoteTitle" type="text" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Note Title...">
+                       <button @click="createMeetingNote" class="p-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
+                           <Check class="w-3.5 h-3.5" />
+                       </button>
+                       <button @click="isCreatingNote = false" class="p-1.5 bg-gray-200 dark:bg-[#444] text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-[#555] transition-colors">
+                           <X class="w-3.5 h-3.5" />
+                       </button>
+                   </div>
+                   
+                   <div v-if="eventRelations.length === 0 && !isCreatingNote" class="text-[12px] text-gray-400 italic">No linked items yet.</div>
+                   <div v-else class="space-y-1.5">
+                       <div v-for="bl in eventRelations" :key="bl.id" @click="openLinkedNote(bl.id, bl.node_type)" class="flex items-center gap-2 px-2.5 py-2 bg-gray-50 dark:bg-[#252525] rounded-md border border-gray-100 dark:border-[#333] cursor-pointer hover:bg-gray-100 dark:hover:bg-[#2f2f2f] transition-colors group">
+                           <FileText v-if="bl.node_type === 'note'" class="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                           <User v-else-if="bl.node_type === 'person'" class="w-3.5 h-3.5 text-green-500 shrink-0" />
+                           <CheckSquare v-else-if="bl.node_type === 'task'" class="w-3.5 h-3.5 text-yellow-500 shrink-0" />
+                           <Link2 v-else class="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                           <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate flex-1">{{ bl.title }}</span>
+                           
+                           <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                               <button @click.stop="deleteRelationNode(bl)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500" title="Delete Item"><Trash2 class="w-3 h-3" /></button>
+                           </div>
+                       </div>
+                   </div>
+                </div>
+
             </div>
             <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex justify-end gap-3 text-sm font-semibold select-none">
                 <button @click="closeEventForm" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>

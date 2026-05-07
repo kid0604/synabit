@@ -9,10 +9,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 const props = defineProps(nodeViewProps);
 
-const images = computed<GalleryImage[]>({
-  get: () => props.node.attrs.images || [],
-  set: (val) => props.updateAttributes({ images: val })
-});
+
 
 const templateStyle = computed({
   get: () => props.node.attrs.template || 'classic',
@@ -26,6 +23,7 @@ const globalCaption = computed({
 
 const activeImageIndex = ref<number | null>(null);
 const focusedImageIndex = ref<number | null>(null);
+const hoveredInputIndex = ref<number | null>(null);
 
 // Local state for images to prevent focus loss during typing
 const localImages = ref<GalleryImage[]>(JSON.parse(JSON.stringify(props.node.attrs.images || [])));
@@ -151,40 +149,7 @@ const moveImage = (index: number, direction: number) => {
   syncImagesToTiptap();
 };
 
-const draggedImageIndex = ref<number | null>(null);
-const dragTargetIndex = ref<number | null>(null);
 
-const handleDragStart = (index: number, e: DragEvent) => {
-  draggedImageIndex.value = index;
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', index.toString());
-  }
-};
-
-const handleDragEnter = (index: number) => {
-  if (draggedImageIndex.value !== null && draggedImageIndex.value !== index) {
-    dragTargetIndex.value = index;
-  }
-};
-
-const handleDrop = (index: number) => {
-  if (draggedImageIndex.value !== null && draggedImageIndex.value !== index) {
-    const arr = localImages.value;
-    // Swap the images
-    const temp = arr[draggedImageIndex.value];
-    arr[draggedImageIndex.value] = arr[index];
-    arr[index] = temp;
-    syncImagesToTiptap();
-  }
-  draggedImageIndex.value = null;
-  dragTargetIndex.value = null;
-};
-
-const handleDragEnd = () => {
-  draggedImageIndex.value = null;
-  dragTargetIndex.value = null;
-};
 
 const addImage = async () => {
   try {
@@ -197,7 +162,7 @@ const addImage = async () => {
     });
     
     if (selectedPaths && Array.isArray(selectedPaths) && props.extension.options.vaultPath) {
-      const newImages = [...images.value];
+
       const vaultPath = props.extension.options.vaultPath;
       
       for (const pathStr of selectedPaths) {
@@ -252,16 +217,8 @@ const addImage = async () => {
         v-for="(img, index) in localImages" 
         :key="index"
         :class="[
-          getItemClass(index),
-          { 'opacity-40 scale-95': draggedImageIndex === index },
-          { 'ring-4 ring-accent dark:ring-accent-dark ring-inset': dragTargetIndex === index }
+          getItemClass(index)
         ]"
-        draggable="true"
-        @dragstart.stop="handleDragStart(index, $event)"
-        @dragover.stop.prevent
-        @dragenter.stop.prevent="handleDragEnter(index)"
-        @drop.stop.prevent="handleDrop(index)"
-        @dragend.stop="handleDragEnd"
         @mouseenter="activeImageIndex = index"
         @mouseleave="activeImageIndex = null"
         @dblclick.stop="openLightbox(index)"
@@ -326,7 +283,7 @@ const addImage = async () => {
           </button>
 
           <!-- Individual Caption Input -->
-          <div class="absolute bottom-2 left-2 right-2">
+          <div class="absolute bottom-2 left-2 right-2 pointer-events-auto" @mousedown.stop @click.stop>
             <input
               v-show="activeImageIndex === index || focusedImageIndex === index || img.caption"
               v-model="img.caption"
@@ -335,9 +292,13 @@ const addImage = async () => {
               @keydown.enter.prevent="syncImagesToTiptap"
               type="text"
               placeholder="Image caption..."
-              class="w-full bg-black/40 text-white placeholder-white/50 text-xs px-2 py-1.5 rounded border border-white/10 backdrop-blur-md outline-none focus:bg-black/60 transition-colors select-text cursor-text"
+              class="caption-input w-full bg-black/40 text-white placeholder-white/50 text-xs px-2 py-1.5 rounded border border-white/10 backdrop-blur-md outline-none focus:bg-black/60 transition-colors select-text cursor-text"
+              draggable="false"
               @keydown.stop
               @mousedown.stop
+              @click.stop="($event.target as HTMLInputElement)?.focus()"
+              @mouseenter="hoveredInputIndex = index"
+              @mouseleave="hoveredInputIndex = null"
             />
           </div>
         </div>

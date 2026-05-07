@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue';
+import { ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import type { WhiteboardMetadata } from '../../../types/ipc';

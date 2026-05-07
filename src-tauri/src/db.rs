@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::time::Instant;
 use std::sync::Mutex;
 
-use crate::models::note::NoteMetadata;
 
 use crate::models::file::{FileMetadata, FileSource};
 use crate::models::whiteboard::WhiteboardMetadata;
@@ -36,31 +35,8 @@ impl DbBridge {
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
 
-        // ─── Notes Table ───────────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS notes (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                date TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                summary TEXT NOT NULL,
-                tags TEXT NOT NULL,
-                pinned BOOLEAN NOT NULL DEFAULT 0,
-                content TEXT NOT NULL DEFAULT '',
-                is_task BOOLEAN NOT NULL DEFAULT 0,
-                is_event BOOLEAN NOT NULL DEFAULT 0,
-                has_reminder BOOLEAN NOT NULL DEFAULT 0,
-                is_done BOOLEAN NOT NULL DEFAULT 0,
-                raw_frontmatter TEXT NOT NULL,
-                full_width BOOLEAN NOT NULL DEFAULT 0
-            )",
-            [],
-        ).map_err(|e| AppError::General(format!("DB Schema Error (notes): {}", e)))?;
-
-        // Migration: add columns if missing (for existing vaults)
-        let _ = conn.execute("ALTER TABLE notes ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE notes ADD COLUMN content TEXT NOT NULL DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE notes ADD COLUMN full_width BOOLEAN NOT NULL DEFAULT 0", []);
+        // ─── Drop Legacy Notes Table ───────────────────────────
+        let _ = conn.execute("DROP TABLE IF EXISTS notes", []);
 
         // ─── Drop Legacy Events Table ──────────────────────────
         let _ = conn.execute("DROP TABLE IF EXISTS events", []);
@@ -206,106 +182,7 @@ impl DbBridge {
     //  NOTES
     // ═══════════════════════════════════════════════════════════
 
-    pub fn upsert_note(&self, note: &NoteMetadata) -> AppResult<()> {
-        let tags_json = serde_json::to_string(&note.tags)?;
-        self.conn.execute(
-            "INSERT INTO notes (id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter, full_width) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-             ON CONFLICT(id) DO UPDATE SET 
-                title=excluded.title,
-                date=excluded.date,
-                timestamp=excluded.timestamp,
-                summary=excluded.summary,
-                tags=excluded.tags,
-                pinned=excluded.pinned,
-                content=excluded.content,
-                is_task=excluded.is_task,
-                is_event=excluded.is_event,
-                has_reminder=excluded.has_reminder,
-                is_done=excluded.is_done,
-                raw_frontmatter=excluded.raw_frontmatter,
-                full_width=excluded.full_width",
-            params![
-                note.id,
-                note.title,
-                note.date,
-                note.timestamp,
-                note.summary,
-                tags_json,
-                note.pinned,
-                note.content,
-                note.is_task,
-                note.is_event,
-                note.has_reminder,
-                note.is_done,
-                note.raw_frontmatter,
-                note.full_width
-            ],
-        ).map_err(|e| AppError::General(format!("DB Upsert Note Error: {}", e)))?;
-        Ok(())
-    }
 
-    pub fn delete_note(&self, id: &str) -> AppResult<()> {
-         self.conn.execute(
-            "DELETE FROM notes WHERE id = ?1",
-            params![id],
-         ).map_err(|e| AppError::General(format!("DB Delete Error: {}", e)))?;
-         let _ = self.delete_edges(id);
-         Ok(())
-    }
-
-    pub fn get_all_note_timestamps(&self) -> AppResult<HashMap<String, i64>> {
-        let mut stmt = self.conn.prepare("SELECT id, timestamp FROM notes")
-            .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-
-        let mut map = HashMap::new();
-        for r in rows.flatten() {
-            map.insert(r.0, r.1);
-        }
-        Ok(map)
-    }
-
-    pub fn get_all_notes(&self) -> AppResult<Vec<NoteMetadata>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, date, timestamp, summary, tags, pinned, content, is_task, is_event, has_reminder, is_done, raw_frontmatter, full_width 
-             FROM notes ORDER BY timestamp DESC"
-        ).map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-
-        let note_iter = stmt.query_map([], |row| {
-            let tags_str: String = row.get(5)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            let id: String = row.get(0)?;
-            let raw_frontmatter: String = row.get(12)?;
-            let full_width: bool = row.get(13).unwrap_or(false);
-            
-            Ok(NoteMetadata {
-                id: id.clone(),
-                title: row.get(1)?,
-                date: row.get(2)?,
-                timestamp: row.get(3)?,
-                summary: row.get(4)?,
-                tags,
-                path: id, // path == id (relative path)
-                pinned: row.get(6)?,
-                content: row.get(7)?,
-                is_task: row.get(8)?,
-                is_event: row.get(9)?,
-                has_reminder: row.get(10)?,
-                is_done: row.get(11)?,
-                raw_frontmatter,
-                full_width,
-            })
-        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-
-        let mut out = Vec::new();
-        for n in note_iter.flatten() {
-            out.push(n);
-        }
-        Ok(out)
-    }
 
 
 
@@ -469,27 +346,6 @@ impl DbBridge {
     pub fn get_all_nexus_items(&self) -> AppResult<Vec<NexusRow>> {
         let mut items = Vec::new();
 
-        // Notes
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, summary, tags, date, id, content FROM notes"
-        ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            let tags_str: String = row.get(3)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            Ok(NexusRow {
-                id: row.get(0)?, item_type: "note".to_string(),
-                title: row.get(1)?, preview: row.get(2)?,
-                tags, date: row.get(4)?, path: row.get(5)?,
-                content: row.get(6)?,
-                status: None,
-            })
-        }).map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
-        for r in rows.flatten() { items.push(r); }
-
-
-
-
-
         // Files
         let mut stmt = self.conn.prepare(
             "SELECT id, path, filename, extension, size, modified_at, tags FROM files"
@@ -576,25 +432,6 @@ impl DbBridge {
     /// Fast single-item lookup: determines the correct table from the ID prefix
     /// and runs a targeted `WHERE id = ?` query instead of scanning all tables.
     pub fn get_nexus_item_by_id(&self, id: &str) -> AppResult<Option<NexusRow>> {
-        if id.starts_with("Notes/") {
-            let mut stmt = self.conn
-                .prepare("SELECT id, title, summary, tags, date, id, content FROM notes WHERE id = ?1")
-                .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
-            let mut rows = stmt.query_map(params![id], |row| {
-                let tags_str: String = row.get(3)?;
-                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                Ok(NexusRow {
-                    id: row.get(0)?, item_type: "note".to_string(),
-                    title: row.get(1)?, preview: row.get(2)?, tags,
-                    date: row.get(4)?, path: row.get(5)?,
-                    content: row.get(6)?, status: None,
-                })
-            }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
-            return Ok(rows.next().and_then(|r| r.ok()));
-        }
-
-
-
         // Whiteboards
         if id.starts_with("Whiteboards/") || id.starts_with("whiteboard-") {
             let mut stmt = self.conn
@@ -685,7 +522,7 @@ impl DbBridge {
 
     pub fn clear_all(&self) -> AppResult<()> {
         self.conn.execute_batch(
-            "DELETE FROM notes;"
+            ""
         ).map_err(|e| AppError::General(format!("DB Clear Error: {}", e)))?;
         Ok(())
     }
@@ -748,31 +585,6 @@ impl DbBridge {
         // Clear existing index
         self.conn.execute("DELETE FROM search_index", [])
             .map_err(|e| AppError::General(format!("FTS Clear Error: {}", e)))?;
-
-        // Index notes
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, tags, content, date FROM notes"
-        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let tags_json: String = row.get(2)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let content: String = row.get(3)?;
-            let date: String = row.get(4)?;
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'note', ?2, ?3, ?4, '', NULL, ?5, ?1)",
-                params![id, title, tags.join(" "), content, date],
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
-
-
-
-
-
 
 
         // Index files (with properties)
@@ -1130,10 +942,8 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(node) = r {
-                results.push(node);
-            }
+        for node in rows.flatten() {
+            results.push(node);
         }
         Ok(results)
     }
@@ -1163,10 +973,8 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Map Error (get_linked_nodes): {}", e)))?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(node) = r {
-                results.push(node);
-            }
+        for node in rows.flatten() {
+            results.push(node);
         }
         Ok(results)
     }

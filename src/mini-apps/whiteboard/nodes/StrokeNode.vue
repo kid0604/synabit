@@ -1,11 +1,7 @@
 <script setup lang="ts">
-const props = defineProps<{
-  id: string;
-  data: {
-    svgPath: string;
-    color: string;
-    size: number;
-  };
+defineProps<{
+  data: { svgPath: string; color: string; size: number; opacity?: number };
+  selected: boolean;
 }>();
 </script>
 

@@ -14,9 +14,9 @@ const tools = ['nexus', 'quickcap', 'note', 'task', 'calendar', 'whiteboard', 'p
 
 const mainRef = ref<HTMLElement | null>(null);
 
-const { isSwiping, direction } = useSwipe(mainRef, {
+useSwipe(mainRef, {
   threshold: 50,
-  onSwipeEnd: (e, dir) => {
+  onSwipeEnd: (_e, dir) => {
     const currentIndex = tools.indexOf(props.activeTool);
     if (currentIndex === -1) return;
 

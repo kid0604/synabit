@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe } from 'lucide-vue-next';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
-import { emit, listen } from '@tauri-apps/api/event';
+import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
 
 import TiptapEditor from './TiptapEditor.vue';
@@ -10,10 +10,20 @@ import NoteGraph from './NoteGraph.vue';
 
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
-import { useSettings } from '../../composables/useSettings';
-
-import type { NoteMetadata } from '../../types/ipc';
+import type { NodeMetadata } from '../../types/ipc';
 import { logger } from '../../utils/logger';
+
+export interface NoteItem {
+  id: string;
+  title: string;
+  summary: string;
+  date: string;
+  tags: string[];
+  path: string;
+  pinned: boolean;
+  full_width: boolean;
+  content: string;
+}
 
 const emit = defineEmits(['open-node']);
 
@@ -27,7 +37,7 @@ const appStore = useAppStore();
 const { enableDailyNotes, dailyNoteFormat, dailyNoteTag } = storeToRefs(appStore);
 
 // ─── Note State ────────────────────────────────────────────
-const notes = ref<NoteMetadata[]>([]);
+const notes = ref<NoteItem[]>([]);
 const currentNoteId = ref<string | null>(null);
 
 // ─── Tab / Content Management ──────────────────────────────
@@ -71,18 +81,9 @@ const loadNoteFile = async (id: string) => {
     }
     
     if (tabContents.value[id] === undefined) {
-        try {
-            const rawContent = await invoke<string>('read_note', { vaultPath: props.vaultPath, path: id });
-            let body = rawContent;
-            if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
-                const splitIdx = rawContent.indexOf('---', 3);
-                if (splitIdx > 0) {
-                    body = rawContent.substring(splitIdx + 3).replace(/^\s+/, '');
-                }
-            }
-            tabContents.value[id] = body;
-        } catch(e) {
-            logger.error("Failed to read note:", e);
+        const note = notes.value.find(n => n.id === id);
+        if (note) {
+            tabContents.value[id] = note.content;
         }
     }
 };
@@ -138,9 +139,7 @@ const isValidDailyFormat = computed(() => {
 });
 
 // ─── Frontmatter Utils ─────────────────────────────────────
-const buildFrontmatter = (n: NoteMetadata) => {
-    return `---\ntitle: "${n.title}"\npinned: ${n.pinned}\nfull_width: ${n.full_width || false}\ntags: [${n.tags.map(t=>`"${t}"`).join(', ')}]\n---`;
-};
+// Frontmatter handled by Node core
 
 // ─── Note CRUD Operations ──────────────────────────────────
 const handleNoteSelect = (id: string) => {
@@ -162,8 +161,14 @@ const editorFullWidth = computed({
         const note = notes.value.find(n => n.id === currentNoteId.value);
         if (note) {
             note.full_width = val;
-            await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
-            // Refresh to ensure frontend state is correct (though we updated it locally, back-end has the final say)
+            await invoke('write_node_file', { 
+                vaultPath: props.vaultPath, 
+                relPath: note.id, 
+                title: note.title,
+                nodeType: 'note',
+                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+                content: currentContent.value 
+            });
         }
     }
 });
@@ -173,13 +178,15 @@ const togglePin = async (id: string) => {
     if (!note) return;
     note.pinned = !note.pinned;
     try {
-        const rawContent = await invoke<string>('read_note', { vaultPath: props.vaultPath, path: id });
-        let body = rawContent;
-        if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
-            const splitIdx = rawContent.indexOf('---', 3);
-            if (splitIdx > 0) body = rawContent.substring(splitIdx + 3).replace(/^\s+/, '');
-        }
-        await invoke('update_note', { vaultPath: props.vaultPath, path: id, content: `${buildFrontmatter(note)}\n\n${body}` });
+        const body = tabContents.value[id] !== undefined ? tabContents.value[id] : note.content;
+        await invoke('write_node_file', { 
+            vaultPath: props.vaultPath, 
+            relPath: note.id, 
+            title: note.title,
+            nodeType: 'note',
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            content: body 
+        });
         scanVault();
     } catch(e) { logger.error('Pin fail:', e); }
 };
@@ -197,7 +204,7 @@ const deleteNote = async (id: string) => {
            clearTimeout(saveTimeouts.get(id)!);
            saveTimeouts.delete(id);
         }
-        await invoke('delete_note', { vaultPath: props.vaultPath, path: id });
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: id });
         delete tabContents.value[id];
         activeTabs.value = activeTabs.value.filter(t => t !== id);
         tabAccessTime.delete(id);
@@ -209,7 +216,7 @@ const deleteNote = async (id: string) => {
 };
 
 const openInNewWindow = async (id: string) => {
-    try { await invoke('spawn_note_window', { noteId: id }); } catch(e) { logger.error("Failed to open note in new window", e); }
+    try { await invoke('spawn_node_window', { nodeId: id }); } catch(e) { logger.error("Failed to open node in new window", e); }
     activeContextMenu.value = null;
 };
 
@@ -233,9 +240,9 @@ const confirmRename = async () => {
             saveTimeouts.delete(oldId);
         }
         const savedContent = tabContents.value[oldId];
-        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: oldId, newName });
+        const newPath = await invoke<string>('rename_node_file', { vaultPath: props.vaultPath, oldRelPath: oldId, newName });
         
-        // Secondary cancellation: if the user typed during the await rename_note, a new timeout for the old path might have been created.
+        // Secondary cancellation: if the user typed during the await rename_node_file, a new timeout for the old path might have been created.
         let needsSave = false;
         if (saveTimeouts.has(oldId)) {
             clearTimeout(saveTimeouts.get(oldId)!);
@@ -244,37 +251,42 @@ const confirmRename = async () => {
         }
 
         note.title = newName;
-        renamedTabs.set(oldId, newPath);
-        
-        if (savedContent !== undefined) {
-            tabContents.value[newPath] = tabContents.value[oldId] || savedContent;
-            delete tabContents.value[oldId];
-        }
-        if (activeTabs.value.includes(oldId)) {
-            activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
-        }
-        if (tabAccessTime.has(oldId)) {
-            tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
-            tabAccessTime.delete(oldId);
+        if (oldId !== newPath) {
+            renamedTabs.set(oldId, newPath);
+            
+            if (savedContent !== undefined) {
+                tabContents.value[newPath] = tabContents.value[oldId] || savedContent;
+                delete tabContents.value[oldId];
+            }
+            if (activeTabs.value.includes(oldId)) {
+                activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
+            }
+            if (tabAccessTime.has(oldId)) {
+                tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
+                tabAccessTime.delete(oldId);
+            }
         }
 
         if (currentNoteId.value === oldId) {
             currentNoteId.value = newPath;
-            await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${tabContents.value[newPath] || savedContent || ''}` });
-        } else {
-            const rawContent = await invoke<string>('read_note', { vaultPath: props.vaultPath, path: newPath });
-            let body = rawContent;
-            if (rawContent.startsWith('---\n') || rawContent.startsWith('---\r\n')) {
-                const splitIdx = rawContent.indexOf('---', 3);
-                if (splitIdx > 0) body = rawContent.substring(splitIdx + 3).replace(/^\s+/, '');
-            }
-            await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${body}` });
         }
+        
+        const contentBody = tabContents.value[newPath] || savedContent || note.content;
+        await invoke('write_node_file', { 
+            vaultPath: props.vaultPath, 
+            relPath: newPath, 
+            title: newName,
+            nodeType: 'note',
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            content: contentBody 
+        });
         
         if (needsSave) {
             saveNoteForTab(newPath);
         }
-        delete focusedTitles.value[oldId];
+        if (oldId !== newPath) {
+            delete focusedTitles.value[oldId];
+        }
         delete focusedTitles.value[newPath];
         scanVault();
     } catch(err) { alert(err); }
@@ -307,9 +319,9 @@ const renameTopTitle = async (e: Event) => {
             saveTimeouts.delete(oldId);
         }
         const savedContent = tabContents.value[oldId] || '';
-        const newPath = await invoke<string>('rename_note', { vaultPath: props.vaultPath, oldPath: oldId, newName: newTitle });
+        const newPath = await invoke<string>('rename_node_file', { vaultPath: props.vaultPath, oldRelPath: oldId, newName: newTitle });
         
-        // Secondary cancellation: if the user typed during the await rename_note, a new timeout for the old path might have been created.
+        // Secondary cancellation: if the user typed during the await rename_node_file, a new timeout for the old path might have been created.
         let needsSave = false;
         if (saveTimeouts.has(oldId)) {
             clearTimeout(saveTimeouts.get(oldId)!);
@@ -318,22 +330,30 @@ const renameTopTitle = async (e: Event) => {
         }
 
         note.title = newTitle;
-        renamedTabs.set(oldId, newPath);
-        
-        if (tabContents.value[oldId] !== undefined) {
-            tabContents.value[newPath] = tabContents.value[oldId];
-            delete tabContents.value[oldId];
-        }
-        if (activeTabs.value.includes(oldId)) {
-            activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
-        }
-        if (tabAccessTime.has(oldId)) {
-            tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
-            tabAccessTime.delete(oldId);
+        if (oldId !== newPath) {
+            if (tabContents.value[oldId] !== undefined) {
+                tabContents.value[newPath] = tabContents.value[oldId];
+                delete tabContents.value[oldId];
+            }
+            if (activeTabs.value.includes(oldId)) {
+                activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
+            }
+            if (tabAccessTime.has(oldId)) {
+                tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
+                tabAccessTime.delete(oldId);
+            }
         }
 
         currentNoteId.value = newPath;
-        await invoke('update_note', { vaultPath: props.vaultPath, path: newPath, content: `${buildFrontmatter(note)}\n\n${tabContents.value[newPath] || savedContent || ''}` });
+        const contentBody = tabContents.value[newPath] || savedContent || note.content;
+        await invoke('write_node_file', { 
+            vaultPath: props.vaultPath, 
+            relPath: newPath, 
+            title: newTitle,
+            nodeType: 'note',
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            content: contentBody 
+        });
         scanVault();
         
         if (needsSave) {
@@ -352,7 +372,14 @@ const addTag = async (e: KeyboardEvent) => {
        if (note && !note.tags.includes(newTagInput.value.trim())) {
            note.tags.push(newTagInput.value.trim());
            newTagInput.value = '';
-           await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+           await invoke('write_node_file', { 
+               vaultPath: props.vaultPath, 
+               relPath: note.id, 
+               title: note.title,
+               nodeType: 'note',
+               properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+               content: currentContent.value 
+           });
            scanVault();
        }
    }
@@ -362,7 +389,14 @@ const removeTag = async (tagToRemove: string) => {
    const note = notes.value.find(n => n.id === currentNoteId.value);
    if (note) {
        note.tags = note.tags.filter(t => t !== tagToRemove);
-       await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: `${buildFrontmatter(note)}\n\n${currentContent.value}` });
+       await invoke('write_node_file', { 
+           vaultPath: props.vaultPath, 
+           relPath: note.id, 
+           title: note.title,
+           nodeType: 'note',
+           properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+           content: currentContent.value 
+       });
        scanVault();
    }
 };
@@ -379,7 +413,7 @@ interface TagNode {
 const tagTree = ref<TagNode[]>([]);
 const selectedTags = ref<Set<string>>(new Set());
 
-const buildTagTree = (allNotes: NoteMetadata[]) => {
+const buildTagTree = (allNotes: NoteItem[]) => {
   const map = new Map<string, { count: number, children: Set<string> }>();
   allNotes.forEach(n => {
     n.tags.forEach(tagPath => {
@@ -419,7 +453,22 @@ async function scanVault() {
    if (!props.vaultPath) return;
    console.trace('[NoteApp] scanVault called');
    try {
-       const scannedNotes = await invoke<NoteMetadata[]>('scan_vault_path', { vaultPath: props.vaultPath });
+       const scannedNodes = await invoke<NodeMetadata[]>('get_nodes', { nodeType: 'note' });
+       const scannedNotes = scannedNodes.map(n => {
+           let tags: string[] = [];
+           if (Array.isArray(n.properties?.tags)) tags = n.properties.tags as string[];
+           return {
+               id: n.id,
+               title: n.title,
+               content: n.content,
+               date: n.created_at,
+               path: n.id,
+               tags: tags,
+               pinned: !!n.properties?.pinned,
+               full_width: !!n.properties?.full_width,
+               summary: n.content.substring(0, 150).trim()
+           };
+       });
        notes.value = scannedNotes;
        buildTagTree(scannedNotes);
        if (scannedNotes.length > 0 && !currentNoteId.value) {
@@ -436,8 +485,8 @@ const createNewNote = async () => {
     isCreatingNote = true;
     suppressWatcherUntil = Date.now() + 3000;
     try {
-        console.log('[NoteApp] Invoking create_new_note...');
-        const newPath = await invoke<string>('create_new_note', { vaultPath: props.vaultPath });
+        console.log('[NoteApp] Invoking create_node_file...');
+        const newPath = await invoke<string>('create_node_file', { vaultPath: props.vaultPath, directory: 'Notes', nodeType: 'note' });
         console.log('[NoteApp] Created:', newPath);
         await scanVault();
         if (newPath) {
@@ -465,6 +514,16 @@ async function openDailyNote() {
     } catch(e) { logger.error("Failed to open daily note:", e); }
 }
 
+const handleOpenDailyNote = async () => {
+    await openDailyNote();
+    if (window.innerWidth < 768) showNoteSidebar.value = false;
+};
+
+const handleCreateNewNote = async () => {
+    await createNewNote();
+    if (window.innerWidth < 768) showNoteSidebar.value = false;
+};
+
 // ─── Save & Editor ─────────────────────────────────────────
 const saveNoteForTab = (rawTabId: string) => {
     let tabId = rawTabId;
@@ -480,16 +539,23 @@ const saveNoteForTab = (rawTabId: string) => {
         suppressWatcherUntil = Date.now() + 3000;
         const content = tabContents.value[tabId] || '';
         console.log('[NoteApp] saveNoteForTab executing for:', tabId, 'noteId:', note.id, 'content length:', content.length);
-        let fullRaw = `${buildFrontmatter(note)}\n\n${content}`;
+        let fullRaw = content;
         try {
-            await invoke('update_note', { vaultPath: props.vaultPath, path: note.id, content: fullRaw });
+            await invoke('write_node_file', { 
+                vaultPath: props.vaultPath, 
+                relPath: note.id, 
+                title: note.title,
+                nodeType: 'note',
+                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+                content: fullRaw 
+            });
             note.summary = content.substring(0, 150).trim();
-            emit('note-updated', { id: note.id, content });
-        } catch(e) { logger.error("Failed to save note:", e); }
+            tauriEmit('note-updated', { id: note.id, content });
+        } catch(e) { logger.error("Failed to save note:", String(e)); }
     }, 600));
 }
 
-const currentBacklinks = ref<NoteMetadata[]>([]);
+const currentBacklinks = ref<NodeMetadata[]>([]);
 const activeNote = computed(() => notes.value.find(n => n.id === currentNoteId.value) || null);
 
 const currentOutgoingLinks = computed(() => {
@@ -516,7 +582,7 @@ const onEditorUpdate = (val: string, rawTabId: string) => {
     console.log('[NoteApp] onEditorUpdate for tabId:', tabId, 'original:', rawTabId, 'val length:', val.length);
     tabContents.value[tabId] = val;
     if (currentNoteId.value === tabId) {
-        emit('note-updated', { id: tabId, content: val });
+        tauriEmit('note-updated', { id: tabId, content: val });
     }
     saveNoteForTab(tabId);
 };
@@ -525,8 +591,9 @@ watch(currentNoteId, async (newId) => {
     if (newId) {
         await loadNoteFile(newId);
         try {
-            currentBacklinks.value = await invoke('get_note_backlinks', { vaultPath: props.vaultPath, targetId: newId.split(/[\\/]/).pop() || newId });
-        } catch (e) { logger.error(e); currentBacklinks.value = []; }
+            const note = notes.value.find(n => n.id === newId);
+            currentBacklinks.value = await invoke('get_linked_nodes', { targetTitle: note?.title || '', targetId: newId });
+        } catch (e) { logger.error(String(e)); currentBacklinks.value = []; }
     } else { currentBacklinks.value = []; }
 });
 
@@ -785,18 +852,18 @@ onMounted(async () => {
     >
       <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragNoteSidebar"></div>
 
-      <div class="h-14 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
+      <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
          <!-- Close button for mobile -->
          <button @click="showNoteSidebar = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" title="Close Sidebar">
             <X class="w-4 h-4" />
          </button>
 
          <div class="flex gap-1 ml-auto" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="openDailyNote(); if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
+           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
              <Sun class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">Today</span>
            </button>
-           <button @click="createNewNote(); if(window.innerWidth < 768) showNoteSidebar = false" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
+           <button @click="handleCreateNewNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
              <Plus class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">New</span>
            </button>
@@ -986,7 +1053,7 @@ onMounted(async () => {
       </template>
       <template v-else-if="viewMode === 'manager'">
           <div class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] h-full relative z-0 overflow-y-auto">
-             <div class="flex items-center justify-between px-6 h-14 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
+             <div class="flex items-center justify-between px-6 h-10 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
                 <div class="flex items-center gap-3">
                    <button @click="viewMode = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500">
                       <ArrowLeft class="w-5 h-5" />
@@ -1104,11 +1171,13 @@ onMounted(async () => {
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
           <div v-if="currentBacklinks.length === 0" class="text-[13px] text-gray-400 text-center py-4">No linked mentions.</div>
           <div v-for="bl in currentBacklinks" :key="bl.id" @click="handleOpenInternalNote(bl.id)" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group">
-            <h5 class="flex items-center gap-2 mb-1.5 pr-2">
-                <FileText class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/>
+            <h5 class="flex items-center gap-2 pr-2">
+                <Calendar v-if="bl.node_type === 'event'" class="w-3.5 h-3.5 text-rose-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
+                <CheckSquare v-else-if="bl.node_type === 'task'" class="w-3.5 h-3.5 text-emerald-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
+                <FileText v-else class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/>
                 <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ bl.title }}</span>
+                <span v-if="bl.node_type === 'event' && bl.properties && bl.properties.start_at" class="ml-auto text-[9px] text-gray-400 font-medium tracking-wider whitespace-nowrap">{{ (bl.properties.start_at as string).split('T')[0] }}</span>
             </h5>
-            <p class="text-[11px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-3 leading-relaxed pl-5">{{ bl.summary || 'No text content available.' }}</p>
           </div>
       </div>
     </aside>

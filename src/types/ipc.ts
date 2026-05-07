@@ -10,16 +10,15 @@
 // Notes
 // ──────────────────────────────────────────────
 
-export interface NoteMetadata {
+export interface NodeMetadata {
   id: string;
+  node_type: string;
   title: string;
-  summary: string;
-  date: string;
-  tags: string[];
-  path: string;
-  pinned: boolean;
-  full_width: boolean;
   content: string;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  timestamp: number;
 }
 
 // ──────────────────────────────────────────────

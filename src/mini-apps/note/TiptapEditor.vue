@@ -81,7 +81,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
-  (e: 'open-internal-note', noteId: string): void;
+  (e: 'open-internal-note', payload: any): void;
 }>();
 
 // --- Asset path helpers ---
@@ -90,30 +90,28 @@ const injectLocalAssets = (md: string) => {
    let processed = md;
    
    // Preserve <img> tags but convert src to absolute asset URL
-   processed = processed.replace(/<img\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/gi, (m, before, filename, after) => {
+    processed = processed.replace(/<img\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (_m, before, filename, after) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
       const decodedName = decodeURIComponent(filename);
       const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
       const assetUrl = convertFileSrc(absPath); 
       return `<img ${before}src="${assetUrl}"${after}>`;
    });
-   
-   processed = processed.replace(/<video\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (m, before, filename, after) => {
+      processed = processed.replace(/<video\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (_m, before, filename, after) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
       const decodedName = decodeURIComponent(filename);
       const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
       const assetUrl = convertFileSrc(absPath); 
       return `<video ${before}src="${assetUrl}"${after}>`;
    });
-   
-   processed = processed.replace(/<audio\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (m, before, filename, after) => {
+      processed = processed.replace(/<audio\s+([^>]*)src="assets\/([^"]+)"([^>]*)>/g, (_m, before, filename, after) => {
       const sep = props.vaultPath.includes('\\') ? '\\' : '/';
       const decodedName = decodeURIComponent(filename);
       const absPath = `${props.vaultPath}${sep}assets${sep}${decodedName}`;
       const assetUrl = convertFileSrc(absPath); 
       return `<audio ${before}src="${assetUrl}"${after}>`;
    });
-   processed = processed.replace(/\[([^\]]*)\]\(synabit:\/\/(note|node|person|task|quickcap)\/([^)]+)\)/g, (match, label, type, uri) => {
+    processed = processed.replace(/\[([^\]]*)\]\(synabit:\/\/(note|node|person|task|quickcap)\/([^)]+)\)/g, (_match, label, type, uri) => {
       const decoded = decodeURIComponent(uri);
       return `[${label}](synabit://${type}/${encodeURIComponent(decoded)})`;
    });
@@ -133,7 +131,7 @@ const stripLocalAssets = (md: string) => {
    
    // Preserve <img> tags and their inline styles/width/height but make src relative.
    // Ensure it ends with /> to prevent markdown-it from swallowing text.
-   processed = processed.replace(/<img\s+([^>]*)src="([^"]+)"([^>]*)>/gi, (m, before, src, after) => {
+    processed = processed.replace(/<img\s+([^>]*)src="([^"]+)"([^>]*)>/gi, (_m, before, src, after) => {
       const match = src.match(/(?:https?:\/\/asset\.localhost|asset:\/\/localhost|tauri:\/\/localhost)[^\"]+(?:\/|%2F)assets(?:\/|%2F)([^\"]+)/);
       let newSrc = src;
       if (match) {
@@ -382,8 +380,18 @@ const updateTableControls = () => {
   if (!el) return;
   activeTableEl.value = el;
 
+  const wrapper = el.closest('.tiptap-wrapper');
+  const wrapperRect = wrapper ? wrapper.getBoundingClientRect() : { top: 0, left: 0 };
+
   const rect = el.getBoundingClientRect();
-  tableRect.value = { top: rect.top, left: rect.left, width: rect.width, height: rect.height, bottom: rect.bottom, right: rect.right };
+  tableRect.value = { 
+    top: rect.top - wrapperRect.top, 
+    left: rect.left - wrapperRect.left, 
+    width: rect.width, 
+    height: rect.height, 
+    bottom: rect.bottom - wrapperRect.top, 
+    right: rect.right - wrapperRect.left 
+  };
 
   // Read column positions from first row
   const firstRow = el.querySelector('tr');
@@ -391,7 +399,7 @@ const updateTableControls = () => {
     const cells = firstRow.querySelectorAll('td, th');
     colPositions.value = Array.from(cells).map(c => {
       const cr = c.getBoundingClientRect();
-      return { left: cr.left, width: cr.width };
+      return { left: cr.left - wrapperRect.left, width: cr.width };
     });
   }
 
@@ -399,7 +407,7 @@ const updateTableControls = () => {
   const rows = el.querySelectorAll('tr');
   rowPositions.value = Array.from(rows).map(r => {
     const rr = r.getBoundingClientRect();
-    return { top: rr.top, height: rr.height };
+    return { top: rr.top - wrapperRect.top, height: rr.height };
   });
 
   // Determine active row and col for showing specific handles
@@ -424,7 +432,10 @@ const updateTableControls = () => {
 const openContextMenu = (e: MouseEvent) => {
   if (!editor.value || !editor.value.isActive('table')) return;
   e.preventDefault();
-  ctxMenuPos.value = { top: e.clientY, left: e.clientX };
+  const wrapper = activeTableEl.value?.closest('.tiptap-wrapper');
+  const wrapperRect = wrapper ? wrapper.getBoundingClientRect() : { top: 0, left: 0 };
+  
+  ctxMenuPos.value = { top: e.clientY - wrapperRect.top, left: e.clientX - wrapperRect.left };
   showCtxMenu.value = true;
 };
 
@@ -1077,23 +1088,13 @@ defineExpose({
 // Close context menu on click outside
 const onDocClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement;
-  if (!target.closest('.tc-ctx-menu')) {
+  if (!target.closest('.tc-ctx-menu, .tc-corner-handle, .tc-col-handle, .tc-row-handle')) {
     closeCtxMenu();
-  }
-};
-
-// Update table controls on scroll (since they use fixed positioning)
-const onEditorScroll = () => {
-  if (isInTable.value) {
-    updateTableControls();
   }
 };
 
 onMounted(() => {
   document.addEventListener('click', onDocClick);
-  // Find the scrollable editor container and listen for scroll
-  const wrapper = document.querySelector('.tiptap-wrapper')?.closest('.overflow-y-auto');
-  wrapper?.addEventListener('scroll', onEditorScroll);
 });
 
 watch(() => props.modelValue, (newVal) => {
@@ -1107,8 +1108,6 @@ watch(() => props.modelValue, (newVal) => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick);
-  const wrapper = document.querySelector('.tiptap-wrapper')?.closest('.overflow-y-auto');
-  wrapper?.removeEventListener('scroll', onEditorScroll);
   if (editor.value) {
     editor.value.destroy();
   }
@@ -1116,7 +1115,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="tiptap-wrapper w-full relative overflow-x-hidden">
+  <div class="tiptap-wrapper w-full relative">
     <!-- Floating Toolbar -->
     <Transition name="bubble">
       <div
@@ -1229,8 +1228,8 @@ onBeforeUnmount(() => {
         v-for="(col, i) in colPositions" :key="'ch-'+i"
         v-show="i === activeColIdx"
         class="tc-col-handle"
-        :style="{ position: 'fixed', top: (tableRect.top - 20) + 'px', left: (col.left + col.width / 2 - 10) + 'px' }"
-        @click.prevent="(e: MouseEvent) => { selectColumn(i); openContextMenu(e); }"
+        :style="{ position: 'absolute', top: (tableRect.top - 20) + 'px', left: (col.left + col.width / 2 - 10) + 'px' }"
+        @mousedown.prevent="(e: MouseEvent) => { selectColumn(i); openContextMenu(e); }"
       >
         <GripVertical class="w-3 h-3 rotate-90" />
       </button>
@@ -1240,8 +1239,8 @@ onBeforeUnmount(() => {
         v-for="(row, i) in rowPositions" :key="'rh-'+i"
         v-show="i === activeRowIdx"
         class="tc-row-handle"
-        :style="{ position: 'fixed', top: (row.top + row.height / 2 - 10) + 'px', left: (tableRect.left - 22) + 'px' }"
-        @click.prevent="(e: MouseEvent) => { selectRow(i); openContextMenu(e); }"
+        :style="{ position: 'absolute', top: (row.top + row.height / 2 - 10) + 'px', left: (tableRect.left - 22) + 'px' }"
+        @mousedown.prevent="(e: MouseEvent) => { selectRow(i); openContextMenu(e); }"
       >
         <GripVertical class="w-3 h-3" />
       </button>
@@ -1249,8 +1248,8 @@ onBeforeUnmount(() => {
       <!-- Corner handle (select whole table) -->
       <button
         class="tc-corner-handle"
-        :style="{ position: 'fixed', top: (tableRect.top - 22) + 'px', left: (tableRect.left - 24) + 'px' }"
-        @click.prevent="(e: MouseEvent) => { editor?.chain().focus().run(); openContextMenu(e); }"
+        :style="{ position: 'absolute', top: (tableRect.top - 22) + 'px', left: (tableRect.left - 24) + 'px' }"
+        @mousedown.prevent="(e: MouseEvent) => { editor?.chain().focus().run(); openContextMenu(e); }"
       >
         <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="0" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="6" y="0" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="0" y="6" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="6" y="6" width="4" height="4" fill="currentColor" rx="0.5"/></svg>
       </button>
@@ -1258,7 +1257,7 @@ onBeforeUnmount(() => {
       <!-- Add row button (bottom) -->
       <button
         class="tc-add-btn tc-add-row"
-        :style="{ position: 'fixed', top: (tableRect.bottom + 2) + 'px', left: (tableRect.left + tableRect.width / 2 - 14) + 'px' }"
+        :style="{ position: 'absolute', top: (tableRect.bottom + 2) + 'px', left: (tableRect.left + tableRect.width / 2 - 14) + 'px' }"
         @mousedown.prevent="addRowAtBottom"
         title="Add row"
       >
@@ -1268,7 +1267,7 @@ onBeforeUnmount(() => {
       <!-- Add column button (right) -->
       <button
         class="tc-add-btn tc-add-col"
-        :style="{ position: 'fixed', top: (tableRect.top + tableRect.height / 2 - 14) + 'px', left: (tableRect.right + 2) + 'px' }"
+        :style="{ position: 'absolute', top: (tableRect.top + tableRect.height / 2 - 14) + 'px', left: (tableRect.right + 2) + 'px' }"
         @mousedown.prevent="addColAtRight"
         title="Add column"
       >
@@ -1281,7 +1280,7 @@ onBeforeUnmount(() => {
       <div
         v-if="showCtxMenu && editor"
         class="tc-ctx-menu"
-        :style="{ top: ctxMenuPos.top + 'px', left: ctxMenuPos.left + 'px' }"
+        :style="{ position: 'absolute', top: ctxMenuPos.top + 'px', left: ctxMenuPos.left + 'px' }"
         @mousedown.prevent
       >
         <button @click="ctxAction('addRowAbove')">Add row above</button>
@@ -1896,7 +1895,7 @@ onBeforeUnmount(() => {
 
 /* Context Menu */
 .tc-ctx-menu {
-  position: fixed;
+  position: absolute;
   z-index: 10000;
   min-width: 200px;
   background: #fff;
@@ -2015,6 +2014,30 @@ onBeforeUnmount(() => {
 
 .dark .prose a[href^="synabit://note/"]:hover {
   background-color: rgba(168, 85, 247, 0.3);
+}
+
+.prose a[href^="synabit://event/"] {
+  background-color: rgba(225, 29, 72, 0.1);
+  color: #e11d48;
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.prose a[href^="synabit://event/"]:hover {
+  background-color: rgba(225, 29, 72, 0.2);
+}
+
+.dark .prose a[href^="synabit://event/"] {
+  background-color: rgba(225, 29, 72, 0.2);
+  color: #fb7185;
+}
+
+.dark .prose a[href^="synabit://event/"]:hover {
+  background-color: rgba(225, 29, 72, 0.3);
 }
 
 /* === Notion/Obsidian Style Spacing for Prose === */

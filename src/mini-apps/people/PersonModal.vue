@@ -66,7 +66,7 @@ const savePerson = async () => {
     isSaving.value = true;
     try {
         // Construct frontmatter
-        const properties = {};
+        const properties: Record<string, any> = {};
         if (form.value.email) properties.email = form.value.email;
         if (form.value.phone) properties.phone = form.value.phone;
         if (form.value.company) properties.company = form.value.company;
@@ -79,9 +79,7 @@ const savePerson = async () => {
         if (props.person) {
             relPath = props.person.id; // Existing file path
         } else {
-            // New file path: People/Name-timestamp.md
-            const safeName = form.value.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            relPath = `People/${safeName}_${Date.now()}.md`;
+            relPath = `People/${crypto.randomUUID()}.md`;
         }
         
         await invoke('write_node_file', {

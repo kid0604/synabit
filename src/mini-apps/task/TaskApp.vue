@@ -515,8 +515,7 @@ const saveTask = async () => {
         };
 
         if (editingTask.value.isNew) {
-            const safeName = (editingTaskParams.value.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            const relPath = `Tasks/${safeName}_${Date.now()}.md`;
+            const relPath = `Tasks/${crypto.randomUUID()}.md`;
             
             await invoke('write_node_file', {
                 vaultPath: props.vaultPath,
@@ -787,6 +786,7 @@ watch(() => props.vaultPath, () => {
                       </div>
                   </div>
               </div>
+          </div>
 
       <!-- Main Content -->
       <div class="flex-1 overflow-y-auto px-4 md:px-8 pb-16">
@@ -952,7 +952,6 @@ watch(() => props.vaultPath, () => {
               </div>
           </div>
       </div>
-  </div>
 
   <!-- Edit Task Modal -->
   <TaskEditModal 

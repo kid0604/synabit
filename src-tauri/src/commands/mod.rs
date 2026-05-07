@@ -1,4 +1,3 @@
-pub mod notes;
 pub mod files;
 pub mod nexus;
 pub mod whiteboards;

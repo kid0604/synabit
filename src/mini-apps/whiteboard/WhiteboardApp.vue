@@ -892,7 +892,7 @@ function handleKeydown(e: KeyboardEvent) {
       const offset = 30;
       const newNode: WBNode = {
         id: store.generateId(clipboard.type === 'shape' ? 'sh' : 'n'),
-        type: clipboard.type,
+        type: clipboard.type as any,
         position: {
           x: clipboard.position.x + offset,
           y: clipboard.position.y + offset,

@@ -149,21 +149,6 @@ pub fn search_notes(
     db.search_fts(&parsed, 1, 100)
 }
 
-/// FTS5-powered search scoped to quickcaps only.
-/// Used by the QuickCap mini-app search.
-#[tauri::command]
-pub fn search_quickcaps(
-    _app_handle: tauri::AppHandle,
-    state: tauri::State<'_, DbState>,
-    _vault_path: String,
-    query: String,
-) -> AppResult<crate::search::SearchResponse> {
-    let mut parsed = crate::search::parse_query(&query);
-    parsed.type_filter = Some("quickcap".to_string());
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.search_fts(&parsed, 1, 200)
-}
-
 
 /// FTS5-powered search scoped to tasks only.
 /// Used by the Task mini-app search.

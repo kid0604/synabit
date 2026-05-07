@@ -50,7 +50,7 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
     }
 
     // 3. Tiptap Internal Links ([Title](synabit://.../path))
-    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap)/([^)]+)\)").unwrap();
+    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event)/([^)]+)\)").unwrap();
     for cap in md_link_re.captures_iter(text) {
         if let Some(m) = cap.get(2) {
             let encoded_path = m.as_str().trim();

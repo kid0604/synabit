@@ -118,9 +118,7 @@ const performSearch = async () => {
             totalCount.value = response.total_count;
             queryTimeMs.value = response.query_time_ms;
         }
-    } catch(e) {
-        logger.error(e);
-    } finally {
+    } catch(e) { logger.error(String(e)); } finally {
         if (searchId === currentSearchId) {
             isSearching.value = false;
         }
@@ -222,6 +220,16 @@ const renderMarkdownPreview = (text: string, type: string) => {
     
     const html = marked.parse(parsed, { async: false, breaks: true }) as string;
     return DOMPurify.sanitize(html);
+};
+
+const cleanSnippet = (snippet: string) => {
+    if (!snippet) return '';
+    // Replace markdown images: ![alt](url) -> 🖼️ alt
+    let text = snippet.replace(/!\[([^\]]*)\]\([^)]+\)/g, '🖼️ $1');
+    // Replace HTML images
+    text = text.replace(/<img[^>]*>/gi, '🖼️ Image');
+    // Sanitize to only allow <mark> tags from FTS5
+    return DOMPurify.sanitize(text, { ALLOWED_TAGS: ['mark'] });
 };
 </script>
 
@@ -329,8 +337,8 @@ const renderMarkdownPreview = (text: string, type: string) => {
                                 </span>
                             </div>
                             
-                            <p v-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="item.snippet"></p>
-                            <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono">{{ item.snippet }}</p>
+                            <p v-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="cleanSnippet(item.snippet)"></p>
+                            <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono break-words" v-html="cleanSnippet(item.snippet)"></p>
                             
                             <div class="flex items-center gap-2 mt-3" v-if="item.tags.length > 0">
                                 <span v-for="tag in item.tags" :key="tag" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-[#1a1a1c] border border-gray-200 dark:border-[#2c2c2e] text-gray-600 dark:text-gray-400 flex items-center gap-1">

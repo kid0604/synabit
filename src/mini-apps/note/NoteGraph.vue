@@ -205,7 +205,13 @@ const renderGraph = () => {
         }
     });
 
-    simulation.on("tick", () => {
+    // Stop simulation from auto-running to prevent the fly-in animation
+    simulation.stop();
+    
+    // Fast-forward simulation to a stable layout (300 ticks is usually enough)
+    simulation.tick(300);
+
+    const ticked = () => {
         link
             .attr("x1", (d: any) => d.source.x)
             .attr("y1", (d: any) => d.source.y)
@@ -219,7 +225,13 @@ const renderGraph = () => {
         labels
             .attr("x", (d: any) => d.x)
             .attr("y", (d: any) => d.y);
-    });
+    };
+
+    // Render the initial static layout
+    ticked();
+
+    // Listen for future ticks (e.g. during dragging)
+    simulation.on("tick", ticked);
 
     function dragstarted(event: any, d: any) {
         if (!event.active) simulation?.alphaTarget(0.3).restart();
