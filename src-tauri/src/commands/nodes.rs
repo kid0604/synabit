@@ -189,26 +189,39 @@ pub fn write_node_file(
         db.get_node_title(&rel_path)
     };
     
-    // Construct the file content with YAML frontmatter
-    let mut props_map = serde_yaml::Mapping::new();
-    props_map.insert(serde_yaml::Value::String("title".to_string()), serde_yaml::Value::String(title.clone()));
-    props_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String(node_type.clone()));
-    
-    // Merge user properties
-    if let serde_json::Value::Object(map) = &properties {
-        for (k, v) in map {
-            if k == "title" || k == "type" { continue; } // Skip standard fields
-            if let Ok(yaml_val) = serde_yaml::to_value(v) {
-                props_map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
+    // Construct the file content
+    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_content = if ext == "json" || ext == "canvas" {
+        // Output as pure JSON
+        let json_obj = serde_json::json!({
+            "title": title.clone(),
+            "type": node_type.clone(),
+            "metadata": properties.clone(),
+            "content": content.clone()
+        });
+        serde_json::to_string_pretty(&json_obj).unwrap_or_default()
+    } else {
+        // Output as Markdown with YAML frontmatter
+        let mut props_map = serde_yaml::Mapping::new();
+        props_map.insert(serde_yaml::Value::String("title".to_string()), serde_yaml::Value::String(title.clone()));
+        props_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String(node_type.clone()));
+        
+        // Merge user properties
+        if let serde_json::Value::Object(map) = &properties {
+            for (k, v) in map {
+                if k == "title" || k == "type" { continue; } // Skip standard fields
+                if let Ok(yaml_val) = serde_yaml::to_value(v) {
+                    props_map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
+                }
             }
         }
-    }
-    
-    let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
-    // serde_yaml output usually ends with newline and might start with ---, but usually just standard YAML format
-    // we manually add --- blocks to ensure Markdown compatibility
-    let yaml_str = frontmatter.trim_start_matches("---\n");
-    let file_content = format!("---\n{}---\n{}", yaml_str, content);
+        
+        let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
+        // serde_yaml output usually ends with newline and might start with ---, but usually just standard YAML format
+        // we manually add --- blocks to ensure Markdown compatibility
+        let yaml_str = frontmatter.trim_start_matches("---\n");
+        format!("---\n{}---\n{}", yaml_str, content)
+    };
     
     // Write to disk
     std::fs::write(&abs_path, file_content)?;

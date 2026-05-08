@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -18,6 +18,7 @@ const Nexus = defineAsyncComponent(() => import('./mini-apps/nexus/NexusApp.vue'
 const FileManager = defineAsyncComponent(() => import('./mini-apps/file/FileApp.vue'));
 const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
 const PeopleApp = defineAsyncComponent(() => import('./mini-apps/people/PeopleApp.vue'));
+const FinanceApp = defineAsyncComponent(() => import('./mini-apps/finance/FinanceApp.vue'));
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
 
 // Composables
@@ -43,7 +44,7 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 const { useMobileLayout, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people'>('nexus');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people' | 'finance'>('nexus');
 
 watch(activeTool, (newTool, oldTool) => {
   if (oldTool !== newTool) {
@@ -57,6 +58,7 @@ const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
 const whiteboardAppRef = ref<any>(null);
 const peopleAppRef = ref<any>(null);
+const financeAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isFloatingView = ref(false);
@@ -133,6 +135,10 @@ const handleEditFromNexus = (id: string, type: string) => {
     else if (type === 'person') {
         activeTool.value = 'people';
         setTimeout(() => peopleAppRef.value?.openPersonById(id), 100);
+    }
+    else if (type === 'finance_month') {
+        activeTool.value = 'finance';
+        setTimeout(() => financeAppRef.value?.openMonthById(id), 100);
     }
 };
 
@@ -317,6 +323,10 @@ onUnmounted(() => {
                    <Users class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">People</span>
                 </button>
+                <button @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Wallet class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Finance</span>
+                </button>
                 
                 <button v-if="useMobileLayout" @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
@@ -363,6 +373,9 @@ onUnmounted(() => {
         </template>
         <template v-else-if="activeTool === 'people'">
            <PeopleApp ref="peopleAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+        </template>
+        <template v-else-if="activeTool === 'finance'">
+           <FinanceApp ref="financeAppRef" :vaultPath="vaultPath" />
         </template>
 
         <!-- SETTINGS MODAL -->
