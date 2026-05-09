@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -19,6 +19,7 @@ const FileManager = defineAsyncComponent(() => import('./mini-apps/file/FileApp.
 const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
 const PeopleApp = defineAsyncComponent(() => import('./mini-apps/people/PeopleApp.vue'));
 const FinanceApp = defineAsyncComponent(() => import('./mini-apps/finance/FinanceApp.vue'));
+const ChatApp = defineAsyncComponent(() => import('./mini-apps/chat/ChatApp.vue'));
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
 
 // Composables
@@ -44,11 +45,31 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 const { useMobileLayout, isMobileOS } = usePlatform();
 
 // ─── App View State ───────────────────────────────────────
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people' | 'finance'>('nexus');
+const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people' | 'finance' | 'chat'>('nexus');
 
-watch(activeTool, (newTool, oldTool) => {
+watch(activeTool, async (newTool, oldTool) => {
   if (oldTool !== newTool) {
     logger.info(`Navigated to mini-app: ${newTool} (from ${oldTool})`);
+  }
+  
+  if (newTool === 'chat' && hasUnreadNotifications.value && vaultPath.value) {
+     hasUnreadNotifications.value = false;
+     try {
+         const msgs = await invoke<any[]>('get_nodes', { nodeType: 'message' });
+         for (const m of msgs) {
+             if (m.properties && m.properties.is_read === false) {
+                 m.properties.is_read = true;
+                 await invoke('write_node_file', {
+                     vaultPath: vaultPath.value,
+                     relPath: m.id,
+                     title: m.title,
+                     nodeType: 'message',
+                     properties: m.properties,
+                     content: m.content
+                 });
+             }
+         }
+     } catch(e) { logger.error('Failed to mark messages as read', e); }
   }
 });
 
@@ -56,6 +77,7 @@ watch(activeTool, (newTool, oldTool) => {
 const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
+const calendarAppRef = ref<any>(null);
 const whiteboardAppRef = ref<any>(null);
 const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
@@ -115,34 +137,69 @@ const clearVault = () => {
 };
 
 // ─── Cross-app Navigation (Nexus → Note/Task/QuickCap) ───
-const handleEditFromNexus = (id: string, type: string) => {
+import { nextTick } from 'vue';
+
+const callWhenReady = (getRef: () => any, method: string, ...args: any[]) => {
+    let attempts = 0;
+    const interval = setInterval(() => {
+        const componentRef = getRef();
+        if (componentRef && typeof componentRef[method] === 'function') {
+            clearInterval(interval);
+            componentRef[method](...args);
+        } else if (attempts >= 40) { // 2 seconds max
+            clearInterval(interval);
+            logger.warn(`Component ref or method ${method} not ready after 2s`);
+        }
+        attempts++;
+    }, 50);
+};
+
+const handleEditFromNexus = async (id: string, type: string) => {
+    logger.info(`App.vue: handleEditFromNexus received id: ${id}, type: ${type}`);
     if (type === 'note') { 
         activeTool.value = 'note'; 
-        setTimeout(() => noteAppRef.value?.openNoteById(id), 100); 
+        callWhenReady(() => noteAppRef.value, 'openNoteById', id);
     }
     else if (type === 'quickcap') { 
         activeTool.value = 'quickcap'; 
-        setTimeout(() => quickCapAppRef.value?.openEditById(id), 100); 
+        callWhenReady(() => quickCapAppRef.value, 'openEditById', id);
     }
     else if (type === 'task') { 
         activeTool.value = 'task'; 
-        setTimeout(() => taskAppRef.value?.openEditById(id), 100); 
+        callWhenReady(() => taskAppRef.value, 'openEditById', id);
+    }
+    else if (type === 'calendar') { 
+        activeTool.value = 'calendar'; 
+        callWhenReady(() => calendarAppRef.value, 'openEventById', id);
     }
     else if (type === 'whiteboard') {
         activeTool.value = 'whiteboard';
-        setTimeout(() => whiteboardAppRef.value?.openBoardById(id), 100);
+        callWhenReady(() => whiteboardAppRef.value, 'openBoardById', id);
     }
     else if (type === 'person') {
         activeTool.value = 'people';
-        setTimeout(() => peopleAppRef.value?.openPersonById(id), 100);
+        callWhenReady(() => peopleAppRef.value, 'openPersonById', id);
     }
     else if (type === 'finance_month') {
         activeTool.value = 'finance';
-        setTimeout(() => financeAppRef.value?.openMonthById(id), 100);
+        callWhenReady(() => financeAppRef.value, 'openMonthById', id);
     }
 };
 
 import { logger } from './utils/logger';
+
+// ─── Notifications & Initial Scan ─────────────────────────
+const hasUnreadNotifications = ref(false);
+
+const checkUnreadNotifications = async () => {
+    if (!vaultPath.value) return;
+    try {
+        const msgs = await invoke<any[]>('get_nodes', { nodeType: 'message' });
+        hasUnreadNotifications.value = msgs.some(m => m.properties && m.properties.is_read === false);
+    } catch(e) {
+        logger.error('Failed to check unread messages', e);
+    }
+};
 
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
@@ -169,7 +226,9 @@ onMounted(async () => {
      invoke('migrate_tasks_to_nodes', { vaultPath: vaultPath.value }).then(() => {
          invoke('migrate_events_to_nodes', { vaultPath: vaultPath.value }).then(() => {
              invoke('migrate_quickcaps_to_nodes', { vaultPath: vaultPath.value }).then(() => {
-                 invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+                 invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
+                     await checkUnreadNotifications();
+                 }).catch(logger.error);
              }).catch(logger.error);
          }).catch(logger.error);
      }).catch(logger.error);
@@ -190,6 +249,8 @@ onMounted(async () => {
           invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
       }
       
+      setTimeout(() => checkUnreadNotifications(), 500);
+      
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
@@ -203,6 +264,8 @@ onMounted(async () => {
       } else {
           invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
       }
+      
+      setTimeout(() => checkUnreadNotifications(), 500);
   }).then(fn => unlistenFns.push(fn));
 
   onUnmounted(() => {
@@ -219,9 +282,18 @@ onMounted(async () => {
           if (noteId && nApp.tabContents[noteId]) {
               const note = nApp.notes.find((n: any) => n.id === noteId);
               if (note) {
-                  const fm = `---\ntitle: "${note.title}"\npinned: ${note.pinned}\ntags: [${note.tags.map((t: string) => `"${t}"`).join(', ')}]\n---`;
                   try {
-                      await invoke('update_note', { vaultPath: vaultPath.value, path: note.id, content: `${fm}\n\n${nApp.tabContents[noteId]}` });
+                      await invoke('write_node_file', {
+                          vaultPath: vaultPath.value,
+                          relPath: note.id,
+                          nodeType: 'note',
+                          title: note.title,
+                          properties: {
+                              pinned: note.pinned,
+                              tags: note.tags
+                          },
+                          content: nApp.tabContents[noteId]
+                      });
                       emit('note-updated', { id: note.id, content: nApp.tabContents[noteId] });
                   } catch(e) { logger.error('Save before close failed', e); }
               }
@@ -291,6 +363,15 @@ onUnmounted(() => {
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
 
+                <button @click="activeTool = 'chat'" :class="['p-2 rounded-xl transition-all duration-200 relative group flex-shrink-0', activeTool === 'chat' ? 'bg-[#e6e6e6] dark:bg-[#333333] text-black dark:text-white shadow-sm' : 'text-gray-400 dark:text-gray-500 hover:bg-[#e6e6e6] dark:hover:bg-[#333333] hover:text-black dark:hover:text-white']">
+                    <MessageSquare class="w-[22px] h-[22px]" />
+                    <div v-if="hasUnreadNotifications" class="absolute top-[6px] right-[6px] w-[6px] h-[6px] bg-red-500 rounded-full ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]"></div>
+                    <!-- Tooltip -->
+                    <div class="absolute left-full ml-3 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 pointer-events-none">
+                        Chat
+                    </div>
+                </button>
+
                 <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Zap class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
@@ -350,7 +431,10 @@ onUnmounted(() => {
         </template>
 
         <!-- MINI APP CONTENT AREA -->
-        <template v-if="activeTool === 'note'">
+        <template v-if="activeTool === 'chat'">
+            <ChatApp :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+        </template>
+        <template v-else-if="activeTool === 'note'">
           <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />
         </template>
         <template v-else-if="activeTool === 'quickcap'">
@@ -363,7 +447,7 @@ onUnmounted(() => {
            <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
         </template>
         <template v-else-if="activeTool === 'calendar'">
-          <CalendarApp :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+          <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </template>
         <template v-else-if="activeTool === 'file'">
            <FileManager :vaultPath="vaultPath" />

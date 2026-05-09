@@ -416,14 +416,16 @@ const clickDay = (dateObj: Date) => {
     selectedDate.value = dateObj;
     // Auto-update currentDate to follow the selection into views
     currentDate.value = new Date(dateObj);
-    showRightPanel.value = true;
+    if (viewMode.value !== 'day' && viewMode.value !== 'week') {
+        showRightPanel.value = true;
+    }
 };
 
 const clickYearDay = (dt: Date) => {
     selectedDate.value = dt;
     currentDate.value = new Date(dt);
     viewMode.value = 'day';
-    showRightPanel.value = true;
+    showRightPanel.value = false;
 };
 
 // --- Panel Computed ---
@@ -695,7 +697,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                  <!-- View Switcher -->
                  <div class="flex bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333] shrink-0">
                     <button v-for="v in (['day','week','month','year'] as ViewMode[])" :key="v"
-                            @click="viewMode = v"
+                            @click="viewMode = v; if (v === 'day' || v === 'week') showRightPanel = false;"
                             class="px-3 py-1.5 md:px-4 md:py-1.5 text-[11px] md:text-xs font-semibold rounded-lg capitalize transition-all"
                             :class="viewMode === v ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-purple-600 dark:bg-[#333] dark:text-purple-400' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'">
                         {{ v }}
@@ -715,15 +717,15 @@ const deleteEvent = async (ev: EventMetadata) => {
              </div>
          </header>
          
-         <div class="flex-1 min-h-0 relative">
+         <div class="flex-1 min-h-0 relative w-full">
              <!-- MONTH VIEW -->
              <div v-show="viewMode === 'month'" class="h-full flex flex-col select-none">
-                 <div class="grid grid-cols-7 mb-2 flex-shrink-0 border-b border-[#e6e6e6] dark:border-[#333] pb-2">
+                 <div class="grid grid-cols-7 mb-2 flex-shrink-0 border-b border-[#e6e6e6] dark:border-[#333] pb-2 px-1">
                      <div v-for="day in dayNamesShort" :key="day" class="text-center text-xs font-bold uppercase tracking-wider text-[#8b8b8b] dark:text-[#71717a]">
                          {{ day }}
                      </div>
                  </div>
-                 <div class="flex-1 overflow-y-auto no-scrollbar pb-2">
+                 <div class="flex-1 overflow-y-auto no-scrollbar pb-2 px-1">
                      <div class="grid grid-cols-7 grid-rows-6 gap-2 min-h-[500px] md:min-h-[650px] h-full">
                      <div v-for="(dayObj, idx) in calendarDays" :key="idx" 
                           @click="clickDay(dayObj.date)"
@@ -773,11 +775,11 @@ const deleteEvent = async (ev: EventMetadata) => {
              </div>
 
              <!-- DAY VIEW -->
-             <div v-if="viewMode === 'day'" class="h-full flex flex-col border border-[#ececeb] dark:border-[#333] rounded-2xl bg-white dark:bg-[#1a1a1a] select-none overflow-hidden">
+             <div v-if="viewMode === 'day'" class="w-full h-full flex flex-col border border-[#ececeb] dark:border-[#333] rounded-2xl bg-white dark:bg-[#1a1a1a] select-none overflow-hidden">
                 <!-- All day tasks header -->
                 <div class="flex border-b border-[#ececeb] dark:border-[#333] bg-gray-50/50 dark:bg-[#222]">
                     <div class="w-16 border-r border-[#ececeb] dark:border-[#333] flex items-center justify-center p-2">
-                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center writing-vertical-lr rotate-180">All Day</span>
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center writing-vertical-lr">All Day</span>
                     </div>
                     <div class="flex-1 p-2 flex flex-wrap gap-2 items-start min-h-[40px]" @dblclick="openAddEventModal(currentDate)">
                         <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
@@ -811,11 +813,11 @@ const deleteEvent = async (ev: EventMetadata) => {
              </div>
 
              <!-- WEEK VIEW -->
-             <div v-if="viewMode === 'week'" class="h-full flex flex-col border border-[#ececeb] dark:border-[#333] rounded-2xl bg-white dark:bg-[#1a1a1a] overflow-hidden select-none">
+             <div v-if="viewMode === 'week'" class="w-full h-full flex flex-col border border-[#ececeb] dark:border-[#333] rounded-2xl bg-white dark:bg-[#1a1a1a] overflow-hidden select-none">
                 <!-- Week Days Header & All-day row -->
                 <div class="flex border-b border-[#ececeb] dark:border-[#333] shadow-sm z-10 sticky top-0 bg-white dark:bg-[#1a1a1a]">
                     <div class="w-12 border-r border-[#ececeb] dark:border-[#333] flex items-center justify-center bg-gray-50/50 dark:bg-[#222]">
-                        <span class="text-[9px] font-bold text-gray-400 uppercase tracking-widest writing-vertical-lr rotate-180 mb-2">All Day</span>
+                        <span class="text-[9px] font-bold text-gray-400 uppercase tracking-widest writing-vertical-lr mb-2">All Day</span>
                     </div>
                     <!-- 7 Columns headers -->
                     <div v-for="dayObj in currentWeekDays" :key="dayObj.dateStr" class="flex-1 flex flex-col border-r last:border-0 border-[#ececeb] dark:border-[#333]" @click="clickDay(dayObj.date)">
@@ -846,7 +848,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                         </div>
                     </div>
                     <!-- 7 Columns Grid -->
-                    <div class="flex-1 flex">
+                    <div class="flex-1 flex w-full">
                         <div v-for="dayObj in currentWeekDays" :key="'col-'+dayObj.dateStr" class="flex-1 flex flex-col border-r last:border-0 border-gray-100 dark:border-[#2f2f2f] hover:bg-gray-50/50 dark:hover:bg-[#252525]/30 transition-colors" @click="clickDay(dayObj.date)">
                             <div v-for="hr in hours" :key="'col-'+dayObj.dateStr+'-'+hr" class="h-[60px] border-b border-gray-100/50 dark:border-[#2f2f2f]/50 p-0.5 relative group cursor-pointer" @dblclick.self="openAddEventModal(dayObj.date, hr)">
                                 <div v-for="ev in getEventsForDateAndHour(dayObj.dateStr, hr)" :key="'ev-'+ev.id" 
@@ -863,7 +865,7 @@ const deleteEvent = async (ev: EventMetadata) => {
              </div>
 
              <!-- YEAR VIEW -->
-             <div v-if="viewMode === 'year'" class="h-full overflow-y-auto no-scrollbar pb-6 pr-2 select-none">
+             <div v-if="viewMode === 'year'" class="w-full h-full overflow-y-auto no-scrollbar pb-6 pr-2 select-none">
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6 lg:gap-8">
                     <div v-for="monthObj in yearMonths" :key="monthObj.monthIndex" class="bg-white dark:bg-[#232323] border border-gray-100 dark:border-[#333] rounded-2xl p-4 shadow-sm">
                         <!-- Month Title -->

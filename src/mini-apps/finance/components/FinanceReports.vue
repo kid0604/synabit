@@ -22,7 +22,6 @@ const formatShort = (val: number) => {
     return val.toString();
 };
 
-import { Filter, Calendar, Wallet } from 'lucide-vue-next';
 import { SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from '../types';
 
 // --- Filters State ---

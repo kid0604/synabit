@@ -2,7 +2,7 @@
 
 Synabit is a modern, ultra-fast productivity workspace built for macOS. Combining the power of a Markdown-based Zettelkasten knowledge vault with high-speed fleeting notes (QuickCaps), Synabit is designed to keep you focused.
 
-## Features (v0.0.1)
+## Features (v0.3.1)
 - **Note Vault**: A robust Markdown note management system. Notes are stored securely in your local `Notes/` folder.
 - **QuickCap**: A lightning-fast fleeting note tool inspired by Google Keep and Apple Notes.
   - Masonry layout for variable-height cards.

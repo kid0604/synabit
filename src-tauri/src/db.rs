@@ -403,7 +403,7 @@ impl DbBridge {
 
         // Nodes (Universal Architecture)
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_type, title, content, properties, updated_at FROM nodes"
+            "SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE node_type NOT LIKE 'finance_%'"
         ).map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
         let rows = stmt.query_map([], |row| {
             let props_str: String = row.get(4)?;
@@ -492,7 +492,7 @@ impl DbBridge {
         // Fallback to Universal Nodes table
         {
             let mut stmt = self.conn
-                .prepare("SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE id = ?1")
+                .prepare("SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE id = ?1 AND node_type NOT LIKE 'finance_%'")
                 .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
             let mut rows = stmt.query_map(params![id], |row| {
                 let props_str: String = row.get(4)?;
@@ -632,7 +632,7 @@ impl DbBridge {
 
         // Index nodes (Universal Core)
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_type, title, content, properties, updated_at FROM nodes"
+            "SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE node_type NOT LIKE 'finance_%'"
         ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
         let _ = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
@@ -673,6 +673,9 @@ impl DbBridge {
     /// Insert or update a single entry in the FTS5 search index.
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_search_entry(&self, item_id: &str, item_type: &str, title: &str, tags: &str, content: &str, properties: &str, status: Option<&str>, date: &str, path: &str) {
+        if item_type.starts_with("finance_") {
+            return;
+        }
         // FTS5 doesn't support ON CONFLICT, so delete + insert
         let _ = self.conn.execute(
             "DELETE FROM search_index WHERE item_id = ?1",

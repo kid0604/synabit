@@ -33,6 +33,7 @@ pub fn get_nexus_items(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
     { let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(rows) = db.get_all_nexus_items() {
             for r in rows {
+                if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" { continue; }
                 let title = if r.title.is_empty() {
                     match r.item_type.as_str() {
                         "note" => "Untitled Note".to_string(),
@@ -198,7 +199,7 @@ pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'
 
     // 1. Populate nodes and mapping
     for r in &items {
-        if r.item_type == "quickcap" { continue; }
+        if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" { continue; }
 
         let title = if r.title.is_empty() {
             match r.item_type.as_str() {

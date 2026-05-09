@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import * as d3 from 'd3';
 
 const props = defineProps<{
@@ -81,7 +81,7 @@ const drawChart = () => {
     
   // Interactions
   slices
-    .on('mouseover', function(event, d) {
+    .on('mouseover', function(_event, d) {
         d3.select(this)
           .transition()
           .duration(200)
@@ -94,7 +94,7 @@ const drawChart = () => {
         svg.select('.center-text-label')
           .text(d.data.label);
     })
-    .on('mouseout', function(event, d) {
+    .on('mouseout', function(_event, _d) {
         d3.select(this)
           .transition()
           .duration(200)

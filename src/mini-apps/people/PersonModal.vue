@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { X, Save, Trash2, User, Mail, Phone, Building, Hash, AlignLeft } from 'lucide-vue-next';
+import { X, Save, Trash2, User, Mail, Phone, Building, Hash, AlignLeft, Gift } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 
 const props = defineProps<{
@@ -16,6 +16,7 @@ const form = ref({
     email: '',
     phone: '',
     company: '',
+    birthday: '',
     tags: [] as string[],
     notes: ''
 });
@@ -30,6 +31,7 @@ onMounted(() => {
         form.value.email = props.person.properties.email || '';
         form.value.phone = props.person.properties.phone || '';
         form.value.company = props.person.properties.company || '';
+        form.value.birthday = props.person.properties.birthday || '';
         form.value.tags = [...(props.person.properties.tags || [])];
         form.value.notes = props.person.content || '';
     }
@@ -70,6 +72,7 @@ const savePerson = async () => {
         if (form.value.email) properties.email = form.value.email;
         if (form.value.phone) properties.phone = form.value.phone;
         if (form.value.company) properties.company = form.value.company;
+        if (form.value.birthday) properties.birthday = form.value.birthday;
         if (form.value.tags.length > 0) properties.tags = form.value.tags;
         
         const content = form.value.notes;
@@ -187,17 +190,31 @@ const deletePerson = async () => {
                     </div>
                 </div>
                 
-                <!-- Company -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Company / Organization</label>
-                    <div class="relative">
-                        <Building class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input 
-                            v-model="form.company" 
-                            type="text" 
-                            placeholder="Acme Corp" 
-                            class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none"
-                        />
+                <!-- Company & Birthday -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Company / Organization</label>
+                        <div class="relative">
+                            <Building class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input 
+                                v-model="form.company" 
+                                type="text" 
+                                placeholder="Acme Corp" 
+                                class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none"
+                            />
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Birthday</label>
+                        <div class="relative">
+                            <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input 
+                                v-model="form.birthday" 
+                                type="date" 
+                                class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none"
+                            />
+                        </div>
                     </div>
                 </div>
                 

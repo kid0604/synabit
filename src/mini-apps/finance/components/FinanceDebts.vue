@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Plus, BookOpen, User, Calendar, CreditCard, ChevronRight, CheckCircle2, AlertCircle, ArrowUpRight, ArrowDownLeft, X, Wallet } from 'lucide-vue-next';
+import { Plus, BookOpen, User, Calendar, CheckCircle2, AlertCircle, ArrowUpRight, ArrowDownLeft } from 'lucide-vue-next';
 import type { Debt, FinanceAccount, Transaction } from '../types';
 import DebtModal from '../DebtModal.vue';
 import DebtRepaymentModal from '../DebtRepaymentModal.vue';
@@ -86,7 +86,7 @@ const handleSaveDebt = (debt: Debt, initialTx?: Transaction) => {
     showDebtModal.value = false;
 };
 
-const handleRepayment = (debt: Debt, amount: number, tx: Transaction) => {
+const handleRepayment = (debt: Debt, _amount: number, tx: Transaction) => {
     const updatedDebts = [...props.debts];
     const idx = updatedDebts.findIndex(d => d.id === debt.id);
     if (idx >= 0) {

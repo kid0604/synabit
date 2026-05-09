@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Users, Plus, Mail, Phone, Building, Hash, Search, CheckSquare, FileText, Zap, Edit2 } from 'lucide-vue-next';
+import { Users, Plus, Mail, Phone, Building, Hash, Search, CheckSquare, FileText, Zap, Edit2, Gift } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
 import { logger } from '../../utils/logger';
 
@@ -274,6 +274,10 @@ defineExpose({ openPersonById });
                             <div v-if="selectedPerson.properties.phone" class="flex items-center gap-2">
                                 <Phone class="w-4 h-4 opacity-70" />
                                 <a :href="'tel:' + selectedPerson.properties.phone" class="hover:underline">{{ selectedPerson.properties.phone }}</a>
+                            </div>
+                            <div v-if="selectedPerson.properties.birthday" class="flex items-center gap-2">
+                                <Gift class="w-4 h-4 opacity-70 text-pink-500" />
+                                <span>{{ selectedPerson.properties.birthday }}</span>
                             </div>
                         </div>
                         

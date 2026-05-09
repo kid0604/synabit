@@ -23,7 +23,7 @@ import { VideoExtension } from './VideoExtension';
 import { AudioExtension } from './AudioExtension';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Extension } from '@tiptap/core';
+import { Extension, textInputRule } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
@@ -767,6 +767,32 @@ const TabIndentExtension = Extension.create({
   },
 });
 
+// --- Arrow Typography Extension ---
+const ArrowExtension = Extension.create({
+  name: 'arrows',
+  addInputRules() {
+    return [
+      textInputRule({
+        find: /->$/,
+        replace: '→',
+      }),
+      textInputRule({
+        find: /<-$/,
+        replace: '←',
+      }),
+      textInputRule({
+        find: /←>$/,
+        replace: '↔',
+      }),
+      // Support direct <-> typing without individual triggering just in case
+      textInputRule({
+        find: /<->$/,
+        replace: '↔',
+      }),
+    ];
+  },
+});
+
 // --- Editor ---
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
@@ -776,6 +802,7 @@ const editor = useEditor({
     }),
     TabIndentExtension,
     Markdown.configure({ html: true }),
+    ArrowExtension,
     CustomImage,
     ImageGallery.configure({ vaultPath: props.vaultPath }),
     TaskList,
@@ -1741,6 +1768,7 @@ onBeforeUnmount(() => {
 /* === Table === */
 .tiptap table {
   border-collapse: collapse !important;
+  table-layout: fixed !important;
   width: 100%;
   margin: 1em 0;
   border: 1px solid #e5e7eb !important;
@@ -1761,8 +1789,6 @@ onBeforeUnmount(() => {
   background: #f3f4f6;
   font-weight: 600;
   font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
   color: #6b7280;
 }
 

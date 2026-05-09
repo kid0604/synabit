@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Plus, Settings, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Wallet, Calendar, Scale, RefreshCw, Search, Trash2, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
+import { Plus, Settings, ChevronLeft, ChevronRight, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 
-import FinanceChart from './components/FinanceChart.vue';
+
 import FinanceReports from './components/FinanceReports.vue';
 import FinanceDebts from './components/FinanceDebts.vue';
 import FinanceBudgets from './components/FinanceBudgets.vue';
@@ -156,20 +156,7 @@ const accountBalances = computed(() => {
     });
 });
 
-const chartData = computed(() => {
-    // Aggregate expenses by category
-    const expenseData: Record<string, number> = {};
-    currentTransactions.value.forEach(t => {
-        if (t.type === 'expense') {
-            expenseData[t.category] = (expenseData[t.category] || 0) + t.amount;
-        }
-    });
-    
-    // Format for chart
-    return Object.keys(expenseData)
-        .map(label => ({ label, value: expenseData[label] }))
-        .sort((a, b) => b.value - a.value); // Sort largest first
-});
+
 
 // --- Methods ---
 
@@ -177,10 +164,7 @@ const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 };
 
-const formatDate = (isoStr: string) => {
-    const d = new Date(isoStr);
-    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')} ${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;
-};
+
 
 const getAccountName = (id: string) => {
     const acc = accounts.value.find(a => a.id === id);
@@ -268,7 +252,6 @@ const loadData = async () => {
         const monthNodes: any[] = await invoke('get_nodes', { nodeType: 'finance_month' });
         
         // Auto-migration for legacy transactions
-        let migratedAny = false;
         
         months.value = monthNodes.map(node => {
             // Check for legacy transactions
@@ -295,7 +278,6 @@ const loadData = async () => {
                     properties: node.properties,
                     content: ''
                 }).catch(e => logger.error('Auto-migration save failed', e));
-                migratedAny = true;
             }
             
             // Extract YYYY-MM from title or id
@@ -431,7 +413,9 @@ const saveTransaction = async (tx: Transaction) => {
             totalAmount: tx.amount,
             paidAmount: 0,
             startDate: tx.date,
-            status: 'active'
+            status: 'active',
+            accountId: tx.accountId,
+            note: ''
         };
         tx.debtId = newDebt.id;
         const newDebts = [...debts.value, newDebt];
@@ -470,9 +454,7 @@ const saveTransaction = async (tx: Transaction) => {
         txs.push(tx); // Add
     }
     
-    let isNewMonth = false;
     if (!months.value.some(m => m.id === expectedId)) {
-        isNewMonth = true;
         months.value.push({
             id: expectedId,
             label: `Tháng ${mm}/${yyyy}`,
@@ -513,9 +495,10 @@ const saveTransaction = async (tx: Transaction) => {
         });
         showTxModal.value = false;
         
-        // If we created a new month, jump to it automatically
-        if (isNewMonth) {
-            currentMonthIdx.value = months.value.findIndex(m => m.id === expectedId);
+        // Always jump to the month where the transaction was added
+        const targetIdx = months.value.findIndex(m => m.id === expectedId);
+        if (targetIdx >= 0) {
+            currentMonthIdx.value = targetIdx;
         }
     } catch (e) {
         logger.error('Failed to save transaction', e);
@@ -705,7 +688,7 @@ defineExpose({ openMonthById });
           </div>
 
           <!-- Main Content (Transactions) -->
-          <div v-if="currentView === 'transactions'" class="flex-1 flex flex-col gap-6 overflow-hidden">
+          <div v-if="currentView === 'transactions' && currentMonth" class="flex-1 flex flex-col gap-6 overflow-hidden">
               
               <!-- Monthly Dashboard Header -->
               <div class="flex gap-4 shrink-0">

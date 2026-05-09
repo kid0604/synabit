@@ -562,20 +562,32 @@ const confirmTurnIntoNote = async (payload: any) => {
     if (!cap) return;
     
     try {
-        const path = await invoke<string>('create_new_note', { vaultPath: props.vaultPath });
-        
         let tagsArray: string[] = [];
         if (payload.tags) {
             tagsArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
         }
         
-        const frontmatter = `---\ntitle: "${payload.title.replace(/"/g, '\\"')}"\ntags: [${tagsArray.map(t => `"${t}"`).join(', ')}]\n---\n\n`;
-        await invoke('update_note', { vaultPath: props.vaultPath, path, content: frontmatter + payload.content });
+        const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const relPath = `Notes/${safeName}_${Date.now()}.md`;
+
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: relPath,
+            nodeType: 'note',
+            title: payload.title || 'Untitled',
+            properties: {
+                tags: tagsArray
+            },
+            content: payload.content
+        });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
             await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
             quickCaps.value.splice(index, 1);
+        }
+        if (selectedCap.value?.id === cap.id) {
+            selectedCap.value = null;
         }
         
         await emitTauri('vault-changed');
@@ -619,6 +631,9 @@ const confirmTurnIntoTask = async (payload: any) => {
         if (index !== -1) {
             await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
             quickCaps.value.splice(index, 1);
+        }
+        if (selectedCap.value?.id === cap.id) {
+            selectedCap.value = null;
         }
         
         closeTaskModal();

@@ -45,6 +45,7 @@ mod desktop {
         state: tauri::State<'_, WatcherState>,
         vault_path: String,
     ) -> AppResult<()> {
+        use tauri::Manager;
         let mut watcher_lock = state.watcher.lock().unwrap_or_else(|e| e.into_inner());
         let mut debounce_lock = state.debounce.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -62,6 +63,11 @@ mod desktop {
                 "Vault path does not exist".to_string(),
             ));
         }
+
+        // Update ChatEngineState
+        let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
+        let mut active_vault = chat_state.active_vault_path.lock().unwrap();
+        *active_vault = Some(vault_path.clone());
 
         let emit_handle = app_handle.clone();
 
@@ -194,10 +200,16 @@ pub mod mobile_stub {
 
     #[tauri::command]
     pub fn start_vault_watcher(
-        _app_handle: tauri::AppHandle,
+        app_handle: tauri::AppHandle,
         _state: tauri::State<'_, WatcherState>,
-        _vault_path: String,
+        vault_path: String,
     ) -> AppResult<()> {
+        use tauri::Manager;
+        // Update ChatEngineState
+        let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
+        let mut active_vault = chat_state.active_vault_path.lock().unwrap();
+        *active_vault = Some(vault_path.clone());
+
         // On mobile, file watching is a no-op.
         // The frontend re-scans on app resume instead.
         Ok(())

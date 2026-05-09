@@ -7,8 +7,9 @@ pub mod path_utils;
 pub mod search;
 pub mod utils;
 pub mod watcher;
+pub mod chat_engine;
 
-use commands::{files, nexus, nodes, whiteboards};
+use commands::{files, nexus, nodes, whiteboards, chat};
 use db::DbBridge;
 
 #[tauri::command]
@@ -63,6 +64,10 @@ pub fn run() {
                     log::info!("Search index built successfully.");
                 }
             }
+
+            // Initialize Chat Engine
+            app.manage(chat_engine::ChatEngineState::default());
+            chat_engine::init_engine(app.handle().clone());
 
             Ok(())
         })
@@ -129,6 +134,8 @@ pub fn run() {
             gdrive::browse::connect_gdrive_complete,
             gdrive::browse::disconnect_gdrive,
             gdrive::browse::get_gdrive_files,
+            // Chat
+            chat::get_chat_history,
             // System
             open_app_log_folder,
         ])

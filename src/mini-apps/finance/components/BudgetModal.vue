@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { X, Target } from 'lucide-vue-next';
-import type { Budget } from './types';
+import type { Budget } from '../types';
 
 const props = defineProps<{
     show: boolean;

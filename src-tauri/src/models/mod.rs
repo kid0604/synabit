@@ -5,3 +5,4 @@ pub mod node;
 pub mod note;
 pub mod task;
 pub mod whiteboard;
+pub mod chat;

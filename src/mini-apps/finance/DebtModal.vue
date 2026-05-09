@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
-import { X, Calendar, Wallet, Users, FileText } from 'lucide-vue-next';
+import { X, Wallet, Users, FileText } from 'lucide-vue-next';
 import type { Debt, FinanceAccount, Transaction } from './types';
 
 const props = defineProps<{

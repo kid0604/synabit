@@ -408,15 +408,21 @@ const openEditModal = (task: TaskMetadata) => {
 };
 
 const openEditById = async (id: string) => {
+    logger.info(`TaskApp: openEditById called with id: ${id}`);
     if (tasks.value.length === 0) {
+        logger.info(`TaskApp: tasks empty, loading tasks...`);
         await loadTasks();
     }
     // Normalize path separators to ensure matching works cross-platform
     const normalizedId = id.replace(/\\/g, '/');
     const task = tasks.value.find(t => t.id.replace(/\\/g, '/') === normalizedId) 
               || tasks.value.find(t => t.id.replace(/\\/g, '/').endsWith(normalizedId));
+    
     if (task) {
+        logger.info(`TaskApp: Found task: ${task.title}, opening modal.`);
         openEditModal(task);
+    } else {
+        logger.warn(`TaskApp: Task not found for id: ${id}`);
     }
 };
 

@@ -791,9 +791,21 @@ const openNoteById = async (id: string) => {
 defineExpose({ openNoteById, scanVault, notes, tabContents, loadNoteFile, currentNoteId });
 
 // ─── Lifecycle ─────────────────────────────────────────────
+const onClickOutside = () => { activeContextMenu.value = null; };
+let unlistenFns: (() => void)[] = [];
+
+onUnmounted(() => {
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    document.removeEventListener('click', onClickOutside);
+    unlistenFns.forEach(fn => fn());
+    unlistenFns = [];
+});
+
 onMounted(async () => {
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+  document.addEventListener('click', onClickOutside);
 
   if (props.isFloatingView && props.floatingNoteId) {
       currentNoteId.value = props.floatingNoteId;
@@ -805,8 +817,6 @@ onMounted(async () => {
   if (props.vaultPath) {
      await scanVault();
   }
-
-  let unlistenFns: (() => void)[] = [];
 
   listen('note-updated', (event: any) => {
       const data = event.payload as { id: string, content: string };
@@ -827,17 +837,6 @@ onMounted(async () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
   }).then(fn => unlistenFns.push(fn));
-
-  const onClickOutside = () => { activeContextMenu.value = null; };
-  document.addEventListener('click', onClickOutside);
-
-  onUnmounted(() => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      document.removeEventListener('click', onClickOutside);
-      unlistenFns.forEach(fn => fn());
-      unlistenFns = [];
-  });
 });
 </script>
 
