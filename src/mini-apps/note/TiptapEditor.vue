@@ -22,6 +22,7 @@ import { EquationExtension } from './EquationExtension';
 import { VideoExtension } from './VideoExtension';
 import { AudioExtension } from './AudioExtension';
 import { LocationExtension } from './LocationExtension';
+import { WhiteboardExtension } from './WhiteboardExtension';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension, textInputRule } from '@tiptap/core';
@@ -40,7 +41,8 @@ import {
   Quote, Code2, Minus, Type, Table2,
   Image as ImageIcon, Images, Sigma, Video as VideoIcon,
   Music as MusicIcon, MapPin as MapPinIcon,
-  Smile as SmileIcon, Navigation as NavigationIcon
+  Smile as SmileIcon, Navigation as NavigationIcon,
+  PenTool as PenToolIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -519,6 +521,29 @@ const confirmRoute = () => {
 
 // --- Emoji Picker (full panel from /emoji) ---
 const emojiPicker = ref({ show: false, search: '', activeCategory: 'smileys' });
+
+// --- Whiteboard Picker Modal ---
+const whiteboardPickerModal = ref<{ show: boolean; boards: any[]; loading: boolean; search: string }>({
+  show: false, boards: [], loading: false, search: ''
+});
+
+const filteredWhiteboards = computed(() => {
+  const q = whiteboardPickerModal.value.search.toLowerCase().trim();
+  if (!q) return whiteboardPickerModal.value.boards;
+  return whiteboardPickerModal.value.boards.filter((b: any) =>
+    (b.title || '').toLowerCase().includes(q)
+  );
+});
+
+const confirmWhiteboard = (board: any) => {
+  if (!editor.value) return;
+  editor.value.commands.setWhiteboard({
+    boardId: board.id || board.path,
+    boardPath: board.path,
+    title: board.title || 'Untitled Board',
+  });
+  whiteboardPickerModal.value = { show: false, boards: [], loading: false, search: '' };
+};
 
 const insertEmoji = (emoji: string) => {
   if (!editor.value) return;
@@ -1033,6 +1058,23 @@ const slashCommandItems = (): SlashCommandItem[] => [
       emojiPicker.value = { show: true, search: '', activeCategory: 'smileys' };
     },
   },
+  {
+    title: 'Whiteboard',
+    description: 'Embed an existing whiteboard',
+    icon: PenToolIcon,
+    command: async ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      whiteboardPickerModal.value = { show: true, boards: [], loading: true, search: '' };
+      try {
+        const boards = await invoke<any[]>('scan_whiteboards', { vaultPath: props.vaultPath });
+        whiteboardPickerModal.value.boards = boards;
+      } catch (e) {
+        logger.error('Failed to scan whiteboards', e);
+      } finally {
+        whiteboardPickerModal.value.loading = false;
+      }
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -1172,6 +1214,16 @@ const editor = useEditor({
     }),
     EquationExtension,
     LocationExtension,
+    WhiteboardExtension.configure({
+      HTMLAttributes: {},
+    }).extend({
+      addStorage() {
+        return {
+          ...this.parent?.(),
+          vaultPath: props.vaultPath,
+        };
+      },
+    }),
     VideoExtension,
     AudioExtension,
     Table.configure({
@@ -1557,6 +1609,14 @@ const onDocClick = (e: MouseEvent) => {
 
 onMounted(() => {
   document.addEventListener('click', onDocClick);
+
+  // Listen for whiteboard embed "Open in Whiteboard" events
+  const editorDom = editor.value?.view?.dom;
+  if (editorDom) {
+    editorDom.addEventListener('open-whiteboard-embed', ((e: CustomEvent) => {
+      emit('open-internal-note', { id: e.detail.id, type: 'whiteboard' });
+    }) as EventListener);
+  }
 });
 
 watch(() => props.modelValue, (newVal) => {
@@ -2024,6 +2084,78 @@ onBeforeUnmount(() => {
               <NavigationIcon class="w-3.5 h-3.5" />
               Insert Route
             </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Whiteboard Picker Modal -->
+    <Teleport to="body">
+      <div v-if="whiteboardPickerModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="whiteboardPickerModal.show = false">
+        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[420px] max-w-[95vw] max-h-[520px] flex flex-col overflow-hidden" @keydown.esc="whiteboardPickerModal.show = false">
+          <!-- Header -->
+          <div class="flex items-center gap-2 p-4 pb-0">
+            <PenToolIcon class="w-4 h-4 text-violet-500" />
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Insert Whiteboard</h3>
+          </div>
+
+          <!-- Search -->
+          <div class="px-4 pt-3 pb-2">
+            <input
+              v-model="whiteboardPickerModal.search"
+              type="text"
+              placeholder="Search whiteboards..."
+              class="w-full px-3 py-2 text-sm rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-[#fafafa] dark:bg-[#252525] text-gray-800 dark:text-gray-200 outline-none focus:border-violet-400 transition-colors"
+              autofocus
+              @keydown.esc="whiteboardPickerModal.show = false"
+            />
+          </div>
+
+          <!-- Board List -->
+          <div class="flex-1 overflow-y-auto px-4 pb-4">
+            <!-- Loading -->
+            <div v-if="whiteboardPickerModal.loading" class="flex flex-col items-center justify-center py-12 gap-2 text-gray-400 text-sm">
+              <div class="w-5 h-5 border-2 border-gray-200 dark:border-gray-600 border-t-violet-500 rounded-full animate-spin"></div>
+              <span>Loading whiteboards…</span>
+            </div>
+
+            <!-- Empty -->
+            <div v-else-if="filteredWhiteboards.length === 0" class="flex flex-col items-center justify-center py-12 gap-2 text-gray-400 text-sm">
+              <PenToolIcon class="w-6 h-6 opacity-40" />
+              <span>{{ whiteboardPickerModal.search ? 'No matching whiteboards' : 'No whiteboards found' }}</span>
+            </div>
+
+            <!-- List -->
+            <div v-else class="space-y-1 mt-1">
+              <button
+                v-for="board in filteredWhiteboards"
+                :key="board.id || board.path"
+                @click="confirmWhiteboard(board)"
+                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-violet-50 dark:hover:bg-violet-500/10 transition-colors group cursor-pointer"
+              >
+                <div class="w-9 h-9 rounded-lg bg-violet-100 dark:bg-violet-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-violet-200 dark:group-hover:bg-violet-500/25 transition-colors">
+                  <PenToolIcon class="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                    {{ board.title || 'Untitled Board' }}
+                  </div>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <span v-if="board.tags && board.tags.length" class="text-[10px] text-gray-400 truncate">
+                      {{ board.tags.slice(0, 3).join(', ') }}
+                    </span>
+                    <span class="text-[10px] text-gray-400">
+                      {{ board.updated_at ? new Date(board.updated_at).toLocaleDateString() : '' }}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="flex justify-end p-4 pt-2 border-t border-[#f3f4f6] dark:border-[#2a2a2a]">
+            <button @click="whiteboardPickerModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
           </div>
         </div>
       </div>

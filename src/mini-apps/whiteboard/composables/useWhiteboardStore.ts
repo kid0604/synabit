@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { WhiteboardMetadata } from '../../../types/ipc';
 
@@ -139,6 +140,8 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       // Update local meta
       board.title = currentBoardData.value.title;
       board.tags = currentBoardData.value.tags;
+      // Notify embedded previews in notes to reload
+      tauriEmit('whiteboard-updated', { path: board.path, id: board.id });
     } catch (err) {
       logger.error('Failed to save whiteboard', err as string);
     } finally {
