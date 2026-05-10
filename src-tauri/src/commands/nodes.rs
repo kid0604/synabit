@@ -125,7 +125,11 @@ pub fn scan_specific_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
 
     for rel_path in paths {
-        let abs_path = base_dir.join(&rel_path);
+        // Validate path stays within vault
+        let abs_path = match path_utils::resolve_safe_path(&vault_path, &rel_path) {
+            Ok(p) => p,
+            Err(_) => continue, // Skip invalid paths silently
+        };
         
         if abs_path.exists() && abs_path.is_file() {
             if let Some(node) = parse_file_to_node(&vault_path, &abs_path) {
@@ -176,7 +180,7 @@ pub fn write_node_file(
     properties: serde_json::Value,
     content: String,
 ) -> AppResult<()> {
-    let abs_path = Path::new(&vault_path).join(&rel_path);
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &rel_path)?;
     
     // Ensure directory exists
     if let Some(parent) = abs_path.parent() {
@@ -322,7 +326,7 @@ fn update_node_mentions(
 
 #[tauri::command]
 pub fn delete_node_file(state: tauri::State<'_, DbState>, vault_path: String, rel_path: String) -> AppResult<()> {
-    let abs_path = Path::new(&vault_path).join(&rel_path);
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &rel_path)?;
     
     if abs_path.exists() {
         std::fs::remove_file(abs_path)?;
@@ -339,9 +343,7 @@ pub fn delete_node_file(state: tauri::State<'_, DbState>, vault_path: String, re
 
 #[tauri::command]
 pub fn rename_node_file(state: tauri::State<'_, DbState>, vault_path: String, old_rel_path: String, new_name: String) -> AppResult<String> {
-    path_utils::enforce_no_traversal(&old_rel_path)?;
-    let base_dir = Path::new(&vault_path);
-    let old_abs = base_dir.join(&old_rel_path);
+    let old_abs = path_utils::resolve_safe_path(&vault_path, &old_rel_path)?;
     
     if !old_abs.exists() {
         return Err(crate::error::AppError::InvalidPath("File not found.".to_string()));
@@ -416,7 +418,7 @@ pub fn rename_node_file(state: tauri::State<'_, DbState>, vault_path: String, ol
 #[tauri::command]
 pub fn create_node_file(state: tauri::State<'_, DbState>, vault_path: String, directory: String, node_type: String, date_format: Option<String>) -> AppResult<String> {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let dir_path = Path::new(&vault_path).join(&directory);
+    let dir_path = path_utils::resolve_safe_path(&vault_path, &directory)?;
     if !dir_path.exists() {
         std::fs::create_dir_all(&dir_path)?;
     }
@@ -918,6 +920,8 @@ pub fn copy_asset_to_vault(vault_path: String, source_path: String) -> AppResult
     if !source.exists() || !source.is_file() {
         return Err(crate::error::AppError::InvalidPath("Source file does not exist or is not a regular file".to_string()));
     }
+    // Validate the output stays within vault
+    path_utils::resolve_safe_path(&vault_path, "assets")?;
     
     let assets_dir = Path::new(&vault_path).join("assets");
     if !assets_dir.exists() {

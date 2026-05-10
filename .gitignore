@@ -23,11 +23,28 @@ dist-ssr
 *.sln
 *.sw?
 
-# Debug/test scripts
+# Debug/test/refactor scripts (one-off helpers)
 debug_*.rs
 debug_*.js
 test_*.js
 test_*.rs
+test_*.vue
+fix_*.py
+replace_*.py
+
+# Build and error logs
+build.log
+build_log.txt
+ts_errors*.txt
+
+# Database cache files
+*.db
+*.db-shm
+*.db-wal
+
+# Test output
+playwright-report/
+test-results/
 
 # Secrets (OAuth credentials, API keys)
 src-tauri/secrets/

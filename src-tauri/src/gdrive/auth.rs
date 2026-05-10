@@ -1,10 +1,12 @@
 use std::fs;
 use super::{
     GDriveTokens, TokenResponse,
-    CLIENT_ID, CLIENT_SECRET, TOKEN_URI, AUTH_URI, SCOPE,
+    CLIENT_ID, TOKEN_URI, AUTH_URI, SCOPE,
     REDIRECT_PORT_START, REDIRECT_PORT_END,
-    tokens_path,
+    tokens_path, generate_pkce_pair,
 };
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use super::CLIENT_SECRET;
 
 // ──────────────────────────────────────────────
 // Token Management
@@ -55,6 +57,8 @@ pub(crate) async fn get_valid_token(app_handle: &tauri::AppHandle) -> Result<Str
     let now = chrono::Utc::now().timestamp();
 
     if now >= tokens.expires_at - 60 {
+        // Desktop: Google requires client_secret for refresh
+        // Mobile: public client, no secret needed
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let form_data = vec![
             ("client_id", CLIENT_ID),
@@ -139,7 +143,10 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    log::info!("Starting Google Drive OAuth2 flow (Desktop)...");
+    log::info!("Starting Google Drive OAuth2 flow (Desktop, PKCE)...");
+
+    // Generate PKCE pair
+    let (code_verifier, code_challenge) = generate_pkce_pair();
 
     // Find an available port
     let mut port = 0u16;
@@ -159,11 +166,12 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     let redirect_uri = format!("http://127.0.0.1:{}", port);
 
     let auth_url = format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256",
         AUTH_URI,
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(&redirect_uri),
         urlencoding::encode(SCOPE),
+        urlencoding::encode(&code_challenge),
     );
 
     let _ = opener::open(&auth_url);
@@ -215,7 +223,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     .await
     .map_err(|_| "Authentication timed out (120s). Please try again.".to_string())??;
 
-    // Exchange code for tokens
+    // Exchange code for tokens — Desktop: client_secret + PKCE code_verifier
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URI)
@@ -223,6 +231,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
             ("code", auth_code.as_str()),
             ("client_id", CLIENT_ID),
             ("client_secret", CLIENT_SECRET),
+            ("code_verifier", code_verifier.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("grant_type", "authorization_code"),
         ])
@@ -248,7 +257,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     };
 
     save_tokens(&app_handle, &tokens)?;
-    log::info!("Google Drive authentication successful (Desktop).");
+    log::info!("Google Drive authentication successful (Desktop, PKCE).");
     Ok("Authentication successful".to_string())
 }
 
@@ -256,14 +265,25 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_opener::OpenerExt;
-    log::info!("Starting Google Drive OAuth2 flow (Mobile)...");
+    log::info!("Starting Google Drive OAuth2 flow (Mobile, PKCE)...");
+
+    // Generate PKCE pair and store verifier for the completion step
+    let (code_verifier, code_challenge) = generate_pkce_pair();
+    {
+        use tauri::Manager;
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.set_kv("pkce_code_verifier_vault", &code_verifier);
+    }
+
     let redirect_uri = "com.synabit.app:/oauth2callback";
     let auth_url = format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256",
         AUTH_URI,
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(SCOPE),
+        urlencoding::encode(&code_challenge),
     );
 
     app_handle.opener().open_url(auth_url, None::<String>).map_err(|e| format!("Failed to open browser: {}", e))?;
@@ -272,6 +292,16 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
 
 #[tauri::command]
 pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: String) -> Result<String, String> {
+    // Retrieve the stored PKCE code_verifier
+    let code_verifier = {
+        use tauri::Manager;
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.get_kv("pkce_code_verifier_vault")
+            .map_err(|e| format!("DB error: {}", e))?
+            .ok_or_else(|| "No PKCE verifier found. Please restart authentication.".to_string())?
+    };
+
     let redirect_uri = "com.synabit.app:/oauth2callback";
     
     let client = reqwest::Client::new();
@@ -280,6 +310,7 @@ pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: Strin
         .form(&[
             ("code", auth_code.as_str()),
             ("client_id", CLIENT_ID),
+            ("code_verifier", code_verifier.as_str()),
             ("redirect_uri", redirect_uri),
             ("grant_type", "authorization_code"),
         ])
@@ -305,6 +336,15 @@ pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: Strin
     };
 
     save_tokens(&app_handle, &tokens)?;
-    log::info!("Google Drive authentication complete (Mobile).");
+
+    // Clean up stored verifier
+    {
+        use tauri::Manager;
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.delete_kv("pkce_code_verifier_vault");
+    }
+
+    log::info!("Google Drive authentication complete (Mobile, PKCE).");
     Ok("Authentication successful".to_string())
 }

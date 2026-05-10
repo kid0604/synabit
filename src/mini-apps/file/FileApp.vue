@@ -101,7 +101,7 @@ watch(selectedFile, async (newVal) => {
         if (isTextFile.value) {
             isLoadingPreview.value = true;
             try {
-                previewContent.value = await invoke<string>('read_local_file_content', { path: newVal.path });
+                previewContent.value = await invoke<string>('read_local_file_content', { vaultPath: props.vaultPath, path: newVal.path });
             } catch (e) {
                 logger.error("Failed to read text preview", e);
                 previewContent.value = "Unable to load preview or file is too large.";

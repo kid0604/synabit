@@ -137,7 +137,6 @@ const clearVault = () => {
 };
 
 // ─── Cross-app Navigation (Nexus → Note/Task/QuickCap) ───
-import { nextTick } from 'vue';
 
 const callWhenReady = (getRef: () => any, method: string, ...args: any[]) => {
     let attempts = 0;

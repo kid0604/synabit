@@ -256,6 +256,7 @@ let lastGraphFingerprint = '';
 const computeGraphFingerprint = () => {
     return JSON.stringify([
         props.currentNoteId,
+        props.currentNoteTitle,
         props.tags.slice().sort(),
         props.outgoingLinks.slice().sort(),
         props.backlinks.map(b => b.id).sort(),
@@ -265,7 +266,7 @@ const computeGraphFingerprint = () => {
 
 let graphDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-watch(() => [props.currentNoteId, props.tags, props.outgoingLinks, props.backlinks, isShowMore.value], () => {
+watch(() => [props.currentNoteId, props.currentNoteTitle, props.tags, props.outgoingLinks, props.backlinks, isShowMore.value], () => {
     const fingerprint = computeGraphFingerprint();
     if (fingerprint === lastGraphFingerprint) return;
     lastGraphFingerprint = fingerprint;

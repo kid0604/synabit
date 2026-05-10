@@ -178,3 +178,130 @@ pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target
 
     text_with_md_links.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_edges ─────────────────────────────
+
+    #[test]
+    fn test_extract_tags() {
+        let edges = extract_edges("node1", "Hello #world #test");
+        let tags: Vec<_> = edges.iter().filter(|e| e.link_type == "tag").collect();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].target_title_or_path, "#world");
+        assert_eq!(tags[1].target_title_or_path, "#test");
+    }
+
+    #[test]
+    fn test_extract_tags_dedup() {
+        let edges = extract_edges("node1", "#work hello #work");
+        let tags: Vec<_> = edges.iter().filter(|e| e.link_type == "tag").collect();
+        assert_eq!(tags.len(), 1); // deduped
+    }
+
+    #[test]
+    fn test_extract_tags_case_insensitive() {
+        let edges = extract_edges("node1", "#Work #WORK #work");
+        let tags: Vec<_> = edges.iter().filter(|e| e.link_type == "tag").collect();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].target_title_or_path, "#work");
+    }
+
+    #[test]
+    fn test_extract_wikilinks() {
+        let edges = extract_edges("node1", "See [[Meeting Notes]] and [[Project Plan]]");
+        let links: Vec<_> = edges.iter().filter(|e| e.link_type == "wikilink").collect();
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target_title_or_path, "meeting notes");
+        assert_eq!(links[1].target_title_or_path, "project plan");
+    }
+
+    #[test]
+    fn test_extract_wikilink_with_alias() {
+        let edges = extract_edges("node1", "See [[Real Title|Display Text]]");
+        let links: Vec<_> = edges.iter().filter(|e| e.link_type == "wikilink").collect();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_title_or_path, "real title"); // Uses the actual title, not alias
+    }
+
+    #[test]
+    fn test_extract_internal_links() {
+        let edges = extract_edges("node1", "Check [My Note](synabit://note/Notes/hello.md)");
+        let links: Vec<_> = edges.iter().filter(|e| e.link_type == "internal_link").collect();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_title_or_path, "Notes/hello.md");
+    }
+
+    #[test]
+    fn test_extract_mixed_content() {
+        let text = "# Meeting\n#work #urgent\n\nSee [[Project Alpha]] and [task](synabit://task/Tasks/todo.md)\n";
+        let edges = extract_edges("node1", text);
+        assert_eq!(edges.len(), 4); // 2 tags + 1 wikilink + 1 internal_link
+    }
+
+    #[test]
+    fn test_extract_empty_text() {
+        let edges = extract_edges("node1", "");
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn test_extract_no_links() {
+        let edges = extract_edges("node1", "Just a plain text with no links or tags.");
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn test_source_id_propagation() {
+        let edges = extract_edges("my-unique-id", "#test");
+        assert_eq!(edges[0].source_id, "my-unique-id");
+    }
+
+    // ── rename_links_in_text ──────────────────────
+
+    #[test]
+    fn test_rename_wikilink() {
+        let text = "See [[Old Title]] for details.";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert_eq!(result, "See [[New Title]] for details.");
+    }
+
+    #[test]
+    fn test_rename_wikilink_preserves_alias() {
+        let text = "See [[Old Title|Display Name]] here.";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert_eq!(result, "See [[New Title|Display Name]] here.");
+    }
+
+    #[test]
+    fn test_rename_case_insensitive() {
+        let text = "See [[old title]] here.";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert_eq!(result, "See [[New Title]] here.");
+    }
+
+    #[test]
+    fn test_rename_no_false_match() {
+        let text = "See [[Different Title]] here.";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert_eq!(result, "See [[Different Title]] here."); // Unchanged
+    }
+
+    #[test]
+    fn test_rename_multiple_occurrences() {
+        let text = "See [[Old Title]] and also [[Old Title|alias]].";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert!(result.contains("[[New Title]]"));
+        assert!(result.contains("[[New Title|alias]]"));
+        assert!(!result.contains("Old Title"));
+    }
+
+    #[test]
+    fn test_rename_internal_link() {
+        let text = "[Old Title](synabit://note/Notes/Old%20Title.md)";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert!(result.contains("New Title"));
+    }
+}

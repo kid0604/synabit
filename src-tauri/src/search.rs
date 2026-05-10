@@ -340,4 +340,153 @@ mod tests {
         assert_eq!(pq.property_filters, vec![("location".to_string(), "hanoi".to_string())]);
         assert!(!pq.is_empty);
     }
+
+    // ── Edge Cases ────────────────────────────────
+
+    #[test]
+    fn test_unicode_search() {
+        let pq = parse_query("日本語 テスト");
+        assert_eq!(pq.fts_terms, vec!["日本語", "テスト"]);
+        assert!(!pq.is_empty);
+    }
+
+    #[test]
+    fn test_emoji_in_query() {
+        let pq = parse_query("🚀 launch");
+        assert_eq!(pq.fts_terms, vec!["🚀", "launch"]);
+    }
+
+    #[test]
+    fn test_unclosed_quote() {
+        // Unclosed quote should capture until end of string
+        let pq = parse_query("\"unclosed phrase");
+        assert_eq!(pq.fts_terms, vec!["\"unclosed phrase\""]);
+    }
+
+    #[test]
+    fn test_empty_quotes() {
+        let pq = parse_query("\"\"");
+        // Empty quotes should not produce FTS terms
+        assert!(pq.fts_terms.is_empty());
+        assert!(pq.is_empty);
+    }
+
+    #[test]
+    fn test_date_filter() {
+        let pq = parse_query("date:today meeting");
+        assert_eq!(pq.date_filter, Some("today".to_string()));
+        assert_eq!(pq.fts_terms, vec!["meeting"]);
+
+        let pq2 = parse_query("date:this-week");
+        assert_eq!(pq2.date_filter, Some("this-week".to_string()));
+
+        let pq3 = parse_query("date:this-month");
+        assert_eq!(pq3.date_filter, Some("this-month".to_string()));
+    }
+
+    #[test]
+    fn test_unknown_type_filter_ignored() {
+        let pq = parse_query("is:banana meeting");
+        // Unknown type should be ignored, not set as type_filter
+        assert!(pq.type_filter.is_none());
+        assert_eq!(pq.fts_terms, vec!["meeting"]);
+    }
+
+    #[test]
+    fn test_unknown_status_ignored() {
+        let pq = parse_query("status:banana");
+        assert!(pq.status_filter.is_none());
+    }
+
+    #[test]
+    fn test_sql_injection_attempt() {
+        // Malicious input should be treated as regular search terms
+        let pq = parse_query("'; DROP TABLE search_index; --");
+        // Should be parsed as regular tokens, not executed
+        assert!(pq.fts_terms.contains(&"';".to_string()));
+        assert!(!pq.is_empty);
+    }
+
+    #[test]
+    fn test_multiple_tags() {
+        let pq = parse_query("#work #personal meeting");
+        assert_eq!(pq.tag_filters, vec!["work", "personal"]);
+        assert_eq!(pq.fts_terms, vec!["meeting"]);
+    }
+
+    #[test]
+    fn test_hash_alone_not_tag() {
+        let pq = parse_query("#");
+        // Single # should not be a tag
+        assert!(pq.tag_filters.is_empty());
+    }
+
+    #[test]
+    fn test_dash_alone_not_exclude() {
+        let pq = parse_query("-");
+        // Single - should not be treated as exclude
+        assert!(pq.exclude_terms.is_empty());
+    }
+
+    #[test]
+    fn test_double_dash_not_exclude() {
+        let pq = parse_query("--flag");
+        // Double dash should not be exclude (it's a CLI flag pattern)
+        assert!(pq.exclude_terms.is_empty());
+        assert!(pq.fts_terms.contains(&"--flag".to_string()));
+    }
+
+    #[test]
+    fn test_mixed_case_filters() {
+        let pq = parse_query("IS:Task STATUS:Done IN:TITLE hello");
+        assert_eq!(pq.type_filter, Some("task".to_string()));
+        assert_eq!(pq.status_filter, Some("done".to_string()));
+        assert!(pq.title_only);
+        assert_eq!(pq.fts_terms, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_all_node_types() {
+        for t in &["note", "task", "event", "quickcap", "file"] {
+            let pq = parse_query(&format!("is:{}", t));
+            assert_eq!(pq.type_filter, Some(t.to_string()));
+        }
+    }
+
+    // ── build_fts_match edge cases ────────────────
+
+    #[test]
+    fn test_build_fts_match_empty() {
+        let pq = parse_query("is:task status:done");
+        // No FTS terms, only filters
+        let fts = build_fts_match(&pq);
+        assert!(fts.is_none());
+    }
+
+    #[test]
+    fn test_build_fts_match_phrase_passthrough() {
+        let pq = parse_query("\"exact match\"");
+        let fts = build_fts_match(&pq).unwrap();
+        // Phrase should be passed through as-is
+        assert_eq!(fts, "\"exact match\"");
+    }
+
+    #[test]
+    fn test_build_fts_match_mixed() {
+        let pq = parse_query("hello \"world peace\"");
+        let fts = build_fts_match(&pq).unwrap();
+        assert!(fts.contains("\"hello\" *")); // regular term gets wildcard
+        assert!(fts.contains("\"world peace\"")); // phrase passed through
+        assert!(fts.contains(" AND ")); // joined with AND
+    }
+
+    #[test]
+    fn test_build_fts_match_exclude_only() {
+        // Edge case: exclude terms without FTS terms
+        let pq = parse_query("project -draft -archived");
+        let fts = build_fts_match(&pq).unwrap();
+        assert!(fts.contains("\"project\" *"));
+        assert!(fts.contains("NOT \"draft\""));
+        assert!(fts.contains("NOT \"archived\""));
+    }
 }

@@ -1,0 +1,94 @@
+Synabit Source Available License
+Version 1.0, May 2026
+
+Copyright (c) 2026 Synabit. All rights reserved.
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+
+   "Software" means the Synabit application source code, binaries, 
+   documentation, and associated files in this repository.
+
+   "Licensor" means Synabit, the copyright holder of the Software.
+
+   "You" means the individual or entity exercising the rights granted 
+   under this License.
+
+   "Personal Use" means use by an individual for non-commercial purposes, 
+   including education, research, and personal productivity.
+
+   "Commercial Use" means any use of the Software intended for or directed 
+   toward commercial advantage or monetary compensation, including but not 
+   limited to: selling, licensing, offering as a hosted service, or 
+   incorporating into a commercial product.
+
+2. GRANT OF RIGHTS
+
+   Subject to the terms of this License, the Licensor grants You a 
+   non-exclusive, worldwide, royalty-free, non-transferable right to:
+
+   a) View, study, and learn from the source code of the Software.
+
+   b) Compile, modify, and run the Software for Personal Use only.
+
+   c) Create and share modifications ("patches" or "forks") of the 
+      source code, provided they are distributed under this same License 
+      and include prominent attribution to the original Licensor.
+
+3. RESTRICTIONS
+
+   You MAY NOT:
+
+   a) Use the Software or any derivative work for Commercial Use 
+      without purchasing a valid subscription from the Licensor.
+
+   b) Sell, sublicense, rent, lease, or otherwise commercially distribute 
+      the Software or any derivative work.
+
+   c) Offer the Software as a managed or hosted service to third parties.
+
+   d) Remove, alter, or obscure any copyright notices, license notices, 
+      or attribution statements in the Software.
+
+   e) Use the Licensor's trademarks, trade names, or branding without 
+      prior written consent.
+
+4. COMMERCIAL SUBSCRIPTION
+
+   Commercial Use of the Software requires an active paid subscription 
+   obtained from the Licensor. Current pricing and subscription terms 
+   are available at https://synabit.app/pricing.
+
+5. CONTRIBUTIONS
+
+   By submitting contributions (pull requests, patches, or other 
+   modifications) to the Software, You grant the Licensor a perpetual, 
+   worldwide, royalty-free, non-exclusive license to use, modify, and 
+   distribute Your contributions as part of the Software under this 
+   License or any future license chosen by the Licensor.
+
+6. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND 
+   NONINFRINGEMENT. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY 
+   CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE 
+   SOFTWARE.
+
+7. TERMINATION
+
+   This License automatically terminates if You violate any of its 
+   terms. Upon termination, You must cease all use and destroy all 
+   copies of the Software in Your possession.
+
+8. GOVERNING LAW
+
+   This License shall be governed by and construed in accordance with 
+   the laws of Vietnam, without regard to its conflict of law provisions.
+
+---
+
+For commercial licensing inquiries: legal@synabit.app
+For subscription plans: https://synabit.app/pricing

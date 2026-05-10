@@ -28,6 +28,10 @@ pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_ANDROID_CLIENT_ID"
     Some(val) => val,
     None => env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"),
 };
+// Desktop OAuth clients: Google still requires client_secret for token exchange/refresh.
+// It's considered "not truly secret" for desktop apps, but mandatory for the endpoint.
+// PKCE is added as an additional security layer on top.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const CLIENT_SECRET: &str = env!("SYNABIT_GOOGLE_CLIENT_SECRET", "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time");
 pub(crate) const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 pub(crate) const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
@@ -44,6 +48,24 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs;
 use sha2::{Digest, Sha256};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::Rng;
+
+// ──────────────────────────────────────────────
+// PKCE Helpers (RFC 7636)
+// ──────────────────────────────────────────────
+
+/// Generates a PKCE code_verifier (random 43-128 char string) and
+/// its corresponding S256 code_challenge.
+pub(crate) fn generate_pkce_pair() -> (String, String) {
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+    let code_verifier = URL_SAFE_NO_PAD.encode(&bytes);
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+    (code_verifier, code_challenge)
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GDriveTokens {
@@ -137,4 +159,36 @@ pub(crate) fn load_manifest(vault_path: &str) -> SyncManifest {
 pub(crate) fn save_manifest(vault_path: &str, manifest: &SyncManifest) -> Result<(), String> {
     let content = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
     fs::write(manifest_path(vault_path), content).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pkce_pair_format() {
+        let (verifier, challenge) = generate_pkce_pair();
+        // RFC 7636: code_verifier should be 43-128 chars (base64url of 32 bytes = 43 chars)
+        assert!(verifier.len() >= 43, "verifier too short: {}", verifier.len());
+        assert!(verifier.len() <= 128, "verifier too long: {}", verifier.len());
+        // challenge should be base64url(SHA256(verifier)) = 43 chars
+        assert_eq!(challenge.len(), 43, "challenge should be 43 chars");
+    }
+
+    #[test]
+    fn test_pkce_pair_uniqueness() {
+        let (v1, _) = generate_pkce_pair();
+        let (v2, _) = generate_pkce_pair();
+        assert_ne!(v1, v2, "Two PKCE pairs should be unique");
+    }
+
+    #[test]
+    fn test_pkce_challenge_matches_verifier() {
+        let (verifier, challenge) = generate_pkce_pair();
+        // Manually compute SHA256(verifier) and compare
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        let expected = URL_SAFE_NO_PAD.encode(hasher.finalize());
+        assert_eq!(challenge, expected, "challenge must be SHA256(verifier)");
+    }
 }

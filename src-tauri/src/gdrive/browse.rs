@@ -19,7 +19,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::error::{AppError, AppResult};
 use crate::db::DbState;
 use crate::models::file::FileMetadata;
-use super::{CLIENT_ID, CLIENT_SECRET, TOKEN_URI};
+use super::{CLIENT_ID, TOKEN_URI, generate_pkce_pair};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use super::CLIENT_SECRET;
 
 const BROWSE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 
@@ -105,6 +107,7 @@ async fn get_valid_access_token(app_handle: &tauri::AppHandle, vault_path: &str)
     if needs_refresh {
         if let Ok(refresh_token) = get_credential(app_handle, "synabit_gdrive_refresh_token", vault_path) {
             let client = Client::new();
+            // Desktop: Google requires client_secret for refresh
             let resp = client.post(TOKEN_URI)
                 .form(&[
                     ("client_id", CLIENT_ID),
@@ -218,19 +221,23 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         .port();
     let redirect_uri = format!("http://localhost:{}", port);
 
-    // 2. Construct Authorization URL with drive.readonly scope
+    // 2. Generate PKCE pair
+    let (code_verifier, code_challenge) = generate_pkce_pair();
+
+    // 3. Construct Authorization URL with drive.readonly scope + PKCE
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256",
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(&redirect_uri),
-        urlencoding::encode(BROWSE_SCOPE)
+        urlencoding::encode(BROWSE_SCOPE),
+        urlencoding::encode(&code_challenge)
     );
 
-    // 3. Open browser
+    // 4. Open browser
     opener::open(auth_url)
         .map_err(|e| AppError::General(format!("Failed to open browser: {}", e)))?;
 
-    // 4. Wait for the browser to redirect back to localhost (with 120s timeout)
+    // 5. Wait for the browser to redirect back to localhost (with 120s timeout)
     let auth_code = tokio::time::timeout(std::time::Duration::from_secs(120), async {
         let (mut stream, _) = listener.accept().await.map_err(|e| format!("Accept failed: {}", e))?;
         
@@ -282,13 +289,14 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         ));
     }
 
-    // 5. Exchange code for tokens
+    // 6. Exchange code for tokens — Desktop: client_secret + PKCE code_verifier
     let client = Client::new();
     let token_res = client
         .post(TOKEN_URI)
         .form(&[
             ("client_id", CLIENT_ID),
             ("client_secret", CLIENT_SECRET),
+            ("code_verifier", code_verifier.as_str()),
             ("code", code.as_str()),
             ("grant_type", "authorization_code"),
             ("redirect_uri", redirect_uri.as_str()),
@@ -310,7 +318,7 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         .await
         .map_err(|e| AppError::General(format!("Failed to parse tokens: {}", e)))?;
 
-    // 6. Store tokens securely in Keychain
+    // 7. Store tokens securely in Keychain
     set_credential(&app_handle, "synabit_gdrive_access_token", &vault_path, &token_data.access_token)?;
 
     if let Some(refresh_token) = token_data.refresh_token {
@@ -334,12 +342,23 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) -> AppResult<String> {
     use tauri_plugin_opener::OpenerExt;
+
+    // Generate PKCE pair and store verifier for completion step
+    let (code_verifier, code_challenge) = generate_pkce_pair();
+    {
+        use tauri::Manager;
+        let db_state = app_handle.state::<DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.set_kv("pkce_code_verifier_omnidrive", &code_verifier);
+    }
+
     let redirect_uri = "com.synabit.app:/oauth2callback";
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state=omnidrive",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state=omnidrive&code_challenge={}&code_challenge_method=S256",
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(redirect_uri),
-        urlencoding::encode(BROWSE_SCOPE)
+        urlencoding::encode(BROWSE_SCOPE),
+        urlencoding::encode(&code_challenge)
     );
 
     app_handle.opener().open_url(auth_url, None::<String>).map_err(|e| AppError::General(format!("Failed to open browser: {}", e)))?;
@@ -348,6 +367,16 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
 
 #[tauri::command]
 pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: String, vault_path: String) -> AppResult<bool> {
+    // Retrieve the stored PKCE code_verifier
+    let code_verifier = {
+        use tauri::Manager;
+        let db_state = app_handle.state::<DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.get_kv("pkce_code_verifier_omnidrive")
+            .map_err(|e| AppError::General(format!("DB error: {}", e)))?
+            .ok_or_else(|| AppError::General("No PKCE verifier found. Please restart authentication.".to_string()))?
+    };
+
     let redirect_uri = "com.synabit.app:/oauth2callback";
     
     let client = Client::new();
@@ -355,6 +384,7 @@ pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: St
         .post(TOKEN_URI)
         .form(&[
             ("client_id", CLIENT_ID),
+            ("code_verifier", code_verifier.as_str()),
             ("code", auth_code.as_str()),
             ("grant_type", "authorization_code"),
             ("redirect_uri", redirect_uri),
@@ -388,6 +418,8 @@ pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: St
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let expires_at = chrono::Utc::now().timestamp() + token_data.expires_in;
         let _ = db.set_kv("gdrive_expires_at", &expires_at.to_string());
+        // Clean up stored verifier
+        let _ = db.delete_kv("pkce_code_verifier_omnidrive");
     }
 
     Ok(true)

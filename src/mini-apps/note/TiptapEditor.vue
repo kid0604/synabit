@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onBeforeUnmount, onMounted, ref } from 'vue';
+import { watch, onBeforeUnmount, onMounted, ref, computed } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import { VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
@@ -21,22 +21,26 @@ import { Markdown } from 'tiptap-markdown';
 import { EquationExtension } from './EquationExtension';
 import { VideoExtension } from './VideoExtension';
 import { AudioExtension } from './AudioExtension';
+import { LocationExtension } from './LocationExtension';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension, textInputRule } from '@tiptap/core';
-import { PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import SlashCommandMenu from './SlashCommandMenu.vue';
 import type { SlashCommandItem } from './SlashCommandMenu.vue';
 import NoteMentionMenu from './NoteMentionMenu.vue';
+import EmojiSuggestionMenu from './EmojiSuggestionMenu.vue';
+import { emojiData, emojiCategories, type EmojiItem } from './emojiData';
 import CodeBlockComponent from './CodeBlockComponent.vue';
 import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, ListChecks,
   Quote, Code2, Minus, Type, Table2,
   Image as ImageIcon, Images, Sigma, Video as VideoIcon,
-  Music as MusicIcon
+  Music as MusicIcon, MapPin as MapPinIcon,
+  Smile as SmileIcon, Navigation as NavigationIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -297,6 +301,244 @@ const selectLocalAudio = async () => {
   }
 };
 
+// --- Location prompt ---
+const locationModal = ref<{
+  show: boolean;
+  input: string;
+  lat: number | null;
+  lng: number | null;
+  label: string;
+  provider: 'osm' | 'google';
+  searching: boolean;
+  suggestions: { display: string; lat: number; lng: number }[];
+  error: string;
+}>({
+  show: false, input: '', lat: null, lng: null, label: '',
+  provider: 'osm', searching: false, suggestions: [], error: ''
+});
+
+let geocodeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Parse Google Maps / OSM URL → {lat, lng, provider} */
+const parseMapUrl = (url: string): { lat: number; lng: number; label?: string; provider: 'osm' | 'google' } | null => {
+  try {
+    // Google Maps: various formats
+    // https://www.google.com/maps?q=LAT,LNG
+    // https://www.google.com/maps/@LAT,LNG,ZOOMz
+    // https://maps.google.com/?ll=LAT,LNG
+    // https://goo.gl/maps/... (short link, won't parse)
+    const u = new URL(url);
+    if (u.hostname.includes('google.com') || u.hostname.includes('maps.google')) {
+      const q = u.searchParams.get('q');
+      if (q) {
+        const parts = q.split(',').map(s => parseFloat(s.trim()));
+        if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          return { lat: parts[0], lng: parts[1], provider: 'google' };
+        }
+      }
+      const atMatch = u.pathname.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+      if (atMatch) {
+        return { lat: parseFloat(atMatch[1]), lng: parseFloat(atMatch[2]), provider: 'google' };
+      }
+      const placeMatch = u.pathname.match(/place\/([^/]+)\//);
+      if (placeMatch && atMatch) {
+        return { lat: parseFloat(atMatch[1]), lng: parseFloat(atMatch[2]), label: decodeURIComponent(placeMatch[1].replace(/\+/g, ' ')), provider: 'google' };
+      }
+    }
+    // OpenStreetMap: https://www.openstreetmap.org/?mlat=LAT&mlon=LNG
+    if (u.hostname.includes('openstreetmap.org')) {
+      const mlat = u.searchParams.get('mlat');
+      const mlon = u.searchParams.get('mlon');
+      if (mlat && mlon) {
+        return { lat: parseFloat(mlat), lng: parseFloat(mlon), provider: 'osm' };
+      }
+      const hash = u.hash; // #map=ZOOM/LAT/LNG
+      const hashMatch = hash.match(/#map=\d+\/(-?\d+\.\d+)\/(-?\d+\.\d+)/);
+      if (hashMatch) {
+        return { lat: parseFloat(hashMatch[1]), lng: parseFloat(hashMatch[2]), provider: 'osm' };
+      }
+    }
+  } catch { /* not a URL */ }
+  return null;
+};
+
+/** Parse raw lat,lng string */
+const parseLatLng = (input: string): { lat: number; lng: number } | null => {
+  const match = input.trim().match(/^(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)$/);
+  if (match) {
+    const lat = parseFloat(match[1]);
+    const lng = parseFloat(match[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { lat, lng };
+    }
+  }
+  return null;
+};
+
+/** Nominatim geocoding (free, privacy-first, 1 req/s) */
+const geocodeAddress = async (query: string) => {
+  if (query.length < 3) {
+    locationModal.value.suggestions = [];
+    return;
+  }
+  locationModal.value.searching = true;
+  locationModal.value.error = '';
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
+      { headers: { 'User-Agent': 'Synabit/0.3 (https://synabit.app)' } }
+    );
+    if (!res.ok) throw new Error('Geocoding failed');
+    const data = await res.json();
+    locationModal.value.suggestions = data.map((item: any) => ({
+      display: item.display_name,
+      lat: parseFloat(item.lat),
+      lng: parseFloat(item.lon),
+    }));
+  } catch (e: any) {
+    locationModal.value.error = 'Could not search. Check your internet connection.';
+    locationModal.value.suggestions = [];
+  } finally {
+    locationModal.value.searching = false;
+  }
+};
+
+const onLocationInput = (val: string) => {
+  locationModal.value.input = val;
+  locationModal.value.error = '';
+  locationModal.value.suggestions = [];
+
+  // Try URL first
+  const urlResult = parseMapUrl(val);
+  if (urlResult) {
+    locationModal.value.lat = urlResult.lat;
+    locationModal.value.lng = urlResult.lng;
+    locationModal.value.provider = urlResult.provider;
+    if (urlResult.label) locationModal.value.label = urlResult.label;
+    return;
+  }
+
+  // Try lat,lng
+  const coordResult = parseLatLng(val);
+  if (coordResult) {
+    locationModal.value.lat = coordResult.lat;
+    locationModal.value.lng = coordResult.lng;
+    return;
+  }
+
+  // Otherwise treat as address search (debounced)
+  locationModal.value.lat = null;
+  locationModal.value.lng = null;
+  if (geocodeTimer) clearTimeout(geocodeTimer);
+  geocodeTimer = setTimeout(() => geocodeAddress(val), 500);
+};
+
+const selectSuggestion = (s: { display: string; lat: number; lng: number }) => {
+  locationModal.value.lat = s.lat;
+  locationModal.value.lng = s.lng;
+  locationModal.value.label = s.display.split(',').slice(0, 2).join(',').trim();
+  locationModal.value.suggestions = [];
+  locationModal.value.input = s.display;
+};
+
+const confirmLocation = () => {
+  if (!editor.value || locationModal.value.lat === null || locationModal.value.lng === null) return;
+  editor.value.commands.setLocation({
+    lat: locationModal.value.lat,
+    lng: locationModal.value.lng,
+    label: locationModal.value.label || '',
+    zoom: 15,
+    provider: locationModal.value.provider,
+  });
+  locationModal.value = {
+    show: false, input: '', lat: null, lng: null, label: '',
+    provider: 'osm', searching: false, suggestions: [], error: ''
+  };
+};
+
+// --- Route Modal ---
+const routeModal = ref<{
+  show: boolean;
+  urlInput: string;
+  error: string;
+  label: string;
+}>({
+  show: false, urlInput: '', error: '', label: ''
+});
+
+const isValidRouteUrl = computed(() => {
+  try {
+    const u = new URL(routeModal.value.urlInput.trim());
+    const isGoogle = (u.hostname.includes('google.com') || u.hostname.includes('maps.google') || u.hostname.includes('goo.gl'))
+      && (u.pathname.includes('/dir') || u.pathname.includes('/maps'));
+    const isOSM = u.hostname.includes('openstreetmap.org') && (u.pathname.includes('/directions') || u.searchParams.has('route'));
+    return isGoogle || isOSM;
+  } catch { return false; }
+});
+
+/** Detect provider from URL */
+const detectRouteProvider = (url: string): 'google' | 'osm' => {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('openstreetmap.org')) return 'osm';
+  } catch { /* default */ }
+  return 'google';
+};
+
+const confirmRoute = () => {
+  const r = routeModal.value;
+  if (!editor.value || !isValidRouteUrl.value) return;
+  const url = r.urlInput.trim();
+  const provider = detectRouteProvider(url);
+
+  // Extract label from URL
+  let label = r.label || 'Directions';
+  if (!r.label) {
+    try {
+      const u = new URL(url);
+      if (provider === 'google') {
+        const parts = u.pathname.replace(/^\/maps\/dir\/?/, '').split('/').filter(p => p && !p.startsWith('@') && !p.startsWith('data'));
+        if (parts.length >= 2) {
+          const o = decodeURIComponent(parts[0]).replace(/\+/g, ' ');
+          const d = decodeURIComponent(parts[1]).replace(/\+/g, ' ');
+          label = `${o.split(',')[0].trim()} → ${d.split(',')[0].trim()}`;
+        }
+      } else {
+        // OSM: route=lat1,lng1;lat2,lng2
+        const route = u.searchParams.get('route');
+        if (route) {
+          const pts = route.split(';');
+          if (pts.length >= 2) label = `${pts[0]} → ${pts[pts.length - 1]}`;
+        }
+      }
+    } catch { /* use default */ }
+  }
+  editor.value.commands.setRoute({ routeUrl: url, label, provider });
+  routeModal.value = { show: false, urlInput: '', error: '', label: '' };
+};
+
+// --- Emoji Picker (full panel from /emoji) ---
+const emojiPicker = ref({ show: false, search: '', activeCategory: 'smileys' });
+
+const insertEmoji = (emoji: string) => {
+  if (!editor.value) return;
+  editor.value.chain().focus().insertContent(emoji).run();
+  emojiPicker.value.show = false;
+  emojiPicker.value.search = '';
+};
+
+const filteredPickerEmojis = computed(() => {
+  const q = emojiPicker.value.search.toLowerCase().trim();
+  if (q) {
+    return emojiData.filter(e =>
+      e.shortcode.includes(q) ||
+      e.emoji.includes(q) ||
+      e.keywords.some(k => k.includes(q))
+    );
+  }
+  return emojiData.filter(e => e.category === emojiPicker.value.activeCategory);
+});
+
 // --- Floating Toolbar (manual implementation) ---
 const bubbleMenuRef = ref<HTMLElement | null>(null);
 const showBubble = ref(false);
@@ -328,14 +570,18 @@ const updateBubbleMenu = () => {
   const start = view.coordsAtPos(from);
   const end = view.coordsAtPos(to);
   
+  // Get the editor container's visible bounds (accounts for sidebars)
+  const editorRect = view.dom.getBoundingClientRect();
+  const areaLeft = editorRect.left;
+  const areaRight = editorRect.right;
+  
   // Calculate center in viewport coordinates (fixed positioning)
   let centerX = (start.left + end.right) / 2;
   let topY = Math.min(start.top, end.top) - BUBBLE_MENU_HEIGHT - 8;
   
-  // Clamp horizontal: keep fully visible within viewport
+  // Clamp horizontal: keep fully visible within editor content area
   const halfW = BUBBLE_MENU_WIDTH / 2;
-  const vw = window.innerWidth;
-  centerX = Math.max(halfW + BUBBLE_PADDING, Math.min(centerX, vw - halfW - BUBBLE_PADDING));
+  centerX = Math.max(areaLeft + halfW + BUBBLE_PADDING, Math.min(centerX, areaRight - halfW - BUBBLE_PADDING));
   
   // If would go above viewport, show below selection instead
   if (topY < BUBBLE_PADDING) {
@@ -361,14 +607,40 @@ const ctxMenuPos = ref({ top: 0, left: 0 });
 const canMerge = ref(false);
 const canSplit = ref(false);
 
+// Saved CellSelection for merge/split (tracked on selectionUpdate, restored on action)
+let lastCellSelection: any = null;
+let lastCanMerge = false;
+let lastCanSplit = false;
+
+// Track CellSelection on every selection change
+// Key insight: right-click fires mousedown → creates TextSelection → onSelectionUpdate fires again
+// We must NOT clear savedCellSelection in that case (user is still in table, just lost CellSelection)
+const trackCellSelection = () => {
+  if (!editor.value) return;
+  const sel = editor.value.state.selection;
+  if ((sel as any).$anchorCell) {
+    // Active CellSelection — save it
+    lastCellSelection = sel;
+    lastCanMerge = editor.value.can().mergeCells();
+    lastCanSplit = editor.value.can().splitCell();
+  } else if (!editor.value.isActive('table')) {
+    // User left the table entirely — clear saved state
+    lastCellSelection = null;
+    lastCanMerge = false;
+    lastCanSplit = false;
+  }
+  // If user is in table but no CellSelection (e.g. after right-click),
+  // we intentionally KEEP lastCellSelection so merge can restore it
+};
+
 const updateTableControls = () => {
   if (!editor.value) { isInTable.value = false; return; }
   const inTable = editor.value.isActive('table');
   isInTable.value = inTable;
   if (!inTable) { activeTableEl.value = null; return; }
   
-  canMerge.value = editor.value.can().mergeCells();
-  canSplit.value = editor.value.can().splitCell();
+  canMerge.value = editor.value.can().mergeCells() || lastCanMerge;
+  canSplit.value = editor.value.can().splitCell() || lastCanSplit;
 
   // Find the actual table DOM element
   const { from } = editor.value.state.selection;
@@ -443,6 +715,21 @@ const closeCtxMenu = () => { showCtxMenu.value = false; };
 
 const ctxAction = (action: string) => {
   if (!editor.value) return;
+  
+  // For merge: restore saved CellSelection first
+  if (action === 'mergeCells' && lastCellSelection) {
+    try {
+      const tr = editor.value.state.tr.setSelection(lastCellSelection);
+      editor.value.view.dispatch(tr);
+    } catch (e) { /* positions may be stale */ }
+    editor.value.commands.mergeCells();
+    lastCellSelection = null;
+    lastCanMerge = false;
+    closeCtxMenu();
+    setTimeout(updateTableControls, 50);
+    return;
+  }
+  
   const chain = editor.value.chain().focus();
   switch (action) {
     case 'addRowAbove': chain.addRowBefore().run(); break;
@@ -451,7 +738,6 @@ const ctxAction = (action: string) => {
     case 'addColLeft': chain.addColumnBefore().run(); break;
     case 'addColRight': chain.addColumnAfter().run(); break;
     case 'deleteCol': chain.deleteColumn().run(); break;
-    case 'mergeCells': chain.mergeCells().run(); break;
     case 'splitCell': chain.splitCell().run(); break;
     case 'toggleHeaderRow': chain.toggleHeaderRow().run(); break;
     case 'toggleHeaderCol': chain.toggleHeaderColumn().run(); break;
@@ -717,6 +1003,36 @@ const slashCommandItems = (): SlashCommandItem[] => [
       editor.chain().focus().deleteRange(range).insertContent({ type: 'equation', attrs: { latex: '' } }).run();
     },
   },
+  {
+    title: 'Location',
+    description: 'Embed a map location',
+    icon: MapPinIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      locationModal.value = {
+        show: true, input: '', lat: null, lng: null, label: '',
+        provider: 'osm', searching: false, suggestions: [], error: ''
+      };
+    },
+  },
+  {
+    title: 'Route',
+    description: 'Embed a route/directions map',
+    icon: NavigationIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      routeModal.value = { show: true, urlInput: '', error: '', label: '' };
+    },
+  },
+  {
+    title: 'Emoji',
+    description: 'Open emoji picker',
+    icon: SmileIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      emojiPicker.value = { show: true, search: '', activeCategory: 'smileys' };
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -729,6 +1045,34 @@ const SlashCommands = Extension.create({
         char: '/',
         command: ({ editor, range, props }: any) => {
           props.command({ editor, range });
+        },
+      },
+    };
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+
+// --- Emoji Suggestion Extension (triggered by :) ---
+const EmojiSuggestion = Extension.create({
+  name: 'emojiSuggestion',
+
+  addOptions() {
+    return {
+      suggestion: {
+        char: ':',
+        pluginKey: new PluginKey('emojiSuggestion'),
+        // Only activate after at least 2 chars typed (avoid false triggers on plain colons)
+        allowSpaces: false,
+        command: ({ editor, range, props }: any) => {
+          editor.chain().focus().deleteRange(range).insertContent(props.emoji).run();
         },
       },
     };
@@ -827,10 +1171,12 @@ const editor = useEditor({
       lowlight,
     }),
     EquationExtension,
+    LocationExtension,
     VideoExtension,
     AudioExtension,
     Table.configure({
       resizable: true,
+      allowTableNodeSelection: true,
     }),
     TableRow,
     TableCell,
@@ -984,6 +1330,82 @@ const editor = useEditor({
         ];
       },
     }),
+    EmojiSuggestion.configure({
+      suggestion: {
+        char: ':',
+        pluginKey: new PluginKey('emojiSuggestion'),
+        allowSpaces: false,
+        items: ({ query }: { query: string }) => {
+          if (!query || query.length < 2) return [];
+          const q = query.toLowerCase();
+          return emojiData.filter(e =>
+            e.shortcode.includes(q) ||
+            e.keywords.some(k => k.includes(q))
+          ).slice(0, 8);
+        },
+        command: ({ editor, range, props }: any) => {
+          editor.chain().focus().deleteRange(range).insertContent(props.emoji).run();
+        },
+        render: () => {
+          let component: VueRenderer;
+          let popup: TippyInstance;
+
+          const createPopup = (props: any) => {
+            component = new VueRenderer(EmojiSuggestionMenu, {
+              props,
+              editor: props.editor,
+            });
+
+            if (!props.clientRect) return;
+
+            popup = tippy(document.body, {
+              getReferenceClientRect: props.clientRect,
+              appendTo: () => document.body,
+              content: component.element as Element,
+              showOnCreate: props.items.length > 0,
+              interactive: true,
+              trigger: 'manual',
+              placement: 'bottom-start',
+            });
+          };
+
+          return {
+            onStart: (props: any) => {
+              createPopup(props);
+            },
+            onUpdate: (props: any) => {
+              // Lazy init: if onStart didn't create popup (e.g. no clientRect)
+              if (!component) {
+                createPopup(props);
+                return;
+              }
+              component.updateProps(props);
+              if (!props.items.length) {
+                popup?.hide();
+                return;
+              }
+              popup?.show();
+              if (props.clientRect) {
+                popup?.setProps({
+                  getReferenceClientRect: props.clientRect,
+                });
+              }
+            },
+            onKeyDown: (props: any) => {
+              if (props.event.key === 'Escape') {
+                popup?.hide();
+                return true;
+              }
+              return component?.ref?.onKeyDown(props.event);
+            },
+            onExit: () => {
+              popup?.destroy();
+              component?.destroy();
+            },
+          };
+        },
+      },
+    }),
   ],
   onUpdate: ({ editor: ed }) => {
     const md = (ed.storage as any).markdown.getMarkdown();
@@ -992,6 +1414,7 @@ const editor = useEditor({
     setTimeout(updateBubbleMenu, 10);
   },
   onSelectionUpdate: () => {
+    trackCellSelection(); // capture CellSelection before any right-click can destroy it
     setTimeout(updateBubbleMenu, 10);
     setTimeout(updateTableControls, 10);
   },
@@ -999,6 +1422,18 @@ const editor = useEditor({
     setTimeout(() => { showBubble.value = false; }, 200);
   },
   editorProps: {
+    handleDOMEvents: {
+      contextmenu: (view, event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest('td, th') && target.closest('table')) {
+          event.preventDefault();
+          updateTableControls();
+          openContextMenu(event);
+          return true;
+        }
+        return false;
+      },
+    },
     transformPastedHTML(html) {
       return html
         .replace(/color\s*:\s*[^;"]+;?/gi, '')
@@ -1143,7 +1578,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="tiptap-wrapper w-full relative">
-    <!-- Floating Toolbar -->
+    <!-- Floating Toolbar (teleported to body to escape overflow clipping) -->
+    <Teleport to="body">
     <Transition name="bubble">
       <div
         v-if="showBubble && editor"
@@ -1247,6 +1683,7 @@ onBeforeUnmount(() => {
         </label>
       </div>
     </Transition>
+    </Teleport>
 
     <!-- Table Controls: + buttons, row/col handles -->
     <template v-if="isInTable && activeTableEl">
@@ -1318,8 +1755,8 @@ onBeforeUnmount(() => {
         <button @click="ctxAction('addColRight')">Add column right</button>
         <button @click="ctxAction('deleteCol')" class="ctx-danger">Delete column</button>
         <div class="ctx-sep" />
-        <button v-if="canMerge" @click="ctxAction('mergeCells')">Merge cells</button>
-        <button v-if="canSplit" @click="ctxAction('splitCell')">Split cell</button>
+        <button @click="ctxAction('mergeCells')">Merge cells</button>
+        <button @click="ctxAction('splitCell')">Split cell</button>
         <button @click="ctxAction('toggleHeaderRow')">Toggle header row</button>
         <button @click="ctxAction('toggleHeaderCol')">Toggle header column</button>
         <div class="ctx-sep" />
@@ -1430,6 +1867,206 @@ onBeforeUnmount(() => {
           <div class="flex justify-end gap-2 mt-6">
             <button @click="audioModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
             <button @click="confirmAudio" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">Embed</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Location Modal -->
+    <Teleport to="body">
+      <div v-if="locationModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="locationModal.show = false">
+        <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-[420px] border border-[#e6e6e6] dark:border-[#3a3a3a]">
+          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-1 flex items-center gap-2">
+            <MapPinIcon class="w-4 h-4 text-red-500" />
+            Insert Location
+          </h3>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">Paste a map URL, enter coordinates, or search an address</p>
+          
+          <div class="space-y-3">
+            <!-- Input -->
+            <div class="relative">
+              <input
+                :value="locationModal.input"
+                @input="(e: Event) => onLocationInput((e.target as HTMLInputElement).value)"
+                type="text"
+                placeholder="Paste URL, lat/lng, or type an address..."
+                class="w-full px-3 py-2.5 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 dark:focus:ring-red-400/20 focus:border-red-400 dark:focus:border-red-500 pr-8"
+                @keydown.enter="confirmLocation"
+                autofocus
+              />
+              <div v-if="locationModal.searching" class="absolute right-3 top-1/2 -translate-y-1/2">
+                <div class="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-red-500 rounded-full animate-spin" />
+              </div>
+            </div>
+
+            <!-- Suggestions -->
+            <div v-if="locationModal.suggestions.length > 0" class="rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-[#fafafa] dark:bg-[#1a1a1a] max-h-[160px] overflow-y-auto">
+              <button
+                v-for="(s, i) in locationModal.suggestions"
+                :key="i"
+                class="w-full text-left px-3 py-2 text-xs text-[#374151] dark:text-[#d4d4d8] hover:bg-[#f3f4f6] dark:hover:bg-[#252525] transition-colors border-b border-[#f3f4f6] dark:border-[#2a2a2a] last:border-0 flex items-start gap-2"
+                @click="selectSuggestion(s)"
+              >
+                <MapPinIcon class="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
+                <span class="line-clamp-2">{{ s.display }}</span>
+              </button>
+            </div>
+
+            <!-- Error -->
+            <p v-if="locationModal.error" class="text-xs text-red-500">{{ locationModal.error }}</p>
+
+            <!-- Resolved coordinates preview -->
+            <div v-if="locationModal.lat !== null && locationModal.lng !== null" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/30">
+              <MapPinIcon class="w-3.5 h-3.5 text-green-600 dark:text-green-400 flex-shrink-0" />
+              <div class="flex-1 min-w-0">
+                <span class="text-xs font-medium text-green-700 dark:text-green-300">{{ locationModal.lat.toFixed(5) }}, {{ locationModal.lng.toFixed(5) }}</span>
+              </div>
+            </div>
+
+            <!-- Label -->
+            <div v-if="locationModal.lat !== null">
+              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Label (optional)</label>
+              <input
+                v-model="locationModal.label"
+                type="text"
+                placeholder="e.g., Hanoi Opera House"
+                class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20"
+                @keydown.enter="confirmLocation"
+              />
+            </div>
+
+            <!-- Map Provider -->
+            <div v-if="locationModal.lat !== null">
+              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Map Provider</label>
+              <div class="flex gap-2">
+                <button
+                  @click="locationModal.provider = 'osm'"
+                  class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border"
+                  :class="locationModal.provider === 'osm'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-[#fafafa] dark:bg-[#1a1a1a] border-[#e0e0e0] dark:border-[#444] text-gray-500 dark:text-gray-400 hover:bg-[#f3f4f6] dark:hover:bg-[#252525]'"
+                >
+                  🗺️ OpenStreetMap
+                  <span class="block text-[10px] mt-0.5 opacity-70">Free · Privacy-first</span>
+                </button>
+                <button
+                  @click="locationModal.provider = 'google'"
+                  class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border"
+                  :class="locationModal.provider === 'google'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                    : 'bg-[#fafafa] dark:bg-[#1a1a1a] border-[#e0e0e0] dark:border-[#444] text-gray-500 dark:text-gray-400 hover:bg-[#f3f4f6] dark:hover:bg-[#252525]'"
+                >
+                  📍 Google Maps
+                  <span class="block text-[10px] mt-0.5 opacity-70">Detailed · Satellite</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex justify-end gap-2 mt-5">
+            <button @click="locationModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
+            <button
+              @click="confirmLocation"
+              :disabled="locationModal.lat === null || locationModal.lng === null"
+              class="px-4 py-1.5 text-sm rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              <MapPinIcon class="w-3.5 h-3.5" />
+              Insert
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Route Modal -->
+    <Teleport to="body">
+      <div v-if="routeModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="routeModal.show = false">
+        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[420px] max-w-[95vw] p-5" @keydown.esc="routeModal.show = false">
+          <div class="flex items-center gap-2 mb-4">
+            <NavigationIcon class="w-4 h-4 text-indigo-500" />
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Insert Route</h3>
+          </div>
+
+          <!-- URL Input -->
+          <div class="mb-3">
+            <label class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1 block">Directions URL</label>
+            <input
+              v-model="routeModal.urlInput"
+              type="text"
+              placeholder="Paste Google Maps or OpenStreetMap directions URL..."
+              class="w-full px-3 py-2 text-sm rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-[#fafafa] dark:bg-[#252525] text-gray-800 dark:text-gray-200 outline-none focus:border-indigo-400 transition-colors"
+              @keydown.enter.stop="confirmRoute"
+            />
+            <p class="text-[10px] text-gray-400 mt-1">Supports Google Maps and OpenStreetMap directions links.</p>
+          </div>
+
+          <!-- Optional Label -->
+          <div class="mb-3">
+            <label class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1 block">Label <span class="text-gray-300 dark:text-gray-500">(optional)</span></label>
+            <input
+              v-model="routeModal.label"
+              type="text"
+              placeholder="e.g., Home → Office"
+              class="w-full px-3 py-2 text-sm rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-[#fafafa] dark:bg-[#252525] text-gray-800 dark:text-gray-200 outline-none focus:border-indigo-400 transition-colors"
+              @keydown.enter.stop="confirmRoute"
+            />
+          </div>
+
+          <div v-if="routeModal.error" class="text-xs text-red-400 mb-2">{{ routeModal.error }}</div>
+
+          <div class="flex justify-end gap-2 mt-4">
+            <button @click="routeModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
+            <button
+              @click="confirmRoute"
+              :disabled="!isValidRouteUrl"
+              class="px-4 py-1.5 text-sm rounded-lg bg-indigo-500 text-white font-medium hover:bg-indigo-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              <NavigationIcon class="w-3.5 h-3.5" />
+              Insert Route
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Emoji Picker Modal -->
+    <Teleport to="body">
+      <div v-if="emojiPicker.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emojiPicker.show = false">
+        <div class="emoji-picker-panel bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[360px] max-h-[420px] flex flex-col overflow-hidden">
+          <!-- Search -->
+          <div class="p-3 border-b border-[#e5e7eb] dark:border-[#333]">
+            <input
+              v-model="emojiPicker.search"
+              type="text"
+              placeholder="Search emoji..."
+              class="w-full px-3 py-2 text-sm bg-[#f3f4f6] dark:bg-[#2a2a2a] border border-transparent rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500/50 text-[#111827] dark:text-[#f4f4f5] placeholder:text-gray-400"
+              autofocus
+              @keydown.esc="emojiPicker.show = false"
+            />
+          </div>
+          <!-- Category Tabs -->
+          <div v-if="!emojiPicker.search" class="flex gap-0.5 px-2 py-1.5 border-b border-[#e5e7eb] dark:border-[#333] overflow-x-auto">
+            <button
+              v-for="cat in emojiCategories"
+              :key="cat.id"
+              @click="emojiPicker.activeCategory = cat.id"
+              class="px-2 py-1 text-lg rounded-md transition-colors flex-shrink-0"
+              :class="emojiPicker.activeCategory === cat.id ? 'bg-[#e5e7eb] dark:bg-[#333]' : 'hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2a]'"
+              :title="cat.title"
+            >{{ cat.label }}</button>
+          </div>
+          <!-- Emoji Grid -->
+          <div class="flex-1 overflow-y-auto p-2">
+            <div v-if="filteredPickerEmojis.length === 0" class="py-8 text-center text-sm text-gray-400">No emoji found</div>
+            <div class="grid grid-cols-8 gap-0.5">
+              <button
+                v-for="item in filteredPickerEmojis"
+                :key="item.shortcode"
+                @click="insertEmoji(item.emoji)"
+                class="w-9 h-9 flex items-center justify-center text-xl rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer"
+                :title="':' + item.shortcode + ':'"
+              >{{ item.emoji }}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1981,6 +2618,20 @@ onBeforeUnmount(() => {
  .dark .ctx-sep { 
     background: #333;
   }
+
+/* Cell selection highlight (prosemirror-tables applies this class) */
+.prose td.selectedCell,
+.prose th.selectedCell {
+  background: rgba(139, 92, 246, 0.12) !important;
+  outline: 2px solid rgba(139, 92, 246, 0.4);
+  outline-offset: -2px;
+}
+.dark .prose td.selectedCell,
+.dark .prose th.selectedCell {
+  background: rgba(139, 92, 246, 0.2) !important;
+  outline: 2px solid rgba(139, 92, 246, 0.5);
+  outline-offset: -2px;
+}
 
 .prose blockquote {
   border-left-color: #9ca3af !important;

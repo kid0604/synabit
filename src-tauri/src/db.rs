@@ -35,17 +35,27 @@ impl DbBridge {
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
 
-        // ─── Drop Legacy Notes Table ───────────────────────────
-        let _ = conn.execute("DROP TABLE IF EXISTS notes", []);
+        // ─── One-time Legacy Cleanup ────────────────────────────
+        // These tables were migrated to Universal Node Core in v0.2.x.
+        // Only drop them once, then set a flag so we skip on future startups.
+        {
+            let already_cleaned: bool = conn
+                .query_row(
+                    "SELECT value FROM kv_store WHERE key = 'legacy_tables_cleaned'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|v| v == "1")
+                .unwrap_or(false);
 
-        // ─── Drop Legacy Events Table ──────────────────────────
-        let _ = conn.execute("DROP TABLE IF EXISTS events", []);
-
-        // ─── Drop Legacy Tasks Table ───────────────────────────
-        let _ = conn.execute("DROP TABLE IF EXISTS tasks", []);
-
-        // ─── Drop Legacy QuickCaps Table ───────────────────────────
-        let _ = conn.execute("DROP TABLE IF EXISTS quickcaps", []);
+            if !already_cleaned {
+                let _ = conn.execute("DROP TABLE IF EXISTS notes", []);
+                let _ = conn.execute("DROP TABLE IF EXISTS events", []);
+                let _ = conn.execute("DROP TABLE IF EXISTS tasks", []);
+                let _ = conn.execute("DROP TABLE IF EXISTS quickcaps", []);
+                // Flag will be set after kv_store table is created below
+            }
+        }
 
         // ─── Files Table ───────────────────────────────────────
         conn.execute(
@@ -111,6 +121,12 @@ impl DbBridge {
             )",
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (kv_store): {}", e)))?;
+
+        // Mark legacy cleanup as done (now that kv_store exists)
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO kv_store (key, value) VALUES ('legacy_tables_cleaned', '1')",
+            [],
+        );
 
         // ─── Graph Edges (for Nexus Knowledge Graph) ───────────
         conn.execute(
@@ -520,12 +536,6 @@ impl DbBridge {
         Ok(None)
     }
 
-    pub fn clear_all(&self) -> AppResult<()> {
-        self.conn.execute_batch(
-            ""
-        ).map_err(|e| AppError::General(format!("DB Clear Error: {}", e)))?;
-        Ok(())
-    }
 
     // ═══════════════════════════════════════════════════════════
     //  GRAPH EDGES
@@ -702,14 +712,15 @@ impl DbBridge {
 
         let has_fts_terms = !parsed.fts_terms.is_empty();
         let has_exclude = !parsed.exclude_terms.is_empty();
-        let has_tag_filter = !parsed.tag_filters.is_empty();
-        let has_type_filter = parsed.type_filter.is_some();
-        let has_status_filter = parsed.status_filter.is_some();
+
+        // All parameter values collected here; SQL uses numbered placeholders ?N
+        let mut param_values: Vec<String> = Vec::new();
+        // Tracks the next available placeholder index (1-based for SQLite)
+        let mut param_idx: usize = 1;
 
         // Build the SQL query dynamically
         let mut sql;
         let mut count_sql;
-        let mut param_values: Vec<String> = Vec::new();
 
         if has_fts_terms || has_exclude {
             // Build FTS5 MATCH expression
@@ -733,10 +744,9 @@ impl DbBridge {
 
             let fts_expr = match_parts.join(" AND ");
             param_values.push(fts_expr);
+            param_idx += 1; // ?1 is used for the MATCH expression
 
             // Main query with BM25 ranking
-            // bm25(search_index, weight_item_id, weight_item_type, weight_title, weight_tags, weight_content)
-            // We want: title=10.0, tags=5.0, content=1.0, item_id and item_type have 0 weight
             // bm25 weights: item_id=0, item_type=0, title=10, tags=5, content=1, properties=3
             sql = "SELECT item_id, item_type, title, snippet(search_index, 4, '<mark>', '</mark>', '…', 48) as snip, tags, date, path, bm25(search_index, 0.0, 0.0, 10.0, 5.0, 1.0, 3.0) as rank, status FROM search_index WHERE search_index MATCH ?1".to_string();
             count_sql = "SELECT COUNT(*) FROM search_index WHERE search_index MATCH ?1".to_string();
@@ -746,32 +756,34 @@ impl DbBridge {
             count_sql = "SELECT COUNT(*) FROM search_index WHERE 1=1".to_string();
         }
 
-        // Apply filters
-        if has_type_filter {
-            let type_val = parsed.type_filter.as_ref().unwrap();
-            sql.push_str(&format!(" AND item_type = '{}'", type_val));
-            count_sql.push_str(&format!(" AND item_type = '{}'", type_val));
+        // Apply filters — all use parameterized placeholders
+        if let Some(type_val) = &parsed.type_filter {
+            sql.push_str(&format!(" AND item_type = ?{}", param_idx));
+            count_sql.push_str(&format!(" AND item_type = ?{}", param_idx));
+            param_values.push(type_val.clone());
+            param_idx += 1;
         }
 
-        if has_tag_filter {
-            for tag in &parsed.tag_filters {
-                let escaped = tag.replace('\'', "''");
-                sql.push_str(&format!(" AND tags LIKE '%{}%'", escaped));
-                count_sql.push_str(&format!(" AND tags LIKE '%{}%'", escaped));
-            }
+        for tag in &parsed.tag_filters {
+            sql.push_str(&format!(" AND tags LIKE ?{}", param_idx));
+            count_sql.push_str(&format!(" AND tags LIKE ?{}", param_idx));
+            param_values.push(format!("%{}%", tag));
+            param_idx += 1;
         }
 
-        if has_status_filter {
-            let status_val = parsed.status_filter.as_ref().unwrap();
-            sql.push_str(&format!(" AND status = '{}'", status_val));
-            count_sql.push_str(&format!(" AND status = '{}'", status_val));
+        if let Some(status_val) = &parsed.status_filter {
+            sql.push_str(&format!(" AND status = ?{}", param_idx));
+            count_sql.push_str(&format!(" AND status = ?{}", param_idx));
+            param_values.push(status_val.clone());
+            param_idx += 1;
         }
 
         // Apply generic property filters
         for (key, val) in &parsed.property_filters {
-            let filter = format!("{}:{}", key, val).replace('\'', "''");
-            sql.push_str(&format!(" AND properties LIKE '%{}%'", filter));
-            count_sql.push_str(&format!(" AND properties LIKE '%{}%'", filter));
+            sql.push_str(&format!(" AND properties LIKE ?{}", param_idx));
+            count_sql.push_str(&format!(" AND properties LIKE ?{}", param_idx));
+            param_values.push(format!("%{}:{}%", key, val));
+            param_idx += 1;
         }
 
         // Ordering
@@ -781,24 +793,29 @@ impl DbBridge {
             sql.push_str(" ORDER BY date DESC");
         }
 
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", per_page, offset));
+        // LIMIT and OFFSET as parameters
+        sql.push_str(&format!(" LIMIT ?{} OFFSET ?{}", param_idx, param_idx + 1));
+        param_values.push(per_page.to_string());
+        param_values.push(offset.to_string());
 
-        // Execute count query
-        let total_count: u32 = if !param_values.is_empty() {
-            self.conn.query_row(&count_sql, params![param_values[0]], |row| row.get(0))
-                .unwrap_or(0)
-        } else {
-            self.conn.query_row(&count_sql, [], |row| row.get(0))
-                .unwrap_or(0)
-        };
+        // Execute count query (uses only the filter params, not LIMIT/OFFSET)
+        let count_params: Vec<&str> = param_values.iter()
+            .take(param_values.len() - 2) // exclude LIMIT and OFFSET
+            .map(|s| s.as_str())
+            .collect();
+        let total_count: u32 = self.conn.query_row(
+            &count_sql,
+            rusqlite::params_from_iter(count_params.iter()),
+            |row| row.get(0),
+        ).unwrap_or(0);
 
-        // Execute search query
-        let mut results = Vec::new();
-
-        if !param_values.is_empty() {
-            let mut stmt = self.conn.prepare(&sql)
-                .map_err(|e| AppError::General(format!("FTS Search Prepare Error: {}", e)))?;
-            let rows = stmt.query_map(params![param_values[0]], |row| {
+        // Execute search query (all params including LIMIT/OFFSET)
+        let all_params: Vec<&str> = param_values.iter().map(|s| s.as_str()).collect();
+        let mut stmt = self.conn.prepare(&sql)
+            .map_err(|e| AppError::General(format!("FTS Search Prepare Error: {}", e)))?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(all_params.iter()),
+            |row| {
                 let tags_str: String = row.get(4)?;
                 let tags: Vec<String> = tags_str.split_whitespace()
                     .filter(|s| !s.is_empty())
@@ -816,36 +833,12 @@ impl DbBridge {
                     score: -rank, // BM25 returns negative; negate for display
                     status: row.get(8)?,
                 })
-            }).map_err(|e| AppError::General(format!("FTS Search Map Error: {}", e)))?;
+            },
+        ).map_err(|e| AppError::General(format!("FTS Search Map Error: {}", e)))?;
 
-            for row in rows.flatten() {
-                results.push(row);
-            }
-        } else {
-            let mut stmt = self.conn.prepare(&sql)
-                .map_err(|e| AppError::General(format!("FTS Search Prepare Error: {}", e)))?;
-            let rows = stmt.query_map([], |row| {
-                let tags_str: String = row.get(4)?;
-                let tags: Vec<String> = tags_str.split_whitespace()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect();
-                Ok(crate::search::SearchResult {
-                    id: row.get(0)?,
-                    item_type: row.get(1)?,
-                    title: row.get(2)?,
-                    snippet: row.get(3)?,
-                    tags,
-                    date: row.get(5)?,
-                    path: row.get(6)?,
-                    score: 0.0,
-                    status: row.get(8)?,
-                })
-            }).map_err(|e| AppError::General(format!("FTS Search Map Error: {}", e)))?;
-
-            for row in rows.flatten() {
-                results.push(row);
-            }
+        let mut results = Vec::new();
+        for row in rows.flatten() {
+            results.push(row);
         }
 
         let elapsed = start.elapsed().as_millis() as u64;

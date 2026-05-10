@@ -315,12 +315,24 @@ pub fn reindex_sources(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
 }
 
 #[tauri::command]
-pub fn read_local_file_content(path: String) -> AppResult<String> {
-    path_utils::enforce_no_traversal(&path)?;
+pub fn read_local_file_content(state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<String> {
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_file() {
         return Err(AppError::InvalidPath("File not found or is a directory".to_string()));
     }
+
+    // Validate path is within vault or registered file sources
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut allowed_roots = vec![vault_path.clone()];
+    if let Ok(sources) = db.get_all_file_sources() {
+        for source in sources {
+            allowed_roots.push(source.path);
+        }
+    }
+    drop(db);
+
+    let root_refs: Vec<&str> = allowed_roots.iter().map(|s| s.as_str()).collect();
+    path_utils::enforce_within_roots(p, &root_refs)?;
     
     // Check size limit (e.g. 5MB)
     if let Ok(meta) = p.metadata() {
