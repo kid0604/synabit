@@ -23,6 +23,9 @@ import { VideoExtension } from './VideoExtension';
 import { AudioExtension } from './AudioExtension';
 import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
+import { TransclusionExtension } from './extensions/TransclusionExtension';
+import { BlockIdHider } from './extensions/BlockIdHider';
+import EmbedPickerModal from './EmbedPickerModal.vue';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension, textInputRule } from '@tiptap/core';
@@ -42,7 +45,8 @@ import {
   Image as ImageIcon, Images, Sigma, Video as VideoIcon,
   Music as MusicIcon, MapPin as MapPinIcon,
   Smile as SmileIcon, Navigation as NavigationIcon,
-  PenTool as PenToolIcon
+  PenTool as PenToolIcon,
+  Link2 as EmbedIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -83,6 +87,8 @@ const props = defineProps<{
   modelValue: string;
   vaultPath: string;
   notes?: any[];
+  zenMode?: boolean;
+  currentNoteId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -543,6 +549,54 @@ const confirmWhiteboard = (board: any) => {
     title: board.title || 'Untitled Board',
   });
   whiteboardPickerModal.value = { show: false, boards: [], loading: false, search: '' };
+};
+
+// --- Embed Picker Modal (Transclusion 2.0) ---
+const embedPickerModal = ref(false);
+
+const confirmEmbed = (payload: { nodeId: string; blockId?: string; noteTitle: string }) => {
+  if (!editor.value) return;
+  const target = payload.blockId
+    ? `${payload.nodeId}#${payload.blockId}`
+    : payload.noteTitle;
+  editor.value.commands.insertContent({
+    type: 'transclusion',
+    attrs: { target, nodeId: payload.nodeId },
+  });
+  embedPickerModal.value = false;
+};
+
+// --- Block Context Menu (right-click → Copy Block Link) ---
+const blockCtxMenu = ref<{ show: boolean; top: number; left: number; text: string }>({
+  show: false, top: 0, left: 0, text: ''
+});
+
+const openBlockContextMenu = (event: MouseEvent, text: string) => {
+  const wrapper = (event.target as HTMLElement).closest('.tiptap-wrapper');
+  const wrapperRect = wrapper ? wrapper.getBoundingClientRect() : { top: 0, left: 0 };
+  blockCtxMenu.value = {
+    show: true,
+    top: event.clientY - wrapperRect.top,
+    left: event.clientX - wrapperRect.left,
+    text,
+  };
+};
+
+const copyBlockLink = async () => {
+  if (!props.currentNoteId || !blockCtxMenu.value.text) return;
+  try {
+    const blockId = await invoke<string>('create_block_reference', {
+      vaultPath: props.vaultPath,
+      nodeId: props.currentNoteId,
+      contentSnippet: blockCtxMenu.value.text.trim(),
+    });
+    const uri = `synabit://block/${props.currentNoteId}#${blockId}`;
+    await navigator.clipboard.writeText(uri);
+    blockCtxMenu.value.show = false;
+  } catch (err) {
+    console.error('Failed to copy block link:', err);
+    blockCtxMenu.value.show = false;
+  }
 };
 
 const insertEmoji = (emoji: string) => {
@@ -1075,6 +1129,15 @@ const slashCommandItems = (): SlashCommandItem[] => [
       }
     },
   },
+  {
+    title: 'Embed',
+    description: 'Embed content from another note',
+    icon: EmbedIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      embedPickerModal.value = true;
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -1458,17 +1521,34 @@ const editor = useEditor({
         },
       },
     }),
+    TransclusionExtension,
+    BlockIdHider,
   ],
   onUpdate: ({ editor: ed }) => {
-    const md = (ed.storage as any).markdown.getMarkdown();
+    let md = (ed.storage as any).markdown.getMarkdown();
+    // Convert Transclusion HTML tags back to ![[Target]]
+    // Handle spans with data-transclusion (and optional data-node-id) in any attribute order
+    md = md.replace(/<span[^>]*data-transclusion="([^"]+)"[^>]*>.*?<\/span>/g, (_m: string, target: string) => `![[${target}]]`);
     emit('update:modelValue', stripLocalAssets(md));
     // Update bubble menu position on content change
     setTimeout(updateBubbleMenu, 10);
   },
-  onSelectionUpdate: () => {
+  onSelectionUpdate: ({ editor: ed }) => {
     trackCellSelection(); // capture CellSelection before any right-click can destroy it
     setTimeout(updateBubbleMenu, 10);
     setTimeout(updateTableControls, 10);
+    
+    // Typewriter scrolling in Zen Mode
+    if (props.zenMode && ed.view.state.selection.empty) {
+      const view = ed.view;
+      const coords = view.coordsAtPos(view.state.selection.from);
+      const scrollContainer = view.dom.closest('.overflow-y-auto');
+      if (scrollContainer) {
+         const containerRect = scrollContainer.getBoundingClientRect();
+         const targetTop = scrollContainer.scrollTop + (coords.top - containerRect.top) - (containerRect.height / 2) + 20;
+         scrollContainer.scrollTo({ top: targetTop, behavior: 'smooth' });
+      }
+    }
   },
   onBlur: () => {
     setTimeout(() => { showBubble.value = false; }, 200);
@@ -1483,9 +1563,21 @@ const editor = useEditor({
           openContextMenu(event);
           return true;
         }
+        // Block context menu for paragraphs/headings
+        const blockEl = target.closest('p, h1, h2, h3, h4, h5, h6');
+        if (blockEl && props.currentNoteId && !target.closest('table')) {
+          const text = blockEl.textContent?.trim();
+          if (text) {
+            event.preventDefault();
+            openBlockContextMenu(event, text);
+            return true;
+          }
+        }
+        blockCtxMenu.value.show = false;
         return false;
       },
     },
+
     transformPastedHTML(html) {
       return html
         .replace(/color\s*:\s*[^;"]+;?/gi, '')
@@ -1549,6 +1641,19 @@ const editor = useEditor({
       return false; 
     },
     handlePaste: function(_view, event, _slice) {
+      // Handle synabit:// block reference URIs
+      const text = event.clipboardData?.getData('text/plain') || '';
+      const blockMatch = text.match(/^synabit:\/\/block\/([^#]+)#(.+)$/);
+      if (blockMatch) {
+        event.preventDefault();
+        const [, nodeId, blockId] = blockMatch;
+        editor.value?.commands.insertContent({
+          type: 'transclusion',
+          attrs: { target: `${nodeId}#${blockId}`, nodeId },
+        });
+        return true;
+      }
+      // Handle pasted images
       if (event.clipboardData && event.clipboardData.items) {
         let imageHandled = false;
         for (const item of event.clipboardData.items) {
@@ -1824,12 +1929,27 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
+    <!-- Block Context Menu (Copy Block Link) -->
+    <Transition name="bubble">
+      <div
+        v-if="blockCtxMenu.show"
+        class="tc-ctx-menu"
+        :style="{ position: 'absolute', top: blockCtxMenu.top + 'px', left: blockCtxMenu.left + 'px', zIndex: 100 }"
+        @mousedown.prevent
+      >
+        <button @click="copyBlockLink" class="flex items-center gap-2">
+          <LinkIcon class="w-3.5 h-3.5" />
+          Copy Block Link
+        </button>
+      </div>
+    </Transition>
+
     <div :class="{
       'list-style-decimal': nestedNumberListStyle === 'decimal',
       'list-style-alpha': nestedNumberListStyle === 'alpha',
       'list-style-nested': nestedNumberListStyle === 'nested'
     }" class="editor-wrapper h-full w-full">
-      <editor-content :editor="editor" @contextmenu="(e: MouseEvent) => { if (editor?.isActive('table')) openContextMenu(e); }" />
+      <editor-content :editor="editor" @contextmenu="(e: MouseEvent) => { if (editor?.isActive('table')) openContextMenu(e); }" @click="blockCtxMenu.show = false" />
     </div>
 
     <!-- Link URL Modal (replaces window.prompt) -->
@@ -2160,6 +2280,15 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Teleport>
+
+    <!-- Embed Picker Modal (Transclusion 2.0) -->
+    <EmbedPickerModal
+      :show="embedPickerModal"
+      :notes="allNodes"
+      :vault-path="vaultPath"
+      @close="embedPickerModal = false"
+      @embed="confirmEmbed"
+    />
 
     <!-- Emoji Picker Modal -->
     <Teleport to="body">

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch, toRef, nextTick } from 'vue';
 import { VueFlow, useVueFlow, ConnectionMode, MarkerType, getRectOfNodes } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
-import { Plus, Trash2, PenTool, PanelLeftClose, PanelLeft, Tag, X } from 'lucide-vue-next';
+import { Plus, Trash2, PenTool, PanelLeftClose, PanelLeft, Tag, X, FileText, Search, GripVertical, ChevronDown, ChevronRight } from 'lucide-vue-next';
 
 // Edge, Shape, Text & Multi-select menus
 import EdgeMenu from './components/EdgeMenu.vue';
@@ -12,12 +12,14 @@ import TextMenu from './components/TextMenu.vue';
 import MultiSelectMenu from './components/MultiSelectMenu.vue';
 import { toPng } from 'html-to-image';
 import { ask } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 // Custom nodes
 import ShapeNode from './nodes/ShapeNode.vue';
 import StrokeNode from './nodes/StrokeNode.vue';
 import MindmapNode from './nodes/MindmapNode.vue';
 import TextNode from './nodes/TextNode.vue';
+import NoteCardNode from './nodes/NoteCardNode.vue';
 
 // Toolbar
 import WhiteboardToolbar from './components/WhiteboardToolbar.vue';
@@ -639,6 +641,39 @@ function handlePaneClick(event: any) {
   }
 }
 
+function handleDragOver(event: DragEvent) {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+function handleDrop(event: DragEvent) {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+  
+  const noteId = event.dataTransfer.getData('application/synabit-note-id');
+  const noteTitle = event.dataTransfer.getData('application/synabit-note-title');
+  const blockId = event.dataTransfer.getData('application/synabit-block-id');
+  
+  if (noteId) {
+    const pos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+    
+    addNodeToCanvas({
+      id: store.generateId('note'),
+      type: 'note',
+      position: pos,
+      data: {
+        noteId,
+        noteTitle,
+        blockId: blockId || undefined,
+        width: 280,
+        height: 180,
+      },
+    });
+  }
+}
+
 // ─── Mindmap subtree drag (XMind-style) ─────────────────
 let mindmapDragState: {
   nodeId: string;
@@ -999,6 +1034,43 @@ async function exportPng() {
 
 // ─── Sidebar ────────────────────────────────────────────
 const sidebarOpen = ref(true);
+const sidebarTab = ref<'boards' | 'notes'>('boards');
+const whiteboardNotes = ref<any[]>([]);
+const noteSearch = ref('');
+const dailyNotesExpanded = ref(false);
+
+/** Detect daily notes (title is a date like 2026-05-04) */
+const isDailyNote = (title: string) => /^\d{4}-\d{2}-\d{2}$/.test(title?.trim());
+
+/** Extract a 1-line preview from note content (strip frontmatter + markdown) */
+const notePreview = (content: string) => {
+  if (!content) return '';
+  let text = content;
+  if (text.startsWith('---')) {
+    const end = text.indexOf('---', 3);
+    if (end > 3) text = text.substring(end + 3);
+  }
+  // Strip markdown syntax and get first meaningful line
+  const line = text.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#') && !l.startsWith('---'));
+  if (!line) return '';
+  const clean = line.replace(/[\*\_\[\]\(\)\#\>\`]/g, '').trim();
+  return clean.length > 60 ? clean.substring(0, 60) + '…' : clean;
+};
+
+const filteredRegularNotes = computed(() => {
+  const q = noteSearch.value.toLowerCase().trim();
+  return whiteboardNotes.value
+    .filter(n => !isDailyNote(n.title))
+    .filter(n => !q || (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
+});
+
+const filteredDailyNotes = computed(() => {
+  const q = noteSearch.value.toLowerCase().trim();
+  return whiteboardNotes.value
+    .filter(n => isDailyNote(n.title))
+    .filter(n => !q || (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
+});
+
 const editingTitle = ref(false);
 const titleInput = ref('');
 
@@ -1006,6 +1078,14 @@ function startEditTitle() {
   if (!store.currentBoardData.value) return;
   editingTitle.value = true;
   titleInput.value = store.currentBoardData.value.title;
+}
+
+function handleNoteDragStart(event: DragEvent, note: any) {
+  if (event.dataTransfer) {
+    event.dataTransfer.setData('application/synabit-note-id', note.id);
+    event.dataTransfer.setData('application/synabit-note-title', note.title);
+    event.dataTransfer.effectAllowed = 'copy';
+  }
 }
 
 function finishEditTitle() {
@@ -1074,6 +1154,14 @@ onMounted(async () => {
   if (store.boards.value.length > 0) {
     await store.loadBoardData(store.boards.value[0].id);
   }
+  
+  try {
+    const loadedNotes = await invoke<any[]>('get_nodes', { nodeType: 'note' });
+    whiteboardNotes.value = loadedNotes.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  } catch (err) {
+    logger.error('Failed to load notes for whiteboard sidebar', err);
+  }
+
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
@@ -1109,9 +1197,13 @@ defineExpose({ openBoardById });
       <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragSidebar"></div>
 
       <div class="flex items-center justify-between p-3 border-b border-border dark:border-border-dark" data-tauri-drag-region>
-        <h2 class="text-sm font-bold text-text dark:text-text-dark">Boards</h2>
+        <div class="flex gap-4">
+          <button @click="sidebarTab = 'boards'" :class="sidebarTab === 'boards' ? 'text-sm font-bold text-text dark:text-text-dark' : 'text-sm font-semibold text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark transition-colors'">Boards</button>
+          <button @click="sidebarTab = 'notes'" :class="sidebarTab === 'notes' ? 'text-sm font-bold text-text dark:text-text-dark' : 'text-sm font-semibold text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark transition-colors'">Notes</button>
+        </div>
         <div class="flex items-center gap-1" @mousedown.stop>
           <button
+            v-if="sidebarTab === 'boards'"
             @click="store.createBoard()"
             class="wb-icon-btn"
             title="New Board"
@@ -1124,7 +1216,7 @@ defineExpose({ openBoardById });
         </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto p-2 space-y-1" @mousedown.stop>
+      <div v-if="sidebarTab === 'boards'" class="flex-1 overflow-y-auto p-2 space-y-1" @mousedown.stop>
         <button
           v-for="board in store.boards.value"
           :key="board.id"
@@ -1157,6 +1249,71 @@ defineExpose({ openBoardById });
           <button @click="store.createBoard()" class="text-accent dark:text-accent-dark mt-1 hover:underline">
             Create one
           </button>
+        </div>
+      </div>
+
+      <div v-else-if="sidebarTab === 'notes'" class="flex-1 overflow-y-auto flex flex-col" @mousedown.stop>
+        <!-- Search -->
+        <div class="p-2 border-b border-border dark:border-border-dark">
+          <div class="relative">
+            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted dark:text-muted-dark" />
+            <input
+              v-model="noteSearch"
+              placeholder="Search notes…"
+              class="w-full pl-8 pr-3 py-1.5 text-xs bg-surface-hover/50 dark:bg-surface-hover-dark/50 border border-border dark:border-border-dark rounded-md outline-none focus:ring-1 focus:ring-accent/40 text-text dark:text-text-dark placeholder:text-muted dark:placeholder:text-muted-dark transition-all"
+            />
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+          <!-- Regular Notes -->
+          <div
+            v-for="note in filteredRegularNotes"
+            :key="note.id"
+            draggable="true"
+            @dragstart="(e) => handleNoteDragStart(e, note)"
+            class="group px-3 py-2 rounded-lg transition-all hover:bg-surface-hover dark:hover:bg-surface-hover-dark cursor-grab active:cursor-grabbing border border-transparent hover:border-border dark:hover:border-border-dark"
+          >
+            <div class="flex items-center gap-2 min-w-0">
+              <GripVertical class="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-40 transition-opacity text-muted" />
+              <FileText class="w-3.5 h-3.5 flex-shrink-0 text-accent/60" />
+              <span class="text-sm font-medium text-text dark:text-text-dark truncate">{{ note.title || 'Untitled' }}</span>
+            </div>
+            <p v-if="notePreview(note.content)" class="text-[11px] text-muted dark:text-muted-dark truncate mt-0.5 ml-[34px]">
+              {{ notePreview(note.content) }}
+            </p>
+          </div>
+
+          <!-- Daily Notes Group -->
+          <div v-if="filteredDailyNotes.length > 0" class="mt-2">
+            <button
+              @click="dailyNotesExpanded = !dailyNotesExpanded"
+              class="flex items-center gap-1.5 px-2 py-1.5 w-full text-left text-[11px] font-semibold uppercase tracking-wider text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark transition-colors"
+            >
+              <component :is="dailyNotesExpanded ? ChevronDown : ChevronRight" class="w-3 h-3" />
+              Daily Notes
+              <span class="text-[10px] font-normal opacity-60">({{ filteredDailyNotes.length }})</span>
+            </button>
+            <div v-if="dailyNotesExpanded" class="space-y-0.5 mt-0.5">
+              <div
+                v-for="note in filteredDailyNotes"
+                :key="note.id"
+                draggable="true"
+                @dragstart="(e) => handleNoteDragStart(e, note)"
+                class="group flex items-center gap-2 px-3 py-1.5 rounded-md transition-all hover:bg-surface-hover dark:hover:bg-surface-hover-dark cursor-grab active:cursor-grabbing"
+              >
+                <GripVertical class="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-40 transition-opacity text-muted" />
+                <FileText class="w-3 h-3 flex-shrink-0 text-muted/50" />
+                <span class="text-xs text-text-secondary dark:text-text-secondary-dark truncate">{{ note.title }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div v-if="filteredRegularNotes.length === 0 && filteredDailyNotes.length === 0" class="text-center text-xs text-muted dark:text-muted-dark py-8">
+            <FileText class="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p>{{ noteSearch ? 'No matching notes' : 'No notes found' }}</p>
+          </div>
         </div>
       </div>
     </div>
@@ -1266,6 +1423,8 @@ defineExpose({ openBoardById });
           @connect="handleConnect"
           @nodes-change="handleNodesChange"
           @edges-change="handleEdgesChange"
+          @dragover.prevent="handleDragOver"
+          @drop.prevent="handleDrop"
         >
           <template #node-shape="nodeProps">
             <ShapeNode
@@ -1287,6 +1446,12 @@ defineExpose({ openBoardById });
           </template>
           <template #node-text="nodeProps">
             <TextNode
+              v-bind="nodeProps"
+              @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)"
+            />
+          </template>
+          <template #node-note="nodeProps">
+            <NoteCardNode
               v-bind="nodeProps"
               @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)"
             />

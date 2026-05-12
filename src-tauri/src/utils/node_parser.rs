@@ -69,6 +69,12 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
         return None;
     }
 
+    // Extract blocks if markdown
+    let mut blocks = None;
+    if ext == "md" {
+        blocks = Some(extract_blocks(&final_content));
+    }
+
     Some(NodeMetadata {
         id: rel_path,
         node_type,
@@ -78,5 +84,37 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
         created_at,
         updated_at,
         timestamp,
+        blocks,
     })
+}
+
+pub fn extract_blocks(content: &str) -> Vec<(String, String)> {
+    use pulldown_cmark::{Parser, Options, Event, TagEnd};
+    use regex::Regex;
+
+    let mut blocks = Vec::new();
+    let mut options = Options::all();
+    let parser = Parser::new_ext(content, options).into_offset_iter();
+
+    // Regex to find ` ^block-id` at the end of the block
+    let re = Regex::new(r"(?m)\s*\^([a-zA-Z0-9\-]+)\s*$").unwrap();
+
+    for (event, range) in parser {
+        match event {
+            Event::End(TagEnd::Paragraph) | Event::End(TagEnd::Item) => {
+                let block_text = &content[range.clone()];
+                if let Some(captures) = re.captures(block_text) {
+                    if let Some(id_match) = captures.get(1) {
+                        let block_id = id_match.as_str().to_string();
+                        // Extract content without the block ID marker? Or keep it?
+                        // Keep full block text for exact rendering.
+                        blocks.push((block_id, block_text.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    blocks
 }

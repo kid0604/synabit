@@ -36,6 +36,10 @@ fn sync_node_to_search(db: &crate::db::DbBridge, node: &NodeMetadata) {
         &node.updated_at,
         &node.id
     );
+
+    if let Some(blocks) = node.blocks.clone() {
+        let _ = db.upsert_node_blocks(&node.id, blocks);
+    }
 }
 
 
@@ -107,6 +111,8 @@ pub fn scan_all_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
             let _ = db.delete_node(id);
             // Delete edges
             let _ = db.delete_edges(id);
+            // Delete blocks
+            let _ = db.delete_node_blocks(id);
             // Synchronize FTS5 search index
             db.delete_search_entry(id);
         }
@@ -144,6 +150,7 @@ pub fn scan_specific_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_
             // File was deleted
             let _ = db.delete_node(&rel_path);
             let _ = db.delete_edges(&rel_path);
+            let _ = db.delete_node_blocks(&rel_path);
             db.delete_search_entry(&rel_path);
         }
     }
@@ -168,6 +175,221 @@ pub fn get_linked_nodes(state: tauri::State<'_, DbState>, target_title: String, 
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let id_str = target_id.unwrap_or_default();
     db.get_linked_nodes(&target_title, &id_str)
+}
+
+#[tauri::command]
+pub fn get_node_block(state: tauri::State<'_, DbState>, node_id: String, block_id: String) -> AppResult<Option<String>> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    
+    // Get node content from DB
+    let nodes = db.get_all_nodes()?;
+    let node = match nodes.into_iter().find(|n| n.id == node_id) {
+        Some(n) => n,
+        None => return Ok(None),
+    };
+    
+    // Scan content for the line containing ^block_id marker
+    let marker = format!(" ^{}", block_id);
+    let re = block_id_regex();
+    
+    for line in node.content.lines() {
+        let trimmed = line.trim();
+        if trimmed.ends_with(&marker) {
+            // Return line content WITHOUT the ^id marker
+            let clean = re.replace(trimmed, "").to_string();
+            // Also strip frontmatter-style prefixes like "# ", "## ", etc.
+            return Ok(Some(clean.trim().to_string()));
+        }
+    }
+    
+    Ok(None) // Block marker was deleted from source
+}
+
+/// Returned by get_node_headings for each parseable block in a note.
+#[derive(serde::Serialize)]
+pub struct BlockPreview {
+    pub block_id: String,
+    pub content_preview: String,
+    pub raw_content: String,        // Full original line text for file matching
+    pub block_type: String,         // "h1", "h2", "h3", "paragraph"
+    pub has_persistent_id: bool,    // true if ^id already exists in file
+}
+
+/// Generate a 6-char lowercase alphanumeric block ID
+fn generate_block_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::rng();
+    (0..6).map(|_| {
+        let idx = rng.random_range(0..36u32);
+        if idx < 10 { (b'0' + idx as u8) as char } else { (b'a' + (idx - 10) as u8) as char }
+    }).collect()
+}
+
+/// Helper: find safe char boundary at or before byte index (UTF-8 safe)
+fn safe_split(s: &str, max_bytes: usize) -> &str {
+    if max_bytes >= s.len() { return s; }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Regex pattern for ^block-id markers at end of line
+fn block_id_regex() -> regex::Regex {
+    regex::Regex::new(r" \^([a-z0-9]{6})$").unwrap()
+}
+
+/// Parse note content into block previews, detecting existing ^id markers.
+fn parse_blocks_from_content(content: &str) -> Vec<BlockPreview> {
+    // Strip frontmatter
+    let body = if content.starts_with("---") {
+        if let Some(end_pos) = content[3..].find("---") {
+            let skip = 3 + end_pos + 3;
+            if skip <= content.len() {
+                content[skip..].trim()
+            } else {
+                content
+            }
+        } else {
+            content
+        }
+    } else {
+        content
+    };
+
+    let re = block_id_regex();
+    let mut blocks = Vec::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Check for existing ^id marker
+        let (clean_text, existing_id) = if let Some(caps) = re.captures(trimmed) {
+            let id = caps[1].to_string();
+            let text_end = caps.get(0).unwrap().start();
+            (trimmed[..text_end].to_string(), Some(id))
+        } else {
+            (trimmed.to_string(), None)
+        };
+
+        // Determine block type
+        let (block_type, preview) = if let Some(rest) = clean_text.strip_prefix("### ") {
+            ("h3".to_string(), rest.trim().to_string())
+        } else if let Some(rest) = clean_text.strip_prefix("## ") {
+            ("h2".to_string(), rest.trim().to_string())
+        } else if let Some(rest) = clean_text.strip_prefix("# ") {
+            ("h1".to_string(), rest.trim().to_string())
+        } else if !clean_text.starts_with("- ")
+            && !clean_text.starts_with("* ")
+            && !clean_text.starts_with("> ")
+            && !clean_text.starts_with("```")
+            && !clean_text.starts_with("|")
+        {
+            let preview = if clean_text.len() > 120 {
+                format!("{}…", safe_split(&clean_text, 120))
+            } else {
+                clean_text.clone()
+            };
+            ("paragraph".to_string(), preview)
+        } else {
+            continue;
+        };
+
+        // Use existing ^id if present, otherwise use a content hash as temporary display ID
+        let has_persistent_id = existing_id.is_some();
+        let block_id = existing_id.unwrap_or_else(|| {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(clean_text.trim().as_bytes());
+            let result = hasher.finalize();
+            format!("{:02x}{:02x}{:02x}{:02x}", result[0], result[1], result[2], result[3])
+        });
+
+        blocks.push(BlockPreview {
+            block_id,
+            content_preview: preview,
+            raw_content: clean_text,
+            block_type,
+            has_persistent_id,
+        });
+    }
+
+    blocks
+}
+
+#[tauri::command]
+pub fn get_node_headings(state: tauri::State<'_, DbState>, node_id: String) -> AppResult<Vec<BlockPreview>> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Get node content from DB
+    let nodes = db.get_all_nodes()?;
+    let node = nodes.into_iter().find(|n| n.id == node_id);
+    let node = match node {
+        Some(n) => n,
+        None => return Ok(vec![]),
+    };
+
+    Ok(parse_blocks_from_content(&node.content))
+}
+
+#[tauri::command]
+pub fn create_block_reference(
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    node_id: String,
+    content_snippet: String,
+) -> AppResult<String> {
+    let block_id = generate_block_id();
+    let marker = format!(" ^{}", block_id);
+
+    // Read the source file
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &node_id)?;
+    let file_content = std::fs::read_to_string(&abs_path)
+        .map_err(|e| crate::error::AppError::General(format!("Failed to read file: {}", e)))?;
+
+    // Find the line matching content_snippet and append ^id
+    let snippet_trimmed = content_snippet.trim();
+    let mut found = false;
+    let mut updated_lines: Vec<String> = Vec::new();
+
+    for line in file_content.lines() {
+        if !found && line.trim().contains(snippet_trimmed) {
+            // Check if this line already has a ^id — don't add another
+            let re = block_id_regex();
+            if let Some(caps) = re.captures(line.trim()) {
+                // Already has ^id, return existing one
+                let existing_id = caps[1].to_string();
+                return Ok(existing_id);
+            }
+            updated_lines.push(format!("{}{}", line, marker));
+            found = true;
+        } else {
+            updated_lines.push(line.to_string());
+        }
+    }
+
+    if !found {
+        return Err(crate::error::AppError::General(
+            "Content snippet not found in source file".to_string(),
+        ));
+    }
+
+    // Write back to disk
+    let new_content = updated_lines.join("\n");
+    std::fs::write(&abs_path, &new_content)
+        .map_err(|e| crate::error::AppError::General(format!("Failed to write file: {}", e)))?;
+
+    // Update DB with new file content
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(node) = parse_file_to_node(&vault_path, &abs_path) {
+        let _ = db.upsert_node(&node);
+    }
+
+    Ok(block_id)
 }
 
 #[tauri::command]

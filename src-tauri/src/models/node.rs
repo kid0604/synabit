@@ -11,4 +11,6 @@ pub struct NodeMetadata {
     pub created_at: String,
     pub updated_at: String,
     pub timestamp: i64,      // Used for cache invalidation
+    #[serde(skip)]
+    pub blocks: Option<Vec<(String, String)>>, // Block-level contents
 }

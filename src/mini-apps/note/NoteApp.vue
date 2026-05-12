@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare } from 'lucide-vue-next';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
@@ -118,6 +118,19 @@ const managerSearchQuery = ref('');
 
 // ─── Context Menu & Search ─────────────────────────────────
 const activeContextMenu = ref<string | null>(null);
+
+const zenMode = ref(false);
+watch(zenMode, (val) => {
+    if (val) {
+        document.body.classList.add('zen-mode');
+        showNoteSidebar.value = false;
+        showRightSidebar.value = false;
+    } else {
+        document.body.classList.remove('zen-mode');
+        showNoteSidebar.value = true;
+    }
+});
+
 const searchQuery = ref('');
 const newTagInput = ref('');
 const isCaseSensitiveSearch = ref(false);
@@ -551,6 +564,10 @@ const saveNoteForTab = (rawTabId: string) => {
             });
             note.summary = content.substring(0, 150).trim();
             tauriEmit('note-updated', { id: note.id, content });
+            // Notify transclusion nodes that this note's blocks may have changed
+            window.dispatchEvent(new CustomEvent('synabit-block-refresh', {
+              detail: { nodeId: note.id }
+            }));
         } catch(e) { logger.error("Failed to save note:", String(e)); }
     }, 600));
 }
@@ -794,10 +811,20 @@ defineExpose({ openNoteById, scanVault, notes, tabContents, loadNoteFile, curren
 const onClickOutside = () => { activeContextMenu.value = null; };
 let unlistenFns: (() => void)[] = [];
 
+// --- Handle transclusion "Open source note" navigation ---
+const onSynabitNavigate = (e: Event) => {
+  const detail = (e as CustomEvent).detail;
+  if (detail?.type === 'note' && detail?.id) {
+    handleOpenInternalNote({ id: detail.id, type: 'note' });
+  }
+};
+
 onUnmounted(() => {
+    document.body.classList.remove('zen-mode');
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('click', onClickOutside);
+    window.removeEventListener('synabit-navigate', onSynabitNavigate as EventListener);
     unlistenFns.forEach(fn => fn());
     unlistenFns = [];
 });
@@ -806,6 +833,7 @@ onMounted(async () => {
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
   document.addEventListener('click', onClickOutside);
+  window.addEventListener('synabit-navigate', onSynabitNavigate as EventListener);
 
   if (props.isFloatingView && props.floatingNoteId) {
       currentNoteId.value = props.floatingNoteId;
@@ -986,6 +1014,9 @@ onMounted(async () => {
               </button>
             </div>
             <div class="flex gap-2">
+              <button v-if="currentNoteId && viewMode === 'editor'" @click="zenMode = !zenMode" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="zenMode ? 'Exit Zen Mode' : 'Zen Mode'">
+                <Monitor class="w-4 h-4" />
+              </button>
               <button v-if="currentNoteId && viewMode === 'editor'" @click="editorFullWidth = !editorFullWidth" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="editorFullWidth ? 'Standard Width' : 'Full Width'">
                 <!-- Shrink Icon -->
                 <div v-if="editorFullWidth" class="flex items-center space-x-[1px]">
@@ -1004,7 +1035,14 @@ onMounted(async () => {
               </button>
             </div>
           </div>
-          <div v-else class="h-8 flex-shrink-0 w-full z-50 bg-[#fdfdfc] dark:bg-[#242424]" data-tauri-drag-region></div>
+          
+          <div v-if="zenMode" class="absolute top-4 right-4 z-50">
+             <button @click="zenMode = false" class="p-2 bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 rounded-full text-gray-500 hover:text-black dark:hover:text-white transition-all shadow-sm backdrop-blur-md opacity-0 hover:opacity-100 group-hover:opacity-100" title="Exit Zen Mode">
+                <Monitor class="w-4 h-4" />
+             </button>
+          </div>
+
+          <div v-else-if="!isFloatingView && viewMode !== 'editor'" class="h-8 flex-shrink-0 w-full z-50 bg-[#fdfdfc] dark:bg-[#242424]" data-tauri-drag-region></div>
 
           <template v-if="activeTabs.length > 0">
             <template v-for="tabId in activeTabs" :key="tabId">
@@ -1036,8 +1074,8 @@ onMounted(async () => {
                        placeholder="Note Title"></textarea>
                    </div>
                 </div>
-                <div class="mt-4 pb-20 w-full text-text dark:text-text-dark">
-                   <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" @update:model-value="(val: string) => onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
+                <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode}">
+                   <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
                 </div>
                 </div>
               </div>

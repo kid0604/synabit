@@ -98,6 +98,18 @@ impl DbBridge {
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (nodes): {}", e)))?;
 
+        // ─── Node Blocks (for Block-Level Referencing) ──────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS node_blocks (
+                block_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                PRIMARY KEY (block_id, node_id)
+            )",
+            [],
+        ).map_err(|e| AppError::General(format!("DB Schema Error (node_blocks): {}", e)))?;
+
+
         // ─── Whiteboards Table ─────────────────────────────────
         conn.execute(
             "CREATE TABLE IF NOT EXISTS whiteboards (
@@ -195,14 +207,50 @@ impl DbBridge {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  NOTES
+    //  NODE BLOCKS
     // ═══════════════════════════════════════════════════════════
 
+    pub fn upsert_node_blocks(&self, node_id: &str, blocks: Vec<(String, String)>) -> AppResult<()> {
+        // Use INSERT OR REPLACE to keep old block_ids from previous content versions.
+        // This ensures that transclusion references to old block hashes still resolve,
+        // even after the source content has been edited.
+        let mut insert_stmt = self.conn.prepare(
+            "INSERT OR REPLACE INTO node_blocks (block_id, node_id, content) VALUES (?1, ?2, ?3)"
+        ).map_err(|e| AppError::General(format!("DB Error preparing block upsert: {}", e)))?;
+        
+        let mut insert_fts_stmt = self.conn.prepare(
+            "INSERT OR REPLACE INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'block', ?2, '', ?3, '', '', '', ?4)"
+        ).map_err(|e| AppError::General(format!("DB Error preparing block fts upsert: {}", e)))?;
 
+        for (block_id, content) in blocks {
+            let _ = insert_stmt.execute(params![&block_id, node_id, &content]);
+            let item_id = format!("{}#{}", node_id, block_id);
+            let _ = insert_fts_stmt.execute(params![item_id, block_id, content, node_id]);
+        }
+        
+        Ok(())
+    }
 
+    pub fn delete_node_blocks(&self, node_id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM node_blocks WHERE node_id = ?1", params![node_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting blocks: {}", e)))?;
+        let _ = self.conn.execute("DELETE FROM search_index WHERE item_type = 'block' AND path = ?1", params![node_id]);
+        Ok(())
+    }
 
-
-
+    pub fn get_node_block(&self, node_id: &str, block_id: &str) -> AppResult<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT content FROM node_blocks WHERE node_id = ?1 AND block_id = ?2")
+            .map_err(|e| AppError::General(format!("DB Error prepare get block: {}", e)))?;
+        
+        let mut rows = stmt.query(params![node_id, block_id])
+            .map_err(|e| AppError::General(format!("DB Error querying block: {}", e)))?;
+            
+        if let Some(row) = rows.next().unwrap_or(None) {
+            Ok(Some(row.get(0).unwrap_or_default()))
+        } else {
+            Ok(None)
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  WHITEBOARDS
@@ -677,6 +725,24 @@ impl DbBridge {
         .filter_map(|r| r.ok())
         .count();
 
+        // Index node blocks
+        let mut stmt = self.conn.prepare(
+            "SELECT block_id, node_id, content FROM node_blocks"
+        ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
+        let _ = stmt.query_map([], |row| {
+            let block_id: String = row.get(0)?;
+            let node_id: String = row.get(1)?;
+            let content: String = row.get(2)?;
+            let item_id = format!("{}#{}", node_id, block_id);
+            let _ = self.conn.execute(
+                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'block', ?2, '', ?3, '', '', '', ?4)",
+                params![item_id, block_id, content, node_id],
+            );
+            Ok(())
+        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+        .filter_map(|r| r.ok())
+        .count();
+
         Ok(())
     }
 
@@ -912,6 +978,7 @@ impl DbBridge {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 timestamp: row.get(7)?,
+                blocks: None,
             })
         }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 
@@ -934,6 +1001,7 @@ impl DbBridge {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 timestamp: row.get(7)?,
+                blocks: None,
             })
         }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 
@@ -965,6 +1033,7 @@ impl DbBridge {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 timestamp: row.get(7)?,
+                blocks: None,
             })
         }).map_err(|e| AppError::General(format!("DB Map Error (get_linked_nodes): {}", e)))?;
 
@@ -996,6 +1065,7 @@ impl DbBridge {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 timestamp: row.get(7)?,
+                blocks: None,
             })
         }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 
