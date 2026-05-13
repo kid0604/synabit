@@ -21,6 +21,7 @@ import { Markdown } from 'tiptap-markdown';
 import { EquationExtension } from './EquationExtension';
 import { VideoExtension } from './VideoExtension';
 import { AudioExtension } from './AudioExtension';
+import { PdfExtension } from './PdfExtension';
 import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
@@ -46,7 +47,8 @@ import {
   Music as MusicIcon, MapPin as MapPinIcon,
   Smile as SmileIcon, Navigation as NavigationIcon,
   PenTool as PenToolIcon,
-  Link2 as EmbedIcon
+  Link2 as EmbedIcon,
+  BookOpen as BookOpenIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -553,6 +555,44 @@ const confirmWhiteboard = (board: any) => {
 
 // --- Embed Picker Modal (Transclusion 2.0) ---
 const embedPickerModal = ref(false);
+
+// --- PDF Embed Modal ---
+const pdfModal = ref<{ show: boolean }>({ show: false });
+
+const selectPdfFile = async () => {
+  try {
+    const selectedPath = await open({
+      multiple: false,
+      filters: [{
+        name: 'PDF',
+        extensions: ['pdf']
+      }]
+    });
+
+    if (selectedPath && !Array.isArray(selectedPath) && props.vaultPath) {
+      const pathStr = selectedPath as string;
+      const match = pathStr.match(/[\\\/]([^\\\/]+)$/);
+      const filename = match ? match[1] : `document-${Date.now()}.pdf`;
+
+      // Copy to vault assets
+      const relativePath = await invoke<string>('copy_asset_to_vault', {
+        vaultPath: props.vaultPath,
+        sourcePath: pathStr,
+      });
+
+      pdfModal.value.show = false;
+
+      if (editor.value) {
+        editor.value.commands.setPdf({
+          src: relativePath,
+          title: filename.replace(/\.pdf$/i, ''),
+        });
+      }
+    }
+  } catch (e) {
+    logger.error('Failed to embed PDF', e);
+  }
+};
 
 const confirmEmbed = (payload: { nodeId: string; blockId?: string; noteTitle: string }) => {
   if (!editor.value) return;
@@ -1138,6 +1178,15 @@ const slashCommandItems = (): SlashCommandItem[] => [
       embedPickerModal.value = true;
     },
   },
+  {
+    title: 'PDF',
+    description: 'Embed a PDF document',
+    icon: BookOpenIcon,
+    command: async ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).run();
+      pdfModal.value = { show: true };
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -1289,6 +1338,7 @@ const editor = useEditor({
     }),
     VideoExtension,
     AudioExtension,
+    PdfExtension,
     Table.configure({
       resizable: true,
       allowTableNodeSelection: true,
@@ -2290,6 +2340,29 @@ onBeforeUnmount(() => {
       @embed="confirmEmbed"
     />
 
+    <!-- PDF Embed Modal -->
+    <Teleport to="body">
+      <div v-if="pdfModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="pdfModal.show = false">
+        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[400px] p-6">
+          <h3 class="text-base font-semibold text-[#111827] dark:text-[#f4f4f5] mb-1">Embed PDF</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">Select a PDF file to embed in this note</p>
+          <button
+            @click="selectPdfFile"
+            class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#f3f4f6] dark:bg-[#2a2a2a] hover:bg-[#e5e7eb] dark:hover:bg-[#333] border border-[#e5e7eb] dark:border-[#444] rounded-xl text-sm font-medium text-[#111827] dark:text-[#f4f4f5] transition-colors cursor-pointer"
+          >
+            <BookOpenIcon class="w-5 h-5 text-red-500" />
+            Choose PDF File
+          </button>
+          <button
+            @click="pdfModal.show = false"
+            class="w-full mt-2 px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Emoji Picker Modal -->
     <Teleport to="body">
       <div v-if="emojiPicker.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emojiPicker.show = false">
@@ -3055,4 +3128,64 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 
+/* ─── PDF Embed Card ───────────────────────────── */
+.pdf-embed-card {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  margin: 8px 0;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.pdf-embed-card:hover {
+  border-color: #fca5a5;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.08);
+}
+:is(.dark) .pdf-embed-card {
+  border-color: #333;
+  background: linear-gradient(135deg, #1a1212 0%, #1e1e1e 100%);
+}
+:is(.dark) .pdf-embed-card:hover {
+  border-color: #555;
+}
+.pdf-embed-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.pdf-embed-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+.pdf-embed-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pdf-embed-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:is(.dark) .pdf-embed-title {
+  color: #f4f4f5;
+}
+.pdf-embed-path {
+  font-size: 11px;
+  color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 </style>
+

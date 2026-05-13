@@ -1,7 +1,7 @@
 {
   "name": "synabit",
   "private": true,
-  "version": "0.3.7",
+  "version": "0.3.8",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Synabit",
   "type": "module",
@@ -60,6 +60,7 @@
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.0",
     "mermaid": "^11.14.0",
+    "pdfjs-dist": "^5.7.284",
     "perfect-freehand": "^1.2.3",
     "pinia": "^3.0.4",
     "tailwindcss": "^4.2.2",

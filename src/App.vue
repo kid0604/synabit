@@ -15,7 +15,7 @@ const QuickCap = defineAsyncComponent(() => import('./mini-apps/quickcap/QuickCa
 const Tasks = defineAsyncComponent(() => import('./mini-apps/task/TaskApp.vue'));
 const CalendarApp = defineAsyncComponent(() => import('./mini-apps/calendar/CalendarApp.vue'));
 const Nexus = defineAsyncComponent(() => import('./mini-apps/nexus/NexusApp.vue'));
-const FileManager = defineAsyncComponent(() => import('./mini-apps/file/FileApp.vue'));
+const FilesApp = defineAsyncComponent(() => import('./mini-apps/files/FilesApp.vue'));
 const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
 const PeopleApp = defineAsyncComponent(() => import('./mini-apps/people/PeopleApp.vue'));
 const FinanceApp = defineAsyncComponent(() => import('./mini-apps/finance/FinanceApp.vue'));
@@ -81,6 +81,7 @@ const calendarAppRef = ref<any>(null);
 const whiteboardAppRef = ref<any>(null);
 const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
+const filesAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isFloatingView = ref(false);
@@ -183,6 +184,10 @@ const handleEditFromNexus = async (id: string, type: string) => {
         activeTool.value = 'finance';
         callWhenReady(() => financeAppRef.value, 'openMonthById', id);
     }
+    else if (type === 'pdf' || type === 'pdf_highlight') {
+        activeTool.value = 'file';
+        callWhenReady(() => filesAppRef.value, 'openFileById', id);
+    }
 };
 
 import { logger } from './utils/logger';
@@ -227,6 +232,8 @@ onMounted(async () => {
              invoke('migrate_quickcaps_to_nodes', { vaultPath: vaultPath.value }).then(() => {
                  invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
                      await checkUnreadNotifications();
+                     // One-time migration: graph_edges → node_edges
+                     invoke('migrate_graph_edges').catch(logger.error);
                  }).catch(logger.error);
              }).catch(logger.error);
          }).catch(logger.error);
@@ -403,6 +410,7 @@ onUnmounted(() => {
                    <Users class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">People</span>
                 </button>
+
                 <button @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Wallet class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Finance</span>
@@ -449,7 +457,7 @@ onUnmounted(() => {
           <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </template>
         <template v-else-if="activeTool === 'file'">
-           <FileManager :vaultPath="vaultPath" />
+           <FilesApp ref="filesAppRef" :vaultPath="vaultPath" />
         </template>
         <template v-else-if="activeTool === 'whiteboard'">
            <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
@@ -460,6 +468,7 @@ onUnmounted(() => {
         <template v-else-if="activeTool === 'finance'">
            <FinanceApp ref="financeAppRef" :vaultPath="vaultPath" />
         </template>
+
 
         <!-- SETTINGS MODAL -->
         <template #modal>

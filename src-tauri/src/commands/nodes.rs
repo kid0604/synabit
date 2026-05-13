@@ -6,9 +6,27 @@ use crate::db::DbState;
 use crate::error::AppResult;
 use crate::path_utils;
 use crate::utils::node_parser::parse_file_to_node;
-use crate::utils::graph_parser::extract_node_edges;
+use crate::utils::graph_parser::{NodeResolver, extract_resolved_node_edges};
 use crate::models::node::NodeMetadata;
+/// Helper: extract and sync node_edges for a node.
+fn sync_node_edges(db: &crate::db::DbBridge, node: &NodeMetadata, resolver: &NodeResolver) {
+    let _ = db.delete_node_edges_by_source(&node.id);
+    let edges = extract_resolved_node_edges(node, resolver);
+    for edge in edges {
+        let _ = db.upsert_node_edge(&edge);
+    }
+}
 
+/// Helper: delete node_edges for a source
+fn delete_node_edges_for(db: &crate::db::DbBridge, source_id: &str) {
+    let _ = db.delete_node_edges_by_source(source_id);
+}
+
+/// Build a NodeResolver from all nodes in the DB
+fn build_resolver(db: &crate::db::DbBridge) -> NodeResolver {
+    let all_nodes = db.get_all_nodes().unwrap_or_default();
+    NodeResolver::new(&all_nodes)
+}
 fn sync_node_to_search(db: &crate::db::DbBridge, node: &NodeMetadata) {
     let mut tags_str = String::new();
     let mut status = None;
@@ -53,13 +71,14 @@ pub fn scan_all_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     
     // We will get all node timestamps to avoid re-parsing unchanged files.
-    // However, for simplicity and since nodes table is new, let's just get all current nodes
-    // and their timestamps.
     let existing_nodes = db.get_all_nodes()?;
     let mut existing_timestamps = std::collections::HashMap::new();
-    for n in existing_nodes {
-        existing_timestamps.insert(n.id, n.timestamp);
+    for n in &existing_nodes {
+        existing_timestamps.insert(n.id.clone(), n.timestamp);
     }
+    
+    // Build resolver once for all nodes (O(N) setup, O(1) per resolve)
+    let resolver = NodeResolver::new(&existing_nodes);
     
     let mut current_disk_files = HashSet::new();
 
@@ -92,11 +111,7 @@ pub fn scan_all_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
                     if needs_update {
                         if let Some(node) = parse_file_to_node(&vault_path, path) {
                             let _ = db.upsert_node(&node);
-                            // Extract graph edges from node content and properties
-                            let edges = extract_node_edges(&node);
-                            let _ = db.update_edges(&node.id, edges);
-                            
-                            // Synchronize FTS5 search index
+                            sync_node_edges(&db, &node, &resolver);
                             sync_node_to_search(&db, &node);
                         }
                     }
@@ -109,11 +124,8 @@ pub fn scan_all_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
     for id in existing_timestamps.keys() {
         if !current_disk_files.contains(id) {
             let _ = db.delete_node(id);
-            // Delete edges
-            let _ = db.delete_edges(id);
-            // Delete blocks
+            delete_node_edges_for(&db, id);
             let _ = db.delete_node_blocks(id);
-            // Synchronize FTS5 search index
             db.delete_search_entry(id);
         }
     }
@@ -129,6 +141,7 @@ pub fn scan_specific_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_
     }
 
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let resolver = build_resolver(&db);
 
     for rel_path in paths {
         // Validate path stays within vault
@@ -140,16 +153,13 @@ pub fn scan_specific_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_
         if abs_path.exists() && abs_path.is_file() {
             if let Some(node) = parse_file_to_node(&vault_path, &abs_path) {
                 let _ = db.upsert_node(&node);
-                
-                let edges = extract_node_edges(&node);
-                let _ = db.update_edges(&node.id, edges);
-                
+                sync_node_edges(&db, &node, &resolver);
                 sync_node_to_search(&db, &node);
             }
         } else {
             // File was deleted
             let _ = db.delete_node(&rel_path);
-            let _ = db.delete_edges(&rel_path);
+            delete_node_edges_for(&db, &rel_path);
             let _ = db.delete_node_blocks(&rel_path);
             db.delete_search_entry(&rel_path);
         }
@@ -477,8 +487,8 @@ pub fn write_node_file(
             &node.id,
         );
 
-        let edges = extract_node_edges(&node);
-        let _ = db.update_edges(&node.id, edges);
+        let resolver = build_resolver(&db);
+        sync_node_edges(&db, &node, &resolver);
         if let Some(old) = old_title {
             if old != node.title {
                 drop(db); // release lock before updating other files
@@ -536,8 +546,8 @@ fn update_node_mentions(
                         &parsed_node.id,
                     );
 
-                    let edges = crate::utils::graph_parser::extract_node_edges(&parsed_node);
-                    let _ = db.update_edges(&parsed_node.id, edges);
+                    let resolver = build_resolver(&db);
+                    sync_node_edges(&db, &parsed_node, &resolver);
                 }
             }
         }
@@ -557,7 +567,7 @@ pub fn delete_node_file(state: tauri::State<'_, DbState>, vault_path: String, re
     // Update DB immediately
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let _ = db.delete_node(&rel_path);
-    let _ = db.delete_edges(&rel_path);
+    delete_node_edges_for(&db, &rel_path);
     db.delete_search_entry(&rel_path);
     
     Ok(())
@@ -624,8 +634,8 @@ pub fn rename_node_file(state: tauri::State<'_, DbState>, vault_path: String, ol
                 &parsed_node.updated_at,
                 &parsed_node.id,
             );
-            let edges = crate::utils::graph_parser::extract_node_edges(&parsed_node);
-            let _ = db.update_edges(&parsed_node.id, edges);
+            let resolver = build_resolver(&db);
+            sync_node_edges(&db, &parsed_node, &resolver);
             
             if old_title != new_name {
                 drop(db); // release lock
@@ -805,8 +815,8 @@ pub fn migrate_events_to_nodes(state: tauri::State<'_, DbState>, vault_path: Str
                                 if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
                                     let db = state.lock().unwrap_or_else(|e| e.into_inner());
                                     let _ = db.upsert_node(&node);
-                                    let edges = extract_node_edges(&node);
-                                    let _ = db.update_edges(&node.id, edges);
+                                    let resolver = build_resolver(&db);
+                                    sync_node_edges(&db, &node, &resolver);
                                 }
                             }
                         }
@@ -860,8 +870,8 @@ pub fn migrate_notes_to_nodes(state: tauri::State<'_, DbState>, vault_path: Stri
                                 if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
                                     let db = state.lock().unwrap_or_else(|e| e.into_inner());
                                     let _ = db.upsert_node(&node);
-                                    let edges = extract_node_edges(&node);
-                                    let _ = db.update_edges(&node.id, edges);
+                                    let resolver = build_resolver(&db);
+                                    sync_node_edges(&db, &node, &resolver);
                                     
                                     // Update search index manually
                                     let tags = node.properties.get("tags")
@@ -938,8 +948,8 @@ pub fn migrate_tasks_to_nodes(state: tauri::State<'_, DbState>, vault_path: Stri
                                 if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
                                     let db = state.lock().unwrap_or_else(|e| e.into_inner());
                                     let _ = db.upsert_node(&node);
-                                    let edges = extract_node_edges(&node);
-                                    let _ = db.update_edges(&node.id, edges);
+                                    let resolver = build_resolver(&db);
+                                    sync_node_edges(&db, &node, &resolver);
                                     
                                     // Update search index manually
                                     let tags = node.properties.get("tags")
@@ -1029,7 +1039,7 @@ pub fn archive_done_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_,
                                 // Remove old path from DB and index
                                 let db = state.lock().unwrap_or_else(|e| e.into_inner());
                                 let _ = db.delete_node(&node.id);
-                                let _ = db.delete_edges(&node.id);
+                                delete_node_edges_for(&db, &node.id);
                                 db.delete_search_entry(&node.id);
                                 
                                 // The new file will be picked up by the next scan_all_nodes if it's not excluded
@@ -1192,4 +1202,128 @@ pub fn spawn_node_window(app_handle: tauri::AppHandle, node_id: String) -> AppRe
 #[tauri::command]
 pub fn spawn_node_window(_app_handle: tauri::AppHandle, _node_id: String) -> AppResult<()> {
     Err(crate::error::AppError::General("Multiple windows are not supported on mobile".to_string()))
+}
+
+/// List all PDF files in the vault's assets/ directory.
+#[tauri::command]
+pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
+    let assets_dir = Path::new(&vault_path).join("assets");
+    let mut pdfs = Vec::new();
+
+    if !assets_dir.exists() {
+        return Ok(pdfs);
+    }
+
+    for entry in WalkDir::new(&assets_dir).max_depth(2).into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext.eq_ignore_ascii_case("pdf") {
+            let rel_path = path_utils::to_relative(path, &vault_path);
+            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = filename.strip_suffix(".pdf")
+                .or_else(|| filename.strip_suffix(".PDF"))
+                .unwrap_or(&filename)
+                .to_string();
+
+            pdfs.push(serde_json::json!({
+                "name": name,
+                "path": rel_path
+            }));
+        }
+    }
+
+    pdfs.sort_by(|a, b| {
+        let na = a["name"].as_str().unwrap_or("");
+        let nb = b["name"].as_str().unwrap_or("");
+        na.cmp(nb)
+    });
+
+    Ok(pdfs)
+}
+
+#[tauri::command]
+pub fn migrate_files_to_nodes(state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<u32> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Check if already migrated
+    if let Ok(Some(v)) = db.get_kv("files_migrated_to_nodes") {
+        if v == "true" { return Ok(0); }
+    }
+
+    // Read all files from the legacy files table
+    let files = db.get_all_files().unwrap_or_default();
+    let mut count: u32 = 0;
+
+    for file in &files {
+        let node = file.to_node();
+        if db.upsert_node(&node).is_ok() {
+            count += 1;
+        }
+    }
+
+    // Mark migration as done
+    let _ = db.set_kv("files_migrated_to_nodes", "true");
+
+    Ok(count)
+}
+
+/// Migrate legacy graph_edges to new node_edges table.
+/// Resolves target_title_or_path → target_id using NodeResolver.
+/// Skips tags (already in properties). Unresolved targets become ghost nodes.
+#[tauri::command]
+pub fn migrate_graph_edges(state: tauri::State<'_, DbState>) -> AppResult<u32> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Check if already migrated
+    if let Ok(Some(v)) = db.get_kv("edges_migrated_to_node_edges") {
+        if v == "true" {
+            return Ok(0);
+        }
+    }
+
+    let old_edges = db.get_all_edges()?;
+    let all_nodes = db.get_all_nodes()?;
+    let resolver = NodeResolver::new(&all_nodes);
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let mut count: u32 = 0;
+    let mut seen = std::collections::HashSet::new();
+
+    for edge in old_edges {
+        // Skip tags — they live in node properties
+        if edge.link_type == "tag" { continue; }
+
+        let target_id = resolver.resolve(&edge.target_title_or_path, &edge.link_type);
+
+        // Skip self-links
+        if target_id == edge.source_id { continue; }
+
+        let edge_type = match edge.link_type.as_str() {
+            "wikilink" => "wikilink",
+            "internal_link" => "internal_link",
+            _ => "internal_link",
+        };
+
+        let dedup_key = format!("{}-{}-{}", edge.source_id, target_id, edge_type);
+        if !seen.insert(dedup_key) { continue; }
+
+        let new_edge = crate::db::NodeEdge {
+            id: uuid::Uuid::new_v4().to_string(),
+            source_id: edge.source_id,
+            target_id,
+            edge_type: edge_type.to_string(),
+            relation: None,
+            created_at: now.clone(),
+        };
+
+        if db.upsert_node_edge(&new_edge).is_ok() {
+            count += 1;
+        }
+    }
+
+    let _ = db.set_kv("edges_migrated_to_node_edges", "true");
+    Ok(count)
 }

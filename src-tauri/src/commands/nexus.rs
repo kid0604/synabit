@@ -185,19 +185,17 @@ pub fn search_files(
 pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<GraphData> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let items = db.get_all_nexus_items()?;
-    let edges = db.get_all_edges()?;
+    let node_edges = db.get_all_node_edges()?;
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
     
-    let mut node_map = HashMap::new();
-    let mut title_map = HashMap::new();
-    let mut path_map = HashMap::new();
+    let mut node_ids = std::collections::HashSet::new();
     let mut tag_nodes = HashMap::new();
     let mut ghost_nodes = HashMap::new();
     let mut added_links = std::collections::HashSet::new();
 
-    // 1. Populate nodes and mapping
+    // 1. Build graph nodes from items
     for r in &items {
         if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" { continue; }
 
@@ -209,25 +207,15 @@ pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'
             }
         } else { r.title.clone() };
 
-        let node = GraphNode {
+        node_ids.insert(r.id.clone());
+        nodes.push(GraphNode {
             id: r.id.clone(),
             item_type: r.item_type.clone(),
-            title: title.clone(),
+            title,
             tags: r.tags.clone(),
-        };
+        });
 
-        let title_lower = title.to_lowercase().replace(".md", "");
-        title_map.insert(title_lower, r.id.clone());
-        path_map.insert(r.path.clone().to_lowercase(), r.id.clone());
-        
-        let path = std::path::Path::new(&r.path);
-        if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-            path_map.insert(file_name.to_lowercase(), r.id.clone());
-        }
-
-        node_map.insert(r.id.clone(), node);
-
-        // Add Frontmatter Tags
+        // Tag nodes from properties (not from edges)
         for mut tag in r.tags.clone() {
             if tag.starts_with("#") { tag = tag[1..].to_string(); }
             let tag_clean = tag.trim().to_lowercase();
@@ -245,66 +233,45 @@ pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'
 
             let link_key = format!("{}->{}", r.id, tag_id);
             if !added_links.contains(&link_key) {
-                added_links.insert(link_key.clone());
+                added_links.insert(link_key);
                 links.push(GraphLink { source: r.id.clone(), target: tag_id });
             }
         }
     }
 
-    // 2. Build Links from Database Edges
-    for edge in edges {
-        // Skip edges where source is not in node_map (e.g. quickcaps or deleted items)
-        if !node_map.contains_key(&edge.source_id) { continue; }
+    // 2. Build links from node_edges (already ID-based — no resolution needed)
+    for edge in node_edges {
+        // Skip edges where source is not in our graph
+        if !node_ids.contains(&edge.source_id) { continue; }
 
-        let target_id = if edge.link_type == "tag" {
-            let tag_name = edge.target_title_or_path.trim().to_lowercase();
-            if tag_name.is_empty() { continue; }
-            let tag_id = format!("tag-{}", tag_name.replace('#', ""));
-            
-            if !tag_nodes.contains_key(&tag_id) {
-                tag_nodes.insert(tag_id.clone(), GraphNode {
-                    id: tag_id.clone(),
-                    item_type: "tag".to_string(),
-                    title: format!("#{}", tag_name.replace('#', "")),
+        // Handle ghost targets
+        let target_id = if edge.target_id.starts_with("ghost:") {
+            let ghost_title = edge.target_id.strip_prefix("ghost:").unwrap_or(&edge.target_id);
+            let ghost_id = format!("ghost-{}", ghost_title);
+            if !ghost_nodes.contains_key(&ghost_id) {
+                ghost_nodes.insert(ghost_id.clone(), GraphNode {
+                    id: ghost_id.clone(),
+                    item_type: "ghost".to_string(),
+                    title: ghost_title.to_string(),
                     tags: vec![],
                 });
             }
-            tag_id
+            ghost_id
+        } else if !node_ids.contains(&edge.target_id) {
+            continue; // Target node doesn't exist and isn't a ghost — skip
         } else {
-            // For wikilinks and internal_links
-            let link_target = edge.target_title_or_path.to_lowercase();
-            let mut resolved_id = title_map.get(&link_target)
-                .or_else(|| path_map.get(&link_target))
-                .or_else(|| path_map.get(&format!("{}.md", link_target)))
-                .or_else(|| path_map.get(&format!("Notes/{}", link_target)))
-                .cloned();
-
-            if resolved_id.is_none() {
-                // Ghost Node! Target doesn't exist
-                let ghost_id = format!("ghost-{}", link_target);
-                if !ghost_nodes.contains_key(&ghost_id) {
-                    ghost_nodes.insert(ghost_id.clone(), GraphNode {
-                        id: ghost_id.clone(),
-                        item_type: "ghost".to_string(),
-                        title: edge.target_title_or_path.clone(), // Original casing
-                        tags: vec![],
-                    });
-                }
-                resolved_id = Some(ghost_id);
-            }
-            resolved_id.unwrap()
+            edge.target_id.clone()
         };
 
         if target_id != edge.source_id {
             let link_key = format!("{}->{}", edge.source_id, target_id);
             if !added_links.contains(&link_key) {
-                added_links.insert(link_key.clone());
+                added_links.insert(link_key);
                 links.push(GraphLink { source: edge.source_id, target: target_id });
             }
         }
     }
 
-    for (_, node) in node_map { nodes.push(node); }
     for (_, tag_node) in tag_nodes { nodes.push(tag_node); }
     for (_, ghost_node) in ghost_nodes { nodes.push(ghost_node); }
 

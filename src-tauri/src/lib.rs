@@ -94,6 +94,9 @@ pub fn run() {
             nodes::open_daily_note,
             nodes::migrate_notes_to_nodes,
             nodes::spawn_node_window,
+            nodes::list_pdf_files,
+            nodes::migrate_files_to_nodes,
+            nodes::migrate_graph_edges,
             // Files
             files::add_file_source,
             files::get_file_sources,
@@ -107,6 +110,9 @@ pub fn run() {
             files::update_file_metadata,
             files::reindex_sources,
             files::read_local_file_content,
+            files::find_duplicate_files,
+            files::get_file_references,
+            files::delete_file,
             // Nexus
             nexus::get_nexus_items,
             nexus::get_nexus_item,

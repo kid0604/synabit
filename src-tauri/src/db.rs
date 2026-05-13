@@ -9,6 +9,17 @@ use crate::models::whiteboard::WhiteboardMetadata;
 use crate::error::{AppError, AppResult};
 use crate::utils::graph_parser::GraphEdge;
 
+/// New ID-based edge for the knowledge graph
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NodeEdge {
+    pub id: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub edge_type: String,     // 'wikilink' | 'internal_link' | 'embed' | 'manual'
+    pub relation: Option<String>,  // 'references' | 'attachment' | 'related' | custom...
+    pub created_at: String,
+}
+
 pub struct DbBridge {
     conn: Connection,
 }
@@ -98,6 +109,13 @@ impl DbBridge {
             [],
         ).map_err(|e| AppError::General(format!("DB Schema Error (nodes): {}", e)))?;
 
+        // ─── Nodes Indexes (for performance at scale) ────────────
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
+             CREATE INDEX IF NOT EXISTS idx_nodes_type_updated ON nodes(node_type, updated_at);
+             CREATE INDEX IF NOT EXISTS idx_nodes_timestamp ON nodes(timestamp);"
+        ).map_err(|e| AppError::General(format!("DB Schema Error (nodes indexes): {}", e)))?;
+
         // ─── Node Blocks (for Block-Level Referencing) ──────────
         conn.execute(
             "CREATE TABLE IF NOT EXISTS node_blocks (
@@ -140,16 +158,25 @@ impl DbBridge {
             [],
         );
 
-        // ─── Graph Edges (for Nexus Knowledge Graph) ───────────
+        // ─── Node Edges (NEW — ID-based knowledge graph) ────────
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS graph_edges (
+            "CREATE TABLE IF NOT EXISTS node_edges (
+                id TEXT PRIMARY KEY,
                 source_id TEXT NOT NULL,
-                target_title_or_path TEXT NOT NULL,
-                link_type TEXT NOT NULL,
-                PRIMARY KEY (source_id, target_title_or_path, link_type)
+                target_id TEXT NOT NULL,
+                edge_type TEXT NOT NULL,
+                relation TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_id, target_id, edge_type)
             )",
             [],
-        ).map_err(|e| AppError::General(format!("DB Schema Error (graph_edges): {}", e)))?;
+        ).map_err(|e| AppError::General(format!("DB Schema Error (node_edges): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_node_edges_source ON node_edges(source_id);
+             CREATE INDEX IF NOT EXISTS idx_node_edges_target ON node_edges(target_id);
+             CREATE INDEX IF NOT EXISTS idx_node_edges_type ON node_edges(edge_type);"
+        ).map_err(|e| AppError::General(format!("DB Index Error (node_edges): {}", e)))?;
 
         // ─── FTS5 Full-Text Search Index ────────────────────────
         // DROP + CREATE to ensure schema includes the `properties` column.
@@ -336,8 +363,7 @@ impl DbBridge {
                 filename=excluded.filename,
                 extension=excluded.extension,
                 size=excluded.size,
-                modified_at=excluded.modified_at,
-                tags=excluded.tags",
+                modified_at=excluded.modified_at",
             params![
                 file.id, file.path, file.filename, file.extension, file.size, 
                 file.created_at, file.modified_at, tags_json, file.source_type
@@ -401,6 +427,25 @@ impl DbBridge {
             params![new_path, new_filename, extension, old_path],
         ).map_err(|e| AppError::General(format!("DB Rename File Error: {}", e)))?;
         Ok(())
+    }
+
+    /// Search all node content (notes, tasks, events, whiteboards) for references to a filename.
+    /// Returns (id, node_type, title) for each referencing node.
+    pub fn find_nodes_referencing_file(&self, filename: &str) -> AppResult<Vec<(String, String, String)>> {
+        let pattern = format!("%{}%", filename);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_type, title FROM nodes WHERE content LIKE ?1"
+        ).map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
+
+        let rows = stmt.query_map(params![pattern], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+
+        Ok(rows.flatten().collect())
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -586,38 +631,16 @@ impl DbBridge {
 
 
     // ═══════════════════════════════════════════════════════════
-    //  GRAPH EDGES
+    //  GRAPH EDGES (LEGACY — migration only)
     // ═══════════════════════════════════════════════════════════
 
-    pub fn update_edges(&self, source_id: &str, edges: Vec<GraphEdge>) -> AppResult<()> {
-        let mut stmt = self.conn.prepare("DELETE FROM graph_edges WHERE source_id = ?1")
-            .map_err(|e| AppError::General(format!("DB Error prepare delete edges: {}", e)))?;
-        stmt.execute(params![source_id]).map_err(|e| AppError::General(format!("DB Error deleting edges: {}", e)))?;
-
-        let mut insert_stmt = self.conn.prepare(
-            "INSERT INTO graph_edges (source_id, target_title_or_path, link_type) VALUES (?1, ?2, ?3)"
-        ).map_err(|e| AppError::General(format!("DB Error preparing edge insert: {}", e)))?;
-        
-        for edge in edges {
-            let _ = insert_stmt.execute(params![
-                edge.source_id,
-                edge.target_title_or_path,
-                edge.link_type
-            ]); // Ignore individual insert errors (like duplicates)
-        }
-        
-        Ok(())
-    }
-
-    pub fn delete_edges(&self, source_id: &str) -> AppResult<()> {
-        self.conn.execute("DELETE FROM graph_edges WHERE source_id = ?1", params![source_id])
-            .map_err(|e| AppError::General(format!("DB Error deleting edges: {}", e)))?;
-        Ok(())
-    }
-
+    /// Read legacy graph_edges — used ONLY by migrate_graph_edges command.
+    /// Returns empty vec if table doesn't exist (fresh install).
     pub fn get_all_edges(&self) -> AppResult<Vec<GraphEdge>> {
-        let mut stmt = self.conn.prepare("SELECT source_id, target_title_or_path, link_type FROM graph_edges")
-            .map_err(|e| AppError::General(format!("DB Error preparing edges query: {}", e)))?;
+        let mut stmt = match self.conn.prepare("SELECT source_id, target_title_or_path, link_type FROM graph_edges") {
+            Ok(s) => s,
+            Err(_) => return Ok(Vec::new()), // Table doesn't exist on fresh installs
+        };
         let rows = stmt.query_map([], |row| {
             Ok(GraphEdge {
                 source_id: row.get(0)?,
@@ -631,6 +654,76 @@ impl DbBridge {
             edges.push(edge);
         }
         Ok(edges)
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  NODE EDGES (NEW — ID-based knowledge graph)
+    // ═══════════════════════════════════════════════════════════
+
+    pub fn upsert_node_edge(&self, edge: &NodeEdge) -> AppResult<()> {
+        self.conn.execute(
+            "INSERT INTO node_edges (id, source_id, target_id, edge_type, relation, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET
+                relation = COALESCE(excluded.relation, node_edges.relation),
+                id = excluded.id",
+            params![edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.relation, edge.created_at],
+        ).map_err(|e| AppError::General(format!("DB Error upserting node_edge: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn delete_node_edges_by_source(&self, source_id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM node_edges WHERE source_id = ?1", params![source_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting node_edges: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn delete_node_edge(&self, id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM node_edges WHERE id = ?1", params![id])
+            .map_err(|e| AppError::General(format!("DB Error deleting node_edge: {}", e)))?;
+        Ok(())
+    }
+
+    /// Get all edges connected to a node (both incoming and outgoing)
+    pub fn get_node_edges_for_node(&self, node_id: &str) -> AppResult<Vec<NodeEdge>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source_id, target_id, edge_type, relation, created_at
+             FROM node_edges
+             WHERE source_id = ?1 OR target_id = ?1
+             ORDER BY created_at DESC"
+        ).map_err(|e| AppError::General(format!("DB Error querying node_edges: {}", e)))?;
+
+        let rows = stmt.query_map(params![node_id], |row| {
+            Ok(NodeEdge {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                target_id: row.get(2)?,
+                edge_type: row.get(3)?,
+                relation: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Error mapping node_edges: {}", e)))?;
+
+        Ok(rows.flatten().collect())
+    }
+
+    pub fn get_all_node_edges(&self) -> AppResult<Vec<NodeEdge>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source_id, target_id, edge_type, relation, created_at FROM node_edges"
+        ).map_err(|e| AppError::General(format!("DB Error querying all node_edges: {}", e)))?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(NodeEdge {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                target_id: row.get(2)?,
+                edge_type: row.get(3)?,
+                relation: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        }).map_err(|e| AppError::General(format!("DB Error mapping all node_edges: {}", e)))?;
+
+        Ok(rows.flatten().collect())
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1012,16 +1105,20 @@ impl DbBridge {
         Ok(results)
     }
 
-    pub fn get_linked_nodes(&self, target_title: &str, target_id: &str) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+    pub fn get_linked_nodes(&self, _target_title: &str, target_id: &str) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+        if target_id.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.node_type, n.title, n.content, n.properties, n.created_at, n.updated_at, n.timestamp 
              FROM nodes n 
-             JOIN graph_edges e ON n.id = e.source_id 
-             WHERE LOWER(e.target_title_or_path) = LOWER(?1) OR LOWER(e.target_title_or_path) = LOWER(?2)
+             JOIN node_edges e ON n.id = e.source_id 
+             WHERE e.target_id = ?1
              ORDER BY n.updated_at DESC"
         ).map_err(|e| AppError::General(format!("DB Query Error (get_linked_nodes): {}", e)))?;
         
-        let rows = stmt.query_map(params![target_title, target_id], |row| {
+        let rows = stmt.query_map(params![target_id], |row| {
             let props_str: String = row.get(4)?;
             let properties: serde_json::Value = serde_json::from_str(&props_str).unwrap_or(serde_json::Value::Null);
             Ok(crate::models::node::NodeMetadata {
