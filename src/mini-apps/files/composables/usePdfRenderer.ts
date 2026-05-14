@@ -7,6 +7,22 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
+// Polyfill for ReadableStream async iteration (required by pdf.js TextLayer on older WebKit/Tauri)
+if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
+  ReadableStream.prototype[Symbol.asyncIterator] = async function* () {
+    const reader = this.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
+}
+
 export interface PageInfo {
   pageNumber: number;
   width: number;
@@ -45,7 +61,12 @@ export function usePdfRenderer() {
       const arrayBuffer = await response.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
 
-      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const loadingTask = pdfjsLib.getDocument({
+        data: bytes,
+        cMapUrl: 'https://unpkg.com/pdfjs-dist@5.7.284/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@5.7.284/standard_fonts/',
+      });
       const doc = await loadingTask.promise;
       pdfDoc.value = doc;
       totalPages.value = doc.numPages;
@@ -90,6 +111,13 @@ export function usePdfRenderer() {
       textLayerDiv.innerHTML = '';
       textLayerDiv.style.width = `${viewport.width}px`;
       textLayerDiv.style.height = `${viewport.height}px`;
+
+      // pdfjs v5 TextLayer uses CSS var --total-scale-factor for sizing.
+      // In the full pdfjs viewer this is set by PDFPageView; we must set it ourselves.
+      // It must be exactly the logical scale (do NOT multiply by dpr, CSS handles that).
+      textLayerDiv.style.setProperty('--total-scale-factor', `${scale.value}`);
+      textLayerDiv.style.setProperty('--scale-round-x', '1px');
+      textLayerDiv.style.setProperty('--scale-round-y', '1px');
 
       const textContent = await page.getTextContent();
       const { TextLayer } = await import('pdfjs-dist');

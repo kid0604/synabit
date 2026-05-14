@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue';
 import { X, Plus, ExternalLink } from 'lucide-vue-next';
-import type { FileMetadata } from '../composables/useFileStore';
+import type { FileMetadata, FileReference } from '../composables/useFileStore';
 import type { useFileStore } from '../composables/useFileStore';
+import { watch, onMounted } from 'vue';
 
 const props = defineProps<{
   file: FileMetadata;
@@ -41,6 +42,56 @@ const handleRemoveTag = async (tag: string) => {
 };
 
 const isAssetsFile = props.file.path.includes('/assets/');
+
+const fileRefs = ref<FileReference[]>([]);
+const isLoadingRefs = ref(false);
+
+const checkReferences = async () => {
+  fileRefs.value = [];
+  isLoadingRefs.value = true;
+  try {
+    fileRefs.value = await props.store.getFileReferences(props.file.filename);
+  } catch (e) {
+    console.error(e);
+  } finally {
+    isLoadingRefs.value = false;
+  }
+};
+
+const isRenaming = ref(false);
+const renameInput = ref('');
+const renameInputRef = ref<HTMLInputElement | null>(null);
+
+const startRename = async () => {
+  if (isLoadingRefs.value || fileRefs.value.length > 0) return;
+  isRenaming.value = true;
+  renameInput.value = props.file.filename;
+  await nextTick();
+  if (renameInputRef.value) {
+    renameInputRef.value.focus();
+    const extIdx = renameInput.value.lastIndexOf('.');
+    if (extIdx > 0) {
+      renameInputRef.value.setSelectionRange(0, extIdx);
+    } else {
+      renameInputRef.value.select();
+    }
+  }
+};
+
+const handleRename = async () => {
+  if (!isRenaming.value) return;
+  const newName = renameInput.value.trim();
+  if (newName && newName !== props.file.filename) {
+    await props.store.saveFileName(props.file, newName);
+  }
+  isRenaming.value = false;
+};
+
+watch(() => props.file.filename, () => {
+  isRenaming.value = false;
+  checkReferences();
+});
+onMounted(checkReferences);
 </script>
 
 <template>
@@ -55,7 +106,8 @@ const isAssetsFile = props.file.path.includes('/assets/');
       <!-- Filename -->
       <div>
         <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Name</h4>
-        <p class="text-sm font-semibold text-gray-900 dark:text-white break-words">{{ file.filename }}</p>
+        <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full text-sm font-semibold text-gray-900 dark:text-white break-words bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
+        <p v-else @click="startRename" class="text-sm font-semibold text-gray-900 dark:text-white break-words" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ file.filename }}</p>
       </div>
 
       <!-- Properties -->
@@ -90,6 +142,26 @@ const isAssetsFile = props.file.path.includes('/assets/');
               <Plus class="w-3 h-3 inline" /> Add
             </button>
           </template>
+        </div>
+      </div>
+
+      <!-- Used by -->
+      <div>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Used by</h4>
+        <div v-if="isLoadingRefs" class="text-xs text-gray-400">Checking references...</div>
+        <div v-else-if="fileRefs.length === 0" class="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20">
+          <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span class="text-xs font-medium text-green-600 dark:text-green-400">Not used by any node</span>
+        </div>
+        <div v-else class="space-y-1.5">
+          <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 mb-2">
+            <svg class="w-3.5 h-3.5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+            <span class="text-[10px] font-bold text-red-600 dark:text-red-400">Referenced by {{ fileRefs.length }} node(s)</span>
+          </div>
+          <div v-for="ref_ in fileRefs" :key="ref_.node_id" class="flex items-center gap-2 px-3 py-2 bg-white dark:bg-black/30 rounded-lg border border-gray-200/50 dark:border-white/5">
+            <span class="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded text-[9px] font-bold uppercase flex-shrink-0">{{ ref_.node_type }}</span>
+            <span class="text-xs text-gray-700 dark:text-gray-300 truncate">{{ ref_.title || 'Untitled' }}</span>
+          </div>
         </div>
       </div>
     </div>

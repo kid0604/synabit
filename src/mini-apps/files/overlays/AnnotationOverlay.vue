@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { PdfAnnotation } from './composables/usePdfAnnotations';
+import type { PdfAnnotation } from '../composables/usePdfAnnotations';
 
 const props = defineProps<{
   annotations: PdfAnnotation[];
@@ -9,7 +9,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'click-annotation', annotation: PdfAnnotation): void;
+  (e: 'click-annotation', annotation: PdfAnnotation, event: MouseEvent): void;
 }>();
 
 const pageAnnotations = computed(() =>
@@ -40,16 +40,16 @@ const hoverColorMap: Record<string, string> = {
         class="annotation-highlight pointer-events-auto cursor-pointer transition-colors duration-150"
         :style="{
           position: 'absolute',
-          left: `${rect.x * scale * 100 / scale}%`,
-          top: `${rect.y * scale * 100 / scale}%`,
-          width: `${rect.w * scale * 100 / scale}%`,
-          height: `${rect.h * scale * 100 / scale}%`,
+          left: `${rect.x * 100}%`,
+          top: `${rect.y * 100}%`,
+          width: `${rect.w * 100}%`,
+          height: `${rect.h * 100}%`,
           backgroundColor: colorMap[ann.color] || colorMap.yellow,
           borderRadius: '2px',
           mixBlendMode: 'multiply',
         }"
         :title="ann.text"
-        @click.stop="emit('click-annotation', ann)"
+        @click.stop="emit('click-annotation', ann, $event)"
         @mouseenter="($event.target as HTMLElement).style.backgroundColor = hoverColorMap[ann.color] || hoverColorMap.yellow"
         @mouseleave="($event.target as HTMLElement).style.backgroundColor = colorMap[ann.color] || colorMap.yellow"
       >

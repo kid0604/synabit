@@ -184,6 +184,25 @@ export function useFileStore(vaultPath: () => string) {
     }
   };
 
+  const importFiles = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        title: "Select files to import",
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 0) return;
+      isScanning.value = true;
+      const count = await invoke<number>('import_files', { vaultPath: vaultPath(), filePaths: paths });
+      if (count > 0) await fetchFiles();
+    } catch (e) {
+      logger.error("Failed to import files", e);
+    } finally {
+      isScanning.value = false;
+    }
+  };
+
   const removeSource = async (id: string) => {
     try {
       await invoke('remove_file_source', { vaultPath: vaultPath(), sourceId: id });
@@ -353,19 +372,60 @@ export function useFileStore(vaultPath: () => string) {
   });
 
   // ─── Duplicate Finder ─────────────────────────────────────
-  const duplicateReport = ref<DuplicateReport | null>(null);
+  const duplicateGroups = ref<DuplicateGroup[]>([]);
+  const duplicateSummary = ref<{ total_groups: number; total_duplicate_files: number; total_wasted_bytes: number } | null>(null);
   const isScanningDuplicates = ref(false);
+
+  // Computed for backward-compatible template access
+  const duplicateReport = computed<DuplicateReport | null>(() => {
+    if (duplicateGroups.value.length === 0 && !duplicateSummary.value) return null;
+    const summary = duplicateSummary.value || {
+      total_groups: duplicateGroups.value.length,
+      total_duplicate_files: duplicateGroups.value.reduce((acc, g) => acc + g.count - 1, 0),
+      total_wasted_bytes: duplicateGroups.value.reduce((acc, g) => acc + g.wasted_bytes, 0),
+    };
+    return {
+      groups: duplicateGroups.value,
+      ...summary,
+    };
+  });
+
+  let unlistenGroupFound: (() => void) | null = null;
+  let unlistenScanComplete: (() => void) | null = null;
 
   const scanDuplicates = async () => {
     if (isScanningDuplicates.value) return;
     isScanningDuplicates.value = true;
+    duplicateGroups.value = [];
+    duplicateSummary.value = null;
+
+    // Clean up previous listeners
+    unlistenGroupFound?.();
+    unlistenScanComplete?.();
+
+    // Listen for streamed groups
+    unlistenGroupFound = await listen<DuplicateGroup>('duplicate-group-found', (event) => {
+      duplicateGroups.value.push(event.payload);
+    });
+
+    // Listen for scan completion
+    unlistenScanComplete = await listen<{ total_groups: number; total_duplicate_files: number; total_wasted_bytes: number }>('duplicate-scan-complete', (event) => {
+      duplicateSummary.value = event.payload;
+      isScanningDuplicates.value = false;
+      // Clean up listeners
+      unlistenGroupFound?.();
+      unlistenScanComplete?.();
+      unlistenGroupFound = null;
+      unlistenScanComplete = null;
+    });
+
     try {
-      duplicateReport.value = await invoke<DuplicateReport>('find_duplicate_files', { vaultPath: vaultPath() });
+      await invoke('find_duplicate_files', { vaultPath: vaultPath() });
     } catch (e) {
       logger.error("Failed to scan duplicates", e);
-      duplicateReport.value = null;
-    } finally {
       isScanningDuplicates.value = false;
+      unlistenGroupFound?.();
+      unlistenScanComplete?.();
     }
   };
 
@@ -382,6 +442,8 @@ export function useFileStore(vaultPath: () => string) {
     const confirmed = await ask(`Delete "${file.filename}"?\n\nThis will permanently remove the file from disk.`, {
       title: 'Delete File',
       kind: 'warning',
+      okLabel: 'Delete',
+      cancelLabel: 'Cancel'
     });
     if (!confirmed) return false;
 
@@ -442,7 +504,7 @@ export function useFileStore(vaultPath: () => string) {
     isGDriveConnected, gdriveEmail, isConnectingGDrive,
     connectGDrive, syncGDrive, disconnectGDrive,
     // Sources
-    fetchSources, fetchFiles, syncAllSources, addNewSource, removeSource,
+    fetchSources, fetchFiles, syncAllSources, addNewSource, removeSource, importFiles,
     // File ops
     saveFileName, addTag, removeTag, openLocalFile,
     // Duplicates

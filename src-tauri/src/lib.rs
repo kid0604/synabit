@@ -111,6 +111,8 @@ pub fn run() {
             files::reindex_sources,
             files::read_local_file_content,
             files::find_duplicate_files,
+            files::export_annotated_pdf,
+            files::import_files,
             files::get_file_references,
             files::delete_file,
             // Nexus

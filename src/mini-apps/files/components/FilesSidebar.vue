@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FolderOpen, FolderSync, X, Plus, Trash2, HardDrive, Unlink,
-  ImageIcon, Video, Music, Code, FileType, Menu, Copy } from 'lucide-vue-next';
+  ImageIcon, Video, Music, Code, FileType, Menu, Copy, FilePlus2 } from 'lucide-vue-next';
 import type { useFileStore } from '../composables/useFileStore';
 
 const props = defineProps<{
@@ -42,7 +42,10 @@ const catIcon = (t: string) => {
       <div>
         <div class="flex items-center justify-between px-2 mb-2">
           <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Locations</h3>
-          <button @click="store.addNewSource" class="text-gray-400 hover:text-indigo-500 transition-colors cursor-pointer"><Plus class="w-4 h-4" /></button>
+          <div class="flex items-center gap-1">
+            <button @click="store.importFiles" class="text-gray-400 hover:text-emerald-500 transition-colors cursor-pointer" title="Import files"><FilePlus2 class="w-4 h-4" /></button>
+            <button @click="store.addNewSource" class="text-gray-400 hover:text-indigo-500 transition-colors cursor-pointer" title="Add folder"><Plus class="w-4 h-4" /></button>
+          </div>
         </div>
         <div class="space-y-1">
           <button @click="store.activeSourceId.value = null; store.activeType.value = null; store.activeTag.value = null"

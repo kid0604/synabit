@@ -61,6 +61,10 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
             } else {
                 properties = serde_json::json!({});
             }
+            
+            if let Some(c) = json_val.get("content").and_then(|v| v.as_str()) {
+                final_content = c.to_string();
+            }
         } else {
             node_type = ext.to_string();
             properties = serde_json::json!({});

@@ -66,27 +66,67 @@ const isLoadingRefs = ref(false);
 
 const selectDupFile = async (file: FileMetadata) => {
   selectedFile.value = file;
-  fileRefs.value = [];
-  isLoadingRefs.value = true;
-  try {
-    fileRefs.value = await store.getFileReferences(file.filename);
-  } finally {
-    isLoadingRefs.value = false;
-  }
 };
 
-const handleDeleteDupFile = async (file: FileMetadata) => {
+const handleDeleteFile = async (file: FileMetadata) => {
   const deleted = await store.deleteFile(file);
   if (deleted) {
     selectedFile.value = null;
     fileRefs.value = [];
-    // Rescan to update groups
-    await store.scanDuplicates();
+    if (mode.value === 'duplicates') {
+      await store.scanDuplicates();
+    }
   }
 };
 
 // ─── Browse mode ─────────────────────────────────────────────
 const selectedFile = ref<FileMetadata | null>(null);
+const isRenaming = ref(false);
+const renameInput = ref('');
+const renameInputRef = ref<HTMLInputElement | null>(null);
+
+const startRename = async () => {
+  if (isLoadingRefs.value || fileRefs.value.length > 0) return;
+  if (!selectedFile.value) return;
+  isRenaming.value = true;
+  renameInput.value = selectedFile.value.filename;
+  await nextTick();
+  if (renameInputRef.value) {
+    renameInputRef.value.focus();
+    const extIdx = renameInput.value.lastIndexOf('.');
+    if (extIdx > 0) {
+      renameInputRef.value.setSelectionRange(0, extIdx);
+    } else {
+      renameInputRef.value.select();
+    }
+  }
+};
+
+const handleRename = async () => {
+  if (!isRenaming.value || !selectedFile.value) return;
+  const newName = renameInput.value.trim();
+  if (newName && newName !== selectedFile.value.filename) {
+    await store.saveFileName(selectedFile.value, newName);
+  }
+  isRenaming.value = false;
+};
+
+watch(selectedFile, async (newFile) => {
+  isRenaming.value = false;
+  if (newFile) {
+    fileRefs.value = [];
+    isLoadingRefs.value = true;
+    try {
+      fileRefs.value = await store.getFileReferences(newFile.filename);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      isLoadingRefs.value = false;
+    }
+  } else {
+    fileRefs.value = [];
+  }
+});
 const isAddingTag = ref(false);
 const newTagInput = ref('');
 const tagInputRef = ref<HTMLInputElement | null>(null);
@@ -286,7 +326,8 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <component v-else :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50" />
           </div>
           <!-- Name -->
-          <h3 class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white">{{ selectedFile.filename }}</h3>
+          <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
+          <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ selectedFile.filename }}</h3>
           <!-- Metadata -->
           <div class="p-4 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-sm">
             <div class="flex justify-between"><span class="text-gray-500">Type</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ selectedFile.extension }}</span></div>
@@ -311,11 +352,39 @@ onUnmounted(() => { if (unlisten) unlisten(); });
               </button>
             </div>
           </div>
+          <!-- Used by -->
+          <div>
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Used by</h4>
+            <div v-if="isLoadingRefs" class="text-xs text-gray-400">Checking references...</div>
+            <div v-else-if="fileRefs.length === 0" class="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20">
+              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              <span class="text-xs font-medium text-green-600 dark:text-green-400">Not used by any node</span>
+            </div>
+            <div v-else class="space-y-1.5">
+              <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 mb-2">
+                <svg class="w-3.5 h-3.5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+                <span class="text-[10px] font-bold text-red-600 dark:text-red-400">Referenced by {{ fileRefs.length }} node(s)</span>
+              </div>
+              <div v-for="ref_ in fileRefs" :key="ref_.node_id" class="flex items-center gap-2 px-3 py-2 bg-white dark:bg-black/30 rounded-lg border border-gray-200/50 dark:border-white/5">
+                <span class="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded text-[9px] font-bold uppercase flex-shrink-0">{{ ref_.node_type }}</span>
+                <span class="text-xs text-gray-700 dark:text-gray-300 truncate">{{ ref_.title || 'Untitled' }}</span>
+              </div>
+            </div>
+          </div>
         </div>
         <!-- Action -->
-        <div class="p-5 border-t border-gray-200/50 dark:border-white/5">
+        <div class="p-5 border-t border-gray-200/50 dark:border-white/5 space-y-2">
           <button @click="openFileInFocus(selectedFile!)" class="w-full py-2.5 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold text-sm shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer">
             Open File
+          </button>
+          <button
+            @click="handleDeleteFile(selectedFile!)"
+            :disabled="isLoadingRefs || fileRefs.length > 0"
+            class="w-full py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer"
+            :class="isLoadingRefs || fileRefs.length > 0
+              ? 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-gray-600 cursor-not-allowed'
+              : 'bg-red-50 dark:bg-red-500/10 text-red-500 hover:bg-red-100 dark:hover:bg-red-500/20 border border-red-200 dark:border-red-500/20'">
+            {{ fileRefs.length > 0 ? 'In use — cannot delete' : 'Delete File' }}
           </button>
         </div>
       </div>
@@ -452,7 +521,8 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                   <audio v-else-if="['mp3','wav','ogg','m4a'].includes(selectedFile.extension.toLowerCase())" :src="convertFileSrc(selectedFile.path)" controls class="w-full px-4" />
                   <component v-else :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50" />
                 </div>
-                <h3 class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white">{{ selectedFile.filename }}</h3>
+                <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
+                <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ selectedFile.filename }}</h3>
                 <!-- Metadata -->
                 <div class="p-4 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-sm">
                   <div class="flex justify-between"><span class="text-gray-500">Type</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ selectedFile.extension }}</span></div>
@@ -489,7 +559,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                   Open File
                 </button>
                 <button
-                  @click="handleDeleteDupFile(selectedFile!)"
+                  @click="handleDeleteFile(selectedFile!)"
                   :disabled="isLoadingRefs || fileRefs.length > 0"
                   class="w-full py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer"
                   :class="isLoadingRefs || fileRefs.length > 0

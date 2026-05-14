@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, nextTick, computed } from 'vue';
+import { onClickOutside } from '@vueuse/core';
 import { X, Trash2, MessageSquare } from 'lucide-vue-next';
-import type { PdfAnnotation } from './composables/usePdfAnnotations';
+import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
+import type { PdfAnnotation } from '../composables/usePdfAnnotations';
 
 const props = defineProps<{
   show: boolean;
@@ -13,8 +15,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'save', payload: { color: PdfAnnotation['color']; note: string }): void;
-  (e: 'update', payload: { color: PdfAnnotation['color']; note: string }): void;
+  (e: 'save', payload: { color: PdfAnnotation['color']; note: string; text: string }): void;
+  (e: 'update', payload: { color: PdfAnnotation['color']; note: string; text: string }): void;
   (e: 'delete'): void;
 }>();
 
@@ -29,20 +31,49 @@ const selectedColor = ref<PdfAnnotation['color']>('yellow');
 const noteText = ref('');
 const showNote = ref(false);
 const noteInputRef = ref<HTMLTextAreaElement | null>(null);
+const localSelectedText = ref('');
+const popupRef = ref<HTMLElement | null>(null);
+const showConfirmDelete = ref(false);
 
-watch(() => props.show, (v) => {
-  if (v) {
-    if (props.mode === 'edit' && props.annotation) {
-      selectedColor.value = props.annotation.color;
-      noteText.value = props.annotation.content;
-      showNote.value = !!props.annotation.content;
-    } else {
-      selectedColor.value = 'yellow';
-      noteText.value = '';
-      showNote.value = false;
-    }
+onClickOutside(popupRef, () => {
+  if (props.show && !showConfirmDelete.value) {
+    emit('close');
   }
 });
+
+const popupStyle = computed(() => {
+  const top = props.position?.top || 200;
+  const left = props.position?.left || 300;
+  
+  // Constrain to viewport to prevent falling out of bounds
+  const maxTop = window.innerHeight - 350; // approximate max height of popup
+  const maxLeft = window.innerWidth - 380; // approximate max width of popup
+  
+  return {
+    top: `${Math.max(10, Math.min(top, maxTop))}px`,
+    left: `${Math.max(10, Math.min(left, maxLeft))}px`,
+  };
+});
+
+watch(
+  () => [props.show, props.selectedText, props.annotation],
+  () => {
+    if (props.show) {
+      localSelectedText.value = props.selectedText || props.annotation?.text || '';
+      if (props.mode === 'edit' && props.annotation) {
+        selectedColor.value = props.annotation.color;
+        noteText.value = props.annotation.content;
+        showNote.value = !!props.annotation.content;
+      } else {
+        selectedColor.value = 'yellow';
+        noteText.value = '';
+        showNote.value = false;
+      }
+      showConfirmDelete.value = false;
+    }
+  },
+  { immediate: true }
+);
 
 const toggleNote = () => {
   showNote.value = !showNote.value;
@@ -53,9 +84,9 @@ const toggleNote = () => {
 
 const handleSave = () => {
   if (props.mode === 'create') {
-    emit('save', { color: selectedColor.value, note: noteText.value });
+    emit('save', { color: selectedColor.value, note: noteText.value, text: localSelectedText.value });
   } else {
-    emit('update', { color: selectedColor.value, note: noteText.value });
+    emit('update', { color: selectedColor.value, note: noteText.value, text: localSelectedText.value });
   }
 };
 
@@ -63,8 +94,17 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
   selectedColor.value = color;
   // In edit mode, auto-save color change
   if (props.mode === 'edit') {
-    emit('update', { color, note: noteText.value });
+    emit('update', { color, note: noteText.value, text: localSelectedText.value });
   }
+};
+
+const requestDelete = () => {
+  showConfirmDelete.value = true;
+};
+
+const executeDelete = () => {
+  emit('delete');
+  showConfirmDelete.value = false;
 };
 </script>
 
@@ -73,11 +113,11 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
     <Transition name="popup">
       <div
         v-if="show"
+        ref="popupRef"
         class="fixed z-[9999] pdf-annotation-popup"
-        :style="{
-          top: `${(position?.top || 200)}px`,
-          left: `${(position?.left || 300)}px`,
-        }"
+        :style="popupStyle"
+        @mousedown.stop
+        @mouseup.stop
         @click.stop
       >
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl shadow-2xl p-3 min-w-[260px] max-w-[360px]">
@@ -91,9 +131,13 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
             </button>
           </div>
 
-          <!-- Selected text preview -->
-          <div v-if="selectedText || annotation?.text" class="text-xs text-text dark:text-text-dark bg-surface-hover/50 dark:bg-surface-hover-dark/50 rounded-lg p-2 mb-3 max-h-16 overflow-y-auto leading-relaxed italic">
-            "{{ (selectedText || annotation?.text || '').substring(0, 150) }}{{ (selectedText || annotation?.text || '').length > 150 ? '…' : '' }}"
+          <!-- Selected text preview (editable) -->
+          <div v-if="localSelectedText" class="mb-3">
+            <textarea
+              v-model="localSelectedText"
+              class="w-full text-xs text-text dark:text-text-dark bg-surface-hover/50 dark:bg-surface-hover-dark/50 border border-transparent focus:border-accent focus:ring-1 focus:ring-accent dark:focus:ring-accent-dark rounded-lg p-2 max-h-24 overflow-y-auto leading-relaxed resize-none focus:outline-none"
+              rows="3"
+            />
           </div>
 
           <!-- Color picker -->
@@ -141,7 +185,7 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
           <div class="flex items-center gap-2">
             <button
               v-if="mode === 'edit'"
-              @click="emit('delete')"
+              @click="requestDelete"
               class="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer"
             >
               <Trash2 class="w-3.5 h-3.5" />
@@ -164,6 +208,16 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
         </div>
       </div>
     </Transition>
+    
+    <ConfirmModal
+      :show="showConfirmDelete"
+      title="Delete Highlight"
+      message="Are you sure you want to delete this highlight? This action cannot be undone."
+      confirm-text="Delete"
+      :is-destructive="true"
+      @confirm="executeDelete"
+      @cancel="showConfirmDelete = false"
+    />
   </Teleport>
 </template>
 

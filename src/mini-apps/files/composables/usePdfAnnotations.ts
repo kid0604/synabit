@@ -111,12 +111,13 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
   };
 
   /** Update annotation note */
-  const updateAnnotation = async (id: string, updates: { note?: string; color?: PdfAnnotation['color'] }) => {
+  const updateAnnotation = async (id: string, updates: { note?: string; color?: PdfAnnotation['color']; text?: string }) => {
     const ann = annotations.value.find(a => a.id === id);
     if (!ann) return;
 
     const newColor = updates.color || ann.color;
     const newContent = updates.note !== undefined ? updates.note : ann.content;
+    const newText = updates.text !== undefined ? updates.text : ann.text;
 
     try {
       await invoke('write_node_file', {
@@ -129,7 +130,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
           pdf_title: ann.pdfTitle,
           page: ann.page,
           color: newColor,
-          text: ann.text,
+          text: newText,
           rects: ann.rects,
         },
         content: newContent,
@@ -137,6 +138,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
 
       ann.color = newColor;
       ann.content = newContent;
+      ann.text = newText;
       ann.updatedAt = new Date().toISOString();
     } catch (e) {
       console.error('Failed to update annotation:', e);
@@ -185,14 +187,90 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     return md;
   };
 
+  // ─── Drawing Management ────────────────────────────────────
+  const drawings = ref<{ id: string; page: number; strokes: any[] }[]>([]);
+
+  const loadDrawings = async (pdfPath: string) => {
+    try {
+      const nodes = await invoke<any[]>('get_nodes', { nodeType: 'pdf_drawing' });
+      drawings.value = nodes
+        .filter(n => n.properties?.pdf_path === pdfPath)
+        .map(n => ({
+          id: n.id,
+          page: n.properties?.page || 1,
+          strokes: n.properties?.strokes || []
+        }));
+    } catch (e) {
+      console.error('Failed to load drawings:', e);
+      drawings.value = [];
+    }
+  };
+
+  const saveDrawing = async (pdfPath: string, pdfTitle: string, page: number, strokes: any[]) => {
+    // Find existing drawing file for this page
+    const existing = drawings.value.find(d => d.page === page);
+    const id = existing ? existing.id : `PDFAnnotations/${crypto.randomUUID()}.json`;
+
+    try {
+      await invoke('write_node_file', {
+        vaultPath: vaultPath.value,
+        relPath: id,
+        title: `Drawing on page ${page}`,
+        nodeType: 'pdf_drawing',
+        properties: {
+          pdf_path: pdfPath,
+          pdf_title: pdfTitle,
+          page,
+          strokes,
+        },
+        content: '',
+      });
+
+      if (existing) {
+        existing.strokes = strokes;
+      } else {
+        drawings.value.push({ id, page, strokes });
+      }
+    } catch (e) {
+      console.error('Failed to save drawing:', e);
+    }
+  };
+
+  const getPageDrawingStrokes = (page: number) => {
+    return computed(() => {
+      const drawing = drawings.value.find(d => d.page === page);
+      return drawing ? drawing.strokes : [];
+    });
+  };
+
+  const clearAllAnnotations = async (pdfPath: string) => {
+    const nodesToDelete = [...annotations.value.map(a => a.id), ...drawings.value.map(d => d.id)];
+    if (nodesToDelete.length === 0) return;
+
+    try {
+      // Delete all corresponding files
+      await Promise.all(nodesToDelete.map(id => invoke('delete_node_file', { vaultPath: vaultPath.value, relPath: id })));
+      // Reset state
+      annotations.value = [];
+      drawings.value = [];
+    } catch (e) {
+      console.error('Failed to clear annotations:', e);
+    }
+  };
+
   return {
     annotations,
+    drawings,
     isLoading,
     loadAnnotations,
+    loadDrawings,
     createHighlight,
     updateAnnotation,
     deleteAnnotation,
     getPageAnnotations,
     exportToMarkdown,
+    saveDrawing,
+    getPageDrawingStrokes,
+    clearAllAnnotations,
   };
 }

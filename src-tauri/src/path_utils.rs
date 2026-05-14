@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 ///
 /// # Examples
 /// ```
+/// use synabit_lib::path_utils::to_relative;
+/// use std::path::Path;
 /// // On macOS/Linux:
-/// to_relative("Notes/hello.md", "/Users/vault") == "Notes/hello.md"
+/// assert_eq!(to_relative(Path::new("Notes/hello.md"), "/Users/vault"), "Notes/hello.md");
 ///
 /// // On Windows:
-/// to_relative("Notes\\hello.md", "C:\\vault") == "Notes/hello.md"
+/// assert_eq!(to_relative(Path::new("Notes\\hello.md"), "C:\\vault"), "Notes/hello.md");
 /// ```
 pub fn to_relative(full_path: &Path, vault_path: &str) -> String {
     full_path
@@ -35,28 +37,43 @@ pub fn enforce_no_traversal(path: &str) -> Result<(), crate::error::AppError> {
     Ok(())
 }
 
-/// Resolves a relative path within a vault, returning the safe absolute path.
-/// Rejects any path that escapes the vault root after canonicalization.
 pub fn resolve_safe_path(vault_path: &str, relative_path: &str) -> Result<PathBuf, crate::error::AppError> {
+    if relative_path.contains("..") {
+        return Err(crate::error::AppError::InvalidPath("Path traversal detected".into()));
+    }
+
     let base = std::fs::canonicalize(vault_path)
         .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid vault path: {}", e)))?;
     let target = base.join(relative_path);
     
-    // We only canonicalize if the target exists, if it doesn't we check its parent.
-    // canonicalize() fails if the path does not exist.
+    // We only canonicalize if the target exists.
     let canonical = if target.exists() {
         std::fs::canonicalize(&target)
             .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid path: {}", e)))?
     } else {
-        // If it doesn't exist, we canonicalize the parent and append the filename
-        let parent = target.parent().unwrap_or(&target);
-        let canonical_parent = std::fs::canonicalize(parent)
-            .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid parent path: {}", e)))?;
-        if let Some(file_name) = target.file_name() {
-            canonical_parent.join(file_name)
-        } else {
-            canonical_parent
+        // Find the deepest existing ancestor
+        let mut current = target.as_path();
+        let mut non_existing_parts = Vec::new();
+        
+        while !current.exists() {
+            if let Some(parent) = current.parent() {
+                if let Some(file_name) = current.file_name() {
+                    non_existing_parts.push(file_name.to_owned());
+                }
+                current = parent;
+            } else {
+                return Err(crate::error::AppError::InvalidPath("Cannot resolve path root".into()));
+            }
         }
+        
+        let mut resolved = std::fs::canonicalize(current)
+            .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid ancestor path: {}", e)))?;
+            
+        // Re-append the non-existing parts in reverse order
+        for part in non_existing_parts.into_iter().rev() {
+            resolved = resolved.join(part);
+        }
+        resolved
     };
 
     if !canonical.starts_with(&base) {

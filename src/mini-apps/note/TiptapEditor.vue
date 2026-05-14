@@ -3,8 +3,10 @@ import { watch, onBeforeUnmount, onMounted, ref, computed } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import { VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
+import Blockquote from '@tiptap/extension-blockquote';
 import Placeholder from '@tiptap/extension-placeholder';
 import { CustomImage } from './extensions/CustomImage';
+import { ImageCopyFix } from './extensions/ImageCopyFix';
 import { ImageGallery, type GalleryImage } from './extensions/ImageGallery';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
@@ -1291,17 +1293,27 @@ const ArrowExtension = Extension.create({
   },
 });
 
+// --- Custom Blockquote to remove "> " shortcut ---
+const CustomBlockquote = Blockquote.extend({
+  addInputRules() {
+    return [];
+  }
+});
+
 // --- Editor ---
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
   extensions: [
     StarterKit.configure({
       codeBlock: false, // replaced by CodeBlockLowlight
+      blockquote: false, // replaced by CustomBlockquote
     }),
+    CustomBlockquote,
     TabIndentExtension,
     Markdown.configure({ html: true }),
     ArrowExtension,
     CustomImage,
+    ImageCopyFix,
     ImageGallery.configure({ vaultPath: props.vaultPath }),
     TaskList,
     TaskItem.configure({ nested: true }),

@@ -52,6 +52,7 @@ log = "0.4.29"
 base64 = "0.22"
 rand = "0.9"
 pulldown-cmark = "0.13.3"
+lopdf = "0.34"
 
 [dev-dependencies]
 text-diff = "0.4.0"

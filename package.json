@@ -1,7 +1,7 @@
 {
   "name": "synabit",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.3.9",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Synabit",
   "type": "module",
@@ -25,6 +25,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-store": "^2.4.2",
+    "@tiptap/extension-blockquote": "^3.23.2",
     "@tiptap/extension-code-block-lowlight": "^3.22.3",
     "@tiptap/extension-color": "^3.22.3",
     "@tiptap/extension-highlight": "^3.22.2",

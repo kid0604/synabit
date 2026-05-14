@@ -78,6 +78,82 @@ pub fn remove_file_source(_app_handle: tauri::AppHandle, state: tauri::State<'_,
     Ok(())
 }
 
+/// Import individual files: copy them into vault/assets/imported/ and index as file nodes
+#[tauri::command]
+pub fn import_files(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    file_paths: Vec<String>,
+) -> AppResult<u32> {
+    let import_dir = Path::new(&vault_path).join("assets");
+    if !import_dir.exists() {
+        std::fs::create_dir_all(&import_dir)?;
+    }
+
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut count: u32 = 0;
+
+    for src_path in &file_paths {
+        let source = Path::new(src_path);
+        if !source.exists() || !source.is_file() { continue; }
+
+        let original_name = source.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
+
+        // Create a unique filename to avoid collisions, but keep the original name readable
+        let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let dest_name = if import_dir.join(&original_name).exists() {
+            format!("{}_{}.{}", stem, Uuid::new_v4().simple(), extension)
+        } else {
+            original_name.clone()
+        };
+        let dest = import_dir.join(&dest_name);
+
+        if std::fs::copy(source, &dest).is_err() { continue; }
+
+        let abs_path = dest.to_string_lossy().to_string();
+        let meta = std::fs::metadata(&dest).ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let created = meta.as_ref().and_then(|m| m.created().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let created_dt: chrono::DateTime<chrono::Local> = created.into();
+        let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
+
+        let mut ext = extension.clone();
+        if let Ok(Some(kind)) = infer::get_from_path(&dest) {
+            ext = kind.extension().to_string();
+        }
+
+        let file_meta = FileMetadata {
+            id: Uuid::new_v4().to_string(),
+            path: abs_path.clone(),
+            filename: dest_name,
+            extension: ext.clone(),
+            size: size as i64,
+            created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            tags: vec![],
+            source_type: "imported".to_string(),
+        };
+
+        let node = file_meta.to_node();
+        let _ = upsert_file_node(&db, &node, &abs_path);
+
+        // Update search index
+        let props = format!("ext:{} source:imported", ext);
+        db.upsert_search_entry(
+            &node.id, "file", &file_meta.filename,
+            "", &file_meta.extension,
+            &props, None, &file_meta.modified_at, &abs_path,
+        );
+
+        count += 1;
+    }
+
+    Ok(count)
+}
+
 /// Internal scan logic — creates file nodes in the nodes table
 fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<()> {
     let path = Path::new(source_path);
@@ -403,72 +479,288 @@ pub fn get_file_references(_app_handle: tauri::AppHandle, state: tauri::State<'_
     Ok(refs.into_iter().map(|(node_id, node_type, title)| FileReference { node_id, node_type, title }).collect())
 }
 
-#[tauri::command]
-pub fn find_duplicate_files(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<DuplicateReport> {
+/// Compute BLAKE3 hash of first 64KB of a file (partial hash for fast pre-filtering)
+fn blake3_partial_hash(path: &std::path::Path) -> Option<(String, usize)> {
     use std::io::Read;
-
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let nodes = db.get_nodes_by_type("file")?;
-    let files: Vec<FileMetadata> = nodes.iter().filter_map(FileMetadata::from_node).collect();
-
-    // Step 1: Group by size (files with unique sizes can't be duplicates)
-    let mut size_groups: HashMap<i64, Vec<FileMetadata>> = HashMap::new();
-    for file in files {
-        if file.size > 0 {
-            size_groups.entry(file.size).or_default().push(file);
-        }
-    }
-
-    // Step 2: For groups with 2+ files of same size, compute BLAKE3 hash (first 64KB)
-    let mut hash_groups: HashMap<String, Vec<FileMetadata>> = HashMap::new();
-    for (_size, group) in size_groups.into_iter().filter(|(_, g)| g.len() > 1) {
-        for file in group {
-            let path = std::path::Path::new(&file.path);
-            if !path.exists() { continue; }
-            
-            let mut hasher = blake3::Hasher::new();
-            if let Ok(mut f) = std::fs::File::open(path) {
-                let mut buf = [0u8; 65536];
-                if let Ok(n) = f.read(&mut buf) {
-                    hasher.update(&buf[..n]);
-                }
-            } else {
-                continue;
-            }
-            let hash = hasher.finalize().to_hex().to_string();
-            hash_groups.entry(hash).or_default().push(file);
-        }
-    }
-
-    // Step 3: Build duplicate groups from hash matches
-    let mut duplicate_groups: Vec<DuplicateGroup> = hash_groups
-        .into_iter()
-        .filter(|(_, files)| files.len() > 1)
-        .map(|(_, files)| {
-            let count = files.len();
-            let filename = files[0].filename.clone();
-            let extension = files[0].extension.clone();
-            let size = files[0].size;
-            let wasted = size * (count as i64 - 1);
-            DuplicateGroup {
-                filename, extension, size, count,
-                files,
-                wasted_bytes: wasted,
-            }
-        })
-        .collect();
-
-    // Sort by wasted space descending
-    duplicate_groups.sort_by(|a, b| b.wasted_bytes.cmp(&a.wasted_bytes));
-
-    let total_groups = duplicate_groups.len();
-    let total_duplicate_files: usize = duplicate_groups.iter().map(|g| g.count - 1).sum();
-    let total_wasted_bytes: i64 = duplicate_groups.iter().map(|g| g.wasted_bytes).sum();
-
-    Ok(DuplicateReport {
-        groups: duplicate_groups,
-        total_groups,
-        total_duplicate_files,
-        total_wasted_bytes,
-    })
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 65536];
+    let n = f.read(&mut buf).ok()?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&buf[..n]);
+    Some((hasher.finalize().to_hex().to_string(), n))
 }
+
+/// Compute BLAKE3 hash of the entire file (full verification)
+fn blake3_full_hash(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => { hasher.update(&buf[..n]); },
+            Err(_) => return None,
+        }
+    }
+    Some(hasher.finalize().to_hex().to_string())
+}
+
+const PARTIAL_HASH_SIZE: usize = 65536; // 64KB
+
+#[tauri::command]
+pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<()> {
+    use tauri::Emitter;
+
+    // Read file list from DB (fast, no heavy I/O)
+    let files: Vec<FileMetadata> = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        let nodes = db.get_nodes_by_type("file")?;
+        nodes.iter().filter_map(FileMetadata::from_node).collect()
+    };
+
+    // Clone app_handle for use inside blocking thread
+    let handle = app_handle.clone();
+
+    // Offload heavy I/O (hashing) to a blocking thread pool
+    tauri::async_runtime::spawn_blocking(move || {
+        // Step 1: Group by size (files with unique sizes can't be duplicates)
+        let mut size_groups: HashMap<i64, Vec<FileMetadata>> = HashMap::new();
+        for file in files {
+            if file.size > 0 {
+                size_groups.entry(file.size).or_default().push(file);
+            }
+        }
+
+        // Step 2: Partial hash (first 64KB) for groups with 2+ files of same size
+        let mut partial_groups: HashMap<String, (Vec<FileMetadata>, bool)> = HashMap::new();
+        for (_size, group) in size_groups.into_iter().filter(|(_, g)| g.len() > 1) {
+            for file in group {
+                let path = std::path::Path::new(&file.path);
+                if !path.exists() { continue; }
+
+                if let Some((hash, bytes_read)) = blake3_partial_hash(path) {
+                    let is_complete = bytes_read < PARTIAL_HASH_SIZE || file.size <= PARTIAL_HASH_SIZE as i64;
+                    let entry = partial_groups.entry(hash).or_insert_with(|| (Vec::new(), is_complete));
+                    entry.0.push(file);
+                    if !is_complete {
+                        entry.1 = false;
+                    }
+                }
+            }
+        }
+
+        // Step 3: Full hash verification + stream each verified group immediately
+        let mut total_groups: usize = 0;
+        let mut total_duplicate_files: usize = 0;
+        let mut total_wasted_bytes: i64 = 0;
+
+        for (_partial_hash, (candidates, already_complete)) in partial_groups.into_iter() {
+            if candidates.len() < 2 { continue; }
+
+            let verified: Vec<Vec<FileMetadata>> = if already_complete {
+                vec![candidates]
+            } else {
+                let mut full_hash_map: HashMap<String, Vec<FileMetadata>> = HashMap::new();
+                for file in candidates {
+                    let path = std::path::Path::new(&file.path);
+                    if let Some(full_hash) = blake3_full_hash(path) {
+                        full_hash_map.entry(full_hash).or_default().push(file);
+                    }
+                }
+                full_hash_map.into_values().filter(|g| g.len() > 1).collect()
+            };
+
+            // Emit each verified group immediately
+            for files in verified {
+                let count = files.len();
+                let filename = files[0].filename.clone();
+                let extension = files[0].extension.clone();
+                let size = files[0].size;
+                let wasted = size * (count as i64 - 1);
+                let group = DuplicateGroup {
+                    filename, extension, size, count,
+                    files,
+                    wasted_bytes: wasted,
+                };
+
+                total_groups += 1;
+                total_duplicate_files += group.count - 1;
+                total_wasted_bytes += group.wasted_bytes;
+
+                let _ = handle.emit("duplicate-group-found", &group);
+            }
+        }
+
+        // Step 4: Signal scan completion with summary stats
+        #[derive(serde::Serialize, Clone)]
+        struct ScanComplete {
+            total_groups: usize,
+            total_duplicate_files: usize,
+            total_wasted_bytes: i64,
+        }
+
+        let _ = handle.emit("duplicate-scan-complete", ScanComplete {
+            total_groups,
+            total_duplicate_files,
+            total_wasted_bytes,
+        });
+    });
+
+    Ok(())
+}
+
+// ─── Export Annotated PDF ─────────────────────────────────────
+
+#[derive(serde::Deserialize, Debug)]
+pub struct AnnotationRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct ExportAnnotation {
+    pub page: usize,
+    pub color: String,
+    pub text: String,
+    pub rects: Vec<AnnotationRect>,
+    pub note: String,
+}
+
+#[tauri::command]
+pub fn export_annotated_pdf(
+    _app_handle: tauri::AppHandle,
+    vault_path: String,
+    pdf_path: String,
+    annotations: Vec<ExportAnnotation>,
+) -> AppResult<String> {
+    use lopdf::{Document, Object, Dictionary};
+    use lopdf::StringFormat;
+
+    let source = std::path::Path::new(&pdf_path);
+    if !source.exists() {
+        return Err(AppError::InvalidPath("PDF file not found".to_string()));
+    }
+
+    let mut doc = Document::load(&pdf_path)
+        .map_err(|e| AppError::General(format!("Failed to load PDF: {}", e)))?;
+
+    // get_pages() returns BTreeMap<u32, ObjectId> (page_number → object_id)
+    let pages = doc.get_pages();
+
+    for ann in &annotations {
+        let page_num = ann.page as u32;
+        let page_obj_id = match pages.get(&page_num) {
+            Some(id) => *id,
+            None => continue,
+        };
+
+        // Get page MediaBox to convert normalized [0,1] coords to PDF coords
+        let media_box = doc.get_dictionary(page_obj_id)
+            .ok()
+            .and_then(|page| page.get(b"MediaBox").ok().cloned())
+            .and_then(|mb| {
+                if let Object::Array(arr) = mb {
+                    if arr.len() == 4 {
+                        let vals: Vec<f64> = arr.iter().filter_map(|v| match v {
+                            Object::Real(f) => Some(*f as f64),
+                            Object::Integer(i) => Some(*i as f64),
+                            _ => None,
+                        }).collect();
+                        if vals.len() == 4 {
+                            return Some((vals[0], vals[1], vals[2], vals[3]));
+                        }
+                    }
+                }
+                None
+            })
+            .unwrap_or((0.0, 0.0, 612.0, 792.0));
+
+        let page_w = media_box.2 - media_box.0;
+        let page_h = media_box.3 - media_box.1;
+
+        // Map highlight color to RGB
+        let (r, g, b) = match ann.color.as_str() {
+            "yellow" => (1.0_f64, 0.92, 0.23),
+            "green"  => (0.30, 0.69, 0.31),
+            "blue"   => (0.13, 0.59, 0.95),
+            "pink"   => (0.91, 0.12, 0.39),
+            _        => (1.0, 0.92, 0.23),
+        };
+
+        for rect in &ann.rects {
+            // Convert normalized coords → PDF coords (PDF origin = bottom-left)
+            let x1 = media_box.0 + rect.x * page_w;
+            let y1 = media_box.3 - (rect.y + rect.h) * page_h; // flip Y
+            let x2 = x1 + rect.w * page_w;
+            let y2 = y1 + rect.h * page_h;
+
+            let mut annot_dict = Dictionary::new();
+            annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
+            annot_dict.set("Subtype", Object::Name(b"Highlight".to_vec()));
+            annot_dict.set("Rect", Object::Array(vec![
+                Object::Real(x1 as f32), Object::Real(y1 as f32),
+                Object::Real(x2 as f32), Object::Real(y2 as f32),
+            ]));
+            annot_dict.set("C", Object::Array(vec![
+                Object::Real(r as f32), Object::Real(g as f32), Object::Real(b as f32),
+            ]));
+            annot_dict.set("CA", Object::Real(0.4)); // opacity
+            annot_dict.set("F", Object::Integer(4)); // Print flag
+
+            // QuadPoints for highlight rendering
+            annot_dict.set("QuadPoints", Object::Array(vec![
+                Object::Real(x1 as f32), Object::Real(y2 as f32),
+                Object::Real(x2 as f32), Object::Real(y2 as f32),
+                Object::Real(x1 as f32), Object::Real(y1 as f32),
+                Object::Real(x2 as f32), Object::Real(y1 as f32),
+            ]));
+
+            // Add note as Contents if present
+            if !ann.note.is_empty() {
+                annot_dict.set("Contents", Object::String(ann.note.as_bytes().to_vec(), StringFormat::Literal));
+            }
+            if !ann.text.is_empty() {
+                annot_dict.set("T", Object::String(b"Synabit".to_vec(), StringFormat::Literal));
+            }
+
+            let annot_id = doc.add_object(Object::Dictionary(annot_dict));
+
+            // Append annotation reference to the page's /Annots array
+            let existing_annots = doc.get_dictionary(page_obj_id)
+                .ok()
+                .and_then(|p| p.get(b"Annots").ok().cloned());
+
+            let mut annots_array = match existing_annots {
+                Some(Object::Array(arr)) => arr,
+                Some(Object::Reference(r)) => {
+                    if let Ok(Object::Array(arr)) = doc.get_object(r) {
+                        arr.clone()
+                    } else {
+                        vec![]
+                    }
+                },
+                _ => vec![],
+            };
+            annots_array.push(Object::Reference(annot_id));
+
+            // Update the page dictionary with the new Annots array
+            if let Ok(page_dict) = doc.get_dictionary_mut(page_obj_id) {
+                page_dict.set("Annots", Object::Array(annots_array));
+            }
+        }
+    }
+
+    // Save to a new file alongside the original
+    let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+    let parent = source.parent().unwrap_or_else(|| Path::new(&vault_path));
+    let export_path = parent.join(format!("{}_annotated.pdf", stem));
+    
+    doc.save(&export_path)
+        .map_err(|e| AppError::General(format!("Failed to save annotated PDF: {}", e)))?;
+
+    Ok(export_path.to_string_lossy().to_string())
+}
+
