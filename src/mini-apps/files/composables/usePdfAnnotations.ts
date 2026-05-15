@@ -6,6 +6,7 @@ export interface PdfAnnotation {
   nodeType: 'pdf_highlight' | 'pdf_note' | 'pdf_bookmark';
   title: string;
   content: string;  // user note (markdown)
+  pdfId: string;
   pdfPath: string;
   pdfTitle: string;
   page: number;
@@ -21,12 +22,12 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
   const isLoading = ref(false);
 
   /** Load all annotations for a specific PDF */
-  const loadAnnotations = async (pdfPath: string) => {
+  const loadAnnotations = async (fileId: string, pdfPath: string) => {
     isLoading.value = true;
     try {
       const nodes = await invoke<any[]>('get_nodes', { nodeType: 'pdf_highlight' });
       annotations.value = nodes
-        .filter(n => n.properties?.pdf_path === pdfPath)
+        .filter(n => n.properties?.pdf_id === fileId || (!n.properties?.pdf_id && n.properties?.pdf_path === pdfPath))
         .map(nodeToAnnotation)
         .sort((a, b) => a.page - b.page || a.createdAt.localeCompare(b.createdAt));
     } catch (e) {
@@ -43,6 +44,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     nodeType: node.node_type || 'pdf_highlight',
     title: node.title,
     content: node.content || '',
+    pdfId: node.properties?.pdf_id || '',
     pdfPath: node.properties?.pdf_path || '',
     pdfTitle: node.properties?.pdf_title || '',
     page: node.properties?.page || 1,
@@ -55,6 +57,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
 
   /** Create a new highlight annotation */
   const createHighlight = async (opts: {
+    fileId: string;
     pdfPath: string;
     pdfTitle: string;
     page: number;
@@ -66,6 +69,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     const id = `PDFAnnotations/${crypto.randomUUID()}.json`;
     const title = opts.text.length > 80 ? opts.text.substring(0, 80) + '…' : opts.text;
     const properties = {
+      pdf_id: opts.fileId,
       pdf_path: opts.pdfPath,
       pdf_title: opts.pdfTitle,
       page: opts.page,
@@ -90,6 +94,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
         nodeType: 'pdf_highlight',
         title,
         content: opts.note || '',
+        pdfId: opts.fileId,
         pdfPath: opts.pdfPath,
         pdfTitle: opts.pdfTitle,
         page: opts.page,
@@ -126,6 +131,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
         title: ann.title,
         nodeType: 'pdf_highlight',
         properties: {
+          pdf_id: ann.pdfId,
           pdf_path: ann.pdfPath,
           pdf_title: ann.pdfTitle,
           page: ann.page,
@@ -190,11 +196,11 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
   // ─── Drawing Management ────────────────────────────────────
   const drawings = ref<{ id: string; page: number; strokes: any[] }[]>([]);
 
-  const loadDrawings = async (pdfPath: string) => {
+  const loadDrawings = async (fileId: string, pdfPath: string) => {
     try {
       const nodes = await invoke<any[]>('get_nodes', { nodeType: 'pdf_drawing' });
       drawings.value = nodes
-        .filter(n => n.properties?.pdf_path === pdfPath)
+        .filter(n => n.properties?.pdf_id === fileId || (!n.properties?.pdf_id && n.properties?.pdf_path === pdfPath))
         .map(n => ({
           id: n.id,
           page: n.properties?.page || 1,
@@ -206,7 +212,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     }
   };
 
-  const saveDrawing = async (pdfPath: string, pdfTitle: string, page: number, strokes: any[]) => {
+  const saveDrawing = async (fileId: string, pdfPath: string, pdfTitle: string, page: number, strokes: any[]) => {
     // Find existing drawing file for this page
     const existing = drawings.value.find(d => d.page === page);
     const id = existing ? existing.id : `PDFAnnotations/${crypto.randomUUID()}.json`;
@@ -218,6 +224,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
         title: `Drawing on page ${page}`,
         nodeType: 'pdf_drawing',
         properties: {
+          pdf_id: fileId,
           pdf_path: pdfPath,
           pdf_title: pdfTitle,
           page,

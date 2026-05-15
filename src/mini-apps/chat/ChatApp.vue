@@ -3,6 +3,7 @@ import { ref, onMounted, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { Bot, Calendar, CheckSquare, Gift, ArrowRight, MessageSquare } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
+import NavButtons from '../../shared/components/NavButtons.vue';
 
 const props = defineProps<{
     vaultPath: string;
@@ -74,6 +75,7 @@ defineExpose({ fetchMessages });
         <!-- Header -->
         <div class="h-14 border-b border-border dark:border-border-dark flex items-center justify-between px-6 flex-shrink-0 bg-surface dark:bg-surface-dark z-10 shadow-sm" data-tauri-drag-region>
             <div class="flex items-center gap-3 font-semibold">
+                <NavButtons />
                 <MessageSquare class="w-5 h-5 text-blue-500" />
                 <span class="text-lg tracking-tight">Chat</span>
             </div>

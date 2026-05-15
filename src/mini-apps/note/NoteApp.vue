@@ -1,17 +1,25 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor } from 'lucide-vue-next';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor, Download } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
-import { ask } from '@tauri-apps/plugin-dialog';
-
+import { ask, save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
+import { marked } from 'marked';
+import html2pdf from 'html2pdf.js';
 import TiptapEditor from './TiptapEditor.vue';
 import NoteGraph from './NoteGraph.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
 import type { NodeMetadata } from '../../types/ipc';
 import { logger } from '../../utils/logger';
+import type { NavEntry } from '../../stores/useNavigationStore';
+
+// ─── Intra-app navigation ──────────────────────────────────
+const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
+let skipNavPush = false;
 
 export interface NoteItem {
   id: string;
@@ -156,6 +164,9 @@ const isValidDailyFormat = computed(() => {
 
 // ─── Note CRUD Operations ──────────────────────────────────
 const handleNoteSelect = (id: string) => {
+    if (id !== currentNoteId.value && currentNoteId.value && !skipNavPush) {
+        pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
+    }
     currentNoteId.value = id;
     viewMode.value = 'editor';
     if (window.innerWidth < 768) {
@@ -464,7 +475,6 @@ const toggleTagSelection = (tagName: string) => {
 // ─── API Calls ─────────────────────────────────────────────
 async function scanVault() {
    if (!props.vaultPath) return;
-   console.trace('[NoteApp] scanVault called');
    try {
        const scannedNodes = await invoke<NodeMetadata[]>('get_nodes', { nodeType: 'note' });
        const scannedNotes = scannedNodes.map(n => {
@@ -493,14 +503,11 @@ async function scanVault() {
 }
 
 const createNewNote = async () => {
-    console.trace('[NoteApp] createNewNote called, isCreatingNote=', isCreatingNote);
     if (!props.vaultPath || isCreatingNote) return;
     isCreatingNote = true;
     suppressWatcherUntil = Date.now() + 3000;
     try {
-        console.log('[NoteApp] Invoking create_node_file...');
         const newPath = await invoke<string>('create_node_file', { vaultPath: props.vaultPath, directory: 'Notes', nodeType: 'note' });
-        console.log('[NoteApp] Created:', newPath);
         await scanVault();
         if (newPath) {
             currentNoteId.value = newPath;
@@ -551,7 +558,6 @@ const saveNoteForTab = (rawTabId: string) => {
         saveTimeouts.delete(tabId);
         suppressWatcherUntil = Date.now() + 3000;
         const content = tabContents.value[tabId] || '';
-        console.log('[NoteApp] saveNoteForTab executing for:', tabId, 'noteId:', note.id, 'content length:', content.length);
         let fullRaw = content;
         try {
             await invoke('write_node_file', { 
@@ -596,12 +602,129 @@ const onEditorUpdate = (val: string, rawTabId: string) => {
     while (renamedTabs.has(tabId)) {
         tabId = renamedTabs.get(tabId)!;
     }
-    console.log('[NoteApp] onEditorUpdate for tabId:', tabId, 'original:', rawTabId, 'val length:', val.length);
     tabContents.value[tabId] = val;
     if (currentNoteId.value === tabId) {
         tauriEmit('note-updated', { id: tabId, content: val });
     }
     saveNoteForTab(tabId);
+};
+
+// ─── Export Functions ─────────────────────────────────────────
+const showExportMenu = ref(false);
+
+const exportToMarkdown = async () => {
+    showExportMenu.value = false;
+    if (!currentNoteId.value) return;
+    const content = tabContents.value[currentNoteId.value] || '';
+    const note = notes.value.find(n => n.id === currentNoteId.value);
+    const title = note?.title || 'Untitled';
+    try {
+        const filePath = await save({
+            defaultPath: `${title}.md`,
+            filters: [{ name: 'Markdown', extensions: ['md'] }]
+        });
+        if (filePath) {
+            await writeTextFile(filePath, content);
+            logger.info(`Exported to Markdown: ${filePath}`);
+        }
+    } catch (e) {
+        logger.error('Failed to export Markdown', e);
+    }
+};
+
+const exportToHtml = async () => {
+    showExportMenu.value = false;
+    if (!currentNoteId.value) return;
+    const content = tabContents.value[currentNoteId.value] || '';
+    const note = notes.value.find(n => n.id === currentNoteId.value);
+    const title = note?.title || 'Untitled';
+    try {
+        const htmlContent = marked.parse(content) as string;
+        const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 2rem; color: #333; }
+  img { max-width: 100%; height: auto; border-radius: 8px; }
+  code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+  pre { background: #f4f4f5; padding: 1em; border-radius: 8px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; border-radius: 0; }
+  blockquote { border-left: 4px solid #e4e4e7; margin: 0; padding-left: 1em; color: #71717a; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+  th, td { border: 1px solid #e4e4e7; padding: 0.5em; text-align: left; }
+  input[type="checkbox"] { margin-right: 0.5em; }
+</style>
+</head>
+<body>
+${htmlContent}
+</body>
+</html>`;
+        const filePath = await save({
+            defaultPath: `${title}.html`,
+            filters: [{ name: 'HTML', extensions: ['html'] }]
+        });
+        if (filePath) {
+            await writeTextFile(filePath, fullHtml);
+            logger.info(`Exported to HTML: ${filePath}`);
+        }
+    } catch (e) {
+        logger.error('Failed to export HTML', e);
+    }
+};
+
+const exportToPdf = async () => {
+    showExportMenu.value = false;
+    if (!currentNoteId.value) return;
+    const content = tabContents.value[currentNoteId.value] || '';
+    const note = notes.value.find(n => n.id === currentNoteId.value);
+    const title = note?.title || 'Untitled';
+    try {
+        const filePath = await save({
+            defaultPath: `${title}.pdf`,
+            filters: [{ name: 'PDF', extensions: ['pdf'] }]
+        });
+        if (!filePath) return;
+
+        const htmlContent = marked.parse(content) as string;
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = htmlContent;
+        wrapper.style.padding = '40px';
+        wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+        wrapper.style.lineHeight = '1.6';
+        wrapper.style.color = '#333';
+        
+        // Add minimal styles to wrapper children
+        const style = document.createElement('style');
+        style.innerHTML = `
+          img { max-width: 100%; height: auto; border-radius: 8px; }
+          code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+          pre { background: #f4f4f5; padding: 1em; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
+          pre code { background: transparent; padding: 0; }
+          blockquote { border-left: 4px solid #e4e4e7; margin: 0; padding-left: 1em; color: #71717a; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+          th, td { border: 1px solid #e4e4e7; padding: 0.5em; text-align: left; }
+        `;
+        wrapper.appendChild(style);
+        
+        const opt = {
+          margin:       0,
+          filename:     'export.pdf',
+          image:        { type: 'jpeg', quality: 0.98 },
+          html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
+          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
+
+        const pdfBlob = await html2pdf().set(opt).from(wrapper).output('blob');
+        const arrayBuffer = await pdfBlob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        await writeFile(filePath, uint8Array);
+        logger.info(`Exported to PDF: ${filePath}`);
+    } catch (e) {
+        logger.error('Failed to export PDF', e);
+    }
 };
 
 watch(currentNoteId, async (newId) => {
@@ -621,10 +744,12 @@ const handleOpenInternalNote = (data: any) => {
 
     if (type === 'note' || type === 'node') {
         const exists = notes.value.find(n => n.id === noteId);
-        if (exists) { currentNoteId.value = noteId; }
-        else {
-            const existsByName = notes.value.find(n => n.id.endsWith(noteId));
-            if (existsByName) currentNoteId.value = existsByName.id;
+        const resolved = exists || notes.value.find(n => n.id.endsWith(noteId));
+        if (resolved) {
+            if (resolved.id !== currentNoteId.value && currentNoteId.value && !skipNavPush) {
+                pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
+            }
+            currentNoteId.value = resolved.id;
         }
     } else {
         // Emit up to App.vue to switch tools and open the node
@@ -786,7 +911,11 @@ watch(searchQuery, (q) => {
 });
 
 // ─── Public API for parent (Nexus cross-navigation) ────────
-const openNoteById = async (id: string) => {
+const openNoteById = async (id: string, _skipNavPush = false) => {
+    // Push current note onto nav stack if switching to a different note
+    if (!_skipNavPush && currentNoteId.value && currentNoteId.value !== id && !skipNavPush) {
+        pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
+    }
     // Set synchronously to prevent concurrent scanVault from overwriting it
     currentNoteId.value = id;
     viewMode.value = 'editor';
@@ -1008,6 +1137,7 @@ onMounted(async () => {
       <template v-if="viewMode === 'editor'">
           <div v-if="!isFloatingView" class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
             <div class="flex gap-2">
+              <NavButtons />
               <button @click="showNoteSidebar = !showNoteSidebar" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Sidebar">
                 <PanelLeftClose v-if="showNoteSidebar" class="w-4 h-4" />
                 <PanelLeft v-else class="w-4 h-4" />
@@ -1029,6 +1159,16 @@ onMounted(async () => {
                   <ArrowRight class="w-3 h-3" />
                 </div>
               </button>
+              <div class="relative flex items-center h-full">
+                <button v-if="currentNoteId && viewMode === 'editor'" @click="showExportMenu = !showExportMenu" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" title="Export Note">
+                  <Download class="w-4 h-4" />
+                </button>
+                <div v-if="showExportMenu" class="absolute right-0 top-8 w-40 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden" @click.stop>
+                  <button @click="exportToMarkdown" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">Markdown (.md)</button>
+                  <button @click="exportToHtml" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">HTML (.html)</button>
+                  <button @click="exportToPdf" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">PDF (.pdf)</button>
+                </div>
+              </div>
               <button v-if="currentNoteId && viewMode === 'editor'" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
                 <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
                 <PanelRight v-else class="w-4 h-4" />

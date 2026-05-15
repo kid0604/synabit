@@ -17,6 +17,7 @@ import {
 } from 'lucide-vue-next';
 
 const props = defineProps<{
+  fileId: string;
   filePath: string;
   vaultPath: string;
 }>();
@@ -33,11 +34,11 @@ const showSidebar = ref(false);
 
 // ─── Load PDF when filePath changes ──────────────────────────
 watch(() => props.filePath, async (path) => {
-  if (path) {
+  if (path && props.fileId) {
     const src = convertFileSrc(path);
     await renderer.loadPdf(src);
-    await annotations.loadAnnotations(path);
-    await annotations.loadDrawings(path);
+    await annotations.loadAnnotations(props.fileId, path);
+    await annotations.loadDrawings(props.fileId, path);
   }
 }, { immediate: true });
 
@@ -269,6 +270,7 @@ const handleClickAnnotation = (ann: PdfAnnotation, event?: MouseEvent) => {
 const handleSaveHighlight = async (payload: { color: PdfAnnotation['color']; note: string; text: string }) => {
   const s = popupState.value;
   await annotations.createHighlight({
+    fileId: props.fileId,
     pdfPath: props.filePath,
     pdfTitle: renderer.pdfTitle.value,
     page: s.page,
@@ -302,7 +304,7 @@ const drawColor = ref('#ef4444');
 const drawSize = ref(3);
 
 const handleDrawingSave = async (pageNum: number, strokes: any[]) => {
-  await annotations.saveDrawing(props.filePath, renderer.pdfTitle.value, pageNum, strokes);
+  await annotations.saveDrawing(props.fileId, props.filePath, renderer.pdfTitle.value, pageNum, strokes);
 };
 
 // ─── Mode toggles ────────────────────────────────────────────

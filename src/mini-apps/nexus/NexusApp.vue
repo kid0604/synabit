@@ -5,6 +5,7 @@ import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calenda
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
 
 const emit = defineEmits<{
@@ -250,6 +251,7 @@ const cleanSnippet = (snippet: string) => {
         <!-- Header / Search OmniBar (Floating) -->
         <div class="absolute top-0 inset-x-0 pt-10 px-8 pb-6 z-20 pointer-events-none">
             <div class="max-w-3xl mx-auto flex items-center gap-6 pointer-events-auto">
+                <NavButtons />
                 <div class="flex-1 relative group">
                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                        <Search class="h-5 w-5 text-gray-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors" />

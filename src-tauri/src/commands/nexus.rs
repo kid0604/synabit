@@ -34,6 +34,7 @@ pub fn get_nexus_items(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
         if let Ok(rows) = db.get_all_nexus_items() {
             for r in rows {
                 if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" { continue; }
+                if r.path.starts_with("Messages/") || r.path.contains("/Messages/") || r.path.starts_with("Messages\\") || r.path.contains("\\Messages\\") { continue; }
                 let title = if r.title.is_empty() {
                     match r.item_type.as_str() {
                         "note" => "Untitled Note".to_string(),
@@ -198,6 +199,7 @@ pub fn get_nexus_graph_data(_app_handle: tauri::AppHandle, state: tauri::State<'
     // 1. Build graph nodes from items
     for r in &items {
         if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" { continue; }
+        if r.path.starts_with("Messages/") || r.path.contains("/Messages/") || r.path.starts_with("Messages\\") || r.path.contains("\\Messages\\") { continue; }
 
         let title = if r.title.is_empty() {
             match r.item_type.as_str() {

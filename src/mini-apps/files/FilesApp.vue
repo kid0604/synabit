@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualList, useWindowSize } from '@vueuse/core';
 import { Search, LayoutGrid, List, FolderSync, Menu, ArrowLeft, FileText, ImageIcon, Video, Music, Code, FileArchive, FileType, Info, Copy } from 'lucide-vue-next';
 import { useFileStore, type FileMetadata, type FileReference } from './composables/useFileStore';
 import { getViewer, getViewerType } from './composables/useViewerRegistry';
 import FilesSidebar from './components/FilesSidebar.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 import FilesTabs, { type FileTab } from './components/FilesTabs.vue';
 import FilesInfoPanel from './components/FilesInfoPanel.vue';
+import type { NavEntry } from '../../stores/useNavigationStore';
 
 const props = defineProps<{ vaultPath: string }>();
 const store = useFileStore(() => props.vaultPath);
@@ -21,6 +23,10 @@ const viewMode = ref<'grid' | 'list'>('list');
 const openTabs = ref<FileTab[]>([]);
 const activeTabId = ref<string | null>(null);
 
+// ─── Intra-app navigation ──────────────────────────────────
+const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
+let skipNavPush = false;
+
 const activeTab = computed(() => openTabs.value.find(t => t.id === activeTabId.value) || null);
 const activeViewer = computed(() => activeTab.value ? getViewer(activeTab.value.extension) : null);
 const showInfoPanel = ref(false);
@@ -30,6 +36,9 @@ const activeFileMetadata = computed(() => {
 });
 
 const openFileInFocus = (file: FileMetadata) => {
+  if (activeTabId.value && activeTabId.value !== file.id && !skipNavPush) {
+    pushNavigation?.({ app: 'file', itemId: activeTabId.value });
+  }
   const existing = openTabs.value.find(t => t.id === file.id);
   if (existing) {
     activeTabId.value = existing.id;
@@ -180,12 +189,19 @@ const gridRows = computed(() => {
 const { list: virtualGridRows, containerProps: gridContainerProps, wrapperProps: gridWrapperProps } = useVirtualList(gridRows, { itemHeight: 180 });
 
 // ─── Public API ──────────────────────────────────────────────
-const openFileById = (id: string) => {
+const openFileById = (id: string, _skipNavPush = false) => {
+  if (!_skipNavPush && activeTabId.value && activeTabId.value !== id && !skipNavPush) {
+    pushNavigation?.({ app: 'file', itemId: activeTabId.value });
+  }
   const file = store.files.value.find(f => f.id === id || f.path === id);
-  if (file) openFileInFocus(file);
+  if (file) {
+    skipNavPush = true;
+    openFileInFocus(file);
+    skipNavPush = false;
+  }
 };
 
-defineExpose({ openFileById });
+defineExpose({ openFileById, activeTabId });
 
 // ─── Session Persistence ─────────────────────────────────────
 const SESSION_KEY = 'files_app_state';
@@ -239,6 +255,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
       <div class="flex-1 flex flex-col relative z-10 min-w-0">
         <!-- Header -->
         <div class="h-14 px-4 md:px-8 flex items-center gap-3 justify-between border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
+          <NavButtons />
           <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 cursor-pointer"><Menu class="w-5 h-5" /></button>
           <div class="flex-1 max-w-xl relative group">
             <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500" />
@@ -409,6 +426,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <div v-if="activeTab" class="flex-1 flex overflow-hidden">
           <component
             :is="activeViewer!"
+            :fileId="activeTab.id"
             :filePath="activeTab.path"
             :vaultPath="vaultPath"
             :key="activeTab.id"

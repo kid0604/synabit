@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Users, Plus, Mail, Phone, Building, Hash, Search, CheckSquare, FileText, Zap, Edit2, Gift } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
 
 defineProps<{
@@ -179,6 +180,7 @@ defineExpose({ openPersonById });
             <!-- Header -->
             <div class="h-14 border-b border-border dark:border-border-dark flex items-center justify-between px-4 flex-shrink-0" data-tauri-drag-region>
                 <div class="flex items-center gap-2 font-semibold">
+                    <NavButtons />
                     <Users class="w-4 h-4 text-text-secondary dark:text-text-secondary-dark" />
                     <span>People</span>
                 </div>

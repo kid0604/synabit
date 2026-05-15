@@ -12,6 +12,7 @@ import TiptapImage from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import TaskEditModal from '../task/TaskEditModal.vue';
 import NoteEditModal from '../note/NoteEditModal.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
 
 const props = defineProps<{
@@ -842,6 +843,8 @@ const deleteCap = async (id: string) => {
     
     <!-- Filter Bar -->
     <div class="w-full max-w-7xl px-4 flex items-center justify-between mb-8 mx-auto -mt-4">
+        <div class="flex items-center gap-3 flex-1">
+        <NavButtons />
         <div class="relative w-full sm:max-w-xs group">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                 <Search class="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
@@ -855,6 +858,7 @@ const deleteCap = async (id: string) => {
             <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer">
                 <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
             </button>
+        </div>
         </div>
         <div class="ml-4 flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm md:hidden">
             <button 

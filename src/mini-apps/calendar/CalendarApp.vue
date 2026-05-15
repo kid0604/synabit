@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2 } from 'lucide-vue-next';
+import NavButtons from '../../shared/components/NavButtons.vue';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ (e: 'open-node', id: string, type: string): void }>();
@@ -686,6 +687,7 @@ const deleteEvent = async (ev: EventMetadata) => {
          <header class="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 flex-shrink-0 gap-3" data-tauri-drag-region>
              <div class="flex items-center justify-between w-full md:w-auto">
                  <div class="flex items-center gap-3">
+                     <NavButtons />
                      <CalendarIcon class="w-5 h-5 md:w-6 md:h-6 text-purple-500" />
                      <h1 class="text-xl md:text-2xl font-bold tracking-tight select-none">
                          {{ headerDisplayString }}
@@ -991,11 +993,11 @@ const deleteEvent = async (ev: EventMetadata) => {
                             <div v-else class="flex flex-col gap-2">
                                 <input v-model="startAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                                 <div class="flex items-center gap-1 w-full">
-                                    <select v-model="startAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                    <select v-model="startAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center appearance-none cursor-pointer" style="-webkit-appearance: none;">
                                         <option v-for="h in hourOptions" :key="h" :value="h">{{ h }}</option>
                                     </select>
                                     <span class="text-gray-400 font-bold">:</span>
-                                    <select v-model="startAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                    <select v-model="startAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center appearance-none cursor-pointer" style="-webkit-appearance: none;">
                                         <option v-for="m in startAtMinuteOptions" :key="m" :value="m">{{ m }}</option>
                                     </select>
                                 </div>
@@ -1007,11 +1009,11 @@ const deleteEvent = async (ev: EventMetadata) => {
                             <div v-else class="flex flex-col gap-2">
                                 <input v-model="endAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                                 <div class="flex items-center gap-1 w-full">
-                                    <select v-model="endAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                    <select v-model="endAtHour" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center appearance-none cursor-pointer" style="-webkit-appearance: none;">
                                         <option v-for="h in hourOptions" :key="h" :value="h">{{ h }}</option>
                                     </select>
                                     <span class="text-gray-400 font-bold">:</span>
-                                    <select v-model="endAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-1 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center" style="color-scheme: dark;">
+                                    <select v-model="endAtMinute" class="flex-1 h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white text-center appearance-none cursor-pointer" style="-webkit-appearance: none;">
                                         <option v-for="m in endAtMinuteOptions" :key="m" :value="m">{{ m }}</option>
                                     </select>
                                 </div>

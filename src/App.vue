@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
 import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -32,6 +32,7 @@ import MobileLayout from './layouts/MobileLayout.vue';
 
 // Stores
 import { useAppStore } from './stores/useAppStore';
+import { useNavigationStore, type NavEntry } from './stores/useNavigationStore';
 import { storeToRefs } from 'pinia';
 
 // ─── Settings ─────────────────────────────────────────────
@@ -47,9 +48,37 @@ const { useMobileLayout, isMobileOS } = usePlatform();
 // ─── App View State ───────────────────────────────────────
 const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people' | 'finance' | 'chat'>('nexus');
 
+// ─── Navigation History (Back/Forward) — declared early so watcher can use them ─────
+const navStore = useNavigationStore();
+let isRestoringNav = false;
+
+const getItemIdForApp = (app: string): string | undefined => {
+    switch (app) {
+        case 'note': return noteAppRef.value?.currentNoteId || undefined;
+        case 'whiteboard': return whiteboardAppRef.value?.currentBoardId || undefined;
+        case 'file': return filesAppRef.value?.activeTabId || undefined;
+        default: return undefined;
+    }
+};
+
+const getCurrentItemId = (): string | undefined => getItemIdForApp(activeTool.value);
+
+const getCurrentScrollTop = (): number => {
+    const el = document.querySelector('[data-app-scroll]') as HTMLElement;
+    return el?.scrollTop || 0;
+};
+
 watch(activeTool, async (newTool, oldTool) => {
   if (oldTool !== newTool) {
-    logger.info(`Navigated to mini-app: ${newTool} (from ${oldTool})`);
+    logger.debug(`Navigated to mini-app: ${newTool} (from ${oldTool})`);
+    // Push old location onto the back stack (unless we're restoring from nav history)
+    if (!isRestoringNav && oldTool) {
+      navStore.pushNavigation({
+        app: oldTool,
+        itemId: getItemIdForApp(oldTool),
+        scrollTop: getCurrentScrollTop(),
+      });
+    }
   }
   
   if (newTool === 'chat' && hasUnreadNotifications.value && vaultPath.value) {
@@ -137,6 +166,51 @@ const clearVault = () => {
     gdrive.setupAutoSync();
 };
 
+// ─── Navigation History (Back/Forward) — continued ───────
+
+/** Build a NavEntry snapshot of the current state */
+const buildCurrentEntry = (): NavEntry => ({
+    app: activeTool.value,
+    itemId: getCurrentItemId(),
+    scrollTop: getCurrentScrollTop(),
+});
+
+/** Navigate to a NavEntry — switch tool and restore item + scroll */
+const navigateToEntry = (entry: NavEntry) => {
+    isRestoringNav = true;
+    activeTool.value = entry.app as any;
+    if (entry.itemId) {
+        navigateToItem(entry.app, entry.itemId, entry.scrollTop, true);
+    } else if (entry.scrollTop) {
+        setTimeout(() => {
+            const el = document.querySelector('[data-app-scroll]') as HTMLElement;
+            if (el) el.scrollTop = entry.scrollTop!;
+        }, 150);
+    }
+    setTimeout(() => { isRestoringNav = false; }, 300);
+};
+
+const handleGoBack = () => {
+    const entry = navStore.goBack(buildCurrentEntry());
+    if (entry) navigateToEntry(entry);
+};
+
+const handleGoForward = () => {
+    const entry = navStore.goForward(buildCurrentEntry());
+    if (entry) navigateToEntry(entry);
+};
+
+// Provide navigation to all child mini-apps via inject
+// NOTE: Pinia auto-unwraps computed refs, so navStore.canGoBack returns a plain boolean.
+// We must wrap in computed() to keep reactivity through provide/inject.
+provide('canGoBack', computed(() => navStore.canGoBack));
+provide('canGoForward', computed(() => navStore.canGoForward));
+provide('goBack', handleGoBack);
+provide('goForward', handleGoForward);
+provide('pushNavigation', (entry?: NavEntry) => {
+    navStore.pushNavigation(entry || buildCurrentEntry());
+});
+
 // ─── Cross-app Navigation (Nexus → Note/Task/QuickCap) ───
 
 const callWhenReady = (getRef: () => any, method: string, ...args: any[]) => {
@@ -154,8 +228,30 @@ const callWhenReady = (getRef: () => any, method: string, ...args: any[]) => {
     }, 50);
 };
 
+/** Navigate to a specific item within an app, optionally restoring scroll */
+const navigateToItem = (app: string, itemId: string, scrollTop?: number, skipNavPush = false) => {
+    const restoreScroll = () => {
+        if (scrollTop) {
+            setTimeout(() => {
+                const el = document.querySelector('[data-app-scroll]') as HTMLElement;
+                if (el) el.scrollTop = scrollTop;
+            }, 200);
+        }
+    };
+
+    if (app === 'note') { callWhenReady(() => noteAppRef.value, 'openNoteById', itemId, skipNavPush); restoreScroll(); }
+    else if (app === 'quickcap') { callWhenReady(() => quickCapAppRef.value, 'openEditById', itemId); }
+    else if (app === 'task') { callWhenReady(() => taskAppRef.value, 'openEditById', itemId); }
+    else if (app === 'calendar') { callWhenReady(() => calendarAppRef.value, 'openEventById', itemId); }
+    else if (app === 'whiteboard') { callWhenReady(() => whiteboardAppRef.value, 'openBoardById', itemId, skipNavPush); restoreScroll(); }
+    else if (app === 'people') { callWhenReady(() => peopleAppRef.value, 'openPersonById', itemId); }
+    else if (app === 'finance') { callWhenReady(() => financeAppRef.value, 'openMonthById', itemId); }
+    else if (app === 'file') { callWhenReady(() => filesAppRef.value, 'openFileById', itemId, skipNavPush); }
+};
+
 const handleEditFromNexus = async (id: string, type: string) => {
-    logger.info(`App.vue: handleEditFromNexus received id: ${id}, type: ${type}`);
+    logger.debug(`App.vue: handleEditFromNexus received id: ${id}, type: ${type}`);
+    // Note: watcher on activeTool now handles pushing to back stack automatically
     if (type === 'note') { 
         activeTool.value = 'note'; 
         callWhenReady(() => noteAppRef.value, 'openNoteById', id);
@@ -205,6 +301,18 @@ const checkUnreadNotifications = async () => {
     }
 };
 
+// ─── Keyboard shortcuts for navigation ───────────────────
+const handleKeyboardNav = (e: KeyboardEvent) => {
+    const isMeta = e.metaKey || e.ctrlKey;
+    if (isMeta && e.key === '[') {
+        e.preventDefault();
+        handleGoBack();
+    } else if (isMeta && e.key === ']') {
+        e.preventDefault();
+        handleGoForward();
+    }
+};
+
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
   logger.info("Synabit Frontend App Mounting...");
@@ -212,6 +320,7 @@ onMounted(async () => {
   await initSettings();
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  window.addEventListener('keydown', handleKeyboardNav);
 
   const params = new URLSearchParams(window.location.search);
   const floatingId = params.get('floatingNote');
@@ -312,6 +421,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
+  window.removeEventListener('keydown', handleKeyboardNav);
 });
 </script>
 
@@ -369,13 +479,10 @@ onUnmounted(() => {
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
 
-                <button @click="activeTool = 'chat'" :class="['p-2 rounded-xl transition-all duration-200 relative group flex-shrink-0', activeTool === 'chat' ? 'bg-[#e6e6e6] dark:bg-[#333333] text-black dark:text-white shadow-sm' : 'text-gray-400 dark:text-gray-500 hover:bg-[#e6e6e6] dark:hover:bg-[#333333] hover:text-black dark:hover:text-white']">
-                    <MessageSquare class="w-[22px] h-[22px]" />
-                    <div v-if="hasUnreadNotifications" class="absolute top-[6px] right-[6px] w-[6px] h-[6px] bg-red-500 rounded-full ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]"></div>
-                    <!-- Tooltip -->
-                    <div class="absolute left-full ml-3 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 pointer-events-none">
-                        Chat
-                    </div>
+                <button @click="activeTool = 'chat'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'chat' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <MessageSquare class="w-5 h-5" />
+                   <div v-if="hasUnreadNotifications" class="absolute top-[8px] right-[8px] w-[6px] h-[6px] bg-red-500 rounded-full ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]"></div>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Chat</span>
                 </button>
 
                 <button @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
@@ -437,37 +544,37 @@ onUnmounted(() => {
           </nav>
         </template>
 
-        <!-- MINI APP CONTENT AREA -->
-        <template v-if="activeTool === 'chat'">
+        <!-- MINI APP CONTENT AREA (v-show keeps all apps mounted, instant switching) -->
+        <div v-show="activeTool === 'chat'" class="flex-1 h-full overflow-hidden">
             <ChatApp :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </template>
-        <template v-else-if="activeTool === 'note'">
-          <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />
-        </template>
-        <template v-else-if="activeTool === 'quickcap'">
-           <QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" />
-        </template>
-        <template v-else-if="activeTool === 'nexus'">
-           <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
-        </template>
-        <template v-else-if="activeTool === 'task'">
-           <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
-        </template>
-        <template v-else-if="activeTool === 'calendar'">
-          <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </template>
-        <template v-else-if="activeTool === 'file'">
-           <FilesApp ref="filesAppRef" :vaultPath="vaultPath" />
-        </template>
-        <template v-else-if="activeTool === 'whiteboard'">
-           <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
-        </template>
-        <template v-else-if="activeTool === 'people'">
-           <PeopleApp ref="peopleAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </template>
-        <template v-else-if="activeTool === 'finance'">
-           <FinanceApp ref="financeAppRef" :vaultPath="vaultPath" />
-        </template>
+        </div>
+        <div v-show="activeTool === 'note'" class="flex-1 h-full overflow-hidden">
+            <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />
+        </div>
+        <div v-show="activeTool === 'quickcap'" class="flex-1 h-full overflow-hidden">
+            <QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" />
+        </div>
+        <div v-show="activeTool === 'nexus'" class="flex-1 h-full overflow-hidden">
+            <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
+        </div>
+        <div v-show="activeTool === 'task'" class="flex-1 h-full overflow-hidden">
+            <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
+        </div>
+        <div v-show="activeTool === 'calendar'" class="flex-1 h-full overflow-hidden">
+            <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+        </div>
+        <div v-show="activeTool === 'file'" class="flex-1 h-full overflow-hidden">
+            <FilesApp ref="filesAppRef" :vaultPath="vaultPath" />
+        </div>
+        <div v-show="activeTool === 'whiteboard'" class="flex-1 h-full overflow-hidden">
+            <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
+        </div>
+        <div v-show="activeTool === 'people'" class="flex-1 h-full overflow-hidden">
+            <PeopleApp ref="peopleAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+        </div>
+        <div v-show="activeTool === 'finance'" class="flex-1 h-full overflow-hidden">
+            <FinanceApp ref="financeAppRef" :vaultPath="vaultPath" />
+        </div>
 
 
         <!-- SETTINGS MODAL -->

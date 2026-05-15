@@ -88,6 +88,9 @@ const getFilteredData = () => {
 
     // Pass 1: Add allowed nodes
     for (const node of props.graphData.nodes) {
+        // Exclude PDF annotations from the graph
+        if (node.item_type.startsWith('pdf_')) continue;
+
         if (!showNotes.value && (node.item_type === 'note' || node.item_type === 'ghost')) continue;
         if (!showTasks.value && node.item_type === 'task') continue;
         if (!showEvents.value && node.item_type === 'event') continue;

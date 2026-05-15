@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { Plus, Settings, ChevronLeft, ChevronRight, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
+import NavButtons from '../../shared/components/NavButtons.vue';
 
 
 import FinanceReports from './components/FinanceReports.vue';
@@ -603,6 +604,7 @@ defineExpose({ openMonthById });
       <div v-else class="flex items-center justify-between p-6 shrink-0">
           <div>
               <h1 class="text-2xl font-bold flex items-center gap-2">
+                  <NavButtons />
                   <Wallet class="w-6 h-6 text-blue-500" />
                   Tài chính
               </h1>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, toRef, nextTick } from 'vue';
+import { ref, computed, onMounted, watch, toRef, nextTick, inject } from 'vue';
 import { VueFlow, useVueFlow, ConnectionMode, MarkerType, getRectOfNodes } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -13,6 +13,7 @@ import MultiSelectMenu from './components/MultiSelectMenu.vue';
 import { toPng } from 'html-to-image';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import NavButtons from '../../shared/components/NavButtons.vue';
 
 // Custom nodes
 import ShapeNode from './nodes/ShapeNode.vue';
@@ -30,6 +31,7 @@ import { useFreeDrawing, getStroke, getSvgPathFromStroke } from './composables/u
 import type { WBNode, WBEdge } from './composables/useWhiteboardStore';
 import { SHAPES_MAP } from './shapes';
 import { logger } from '../../utils/logger';
+import type { NavEntry } from '../../stores/useNavigationStore';
 
 // CSS
 import '@vue-flow/core/dist/style.css';
@@ -42,6 +44,17 @@ const props = defineProps<{
 
 const vaultPathRef = toRef(props, 'vaultPath');
 const store = useWhiteboardStore(vaultPathRef);
+
+// ─── Intra-app navigation ──────────────────────────────────
+const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
+let skipNavPush = false;
+
+const switchBoard = (boardId: string) => {
+    if (boardId !== store.currentBoardId.value && store.currentBoardId.value && !skipNavPush) {
+        pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
+    }
+    store.loadBoardData(boardId);
+};
 
 // ─── Vue Flow ───────────────────────────────────────────
 const { setViewport, getViewport, getNodes } = useVueFlow({ id: 'whiteboard-flow' });
@@ -1176,14 +1189,17 @@ onUnmounted(() => {
 });
 
 // ─── Cross-app navigation ────────────────────────────────
-async function openBoardById(boardId: string) {
+async function openBoardById(boardId: string, _skipNavPush = false) {
+  if (!_skipNavPush && store.currentBoardId.value && store.currentBoardId.value !== boardId && !skipNavPush) {
+    pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
+  }
   if (!store.boards.value.length) {
     await store.loadBoards();
   }
   await store.loadBoardData(boardId);
 }
 
-defineExpose({ openBoardById });
+defineExpose({ openBoardById, currentBoardId: store.currentBoardId });
 </script>
 
 <template>
@@ -1220,7 +1236,7 @@ defineExpose({ openBoardById });
         <button
           v-for="board in store.boards.value"
           :key="board.id"
-          @click="store.loadBoardData(board.id)"
+          @click="switchBoard(board.id)"
           :class="[
             'w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all group',
             store.currentBoardId.value === board.id
@@ -1338,6 +1354,7 @@ defineExpose({ openBoardById });
         <!-- Title bar -->
         <div class="wb-title-bar">
           <div class="flex items-center gap-2 min-w-0 flex-1">
+            <NavButtons />
             <input
               v-if="editingTitle"
               v-model="titleInput"

@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
+import NavButtons from '../../shared/components/NavButtons.vue';
 import { useSettings } from '../../composables/useSettings';
 import { logger } from '../../utils/logger';
 
@@ -730,6 +731,7 @@ watch(() => props.vaultPath, () => {
           <div class="px-4 md:px-8 pt-12 md:pt-10 pb-2 md:pb-4 shrink-0 border-b border-transparent">
               <div class="flex items-center justify-between mb-4 md:mb-6">
                   <div class="flex items-center gap-3">
+                      <NavButtons />
                       <button @click="isMobileSidebarOpen = true" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer">
                           <MenuIcon class="w-6 h-6" />
                       </button>
