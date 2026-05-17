@@ -675,7 +675,8 @@ pub fn create_node_file(state: tauri::State<'_, DbState>, vault_path: String, di
     let path = dir_path.join(&filename);
     
     if !path.exists() {
-        let content = format!("---\ntitle: \"{}\"\ntype: \"{}\"\n---\n\n", title, node_type);
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let content = format!("---\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\n---\n\n", title, node_type, created_at);
         std::fs::write(&path, content)?;
         
         // Sync DB immediately
@@ -738,10 +739,11 @@ pub fn open_daily_note(state: tauri::State<'_, DbState>, vault_path: String, for
     let path = notes_dir.join(&filename);
 
     let title = date_str.clone();
+    let created_at = chrono::Utc::now().to_rfc3339();
     let content = if tag.trim().is_empty() {
-        format!("---\ntitle: \"{}\"\ntype: \"note\"\n---\n\n", title)
+        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\n---\n\n", title, created_at)
     } else {
-        format!("---\ntitle: \"{}\"\ntype: \"note\"\ntags:\n  - {}\n---\n\n", title, tag.trim())
+        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\ntags:\n  - {}\n---\n\n", title, created_at, tag.trim())
     };
     std::fs::write(&path, content)?;
         

@@ -50,7 +50,8 @@ import {
   Smile as SmileIcon, Navigation as NavigationIcon,
   PenTool as PenToolIcon,
   Link2 as EmbedIcon,
-  BookOpen as BookOpenIcon
+  BookOpen as BookOpenIcon,
+  Network as MarkmapIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -994,6 +995,14 @@ const slashCommandItems = (): SlashCommandItem[] => [
     icon: Code2,
     command: ({ editor, range }: any) => {
       editor.chain().focus().deleteRange(range).setCodeBlock().run();
+    },
+  },
+  {
+    title: 'Markmap',
+    description: 'Interactive mindmap from markdown',
+    icon: MarkmapIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).setCodeBlock({ language: 'markmap' }).run();
     },
   },
   {
