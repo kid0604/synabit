@@ -235,19 +235,27 @@ fn upsert_file_node(db: &crate::db::DbBridge, node: &crate::models::node::NodeMe
     db.upsert_node(node)
 }
 
-/// Find existing tags for a file path from nodes table
+/// Find existing tags for a file path from nodes table, with fallback to legacy files table
 fn find_existing_file_tags(db: &crate::db::DbBridge, path: &str) -> Vec<String> {
+    // First check the nodes table (current architecture)
     if let Ok(nodes) = db.get_nodes_by_type("file") {
         for node in &nodes {
             if let Some(p) = node.properties.get("path").and_then(|v| v.as_str()) {
                 if p == path {
-                    return node.properties.get("tags")
+                    let tags = node.properties.get("tags")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                        .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect::<Vec<_>>())
                         .unwrap_or_default();
+                    if !tags.is_empty() {
+                        return tags;
+                    }
                 }
             }
         }
+    }
+    // Fallback: check legacy files table for tags
+    if let Some(tags) = db.get_legacy_file_tags(path) {
+        return tags;
     }
     vec![]
 }
@@ -394,19 +402,36 @@ pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'
 pub fn reindex_sources(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     
+
+    
     let assets_dir = std::path::Path::new(&vault_path).join("assets");
     let mut scan_paths: Vec<String> = Vec::new();
     if assets_dir.exists() {
         scan_paths.push(assets_dir.to_string_lossy().to_string());
+    } else {
+        log::warn!("reindex_sources: assets_dir NOT found at {}", assets_dir.display());
     }
     if let Ok(sources) = db.get_all_file_sources() {
+
         for source in sources {
-            scan_paths.push(source.path);
+            // Avoid scanning the same path twice
+            if !scan_paths.contains(&source.path) {
+                scan_paths.push(source.path);
+            }
         }
     }
 
+    log::info!("reindex_sources: scanning {} paths", scan_paths.len());
     for source_path in scan_paths {
-        let _ = do_scan_directory(&db, &source_path);
+        match do_scan_directory(&db, &source_path) {
+            Ok(()) => log::info!("reindex_sources: scanned {} OK", source_path),
+            Err(e) => log::error!("reindex_sources: scan {} FAILED: {:?}", source_path, e),
+        }
+    }
+    
+    // Check result
+    if let Ok(nodes) = db.get_nodes_by_type("file") {
+        log::info!("reindex_sources: {} file nodes in DB after scan", nodes.len());
     }
     
     Ok(())
@@ -524,6 +549,8 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
 
     // Offload heavy I/O (hashing) to a blocking thread pool
     tauri::async_runtime::spawn_blocking(move || {
+        log::info!("Duplicate scan: {} files loaded from DB", files.len());
+
         // Step 1: Group by size (files with unique sizes can't be duplicates)
         let mut size_groups: HashMap<i64, Vec<FileMetadata>> = HashMap::new();
         for file in files {
@@ -532,12 +559,18 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
             }
         }
 
+        let candidate_size_groups: usize = size_groups.values().filter(|g| g.len() > 1).count();
+        log::info!("Duplicate scan: {} size groups with 2+ files", candidate_size_groups);
+
         // Step 2: Partial hash (first 64KB) for groups with 2+ files of same size
         let mut partial_groups: HashMap<String, (Vec<FileMetadata>, bool)> = HashMap::new();
         for (_size, group) in size_groups.into_iter().filter(|(_, g)| g.len() > 1) {
             for file in group {
                 let path = std::path::Path::new(&file.path);
-                if !path.exists() { continue; }
+                if !path.exists() {
+                    log::warn!("Duplicate scan: file not found on disk: {}", file.path);
+                    continue;
+                }
 
                 if let Some((hash, bytes_read)) = blake3_partial_hash(path) {
                     let is_complete = bytes_read < PARTIAL_HASH_SIZE || file.size <= PARTIAL_HASH_SIZE as i64;
@@ -549,6 +582,9 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
                 }
             }
         }
+
+        let candidate_hash_groups: usize = partial_groups.values().filter(|(g, _)| g.len() > 1).count();
+        log::info!("Duplicate scan: {} hash groups with 2+ files", candidate_hash_groups);
 
         // Step 3: Full hash verification + stream each verified group immediately
         let mut total_groups: usize = 0;

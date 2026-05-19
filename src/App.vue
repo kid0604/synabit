@@ -335,17 +335,9 @@ onMounted(async () => {
   if (vaultPath.value) {
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
-     // Force sync all data types on startup so Nexus sees fresh Indexed DB data
-     invoke('migrate_tasks_to_nodes', { vaultPath: vaultPath.value }).then(() => {
-         invoke('migrate_events_to_nodes', { vaultPath: vaultPath.value }).then(() => {
-             invoke('migrate_quickcaps_to_nodes', { vaultPath: vaultPath.value }).then(() => {
-                 invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
-                     await checkUnreadNotifications();
-                     // One-time migration: graph_edges → node_edges
-                     invoke('migrate_graph_edges').catch(logger.error);
-                 }).catch(logger.error);
-             }).catch(logger.error);
-         }).catch(logger.error);
+     // Scan all nodes on startup so Nexus sees fresh Indexed DB data
+     invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
+         await checkUnreadNotifications();
      }).catch(logger.error);
      
      if (noteAppRef.value) noteAppRef.value.scanVault();

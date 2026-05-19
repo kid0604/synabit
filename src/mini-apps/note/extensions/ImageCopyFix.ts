@@ -55,7 +55,7 @@ export const ImageCopyFix = Extension.create({
                     });
                     
                     navigator.clipboard.write([item]).then(() => {
-                      console.log('Image copied to native clipboard');
+                      // image copied successfully
                     }).catch(err => {
                       console.error('Failed to write to clipboard:', err);
                     });

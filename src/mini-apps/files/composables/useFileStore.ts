@@ -405,11 +405,13 @@ export function useFileStore(vaultPath: () => string) {
 
     // Listen for streamed groups
     unlistenGroupFound = await listen<DuplicateGroup>('duplicate-group-found', (event) => {
+
       duplicateGroups.value.push(event.payload);
     });
 
     // Listen for scan completion
     unlistenScanComplete = await listen<{ total_groups: number; total_duplicate_files: number; total_wasted_bytes: number }>('duplicate-scan-complete', (event) => {
+
       duplicateSummary.value = event.payload;
       isScanningDuplicates.value = false;
       // Clean up listeners
@@ -419,10 +421,28 @@ export function useFileStore(vaultPath: () => string) {
       unlistenScanComplete = null;
     });
 
+    // Safety timeout: if scan-complete never arrives, stop spinner after 60s
+    const safetyTimeout = setTimeout(() => {
+      if (isScanningDuplicates.value) {
+        logger.warn('[DupFinder] Safety timeout reached — forcing scan complete with', duplicateGroups.value.length, 'groups');
+        duplicateSummary.value = {
+          total_groups: duplicateGroups.value.length,
+          total_duplicate_files: duplicateGroups.value.reduce((acc, g) => acc + g.count - 1, 0),
+          total_wasted_bytes: duplicateGroups.value.reduce((acc, g) => acc + g.wasted_bytes, 0),
+        };
+        isScanningDuplicates.value = false;
+        unlistenGroupFound?.();
+        unlistenScanComplete?.();
+        unlistenGroupFound = null;
+        unlistenScanComplete = null;
+      }
+    }, 60_000);
+
     try {
       await invoke('find_duplicate_files', { vaultPath: vaultPath() });
     } catch (e) {
-      logger.error("Failed to scan duplicates", e);
+      logger.error("[DupFinder] Failed to scan duplicates", e);
+      clearTimeout(safetyTimeout);
       isScanningDuplicates.value = false;
       unlistenGroupFound?.();
       unlistenScanComplete?.();
@@ -461,16 +481,9 @@ export function useFileStore(vaultPath: () => string) {
 
   // ─── Init ──────────────────────────────────────────────────
   const init = async () => {
-    // One-time migration: files table → nodes table
-    try {
-      const count = await invoke<number>('migrate_files_to_nodes', { vaultPath: vaultPath() });
-      if (count > 0) logger.info(`Migrated ${count} files to nodes`);
-    } catch (e) { logger.error('File migration failed', e); }
-
     await fetchSources();
     await checkGDriveStatus();
-    await fetchFiles();
-    syncAllSources(); // background
+    await syncAllSources(); // index sources + fetch files
   };
 
   const setupAuthListener = async () => {

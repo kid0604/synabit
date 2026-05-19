@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use crate::models::file::{FileMetadata, FileSource};
 use crate::models::whiteboard::WhiteboardMetadata;
 use crate::error::{AppError, AppResult};
-use crate::utils::graph_parser::GraphEdge;
 
 /// New ID-based edge for the knowledge graph
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -197,6 +196,35 @@ impl DbBridge {
                 tokenize = 'unicode61 remove_diacritics 0'
             );"
         ).map_err(|e| AppError::General(format!("DB Schema Error (search_index): {}", e)))?;
+
+        // ─── One-time: Migrate legacy `files` table → `nodes` ─────
+        // Previous frontend-driven migration may have set the flag but created 0 nodes.
+        // Re-run if nodes table has zero file entries despite files table having data.
+        {
+            let legacy_file_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))
+                .unwrap_or(0);
+            let node_file_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM nodes WHERE node_type = 'file'", [], |row| row.get(0))
+                .unwrap_or(0);
+
+            if legacy_file_count > 0 && node_file_count == 0 {
+                log::info!("Migrating {} legacy files to nodes table (SQL batch)...", legacy_file_count);
+                // Single SQL statement — no Rust iteration needed
+                let result = conn.execute(
+                    "INSERT OR IGNORE INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp)
+                     SELECT id, 'file', filename, '',
+                       json_object('path', path, 'extension', extension, 'size', size, 'source_type', source_type, 'tags', json(tags)),
+                       created_at, modified_at, strftime('%s','now')
+                     FROM files",
+                    [],
+                );
+                match result {
+                    Ok(count) => log::info!("Migrated {} files to nodes table.", count),
+                    Err(e) => log::error!("Failed to migrate files to nodes: {}", e),
+                }
+            }
+        }
 
         Ok(Self { conn })
     }
@@ -421,6 +449,16 @@ impl DbBridge {
         Ok(())
     }
 
+    /// Read tags from the legacy `files` table for a given path.
+    /// Returns None if the file doesn't exist or the table is gone.
+    pub fn get_legacy_file_tags(&self, path: &str) -> Option<Vec<String>> {
+        let tags_str: String = self.conn
+            .query_row("SELECT tags FROM files WHERE path = ?1", params![path], |row| row.get(0))
+            .ok()?;
+        let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+        if tags.is_empty() { None } else { Some(tags) }
+    }
+
     pub fn update_file_path_and_name(&self, old_path: &str, new_path: &str, new_filename: &str, extension: &str) -> AppResult<()> {
         self.conn.execute(
             "UPDATE files SET path = ?1, filename = ?2, extension = ?3 WHERE path = ?4",
@@ -629,35 +667,8 @@ impl DbBridge {
         Ok(None)
     }
 
-
     // ═══════════════════════════════════════════════════════════
-    //  GRAPH EDGES (LEGACY — migration only)
-    // ═══════════════════════════════════════════════════════════
-
-    /// Read legacy graph_edges — used ONLY by migrate_graph_edges command.
-    /// Returns empty vec if table doesn't exist (fresh install).
-    pub fn get_all_edges(&self) -> AppResult<Vec<GraphEdge>> {
-        let mut stmt = match self.conn.prepare("SELECT source_id, target_title_or_path, link_type FROM graph_edges") {
-            Ok(s) => s,
-            Err(_) => return Ok(Vec::new()), // Table doesn't exist on fresh installs
-        };
-        let rows = stmt.query_map([], |row| {
-            Ok(GraphEdge {
-                source_id: row.get(0)?,
-                target_title_or_path: row.get(1)?,
-                link_type: row.get(2)?,
-            })
-        }).map_err(|e| AppError::General(format!("DB Error mapping edges: {}", e)))?;
-
-        let mut edges = Vec::new();
-        for edge in rows.flatten() {
-            edges.push(edge);
-        }
-        Ok(edges)
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  NODE EDGES (NEW — ID-based knowledge graph)
+    //  NODE EDGES (ID-based knowledge graph)
     // ═══════════════════════════════════════════════════════════
 
     pub fn upsert_node_edge(&self, edge: &NodeEdge) -> AppResult<()> {

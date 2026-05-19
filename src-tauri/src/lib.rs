@@ -6,6 +6,7 @@ pub mod models;
 pub mod path_utils;
 pub mod search;
 pub mod utils;
+
 pub mod watcher;
 pub mod chat_engine;
 
@@ -83,20 +84,14 @@ pub fn run() {
             nodes::create_block_reference,
             nodes::write_node_file,
             nodes::delete_node_file,
-            nodes::migrate_events_to_nodes,
-            nodes::migrate_tasks_to_nodes,
             nodes::archive_done_nodes,
-            nodes::migrate_quickcaps_to_nodes,
             nodes::save_asset,
             nodes::copy_asset_to_vault,
             nodes::rename_node_file,
             nodes::create_node_file,
             nodes::open_daily_note,
-            nodes::migrate_notes_to_nodes,
             nodes::spawn_node_window,
             nodes::list_pdf_files,
-            nodes::migrate_files_to_nodes,
-            nodes::migrate_graph_edges,
             // Files
             files::add_file_source,
             files::get_file_sources,
@@ -149,6 +144,7 @@ pub fn run() {
             chat::get_chat_history,
             // System
             open_app_log_folder,
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

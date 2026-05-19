@@ -15,6 +15,7 @@ import {
   Highlighter, PenTool, PanelRightOpen, PanelRightClose,
   FileDown, RotateCcw
 } from 'lucide-vue-next';
+import { logger } from '../../../utils/logger';
 
 const props = defineProps<{
   fileId: string;
@@ -65,7 +66,7 @@ const processRenderQueue = async () => {
       await renderer.renderPage(pageNum, refs.canvas, refs.textLayer);
       renderedPages.set(pageNum, currentScale);
     } catch (e) {
-      console.warn(`Failed to render page ${pageNum}:`, e);
+      logger.warn(`Failed to render page ${pageNum}:`, e);
     }
   }
   isRendering = false;
@@ -340,9 +341,9 @@ const exportAnnotatedPdf = async () => {
         note: a.content,
       })),
     });
-    console.log('Exported to:', exportPath);
+    logger.info('Exported to:', exportPath);
   } catch (e) {
-    console.error('Failed to export annotated PDF:', e);
+    logger.error('Failed to export annotated PDF:', e);
   } finally {
     isExporting.value = false;
   }
@@ -363,7 +364,7 @@ const exportToNote = async () => {
       content: md,
     });
   } catch (e) {
-    console.error('Failed to export annotations to note:', e);
+    logger.error('Failed to export annotations to note:', e);
   }
 };
 

@@ -14,8 +14,8 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
     let created = metadata.created().unwrap_or(modified);
     
-    let created_at = chrono::DateTime::<chrono::Local>::from(created).format("%Y-%m-%d %H:%M:%S").to_string();
-    let updated_at = chrono::DateTime::<chrono::Local>::from(modified).format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut created_at = chrono::DateTime::<chrono::Local>::from(created).format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut updated_at = chrono::DateTime::<chrono::Local>::from(modified).format("%Y-%m-%d %H:%M:%S").to_string();
     let timestamp = modified.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
 
     let mut title = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
@@ -71,6 +71,14 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
         }
     } else {
         return None;
+    }
+
+    // Override dates from properties if available
+    if let Some(c) = properties.get("created_at").and_then(|v| v.as_str()) {
+        created_at = c.to_string();
+    }
+    if let Some(u) = properties.get("updated_at").and_then(|v| v.as_str()) {
+        updated_at = u.to_string();
     }
 
     // Extract blocks if markdown

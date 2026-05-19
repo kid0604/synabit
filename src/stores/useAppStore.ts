@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { load, Store } from '@tauri-apps/plugin-store';
 
 export const useAppStore = defineStore('app', () => {
@@ -75,38 +75,36 @@ export const useAppStore = defineStore('app', () => {
     isReady.value = true;
 
     // Set up watchers for auto-save
-    import('vue').then(({ watch }) => {
-      watch(taskArchiveDays, async (v) => {
-        if (storeInstance) await storeInstance.set('taskArchiveDays', v);
-      });
-      watch(enableDailyNotes, async (v) => {
-        if (storeInstance) await storeInstance.set('enableDailyNotes', v);
-      });
-      watch(dailyNoteFormat, async (v) => {
-        if (storeInstance) await storeInstance.set('dailyNoteFormat', v);
-      });
-      watch(dailyNoteTag, async (v) => {
-        if (storeInstance) await storeInstance.set('dailyNoteTag', v);
-      });
-      watch(nestedNumberListStyle, async (v) => {
-        if (storeInstance) await storeInstance.set('nestedNumberListStyle', v);
-      });
+    watch(taskArchiveDays, async (v) => {
+      if (storeInstance) await storeInstance.set('taskArchiveDays', v);
+    });
+    watch(enableDailyNotes, async (v) => {
+      if (storeInstance) await storeInstance.set('enableDailyNotes', v);
+    });
+    watch(dailyNoteFormat, async (v) => {
+      if (storeInstance) await storeInstance.set('dailyNoteFormat', v);
+    });
+    watch(dailyNoteTag, async (v) => {
+      if (storeInstance) await storeInstance.set('dailyNoteTag', v);
+    });
+    watch(nestedNumberListStyle, async (v) => {
+      if (storeInstance) await storeInstance.set('nestedNumberListStyle', v);
+    });
 
-      watch(defaultApp, async (v) => {
-        if (storeInstance) await storeInstance.set('defaultApp', v);
-      });
-      watch(themeMode, async (v) => {
-        if (storeInstance) await storeInstance.set('themeMode', v);
-      });
-      watch(gdriveAutoSyncEnabled, async (v) => {
-        if (storeInstance) await storeInstance.set('gdriveAutoSyncEnabled', v);
-      });
-      watch(gdriveAutoSyncInterval, async (v) => {
-        if (storeInstance) await storeInstance.set('gdriveAutoSyncInterval', v);
-      });
-      watch(gdriveLastSyncTime, async (v) => {
-        if (storeInstance) await storeInstance.set('gdriveLastSyncTime', v);
-      });
+    watch(defaultApp, async (v) => {
+      if (storeInstance) await storeInstance.set('defaultApp', v);
+    });
+    watch(themeMode, async (v) => {
+      if (storeInstance) await storeInstance.set('themeMode', v);
+    });
+    watch(gdriveAutoSyncEnabled, async (v) => {
+      if (storeInstance) await storeInstance.set('gdriveAutoSyncEnabled', v);
+    });
+    watch(gdriveAutoSyncInterval, async (v) => {
+      if (storeInstance) await storeInstance.set('gdriveAutoSyncInterval', v);
+    });
+    watch(gdriveLastSyncTime, async (v) => {
+      if (storeInstance) await storeInstance.set('gdriveLastSyncTime', v);
     });
   }
 

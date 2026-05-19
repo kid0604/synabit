@@ -4,9 +4,9 @@ import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClos
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
 import { ask, save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
-import { marked } from 'marked';
-import html2pdf from 'html2pdf.js';
+
+
+
 import TiptapEditor from './TiptapEditor.vue';
 import NoteGraph from './NoteGraph.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -609,124 +609,6 @@ const onEditorUpdate = (val: string, rawTabId: string) => {
     saveNoteForTab(tabId);
 };
 
-// ─── Export Functions ─────────────────────────────────────────
-const showExportMenu = ref(false);
-
-const exportToMarkdown = async () => {
-    showExportMenu.value = false;
-    if (!currentNoteId.value) return;
-    const content = tabContents.value[currentNoteId.value] || '';
-    const note = notes.value.find(n => n.id === currentNoteId.value);
-    const title = note?.title || 'Untitled';
-    try {
-        const filePath = await save({
-            defaultPath: `${title}.md`,
-            filters: [{ name: 'Markdown', extensions: ['md'] }]
-        });
-        if (filePath) {
-            await writeTextFile(filePath, content);
-            logger.info(`Exported to Markdown: ${filePath}`);
-        }
-    } catch (e) {
-        logger.error('Failed to export Markdown', e);
-    }
-};
-
-const exportToHtml = async () => {
-    showExportMenu.value = false;
-    if (!currentNoteId.value) return;
-    const content = tabContents.value[currentNoteId.value] || '';
-    const note = notes.value.find(n => n.id === currentNoteId.value);
-    const title = note?.title || 'Untitled';
-    try {
-        const htmlContent = marked.parse(content) as string;
-        const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${title}</title>
-<style>
-  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 2rem; color: #333; }
-  img { max-width: 100%; height: auto; border-radius: 8px; }
-  code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-  pre { background: #f4f4f5; padding: 1em; border-radius: 8px; overflow-x: auto; }
-  pre code { background: transparent; padding: 0; border-radius: 0; }
-  blockquote { border-left: 4px solid #e4e4e7; margin: 0; padding-left: 1em; color: #71717a; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
-  th, td { border: 1px solid #e4e4e7; padding: 0.5em; text-align: left; }
-  input[type="checkbox"] { margin-right: 0.5em; }
-</style>
-</head>
-<body>
-${htmlContent}
-</body>
-</html>`;
-        const filePath = await save({
-            defaultPath: `${title}.html`,
-            filters: [{ name: 'HTML', extensions: ['html'] }]
-        });
-        if (filePath) {
-            await writeTextFile(filePath, fullHtml);
-            logger.info(`Exported to HTML: ${filePath}`);
-        }
-    } catch (e) {
-        logger.error('Failed to export HTML', e);
-    }
-};
-
-const exportToPdf = async () => {
-    showExportMenu.value = false;
-    if (!currentNoteId.value) return;
-    const content = tabContents.value[currentNoteId.value] || '';
-    const note = notes.value.find(n => n.id === currentNoteId.value);
-    const title = note?.title || 'Untitled';
-    try {
-        const filePath = await save({
-            defaultPath: `${title}.pdf`,
-            filters: [{ name: 'PDF', extensions: ['pdf'] }]
-        });
-        if (!filePath) return;
-
-        const htmlContent = marked.parse(content) as string;
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = htmlContent;
-        wrapper.style.padding = '40px';
-        wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-        wrapper.style.lineHeight = '1.6';
-        wrapper.style.color = '#333';
-        
-        // Add minimal styles to wrapper children
-        const style = document.createElement('style');
-        style.innerHTML = `
-          img { max-width: 100%; height: auto; border-radius: 8px; }
-          code { background: #f4f4f5; padding: 0.2em 0.4em; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-          pre { background: #f4f4f5; padding: 1em; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
-          pre code { background: transparent; padding: 0; }
-          blockquote { border-left: 4px solid #e4e4e7; margin: 0; padding-left: 1em; color: #71717a; }
-          table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
-          th, td { border: 1px solid #e4e4e7; padding: 0.5em; text-align: left; }
-        `;
-        wrapper.appendChild(style);
-        
-        const opt = {
-          margin:       0,
-          filename:     'export.pdf',
-          image:        { type: 'jpeg', quality: 0.98 },
-          html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
-          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-        };
-
-        const pdfBlob = await html2pdf().set(opt).from(wrapper).output('blob');
-        const arrayBuffer = await pdfBlob.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-        
-        await writeFile(filePath, uint8Array);
-        logger.info(`Exported to PDF: ${filePath}`);
-    } catch (e) {
-        logger.error('Failed to export PDF', e);
-    }
-};
-
 watch(currentNoteId, async (newId) => {
     if (newId) {
         await loadNoteFile(newId);
@@ -1160,14 +1042,7 @@ onMounted(async () => {
                 </div>
               </button>
               <div class="relative flex items-center h-full">
-                <button v-if="currentNoteId && viewMode === 'editor'" @click="showExportMenu = !showExportMenu" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" title="Export Note">
-                  <Download class="w-4 h-4" />
-                </button>
-                <div v-if="showExportMenu" class="absolute right-0 top-8 w-40 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden" @click.stop>
-                  <button @click="exportToMarkdown" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">Markdown (.md)</button>
-                  <button @click="exportToHtml" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">HTML (.html)</button>
-                  <button @click="exportToPdf" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 flex items-center gap-2">PDF (.pdf)</button>
-                </div>
+
               </div>
               <button v-if="currentNoteId && viewMode === 'editor'" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
                 <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
@@ -1378,6 +1253,8 @@ onMounted(async () => {
         </div>
       </div>
     </Teleport>
+
+
   </div>
 </template>
 

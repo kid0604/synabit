@@ -120,13 +120,16 @@ pub fn scan_all_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
         }
     }
     
-    // Cleanup deleted files from DB
-    for id in existing_timestamps.keys() {
-        if !current_disk_files.contains(id) {
-            let _ = db.delete_node(id);
-            delete_node_edges_for(&db, id);
-            let _ = db.delete_node_blocks(id);
-            db.delete_search_entry(id);
+    // Cleanup deleted files from DB — only remove disk-backed node types
+    // (notes, tasks, events, quickcaps, json). Skip "file" nodes and other
+    // managed types whose IDs are UUIDs, not disk paths.
+    let disk_backed_types = ["note", "task", "event", "quickcap", "json"];
+    for n in &existing_nodes {
+        if disk_backed_types.contains(&n.node_type.as_str()) && !current_disk_files.contains(&n.id) {
+            let _ = db.delete_node(&n.id);
+            delete_node_edges_for(&db, &n.id);
+            let _ = db.delete_node_blocks(&n.id);
+            db.delete_search_entry(&n.id);
         }
     }
 
@@ -428,29 +431,46 @@ pub fn write_node_file(
     // Construct the file content
     let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let file_content = if ext == "json" || ext == "canvas" {
+        let mut mut_props = properties.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        if let serde_json::Value::Object(ref mut map) = mut_props {
+            if !map.contains_key("created_at") {
+                map.insert("created_at".to_string(), serde_json::Value::String(now.clone()));
+            }
+            map.insert("updated_at".to_string(), serde_json::Value::String(now));
+        }
         // Output as pure JSON
         let json_obj = serde_json::json!({
             "title": title.clone(),
             "type": node_type.clone(),
-            "metadata": properties.clone(),
+            "metadata": mut_props,
             "content": content.clone()
         });
         serde_json::to_string_pretty(&json_obj).unwrap_or_default()
     } else {
+        let now = chrono::Utc::now().to_rfc3339();
         // Output as Markdown with YAML frontmatter
         let mut props_map = serde_yaml::Mapping::new();
         props_map.insert(serde_yaml::Value::String("title".to_string()), serde_yaml::Value::String(title.clone()));
         props_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String(node_type.clone()));
         
+        let mut has_created_at = false;
+
         // Merge user properties
         if let serde_json::Value::Object(map) = &properties {
             for (k, v) in map {
-                if k == "title" || k == "type" { continue; } // Skip standard fields
+                if k == "title" || k == "type" || k == "updated_at" { continue; } // Skip standard fields
+                if k == "created_at" { has_created_at = true; }
                 if let Ok(yaml_val) = serde_yaml::to_value(v) {
                     props_map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
                 }
             }
         }
+        
+        if !has_created_at {
+            props_map.insert(serde_yaml::Value::String("created_at".to_string()), serde_yaml::Value::String(now.clone()));
+        }
+        props_map.insert(serde_yaml::Value::String("updated_at".to_string()), serde_yaml::Value::String(now));
         
         let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
         // serde_yaml output usually ends with newline and might start with ---, but usually just standard YAML format
@@ -595,14 +615,23 @@ pub fn rename_node_file(state: tauri::State<'_, DbState>, vault_path: String, ol
     props_map.insert(serde_yaml::Value::String("title".to_string()), serde_yaml::Value::String(new_name.clone()));
     props_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String(node.node_type.clone()));
     
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut has_created_at = false;
+
     if let serde_json::Value::Object(map) = &node.properties {
         for (k, v) in map {
-            if k == "title" || k == "type" { continue; }
+            if k == "title" || k == "type" || k == "updated_at" { continue; }
+            if k == "created_at" { has_created_at = true; }
             if let Ok(yaml_val) = serde_yaml::to_value(v) {
                 props_map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
             }
         }
     }
+
+    if !has_created_at {
+        props_map.insert(serde_yaml::Value::String("created_at".to_string()), serde_yaml::Value::String(now.clone()));
+    }
+    props_map.insert(serde_yaml::Value::String("updated_at".to_string()), serde_yaml::Value::String(now));
     
     let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
     let yaml_str = frontmatter.trim_start_matches("---\n");
@@ -676,7 +705,7 @@ pub fn create_node_file(state: tauri::State<'_, DbState>, vault_path: String, di
     
     if !path.exists() {
         let created_at = chrono::Utc::now().to_rfc3339();
-        let content = format!("---\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\n---\n\n", title, node_type, created_at);
+        let content = format!("---\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n---\n\n", title, node_type, created_at, created_at);
         std::fs::write(&path, content)?;
         
         // Sync DB immediately
@@ -741,9 +770,9 @@ pub fn open_daily_note(state: tauri::State<'_, DbState>, vault_path: String, for
     let title = date_str.clone();
     let created_at = chrono::Utc::now().to_rfc3339();
     let content = if tag.trim().is_empty() {
-        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\n---\n\n", title, created_at)
+        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n---\n\n", title, created_at, created_at)
     } else {
-        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\ntags:\n  - {}\n---\n\n", title, created_at, tag.trim())
+        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\ntags:\n  - {}\n---\n\n", title, created_at, created_at, tag.trim())
     };
     std::fs::write(&path, content)?;
         
@@ -775,214 +804,7 @@ pub fn open_daily_note(state: tauri::State<'_, DbState>, vault_path: String, for
     Ok(rel_path)
 }
 
-#[tauri::command]
-pub fn migrate_events_to_nodes(state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
-    use gray_matter::Matter;
-    use gray_matter::engine::YAML;
-    
-    let events_dir = Path::new(&vault_path).join("Events");
-    if !events_dir.exists() {
-        return Ok(());
-    }
 
-    let matter = Matter::<YAML>::new();
-
-    for entry in WalkDir::new(&events_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if ext == "md" {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if let Ok(parsed) = matter.parse::<serde_yaml::Value>(&content) {
-                            let mut frontmatter_map = serde_yaml::Mapping::new();
-                            
-                            if let Some(serde_yaml::Value::Mapping(map)) = parsed.data {
-                                frontmatter_map = map.clone();
-                                
-                                // if it's already type: event, skip it!
-                                if let Some(serde_yaml::Value::String(s)) = frontmatter_map.get(serde_yaml::Value::String("type".to_string())) {
-                                    if s == "event" {
-                                        continue;
-                                    }
-                                }
-                            }
-                            
-                            // Inject type
-                            frontmatter_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("event".to_string()));
-                            
-                            let new_yaml = serde_yaml::to_string(&frontmatter_map).unwrap_or_default();
-                            let yaml_str = new_yaml.trim_start_matches("---\n");
-                            let file_content = format!("---\n{}---\n{}", yaml_str, parsed.content);
-                            
-                            if std::fs::write(entry.path(), file_content).is_ok() {
-                                if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
-                                    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-                                    let _ = db.upsert_node(&node);
-                                    let resolver = build_resolver(&db);
-                                    sync_node_edges(&db, &node, &resolver);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn migrate_notes_to_nodes(state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
-    use gray_matter::Matter;
-    use gray_matter::engine::YAML;
-    
-    let notes_dir = Path::new(&vault_path).join("Notes");
-    if !notes_dir.exists() {
-        return Ok(());
-    }
-
-    let matter = Matter::<YAML>::new();
-
-    for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if ext == "md" {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if let Ok(parsed) = matter.parse::<serde_yaml::Value>(&content) {
-                            let mut frontmatter_map = serde_yaml::Mapping::new();
-                            
-                            if let Some(serde_yaml::Value::Mapping(map)) = parsed.data {
-                                frontmatter_map = map.clone();
-                                
-                                // if it's already type: note, skip it!
-                                if let Some(serde_yaml::Value::String(s)) = frontmatter_map.get(serde_yaml::Value::String("type".to_string())) {
-                                    if s == "note" {
-                                        continue;
-                                    }
-                                }
-                            }
-                            
-                            // Inject type
-                            frontmatter_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("note".to_string()));
-                            
-                            let new_yaml = serde_yaml::to_string(&frontmatter_map).unwrap_or_default();
-                            let yaml_str = new_yaml.trim_start_matches("---\n");
-                            let file_content = format!("---\n{}---\n{}", yaml_str, parsed.content);
-                            
-                            if std::fs::write(entry.path(), file_content).is_ok() {
-                                if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
-                                    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-                                    let _ = db.upsert_node(&node);
-                                    let resolver = build_resolver(&db);
-                                    sync_node_edges(&db, &node, &resolver);
-                                    
-                                    // Update search index manually
-                                    let tags = node.properties.get("tags")
-                                        .and_then(|t| t.as_array())
-                                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>().join(" "))
-                                        .unwrap_or_default();
-                                    let status = node.properties.get("status").and_then(|s| s.as_str());
-                                    let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
-                                    
-                                    db.upsert_search_entry(
-                                        &node.id,
-                                        &node.node_type,
-                                        &node.title,
-                                        &tags,
-                                        &node.content,
-                                        &props_str,
-                                        status,
-                                        &node.created_at,
-                                        &node.id
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn migrate_tasks_to_nodes(state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
-    let tasks_dir = Path::new(&vault_path).join("Tasks");
-    if !tasks_dir.exists() {
-        return Ok(());
-    }
-    
-    let archived_dir = tasks_dir.join("archived");
-    let matter = gray_matter::Matter::<gray_matter::engine::YAML>::new();
-    
-    for entry in walkdir::WalkDir::new(&tasks_dir).into_iter().filter_map(|e| e.ok()) {
-        // Skip archived dir
-        if entry.path().starts_with(&archived_dir) {
-            continue;
-        }
-        
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if ext == "md" {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if let Ok(parsed) = matter.parse::<serde_yaml::Value>(&content) {
-                            let mut frontmatter_map = serde_yaml::Mapping::new();
-                            
-                            if let Some(serde_yaml::Value::Mapping(map)) = parsed.data {
-                                frontmatter_map = map.clone();
-                                
-                                // if it's already type: task, skip it
-                                if let Some(serde_yaml::Value::String(s)) = frontmatter_map.get(serde_yaml::Value::String("type".to_string())) {
-                                    if s == "task" {
-                                        continue;
-                                    }
-                                }
-                            }
-                            
-                            // Inject type
-                            frontmatter_map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("task".to_string()));
-                            
-                            let new_yaml = serde_yaml::to_string(&frontmatter_map).unwrap_or_default();
-                            let yaml_str = new_yaml.trim_start_matches("---\n");
-                            let file_content = format!("---\n{}---\n{}", yaml_str, parsed.content);
-                            
-                            if std::fs::write(entry.path(), file_content).is_ok() {
-                                if let Some(node) = parse_file_to_node(&vault_path, entry.path()) {
-                                    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-                                    let _ = db.upsert_node(&node);
-                                    let resolver = build_resolver(&db);
-                                    sync_node_edges(&db, &node, &resolver);
-                                    
-                                    // Update search index manually
-                                    let tags = node.properties.get("tags")
-                                        .and_then(|t| t.as_array())
-                                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>().join(" "))
-                                        .unwrap_or_default();
-                                    let status = node.properties.get("status").and_then(|s| s.as_str());
-                                    let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
-                                    
-                                    db.upsert_search_entry(
-                                        &node.id,
-                                        &node.node_type,
-                                        &node.title,
-                                        &tags,
-                                        &node.content,
-                                        &props_str,
-                                        status,
-                                        &node.created_at,
-                                        &node.id
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
 
 #[tauri::command]
 pub fn archive_done_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, node_type: String, days: u64) -> AppResult<u32> {
@@ -1056,79 +878,7 @@ pub fn archive_done_nodes(_app_handle: tauri::AppHandle, state: tauri::State<'_,
     Ok(archived_count)
 }
 
-#[tauri::command]
-pub fn migrate_quickcaps_to_nodes(state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
-    use gray_matter::Matter;
-    use gray_matter::engine::YAML;
-    
-    let qc_dir = Path::new(&vault_path).join("QuickCaps");
-    if !qc_dir.exists() {
-        return Ok(());
-    }
 
-    let mut matter = Matter::<YAML>::new();
-    matter.delimiter = "---".to_string();
-
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-
-    for entry in std::fs::read_dir(&qc_dir)?.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if content.starts_with("---") && content.contains("type: quickcap") {
-                    continue;
-                }
-
-                let mut body = content.clone();
-                let mut color = String::new();
-
-                if let Some(start) = body.find("<!--color:") {
-                    if let Some(end) = body[start..].find("-->") {
-                        color = body[start + 10..start + end].to_string();
-                        body.replace_range(start..start + end + 3, "");
-                    }
-                }
-                
-                body = body.trim().to_string();
-
-                let mut props = serde_yaml::Mapping::new();
-                props.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("quickcap".to_string()));
-                if !color.is_empty() {
-                    props.insert(serde_yaml::Value::String("color".to_string()), serde_yaml::Value::String(color));
-                }
-
-                let frontmatter = serde_yaml::to_string(&props).unwrap_or_default();
-                let yaml_str = frontmatter.trim_start_matches("---\n");
-                let new_content = format!("---\n{}---\n{}", yaml_str, body);
-
-                if std::fs::write(&path, new_content).is_ok() {
-                    if let Some(node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &path) {
-                        let _ = db.upsert_node(&node);
-                        let tags = node.properties.get("tags")
-                            .and_then(|t| t.as_array())
-                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>().join(" "))
-                            .unwrap_or_default();
-                        let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
-                        
-                        db.upsert_search_entry(
-                            &node.id,
-                            &node.node_type,
-                            &node.title,
-                            &tags,
-                            &node.content,
-                            &props_str,
-                            None,
-                            &node.updated_at,
-                            &node.id,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 #[tauri::command]
 pub fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> AppResult<String> {
@@ -1246,86 +996,3 @@ pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
     Ok(pdfs)
 }
 
-#[tauri::command]
-pub fn migrate_files_to_nodes(state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<u32> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-
-    // Check if already migrated
-    if let Ok(Some(v)) = db.get_kv("files_migrated_to_nodes") {
-        if v == "true" { return Ok(0); }
-    }
-
-    // Read all files from the legacy files table
-    let files = db.get_all_files().unwrap_or_default();
-    let mut count: u32 = 0;
-
-    for file in &files {
-        let node = file.to_node();
-        if db.upsert_node(&node).is_ok() {
-            count += 1;
-        }
-    }
-
-    // Mark migration as done
-    let _ = db.set_kv("files_migrated_to_nodes", "true");
-
-    Ok(count)
-}
-
-/// Migrate legacy graph_edges to new node_edges table.
-/// Resolves target_title_or_path → target_id using NodeResolver.
-/// Skips tags (already in properties). Unresolved targets become ghost nodes.
-#[tauri::command]
-pub fn migrate_graph_edges(state: tauri::State<'_, DbState>) -> AppResult<u32> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-
-    // Check if already migrated
-    if let Ok(Some(v)) = db.get_kv("edges_migrated_to_node_edges") {
-        if v == "true" {
-            return Ok(0);
-        }
-    }
-
-    let old_edges = db.get_all_edges()?;
-    let all_nodes = db.get_all_nodes()?;
-    let resolver = NodeResolver::new(&all_nodes);
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    let mut count: u32 = 0;
-    let mut seen = std::collections::HashSet::new();
-
-    for edge in old_edges {
-        // Skip tags — they live in node properties
-        if edge.link_type == "tag" { continue; }
-
-        let target_id = resolver.resolve(&edge.target_title_or_path, &edge.link_type);
-
-        // Skip self-links
-        if target_id == edge.source_id { continue; }
-
-        let edge_type = match edge.link_type.as_str() {
-            "wikilink" => "wikilink",
-            "internal_link" => "internal_link",
-            _ => "internal_link",
-        };
-
-        let dedup_key = format!("{}-{}-{}", edge.source_id, target_id, edge_type);
-        if !seen.insert(dedup_key) { continue; }
-
-        let new_edge = crate::db::NodeEdge {
-            id: uuid::Uuid::new_v4().to_string(),
-            source_id: edge.source_id,
-            target_id,
-            edge_type: edge_type.to_string(),
-            relation: None,
-            created_at: now.clone(),
-        };
-
-        if db.upsert_node_edge(&new_edge).is_ok() {
-            count += 1;
-        }
-    }
-
-    let _ = db.set_kv("edges_migrated_to_node_edges", "true");
-    Ok(count)
-}

@@ -399,7 +399,7 @@ const geocodeAddress = async (query: string) => {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
-      { headers: { 'User-Agent': 'Synabit/0.3 (https://synabit.app)' } }
+      { headers: { 'User-Agent': 'Synabit/0.4.1 (https://synabit.app)' } }
     );
     if (!res.ok) throw new Error('Geocoding failed');
     const data = await res.json();
