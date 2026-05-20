@@ -1,6 +1,6 @@
-use std::pin::Pin;
-use std::future::Future;
 use super::{DriveFile, DriveFileList, SyncManifest, VAULT_FOLDER_NAME};
+use std::future::Future;
+use std::pin::Pin;
 
 // ──────────────────────────────────────────────
 // Google Drive API Helpers
@@ -16,7 +16,7 @@ pub(crate) async fn drive_list_files(
 
     loop {
         let mut url = format!(
-            "https://www.googleapis.com/drive/v3/files?q='{}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,modifiedTime),nextPageToken&pageSize=1000",
+            "https://www.googleapis.com/drive/v3/files?q='{}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,modifiedTime,md5Checksum),nextPageToken&pageSize=1000",
             folder_id
         );
         if let Some(ref pt) = page_token {
@@ -118,12 +118,12 @@ pub(crate) async fn drive_upload_file(
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "No file ID returned".to_string())?;
-    
+
     let modified_time = result["modifiedTime"]
         .as_str()
         .map(|s| s.to_string())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        
+
     Ok((id, modified_time))
 }
 
@@ -163,10 +163,7 @@ pub(crate) async fn drive_update_file(
 
 pub(crate) async fn drive_delete_file(token: &str, file_id: &str) -> Result<(), String> {
     let client = reqwest::Client::new();
-    let url = format!(
-        "https://www.googleapis.com/drive/v3/files/{}",
-        file_id
-    );
+    let url = format!("https://www.googleapis.com/drive/v3/files/{}", file_id);
 
     let resp = client
         .delete(&url)

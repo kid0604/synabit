@@ -3,16 +3,30 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{
-    DriveFile, SyncFileEntry,
-    file_sha256, load_manifest, save_manifest, gdrive_cache_dir,
+use super::api::{
+    collect_drive_files, drive_delete_file, drive_download_file, drive_update_file,
+    drive_upload_file, ensure_drive_folder_path, find_or_create_vault_folder,
 };
 use super::auth::get_valid_token;
-use super::api::{
-    collect_drive_files, drive_download_file, drive_upload_file,
-    drive_update_file, drive_delete_file, ensure_drive_folder_path,
-    find_or_create_vault_folder,
+use super::{
+    file_sha256, gdrive_cache_dir, load_manifest, save_manifest, DriveFile, SyncFileEntry,
 };
+
+/// Compares two RFC3339 timestamps with a 3-second tolerance.
+/// This accounts for Google Drive API randomly mutating the fractional seconds
+/// of modifiedTime after an upload finishes.
+fn is_mtime_equal(t1: &str, t2: &str) -> bool {
+    if t1 == t2 {
+        return true;
+    }
+    let dt1 = chrono::DateTime::parse_from_rfc3339(t1).ok();
+    let dt2 = chrono::DateTime::parse_from_rfc3339(t2).ok();
+    if let (Some(d1), Some(d2)) = (dt1, dt2) {
+        d1.signed_duration_since(d2).num_seconds().abs() <= 3
+    } else {
+        false
+    }
+}
 
 #[derive(Serialize, Clone)]
 pub struct SyncResult {
@@ -60,7 +74,10 @@ fn conflict_copy_path(original: &Path) -> PathBuf {
 }
 
 #[tauri::command]
-pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) -> Result<SyncResult, String> {
+pub async fn gdrive_sync_full(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+) -> Result<SyncResult, String> {
     log::info!("Starting full Google Drive sync for vault: {}", vault_path);
     let token = get_valid_token(&app_handle).await?;
     let mut manifest = load_manifest(&vault_path);
@@ -87,12 +104,16 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
 
     let mut drive_map: HashMap<String, DriveFile> = HashMap::new();
     for (rel, f) in &drive_files {
-        drive_map.insert(rel.clone(), DriveFile {
-            id: f.id.clone(),
-            name: f.name.clone(),
-            mime_type: f.mime_type.clone(),
-            modified_time: f.modified_time.clone(),
-        });
+        drive_map.insert(
+            rel.clone(),
+            DriveFile {
+                id: f.id.clone(),
+                name: f.name.clone(),
+                mime_type: f.mime_type.clone(),
+                modified_time: f.modified_time.clone(),
+                md5_checksum: f.md5_checksum.clone(),
+            },
+        );
     }
 
     // 3. Collect local files
@@ -112,13 +133,21 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
             }
         } else if let Some(entry) = manifest.files.get(rel_path) {
             let local_changed = file_sha256(&local_path) != entry.local_sha256;
-            let remote_changed = drive_mtime != entry.drive_modified_time;
+            
+            let mut remote_changed = !is_mtime_equal(&drive_mtime, &entry.drive_modified_time);
+            let drive_md5 = df.md5_checksum.clone().unwrap_or_default();
+            if remote_changed && !drive_md5.is_empty() && !entry.local_md5.is_empty() {
+                // If mtime drifted, verify content using MD5
+                if drive_md5 == entry.local_md5 {
+                    remote_changed = false;
+                }
+            }
 
             match (local_changed, remote_changed) {
                 (false, false) => (false, false),
-                (false, true)  => (true, false),
-                (true, false)  => (false, false),
-                (true, true)   => (true, true),
+                (false, true) => (true, false),
+                (true, false) => (false, false),
+                (true, true) => (true, true),
             }
         } else {
             (false, false)
@@ -132,7 +161,9 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
             if is_conflict {
                 let conflict_path = conflict_copy_path(&local_path);
                 if let Err(e) = fs::rename(&local_path, &conflict_path) {
-                    result.errors.push(format!("Conflict rename {}: {}", rel_path, e));
+                    result
+                        .errors
+                        .push(format!("Conflict rename {}: {}", rel_path, e));
                     continue;
                 }
             }
@@ -144,11 +175,13 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
                         continue;
                     }
                     let hash = file_sha256(&local_path);
+                    let md5_hash = super::file_md5(&local_path);
                     manifest.files.insert(
                         rel_path.clone(),
                         SyncFileEntry {
                             drive_file_id: drive_id,
                             local_sha256: hash,
+                            local_md5: md5_hash,
                             drive_modified_time: drive_mtime,
                             local_modified_time: chrono::Utc::now().to_rfc3339(),
                         },
@@ -174,7 +207,11 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
     for key in &remotely_deleted_keys {
         let local_path = vault.join(key);
         let current_hash = file_sha256(&local_path);
-        let entry_hash = manifest.files.get(key).map(|e| e.local_sha256.clone()).unwrap_or_default();
+        let entry_hash = manifest
+            .files
+            .get(key)
+            .map(|e| e.local_sha256.clone())
+            .unwrap_or_default();
 
         if current_hash == entry_hash {
             let _ = fs::remove_file(&local_path);
@@ -192,10 +229,20 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
 
         if let Some(entry) = manifest.files.get(rel_path) {
             if current_hash != entry.local_sha256 {
-                let remote_mtime = drive_map.get(rel_path)
+                let remote_mtime = drive_map
+                    .get(rel_path)
                     .and_then(|df| df.modified_time.clone())
                     .unwrap_or_default();
-                if !remote_mtime.is_empty() && remote_mtime != entry.drive_modified_time {
+                let drive_md5 = drive_map.get(rel_path).and_then(|df| df.md5_checksum.clone()).unwrap_or_default();
+                
+                let mut remote_changed = !remote_mtime.is_empty() && !is_mtime_equal(&remote_mtime, &entry.drive_modified_time);
+                if remote_changed && !drive_md5.is_empty() && !entry.local_md5.is_empty() {
+                    if drive_md5 == entry.local_md5 {
+                        remote_changed = false;
+                    }
+                }
+                
+                if remote_changed {
                     continue;
                 }
                 match fs::read(&local_path) {
@@ -204,6 +251,7 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
                             Ok(new_gdrive_time) => {
                                 let mut updated = entry.clone();
                                 updated.local_sha256 = current_hash;
+                                updated.local_md5 = super::file_md5(&local_path);
                                 updated.local_modified_time = chrono::Utc::now().to_rfc3339();
                                 updated.drive_modified_time = new_gdrive_time;
                                 manifest.files.insert(rel_path.clone(), updated);
@@ -233,36 +281,35 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
                 .to_string();
 
             match ensure_drive_folder_path(&token, &mut manifest, &rel_dir).await {
-                Ok(parent_folder_id) => {
-                    match fs::read(&local_path) {
-                        Ok(content) => {
-                            match drive_upload_file(&token, &parent_folder_id, &filename, &content)
-                                .await
-                            {
-                                Ok((file_id, new_gdrive_time)) => {
-                                    manifest.files.insert(
-                                        rel_path.clone(),
-                                        SyncFileEntry {
-                                            drive_file_id: file_id,
-                                            local_sha256: current_hash,
-                                            drive_modified_time: new_gdrive_time,
-                                            local_modified_time: chrono::Utc::now().to_rfc3339(),
-                                        },
-                                    );
-                                    result.pushed += 1;
-                                }
-                                Err(e) => {
-                                    result.errors.push(format!("Upload {}: {}", rel_path, e));
-                                }
+                Ok(parent_folder_id) => match fs::read(&local_path) {
+                    Ok(content) => {
+                        match drive_upload_file(&token, &parent_folder_id, &filename, &content)
+                            .await
+                        {
+                            Ok((new_id, new_gdrive_time)) => {
+                                let new_entry = SyncFileEntry {
+                                    drive_file_id: new_id,
+                                    local_sha256: current_hash,
+                                    local_md5: super::file_md5(&local_path),
+                                    drive_modified_time: new_gdrive_time,
+                                    local_modified_time: chrono::Utc::now().to_rfc3339(),
+                                };
+                                manifest.files.insert(rel_path.clone(), new_entry);
+                                result.pushed += 1;
+                            }
+                            Err(e) => {
+                                result.errors.push(format!("Upload {}: {}", rel_path, e));
                             }
                         }
-                        Err(e) => {
-                            result.errors.push(format!("Read {}: {}", rel_path, e));
-                        }
                     }
-                }
+                    Err(e) => {
+                        result.errors.push(format!("Read {}: {}", rel_path, e));
+                    }
+                },
                 Err(e) => {
-                    result.errors.push(format!("Ensure folder {}: {}", rel_dir, e));
+                    result
+                        .errors
+                        .push(format!("Ensure folder {}: {}", rel_dir, e));
                 }
             }
         }
@@ -291,15 +338,21 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
         .iter()
         .filter(|(k, _v)| !vault.join(k).exists() && drive_map.contains_key(k.as_str()))
         .map(|(k, v)| {
-            let remote_mtime = drive_map.get(k.as_str())
+            let remote_mtime = drive_map
+                .get(k.as_str())
                 .and_then(|df| df.modified_time.clone())
                 .unwrap_or_default();
-            (k.clone(), v.drive_file_id.clone(), v.drive_modified_time.clone(), remote_mtime)
+            (
+                k.clone(),
+                v.drive_file_id.clone(),
+                v.drive_modified_time.clone(),
+                remote_mtime,
+            )
         })
         .collect();
 
     for (key, drive_id, base_mtime, remote_mtime) in &locally_deleted {
-        if remote_mtime == base_mtime {
+        if is_mtime_equal(remote_mtime, base_mtime) {
             match drive_delete_file(&token, drive_id).await {
                 Ok(_) => {
                     manifest.files.remove(key);
@@ -317,7 +370,9 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
             match drive_download_file(&token, drive_id).await {
                 Ok(content) => {
                     if let Err(e) = fs::write(&local_path, &content) {
-                        result.errors.push(format!("Re-download write {}: {}", key, e));
+                        result
+                            .errors
+                            .push(format!("Re-download write {}: {}", key, e));
                         continue;
                     }
                     let hash = file_sha256(&local_path);
@@ -341,7 +396,10 @@ pub async fn gdrive_sync_full(app_handle: tauri::AppHandle, vault_path: String) 
 
     log::info!(
         "Google Drive sync complete. Pulled: {}, Pushed: {}, Deleted: {}, Errors: {}",
-        result.pulled, result.pushed, result.deleted, result.errors.len()
+        result.pulled,
+        result.pushed,
+        result.deleted,
+        result.errors.len()
     );
 
     Ok(result)

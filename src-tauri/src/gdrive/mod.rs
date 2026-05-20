@@ -12,27 +12,36 @@
 // browse.rs = OmniDrive File Manager (browse ALL user Drive files)
 // Each has its own OAuth token. Users can enable either, both, or neither.
 
-pub mod auth;
 pub mod api;
-pub mod sync;
+pub mod auth;
 pub mod browse;
+pub mod sync;
 
 // ──────────────────────────────────────────────
 // Shared Constants
 // ──────────────────────────────────────────────
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub(crate) const CLIENT_ID: &str = env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time");
+pub(crate) const CLIENT_ID: &str = env!(
+    "SYNABIT_GOOGLE_CLIENT_ID",
+    "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"
+);
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_ANDROID_CLIENT_ID") {
     Some(val) => val,
-    None => env!("SYNABIT_GOOGLE_CLIENT_ID", "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"),
+    None => env!(
+        "SYNABIT_GOOGLE_CLIENT_ID",
+        "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"
+    ),
 };
 // Desktop OAuth clients: Google still requires client_secret for token exchange/refresh.
 // It's considered "not truly secret" for desktop apps, but mandatory for the endpoint.
 // PKCE is added as an additional security layer on top.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub(crate) const CLIENT_SECRET: &str = env!("SYNABIT_GOOGLE_CLIENT_SECRET", "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time");
+pub(crate) const CLIENT_SECRET: &str = env!(
+    "SYNABIT_GOOGLE_CLIENT_SECRET",
+    "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time"
+);
 pub(crate) const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 pub(crate) const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 pub(crate) const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
@@ -43,13 +52,14 @@ pub(crate) const VAULT_FOLDER_NAME: &str = "Synabit Vault";
 // ──────────────────────────────────────────────
 // Shared Data Structures
 // ──────────────────────────────────────────────
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::fs;
-use sha2::{Digest, Sha256};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use md5::{Digest as Md5Digest, Md5};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 // ──────────────────────────────────────────────
 // PKCE Helpers (RFC 7636)
@@ -85,6 +95,8 @@ pub struct SyncManifest {
 pub struct SyncFileEntry {
     pub drive_file_id: String,
     pub local_sha256: String,
+    #[serde(default)]
+    pub local_md5: String,
     pub drive_modified_time: String,
     pub local_modified_time: String,
 }
@@ -97,6 +109,8 @@ pub(crate) struct DriveFile {
     pub mime_type: Option<String>,
     #[serde(rename = "modifiedTime")]
     pub modified_time: Option<String>,
+    #[serde(rename = "md5Checksum")]
+    pub md5_checksum: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -119,7 +133,10 @@ pub(crate) struct TokenResponse {
 
 pub(crate) fn config_dir(app_handle: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
-    app_handle.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."))
+    app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 pub(crate) fn tokens_path(app_handle: &tauri::AppHandle) -> PathBuf {
@@ -139,6 +156,17 @@ pub(crate) fn file_sha256(path: &Path) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         format!("{:x}", hasher.finalize())
+    } else {
+        String::new()
+    }
+}
+
+pub(crate) fn file_md5(path: &Path) -> String {
+    if let Ok(bytes) = fs::read(path) {
+        let mut hasher = Md5::new();
+        hasher.update(&bytes);
+        let result = hasher.finalize();
+        result.iter().map(|b| format!("{:02x}", b)).collect::<String>()
     } else {
         String::new()
     }
@@ -169,8 +197,16 @@ mod tests {
     fn test_pkce_pair_format() {
         let (verifier, challenge) = generate_pkce_pair();
         // RFC 7636: code_verifier should be 43-128 chars (base64url of 32 bytes = 43 chars)
-        assert!(verifier.len() >= 43, "verifier too short: {}", verifier.len());
-        assert!(verifier.len() <= 128, "verifier too long: {}", verifier.len());
+        assert!(
+            verifier.len() >= 43,
+            "verifier too short: {}",
+            verifier.len()
+        );
+        assert!(
+            verifier.len() <= 128,
+            "verifier too long: {}",
+            verifier.len()
+        );
         // challenge should be base64url(SHA256(verifier)) = 43 chars
         assert_eq!(challenge.len(), 43, "challenge should be 43 chars");
     }
