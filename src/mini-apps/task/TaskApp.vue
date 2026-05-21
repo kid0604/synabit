@@ -2,8 +2,9 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3 } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
+import ProjectEditModal from './ProjectEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { useSettings } from '../../composables/useSettings';
 import { logger } from '../../utils/logger';
@@ -13,6 +14,8 @@ const { taskArchiveDays } = useSettings();
 const props = defineProps<{
   vaultPath: string;
 }>();
+
+const emit = defineEmits(['open-node']);
 
 
 
@@ -39,10 +42,13 @@ export interface TaskMetadata {
 }
 
 const tasks = ref<TaskMetadata[]>([]);
+const projects = ref<any[]>([]);
 const searchQuery = ref('');
+const newProjectDraft = ref<any>(null);
 
-const activeCategory = ref<'all' | 'today' | 'upcoming' | 'someday' | 'transferred'>('today');
+const activeCategory = ref<string>('today');
 const isMobileSidebarOpen = ref(false);
+const showProjectEditModal = ref(false);
 
 const backendSearchIds = ref<string[] | null>(null);
 let taskSearchTimeout: ReturnType<typeof setTimeout>;
@@ -231,9 +237,41 @@ const activeCategoryTasks = computed(() => {
         
         if (activeCategory.value === 'someday') return !isUpcoming;
         
+        if (activeCategory.value.startsWith('project:')) {
+            const projId = activeCategory.value.substring(8);
+            return t.project_id === projId;
+        }
+
         return false;
     });
 });
+
+const activeProject = computed(() => {
+    if (activeCategory.value.startsWith('project:')) {
+        const id = activeCategory.value.substring(8);
+        return projects.value.find(p => p.id === id);
+    }
+    return null;
+});
+
+const linkedNotes = ref<any[]>([]);
+let fetchNotesTimeout: any = null;
+
+watch(activeProject, (proj) => {
+    clearTimeout(fetchNotesTimeout);
+    if (proj) {
+        fetchNotesTimeout = setTimeout(async () => {
+            try {
+                const edges = await invoke<any[]>('get_linked_nodes', { targetTitle: proj.title, targetId: proj.id });
+                linkedNotes.value = edges.filter((n: any) => n.node_type === 'note');
+            } catch(e) {
+                console.error('Failed to get linked notes', e);
+            }
+        }, 100);
+    } else {
+        linkedNotes.value = [];
+    }
+}, { immediate: true });
 
 const viewMode = ref<'list' | 'board' | 'table' | 'gtd'>('list');
 
@@ -401,6 +439,7 @@ const openEditModal = (task: TaskMetadata) => {
         comment: task.comment,
         tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
         status: task.status,
+        project_id: task.project_id || '',
         completed_at: task.completed_at || ''
     };
     customFields.value = Object.entries(task.custom_fields || {})
@@ -448,6 +487,7 @@ const openCreateModal = () => {
         created_at: '',
         updated_at: '',
         completed_at: '',
+        project_id: activeCategory.value.startsWith('project:') ? activeCategory.value.substring(8) : '',
         custom_fields: {},
         isNew: true
     };
@@ -463,6 +503,7 @@ const openCreateModal = () => {
         comment: '',
         tags: '',
         status: 'todo',
+        project_id: activeCategory.value.startsWith('project:') ? activeCategory.value.substring(8) : '',
         completed_at: ''
     };
     customFields.value = [];
@@ -518,6 +559,7 @@ const saveTask = async () => {
             comment: editingTaskParams.value.comment,
             source_link: editingTask.value.source_link || '',
             tags: tagArray,
+            project_id: editingTaskParams.value.project_id,
             completed_at: editingTask.value.completed_at || ''
         };
 
@@ -566,6 +608,7 @@ const saveTask = async () => {
             editingTask.value.due_date = editingTaskParams.value.due_date;
             editingTask.value.comment = editingTaskParams.value.comment;
             editingTask.value.tags = tagArray;
+            editingTask.value.project_id = editingTaskParams.value.project_id;
             editingTask.value.custom_fields = updatedCustomFields;
         }
         
@@ -596,6 +639,7 @@ const mapNodeToTask = (node: any): TaskMetadata => {
         comment: node.properties.comment || '',
         source_link: node.properties.source_link || '',
         tags: tagsArray,
+        project_id: node.properties.project_id || '',
         completed_at: node.properties.completed_at || '',
         custom_fields: node.properties || {}
     };
@@ -608,8 +652,118 @@ const loadTasks = async () => {
         await invoke('archive_done_nodes', { vaultPath: props.vaultPath, nodeType: 'task', days: archiveDays });
         const nodes = await invoke<any[]>('get_nodes', { nodeType: 'task' });
         tasks.value = nodes.map(mapNodeToTask);
+        
+        const projNodes = await invoke<any[]>('get_nodes', { nodeType: 'project' });
+        projects.value = projNodes.map(node => ({
+            id: node.id,
+            path: node.id,
+            title: node.title,
+            status: node.properties.status || 'active',
+            start_date: node.properties.start_date || '',
+            due_date: node.properties.due_date || '',
+            color: node.properties.color || '',
+            tags: node.properties.tags || [],
+            custom_fields: (({ status, start_date, due_date, color, tags, ...rest }) => rest)(node.properties),
+            content: node.content
+        }));
     } catch (e) {
         logger.error("Failed to load tasks", e);
+    }
+};
+
+const handleCreateProjectClick = () => {
+    newProjectDraft.value = {
+        title: '',
+        content: '',
+        due_date: '',
+        start_date: '',
+        status: 'active',
+        isNew: true
+    };
+    showProjectEditModal.value = true;
+};
+
+const handleProjectSave = async (updatedProject: any) => {
+    try {
+        if (newProjectDraft.value) {
+            // Create new project
+            if (!updatedProject.title.trim()) updatedProject.title = 'Untitled Project';
+            const relPath = `Projects/${crypto.randomUUID()}.md`;
+            await invoke('write_node_file', {
+                vaultPath: props.vaultPath,
+                relPath: relPath,
+                nodeType: 'project',
+                title: updatedProject.title,
+                properties: {
+                    status: updatedProject.status,
+                    start_date: updatedProject.start_date,
+                    due_date: updatedProject.due_date,
+                    tags: updatedProject.tags,
+                    color: '',
+                    ...(updatedProject.custom_fields || {})
+                },
+                content: updatedProject.content
+            });
+            
+            showProjectEditModal.value = false;
+            newProjectDraft.value = null;
+            await loadTasks();
+            
+            // Open the newly created project
+            const newProj = projects.value.find(p => p.path === relPath);
+            if (newProj) {
+                activeCategory.value = 'project:' + newProj.id;
+            }
+        } else if (activeProject.value) {
+            // Update existing project
+            await invoke('write_node_file', {
+                vaultPath: props.vaultPath,
+                relPath: activeProject.value.path,
+                nodeType: 'project',
+                title: updatedProject.title,
+                properties: {
+                    status: updatedProject.status,
+                    start_date: updatedProject.start_date,
+                    due_date: updatedProject.due_date,
+                    tags: updatedProject.tags,
+                    color: activeProject.value.color || '',
+                    ...(updatedProject.custom_fields || {})
+                },
+                content: updatedProject.content,
+                existingPath: activeProject.value.path
+            });
+            showProjectEditModal.value = false;
+            await loadTasks();
+        }
+    } catch (e) {
+        logger.error("Failed to save project", e);
+    }
+};
+
+const deleteProject = async () => {
+    if (!activeProject.value) return;
+    let isConfirmed = false;
+    try {
+        isConfirmed = await ask('This action cannot be undone. The project will be permanently deleted. Tasks under it will NOT be deleted.', { 
+            title: 'Delete this project?', 
+            kind: 'warning',
+            okLabel: 'Delete',
+            cancelLabel: 'Cancel'
+        });
+    } catch (e) {
+        logger.warn("Tauri confirm failed, falling back to window.confirm", e);
+        isConfirmed = window.confirm('Delete this project?');
+    }
+    
+    if (!isConfirmed) return;
+    
+    try {
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: activeProject.value.path });
+        showProjectEditModal.value = false;
+        activeCategory.value = 'all';
+        await loadTasks();
+    } catch (e) {
+        logger.error("Failed to delete project", e);
     }
 };
 
@@ -666,7 +820,7 @@ const deleteTask = async (task: TaskMetadata) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, path: task.path });
+        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: task.path });
         const idx = tasks.value.findIndex(t => t.id === task.id);
         if (idx !== -1) tasks.value.splice(idx, 1);
     } catch (e) {
@@ -722,6 +876,19 @@ watch(() => props.vaultPath, () => {
                   <div class="flex items-center"><Send class="w-4 h-4 mr-3" />Transferred</div>
                   <span class="text-xs bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded-full text-slate-600 dark:text-slate-400" v-if="categoryCounts.transferred">{{ categoryCounts.transferred }}</span>
               </button>
+              
+              <div class="pt-4 pb-1 px-3 flex items-center justify-between group">
+                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Projects</span>
+                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" title="New Project">
+                      <Plus class="w-3.5 h-3.5"/>
+                  </button>
+              </div>
+              <button v-for="proj in projects" :key="proj.id" @click="activeCategory = 'project:' + proj.id" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer group" :class="activeCategory === 'project:' + proj.id ? 'bg-white dark:bg-[#2c2c2c] text-indigo-600 dark:text-indigo-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center truncate">
+                      <svg class="w-4 h-4 mr-3 shrink-0" :class="activeCategory === 'project:' + proj.id ? 'text-indigo-500' : 'text-gray-400 group-hover:text-indigo-400'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="truncate">{{ proj.title }}</span>
+                  </div>
+              </button>
           </div>
       </div>
 
@@ -735,8 +902,8 @@ watch(() => props.vaultPath, () => {
                       <button @click="isMobileSidebarOpen = true" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer">
                           <MenuIcon class="w-6 h-6" />
                       </button>
-                      <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize">
-                          {{ activeCategory === 'all' ? 'All Tasks' : activeCategory }}
+                      <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize truncate max-w-[200px] sm:max-w-md lg:max-w-xl">
+                          {{ activeProject ? activeProject.title : (activeCategory === 'all' ? 'All Tasks' : activeCategory) }}
                       </h1>
                   </div>
                   <div class="flex items-center gap-3">
@@ -798,7 +965,69 @@ watch(() => props.vaultPath, () => {
 
       <!-- Main Content -->
       <div class="flex-1 overflow-y-auto px-4 md:px-8 pb-16">
-          <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-full opacity-40">
+          
+          <!-- Project Header & Linked Notes -->
+          <div v-if="activeProject" class="mb-8 mt-2 max-w-4xl mx-auto space-y-6 relative group">
+              <button @click="showProjectEditModal = true" class="absolute top-2 right-2 p-2 rounded-lg bg-white/80 dark:bg-black/50 backdrop-blur-sm border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-indigo-500 shadow-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer z-10" title="Edit Project">
+                  <Edit3 class="w-4 h-4" />
+              </button>
+              
+              <div v-if="activeProject.content || activeProject.due_date || activeProject.start_date || (activeProject.tags && activeProject.tags.length > 0)" class="bg-gray-50 dark:bg-[#1a1a1a] rounded-xl p-5 border border-gray-100 dark:border-[#2c2c2c]">
+                  <div class="flex flex-wrap items-center gap-3 mb-4">
+                      <!-- Status -->
+                      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium capitalize" 
+                            :class="{
+                                'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400': activeProject.status === 'active',
+                                'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400': activeProject.status === 'completed',
+                                'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400': activeProject.status === 'on_hold'
+                            }">
+                          {{ activeProject.status.replace('_', ' ') }}
+                      </span>
+                      
+                      <!-- Dates -->
+                      <div v-if="activeProject.start_date || activeProject.due_date" class="flex items-center text-sm font-medium text-gray-600 dark:text-gray-400">
+                          <CalendarDays class="w-4 h-4 mr-1.5" />
+                          <span v-if="activeProject.start_date">{{ activeProject.start_date }}</span>
+                          <span v-if="activeProject.start_date && activeProject.due_date" class="mx-1">→</span>
+                          <span v-if="activeProject.due_date" :class="{'text-red-500': true}">{{ activeProject.due_date }}</span>
+                      </div>
+                      
+                      <!-- Tags -->
+                      <div v-if="activeProject.tags?.length > 0" class="flex flex-wrap items-center gap-1.5 ml-auto">
+                          <span v-for="tag in activeProject.tags" :key="tag" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-[#2c2c2c] text-gray-700 dark:text-gray-300">
+                              #{{ tag }}
+                          </span>
+                      </div>
+                  </div>
+                  
+                  <div v-if="activeProject.content" class="text-sm text-gray-600 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none">
+                      <div v-html="activeProject.content"></div>
+                  </div>
+                  
+                  <!-- Custom Fields -->
+                  <div v-if="activeProject.custom_fields && Object.keys(activeProject.custom_fields).length > 0" class="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 pt-4 border-t border-gray-200 dark:border-[#333]">
+                      <div v-for="(val, key) in activeProject.custom_fields" :key="key" class="flex items-center text-sm">
+                          <span class="text-gray-400 mr-2 font-medium">{{ key }}:</span>
+                          <span class="text-gray-700 dark:text-gray-300">{{ val }}</span>
+                      </div>
+                  </div>
+              </div>
+              <div v-else class="bg-gray-50/50 dark:bg-[#1a1a1a]/50 rounded-xl p-5 border border-dashed border-gray-200 dark:border-[#2c2c2c] flex items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a1a1a] transition-colors" @click="showProjectEditModal = true">
+                  <span class="text-gray-400 text-sm font-medium flex items-center"><Edit3 class="w-4 h-4 mr-2"/> Add description, dates, or tags</span>
+              </div>
+              
+              <div v-if="linkedNotes.length > 0">
+                  <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center"><FileText class="w-4 h-4 mr-2"/> Related Notes</h3>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      <div v-for="note in linkedNotes" :key="note.id" @click="emit('open-node', note.id, 'note')" class="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-3 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md cursor-pointer transition-all group">
+                          <div class="font-medium text-sm text-[#1c1c1e] dark:text-[#f4f4f5] truncate mb-1">{{ note.title || 'Untitled Note' }}</div>
+                          <div class="text-[11px] text-gray-400 truncate">{{ note.content ? note.content.substring(0, 50) + '...' : 'Empty note' }}</div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+          
+          <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-48 opacity-40">
               <CheckCircle2 class="w-16 h-16 mb-4"/>
               <p>You're all caught up!</p>
           </div>
@@ -966,9 +1195,20 @@ watch(() => props.vaultPath, () => {
       v-if="editingTask" 
       :task="editingTaskParams" 
       :vaultPath="vaultPath"
+      :projects="projects"
       @save="handleModalSave" 
       @close="editingTask = null" 
       @delete="handleModalDelete"
+  />
+
+  <!-- Edit Project Modal -->
+  <ProjectEditModal 
+      v-if="showProjectEditModal && (activeProject || newProjectDraft)" 
+      :project="newProjectDraft || activeProject" 
+      :vaultPath="vaultPath"
+      @save="handleProjectSave" 
+      @close="showProjectEditModal = false; newProjectDraft = null;" 
+      @delete="deleteProject"
   />
 
   <!-- Mobile Floating Action Button (FAB) -->
@@ -1015,6 +1255,19 @@ watch(() => props.vaultPath, () => {
               <button @click="activeCategory = 'transferred'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'transferred' ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
                   <div class="flex items-center"><Send class="w-5 h-5 mr-3" />Transferred</div>
                   <span class="text-xs bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-400" v-if="categoryCounts.transferred">{{ categoryCounts.transferred }}</span>
+              </button>
+              
+              <div class="pt-4 pb-1 px-3 flex items-center justify-between">
+                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Projects</span>
+                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500" title="New Project">
+                      <Plus class="w-4 h-4"/>
+                  </button>
+              </div>
+              <button v-for="proj in projects" :key="proj.id" @click="activeCategory = 'project:' + proj.id; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'project:' + proj.id ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                  <div class="flex items-center truncate">
+                      <svg class="w-5 h-5 mr-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="truncate">{{ proj.title }}</span>
+                  </div>
               </button>
           </div>
       </div>

@@ -7,6 +7,7 @@ const props = defineProps<{
     task: any;
     vaultPath?: string;
     showActions?: boolean;
+    projects?: any[];
 }>();
 
 const emit = defineEmits(['save', 'close', 'delete']);
@@ -23,7 +24,8 @@ const editingTaskParams = ref({
     due_date: props.task?.due_date || '',
     comment: props.task?.comment || '',
     tags: props.task?.tags || '',
-    status: props.task?.status || 'todo'
+    status: props.task?.status || 'todo',
+    project_id: props.task?.project_id || ''
 });
 
 const todayStr = computed(() => {
@@ -177,6 +179,20 @@ const handleBackgroundClick = () => {
                       <option value="P2">P2</option>
                       <option value="P3">P3</option>
                       <option value="P4">P4</option>
+                  </select>
+              </div>
+
+              <!-- Project -->
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.project_id ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Project">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="editingTaskParams.project_id ? 'text-indigo-500 mr-2' : ''"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  
+                  <span v-if="editingTaskParams.project_id" class="text-xs font-semibold max-w-[100px] truncate text-indigo-600 dark:text-indigo-400">
+                      {{ props.projects?.find(p => p.id === editingTaskParams.project_id)?.title || 'Project' }}
+                  </span>
+                  
+                  <select v-model="editingTaskParams.project_id" class="absolute inset-0 opacity-0 cursor-pointer z-10">
+                      <option value="">No Project</option>
+                      <option v-for="proj in props.projects" :key="proj.id" :value="proj.id">{{ proj.title }}</option>
                   </select>
               </div>
 

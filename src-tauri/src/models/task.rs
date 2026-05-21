@@ -22,6 +22,8 @@ pub struct TaskFrontMatter {
     #[serde(default)]
     pub track_progress: bool,
     #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
     pub priority: String,
     #[serde(default)]
     pub start_date: String,
@@ -49,6 +51,7 @@ pub struct TaskMetadata {
     pub is_transferred: bool,
     pub transferred_to: String,
     pub track_progress: bool,
+    pub project_id: String,
     pub priority: String,
     pub start_date: String,
     pub due_date: String,

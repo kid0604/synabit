@@ -22,6 +22,25 @@ export interface NodeMetadata {
 }
 
 // ──────────────────────────────────────────────
+// Projects
+// ──────────────────────────────────────────────
+
+export interface ProjectMetadata {
+  id: string;
+  title: string;
+  status: string;
+  start_date: string;
+  due_date: string;
+  color: string;
+  tags: string[];
+  content: string;
+  path: string;
+  created_at: string;
+  updated_at: string;
+  custom_fields: Record<string, unknown>;
+}
+
+// ──────────────────────────────────────────────
 // Tasks
 // ──────────────────────────────────────────────
 
@@ -36,6 +55,7 @@ export interface TaskFrontMatter {
   is_transferred: boolean;
   transferred_to: string;
   track_progress: boolean;
+  project_id?: string;
   priority: string;
   start_date: string;
   due_date: string;
@@ -54,6 +74,7 @@ export interface TaskMetadata {
   is_transferred: boolean;
   transferred_to: string;
   track_progress: boolean;
+  project_id?: string;
   priority: string;
   start_date: string;
   due_date: string;

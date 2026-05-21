@@ -4,5 +4,6 @@ pub mod file;
 pub mod nexus;
 pub mod node;
 pub mod note;
+pub mod project;
 pub mod task;
 pub mod whiteboard;
