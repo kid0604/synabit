@@ -50,7 +50,9 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
     }
 
     // 3. Tiptap Internal Links ([Title](synabit://.../path))
-    let md_link_re = Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event)/([^)]+)\)").unwrap();
+    let md_link_re =
+        Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event)/([^)]+)\)")
+            .unwrap();
     for cap in md_link_re.captures_iter(text) {
         if let Some(m) = cap.get(2) {
             let encoded_path = m.as_str().trim();
@@ -74,7 +76,7 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
 /// Extracts edges from both content and properties of a Node
 pub fn extract_node_edges(node: &crate::models::node::NodeMetadata) -> Vec<GraphEdge> {
     let mut edges = extract_edges(&node.id, &node.content);
-    
+
     // Also parse properties
     if let serde_json::Value::Object(map) = &node.properties {
         for (key, val) in map {
@@ -101,12 +103,13 @@ pub fn extract_node_edges(node: &crate::models::node::NodeMetadata) -> Vec<Graph
             }
         }
     }
-    
+
     // Deduplicate
     let mut seen = std::collections::HashSet::new();
-    edges.into_iter().filter(|e| {
-        seen.insert(format!("{}-{}", e.target_title_or_path, e.link_type))
-    }).collect()
+    edges
+        .into_iter()
+        .filter(|e| seen.insert(format!("{}-{}", e.target_title_or_path, e.link_type)))
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -144,17 +147,23 @@ impl NodeResolver {
             title_map.entry(title_lower).or_insert_with(|| id.clone());
 
             // Path lookup (the node id IS a path for file-based nodes)
-            path_map.entry(id.to_lowercase()).or_insert_with(|| id.clone());
+            path_map
+                .entry(id.to_lowercase())
+                .or_insert_with(|| id.clone());
 
             // For file nodes: map filename from properties.path
             if node.node_type == "file" {
                 if let Some(p) = node.properties.get("path").and_then(|v| v.as_str()) {
                     let file_path = std::path::Path::new(p);
                     if let Some(fname) = file_path.file_name().and_then(|s| s.to_str()) {
-                        filename_map.entry(fname.to_lowercase()).or_insert_with(|| id.clone());
+                        filename_map
+                            .entry(fname.to_lowercase())
+                            .or_insert_with(|| id.clone());
                     }
                     // Also full path for exact matches
-                    path_map.entry(p.to_lowercase()).or_insert_with(|| id.clone());
+                    path_map
+                        .entry(p.to_lowercase())
+                        .or_insert_with(|| id.clone());
                 }
             }
 
@@ -162,14 +171,21 @@ impl NodeResolver {
             let id_path = std::path::Path::new(&node.id);
             if let Some(fname) = id_path.file_name().and_then(|s| s.to_str()) {
                 let fname_lower = fname.to_lowercase();
-                filename_map.entry(fname_lower.clone()).or_insert_with(|| id.clone());
+                filename_map
+                    .entry(fname_lower.clone())
+                    .or_insert_with(|| id.clone());
                 // Also without .md
                 let no_ext = fname_lower.replace(".md", "");
                 filename_map.entry(no_ext).or_insert_with(|| id.clone());
             }
         }
 
-        NodeResolver { title_map, path_map, id_set, filename_map }
+        NodeResolver {
+            title_map,
+            path_map,
+            id_set,
+            filename_map,
+        }
     }
 
     /// Resolve a target string to a node ID, or return ghost:<target>
@@ -232,12 +248,16 @@ pub fn extract_resolved_node_edges(
 
     for raw in raw_edges {
         // Skip tags — they're stored in node properties
-        if raw.link_type == "tag" { continue; }
+        if raw.link_type == "tag" {
+            continue;
+        }
 
         let target_id = resolver.resolve(&raw.target_title_or_path, &raw.link_type);
 
         // Skip self-links
-        if target_id == node.id { continue; }
+        if target_id == node.id {
+            continue;
+        }
 
         // Map old link_type → new edge_type
         let edge_type = match raw.link_type.as_str() {
@@ -254,7 +274,9 @@ pub fn extract_resolved_node_edges(
         };
 
         let dedup_key = format!("{}-{}-{}", node.id, target_id, edge_type);
-        if !seen.insert(dedup_key) { continue; }
+        if !seen.insert(dedup_key) {
+            continue;
+        }
 
         result.push(NodeEdge {
             id: uuid::Uuid::new_v4().to_string(),
@@ -271,7 +293,12 @@ pub fn extract_resolved_node_edges(
 
 /// Replaces WikiLinks targeting `old_name` with `new_name`.
 /// Retains existing aliases if present.
-pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target_id: Option<&str>) -> String {
+pub fn rename_links_in_text(
+    text: &str,
+    old_title: &str,
+    new_title: &str,
+    target_id: Option<&str>,
+) -> String {
     let wiki_re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
     let old_lower = old_title.to_lowercase();
 
@@ -295,9 +322,11 @@ pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target
         .to_string();
 
     // 2. Replace Tiptap internal links
-    let md_link_re = Regex::new(r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event)/)([^)]+)\)").unwrap();
-    let text_with_md_links = md_link_re
-        .replace_all(&text_with_wiki_links, |caps: &regex::Captures| {
+    let md_link_re =
+        Regex::new(r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event)/)([^)]+)\)")
+            .unwrap();
+    let text_with_md_links =
+        md_link_re.replace_all(&text_with_wiki_links, |caps: &regex::Captures| {
             let label = caps.get(1).unwrap().as_str();
             let prefix = caps.get(2).unwrap().as_str();
             let encoded_path = caps.get(3).unwrap().as_str();
@@ -311,7 +340,9 @@ pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target
                 .unwrap_or(&decoded_path);
 
             let is_match = if let Some(id) = target_id {
-                decoded_path == id || decoded_path == old_title || file_stem.to_lowercase() == old_lower
+                decoded_path == id
+                    || decoded_path == old_title
+                    || file_stem.to_lowercase() == old_lower
             } else {
                 file_stem.to_lowercase() == old_lower
             };
@@ -322,14 +353,16 @@ pub fn rename_links_in_text(text: &str, old_title: &str, new_title: &str, target
                 } else {
                     decoded_path.replacen(file_stem, new_title, 1)
                 };
-                
+
                 let new_label = if label.trim().to_lowercase() == old_lower {
                     new_title
                 } else {
                     label
                 };
-                
-                let safe_path = urlencoding::encode(&new_path).into_owned().replace("%2F", "/");
+
+                let safe_path = urlencoding::encode(&new_path)
+                    .into_owned()
+                    .replace("%2F", "/");
                 format!("[{}]({}{})", new_label, prefix, safe_path)
             } else {
                 caps.get(0).unwrap().as_str().to_string()
@@ -389,7 +422,10 @@ mod tests {
     #[test]
     fn test_extract_internal_links() {
         let edges = extract_edges("node1", "Check [My Note](synabit://note/Notes/hello.md)");
-        let links: Vec<_> = edges.iter().filter(|e| e.link_type == "internal_link").collect();
+        let links: Vec<_> = edges
+            .iter()
+            .filter(|e| e.link_type == "internal_link")
+            .collect();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_title_or_path, "Notes/hello.md");
     }
@@ -489,23 +525,30 @@ mod tests {
         ];
         let resolver = NodeResolver::new(&nodes);
         assert_eq!(resolver.resolve("meeting", "wikilink"), "Notes/Meeting.md");
-        assert_eq!(resolver.resolve("project alpha", "wikilink"), "Notes/Project.md");
+        assert_eq!(
+            resolver.resolve("project alpha", "wikilink"),
+            "Notes/Project.md"
+        );
     }
 
     #[test]
     fn test_resolver_path_match() {
-        let nodes = vec![
-            make_node("Notes/hello.md", "Hello", "note"),
-        ];
+        let nodes = vec![make_node("Notes/hello.md", "Hello", "note")];
         let resolver = NodeResolver::new(&nodes);
-        assert_eq!(resolver.resolve("Notes/hello.md", "internal_link"), "Notes/hello.md");
+        assert_eq!(
+            resolver.resolve("Notes/hello.md", "internal_link"),
+            "Notes/hello.md"
+        );
     }
 
     #[test]
     fn test_resolver_ghost_fallback() {
         let nodes = vec![make_node("Notes/A.md", "A", "note")];
         let resolver = NodeResolver::new(&nodes);
-        assert_eq!(resolver.resolve("nonexistent", "wikilink"), "ghost:nonexistent");
+        assert_eq!(
+            resolver.resolve("nonexistent", "wikilink"),
+            "ghost:nonexistent"
+        );
     }
 
     #[test]
@@ -513,13 +556,10 @@ mod tests {
         let mut node = make_node("Notes/A.md", "A", "note");
         node.content = "#tag1 [[B]]".to_string();
 
-        let nodes = vec![
-            node.clone(),
-            make_node("Notes/B.md", "B", "note"),
-        ];
+        let nodes = vec![node.clone(), make_node("Notes/B.md", "B", "note")];
         let resolver = NodeResolver::new(&nodes);
         let edges = extract_resolved_node_edges(&node, &resolver);
-        
+
         // Should have 1 edge (wikilink to B), NO tag edge
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, "Notes/B.md");
@@ -529,12 +569,12 @@ mod tests {
     #[test]
     fn test_resolved_edges_skip_self_links() {
         let mut node = make_node("Notes/A.md", "A", "note");
-        node.content = "[[A]]".to_string();  // Links to itself
+        node.content = "[[A]]".to_string(); // Links to itself
 
         let nodes = vec![node.clone()];
         let resolver = NodeResolver::new(&nodes);
         let edges = extract_resolved_node_edges(&node, &resolver);
-        
+
         assert!(edges.is_empty());
     }
 
@@ -546,7 +586,7 @@ mod tests {
         let nodes = vec![node.clone()];
         let resolver = NodeResolver::new(&nodes);
         let edges = extract_resolved_node_edges(&node, &resolver);
-        
+
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, "ghost:deleted note");
     }
@@ -556,13 +596,10 @@ mod tests {
         let mut node = make_node("Notes/A.md", "A", "note");
         node.content = "[Task](synabit://task/Tasks/todo.md)".to_string();
 
-        let nodes = vec![
-            node.clone(),
-            make_node("Tasks/todo.md", "Todo", "task"),
-        ];
+        let nodes = vec![node.clone(), make_node("Tasks/todo.md", "Todo", "task")];
         let resolver = NodeResolver::new(&nodes);
         let edges = extract_resolved_node_edges(&node, &resolver);
-        
+
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, "Tasks/todo.md");
         assert_eq!(edges[0].edge_type, "internal_link");

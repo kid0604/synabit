@@ -1,17 +1,25 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use std::collections::HashMap;
-use walkdir::WalkDir;
-use uuid::Uuid;
 use std::time::SystemTime;
+use uuid::Uuid;
+use walkdir::WalkDir;
 
-use crate::models::file::{FileMetadata, FileSource, FileManagerSettings, DuplicateGroup, DuplicateReport};
-use crate::error::{AppError, AppResult};
 use crate::db::DbState;
+use crate::error::{AppError, AppResult};
+use crate::models::file::{
+    DuplicateGroup, DuplicateReport, FileManagerSettings, FileMetadata, FileSource,
+};
 use crate::path_utils;
 
 #[tauri::command]
-pub fn add_file_source(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String, name: String) -> AppResult<FileSource> {
+pub fn add_file_source(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    path: String,
+    name: String,
+) -> AppResult<FileSource> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let id = Uuid::new_v4().to_string();
     let source = FileSource {
@@ -20,7 +28,7 @@ pub fn add_file_source(app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
         name,
     };
     db.upsert_file_source(&source)?;
-    
+
     // Auto trigger scan for the new source
     let _vault_path_clone = vault_path.clone();
     let path_clone = path.clone();
@@ -31,15 +39,19 @@ pub fn add_file_source(app_handle: tauri::AppHandle, state: tauri::State<'_, DbS
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = do_scan_directory(&db, &path_clone);
     });
-    
+
     Ok(source)
 }
 
 #[tauri::command]
-pub fn get_file_sources(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<FileSource>> {
+pub fn get_file_sources(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+) -> AppResult<Vec<FileSource>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let mut sources = db.get_all_file_sources()?;
-    
+
     // Auto-add assets folder if it doesn't exist
     let assets_path = std::path::Path::new(&vault_path).join("assets");
     if assets_path.exists() {
@@ -52,7 +64,7 @@ pub fn get_file_sources(app_handle: tauri::AppHandle, state: tauri::State<'_, Db
             };
             db.upsert_file_source(&source)?;
             sources.push(source);
-            
+
             // Auto trigger scan for the new source
             drop(db); // Release lock before spawning
             let _vault_path_clone = vault_path.clone();
@@ -64,12 +76,17 @@ pub fn get_file_sources(app_handle: tauri::AppHandle, state: tauri::State<'_, Db
             });
         }
     }
-    
+
     Ok(sources)
 }
 
 #[tauri::command]
-pub fn remove_file_source(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, source_id: String) -> AppResult<()> {
+pub fn remove_file_source(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    source_id: String,
+) -> AppResult<()> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     // Ideally we should also remove the files associated with this source from DB.
     // For MVP, we just remove the source. The next full scan might clean up or we can just leave it.
@@ -96,13 +113,27 @@ pub fn import_files(
 
     for src_path in &file_paths {
         let source = Path::new(src_path);
-        if !source.exists() || !source.is_file() { continue; }
+        if !source.exists() || !source.is_file() {
+            continue;
+        }
 
-        let original_name = source.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
+        let original_name = source
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let extension = source
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
         // Create a unique filename to avoid collisions, but keep the original name readable
-        let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let stem = source
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let dest_name = if import_dir.join(&original_name).exists() {
             format!("{}_{}.{}", stem, Uuid::new_v4().simple(), extension)
         } else {
@@ -110,13 +141,21 @@ pub fn import_files(
         };
         let dest = import_dir.join(&dest_name);
 
-        if std::fs::copy(source, &dest).is_err() { continue; }
+        if std::fs::copy(source, &dest).is_err() {
+            continue;
+        }
 
         let abs_path = dest.to_string_lossy().to_string();
         let meta = std::fs::metadata(&dest).ok();
         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
-        let created = meta.as_ref().and_then(|m| m.created().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let modified = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let created = meta
+            .as_ref()
+            .and_then(|m| m.created().ok())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let created_dt: chrono::DateTime<chrono::Local> = created.into();
         let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
 
@@ -134,19 +173,36 @@ pub fn import_files(
             created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             tags: vec![],
+            people: vec![],
             source_type: "imported".to_string(),
         };
 
         let node = file_meta.to_node();
-        let _ = upsert_file_node(&db, &node, &abs_path);
+        if let Ok(updated_node) = upsert_file_node(&db, &node, &abs_path) {
+            // Update search index with the preserved properties
+            let preserved_meta = FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
+            let props = format!("ext:{} source:imported", extension);
+            let mut search_tags = preserved_meta.tags.clone();
+            for person in &preserved_meta.people {
+                search_tags.push(person.clone());
+            }
 
-        // Update search index
-        let props = format!("ext:{} source:imported", ext);
-        db.upsert_search_entry(
-            &node.id, "file", &file_meta.filename,
-            "", &file_meta.extension,
-            &props, None, &file_meta.modified_at, &abs_path,
-        );
+            db.upsert_search_entry(
+                &updated_node.id,
+                "file",
+                &preserved_meta.filename,
+                &search_tags.join(" "),
+                &preserved_meta.extension,
+                &props,
+                None,
+                &preserved_meta.modified_at,
+                &preserved_meta.path,
+            );
+            
+            // Sync edges
+            let resolver = crate::commands::nodes::build_resolver(&db);
+            crate::commands::nodes::sync_node_edges(&db, &updated_node, &resolver);
+        }
 
         count += 1;
     }
@@ -158,22 +214,38 @@ pub fn import_files(
 fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<()> {
     let path = Path::new(source_path);
     if !path.exists() || !path.is_dir() {
-        return Err(AppError::InvalidPath("Source path is invalid or not a directory".to_string()));
+        return Err(AppError::InvalidPath(
+            "Source path is invalid or not a directory".to_string(),
+        ));
     }
 
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             let abs_path = entry.path().to_string_lossy().to_string();
-            if abs_path.contains("/.git/") || abs_path.contains("/node_modules/") || abs_path.contains("/.Trash") {
+            if abs_path.contains("/.git/")
+                || abs_path.contains("/node_modules/")
+                || abs_path.contains("/.Trash")
+            {
                 continue;
             }
             let meta = entry.metadata().ok();
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let modified = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
-            let created = meta.as_ref().and_then(|m| m.created().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+            let modified = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let created = meta
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
             let created_dt: chrono::DateTime<chrono::Local> = created.into();
             let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
-            let mut ext = entry.path().extension().unwrap_or_default().to_string_lossy().to_string();
+            let mut ext = entry
+                .path()
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             if let Ok(Some(kind)) = infer::get_from_path(entry.path()) {
                 ext = kind.extension().to_string();
             }
@@ -184,30 +256,55 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<(
 
             let file_meta = FileMetadata {
                 id: Uuid::new_v4().to_string(),
-                path: abs_path, filename: name, extension: ext,
+                path: abs_path,
+                filename: name,
+                extension: ext,
                 size: size as i64,
                 created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
                 modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-                tags: existing_tags, source_type: "local".to_string(),
+                tags: existing_tags,
+                people: vec![], // People will be preserved by upsert_file_node
+                source_type: "local".to_string(),
             };
 
             let node = file_meta.to_node();
-            let _ = upsert_file_node(db, &node, &file_meta.path);
+            if let Ok(updated_node) = upsert_file_node(db, &node, &file_meta.path) {
+                // Update search index
+                let preserved_meta = FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
+                let props = format!("ext:{} source:local", preserved_meta.extension);
+                
+                let mut search_tags = preserved_meta.tags.clone();
+                for person in &preserved_meta.people {
+                    search_tags.push(person.clone());
+                }
 
-            // Update search index
-            let props = format!("ext:{} source:local", file_meta.extension);
-            db.upsert_search_entry(
-                &node.id, "file", &file_meta.filename,
-                &file_meta.tags.join(" "), &file_meta.extension,
-                &props, None, &file_meta.modified_at, &file_meta.path,
-            );
+                db.upsert_search_entry(
+                    &updated_node.id,
+                    "file",
+                    &preserved_meta.filename,
+                    &search_tags.join(" "),
+                    &preserved_meta.extension,
+                    &props,
+                    None,
+                    &preserved_meta.modified_at,
+                    &preserved_meta.path,
+                );
+
+                // Sync edges
+                let resolver = crate::commands::nodes::build_resolver(&db);
+                crate::commands::nodes::sync_node_edges(&db, &updated_node, &resolver);
+            }
         }
     }
     Ok(())
 }
 
 /// Upsert a file node — uses path as conflict key in properties
-fn upsert_file_node(db: &crate::db::DbBridge, node: &crate::models::node::NodeMetadata, path: &str) -> AppResult<()> {
+fn upsert_file_node(
+    db: &crate::db::DbBridge,
+    node: &crate::models::node::NodeMetadata,
+    path: &str,
+) -> AppResult<crate::models::node::NodeMetadata> {
     // Check if a node with this path already exists
     if let Ok(nodes) = db.get_nodes_by_type("file") {
         for existing in &nodes {
@@ -217,22 +314,27 @@ fn upsert_file_node(db: &crate::db::DbBridge, node: &crate::models::node::NodeMe
                     let mut updated = node.clone();
                     updated.id = existing.id.clone();
                     // Preserve existing tags if new node has empty tags
-                    if let (Some(new_tags), Some(old_tags)) = (
-                        updated.properties.get("tags").and_then(|v| v.as_array()),
-                        existing.properties.get("tags").and_then(|v| v.as_array()),
-                    ) {
-                        if new_tags.is_empty() && !old_tags.is_empty() {
-                            if let Some(props) = updated.properties.as_object_mut() {
+                    // Preserve existing tags and people if new node has empty ones
+                    if let Some(props) = updated.properties.as_object_mut() {
+                        if let Some(old_tags) = existing.properties.get("tags").and_then(|v| v.as_array()) {
+                            if props.get("tags").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_tags.is_empty() {
                                 props.insert("tags".to_string(), serde_json::Value::Array(old_tags.clone()));
                             }
                         }
+                        if let Some(old_people) = existing.properties.get("people").and_then(|v| v.as_array()) {
+                            if props.get("people").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_people.is_empty() {
+                                props.insert("people".to_string(), serde_json::Value::Array(old_people.clone()));
+                            }
+                        }
                     }
-                    return db.upsert_node(&updated);
+                    db.upsert_node(&updated)?;
+                    return Ok(updated);
                 }
             }
         }
     }
-    db.upsert_node(node)
+    db.upsert_node(node)?;
+    Ok(node.clone())
 }
 
 /// Find existing tags for a file path from nodes table, with fallback to legacy files table
@@ -242,9 +344,15 @@ fn find_existing_file_tags(db: &crate::db::DbBridge, path: &str) -> Vec<String> 
         for node in &nodes {
             if let Some(p) = node.properties.get("path").and_then(|v| v.as_str()) {
                 if p == path {
-                    let tags = node.properties.get("tags")
+                    let tags = node
+                        .properties
+                        .get("tags")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect::<Vec<_>>())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|t| t.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
                     if !tags.is_empty() {
                         return tags;
@@ -261,13 +369,22 @@ fn find_existing_file_tags(db: &crate::db::DbBridge, path: &str) -> Vec<String> 
 }
 
 #[tauri::command]
-pub fn scan_directory(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, source_path: String) -> AppResult<()> {
+pub fn scan_directory(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    source_path: String,
+) -> AppResult<()> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     do_scan_directory(&db, &source_path)
 }
 
 #[tauri::command]
-pub fn query_files(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<Vec<FileMetadata>> {
+pub fn query_files(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+) -> AppResult<Vec<FileMetadata>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let nodes = db.get_nodes_by_type("file")?;
     Ok(nodes.iter().filter_map(FileMetadata::from_node).collect())
@@ -293,12 +410,19 @@ pub fn save_settings(_vault_path: String, _settings: FileManagerSettings) -> App
 
 #[cfg(desktop)]
 #[tauri::command]
-pub fn open_local_file(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<()> {
+pub fn open_local_file(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    path: String,
+) -> AppResult<()> {
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_file() {
-        return Err(AppError::InvalidPath("File not found or is a directory".to_string()));
+        return Err(AppError::InvalidPath(
+            "File not found or is a directory".to_string(),
+        ));
     }
-    
+
     // Check if the file is within allowed roots
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let mut allowed_roots = vec![vault_path.clone()];
@@ -307,7 +431,7 @@ pub fn open_local_file(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
             allowed_roots.push(source.path);
         }
     }
-    
+
     let root_refs: Vec<&str> = allowed_roots.iter().map(|s| s.as_str()).collect();
     path_utils::enforce_within_roots(p, &root_refs)?;
 
@@ -328,31 +452,50 @@ pub fn open_local_file(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
 
 #[cfg(not(desktop))]
 #[tauri::command]
-pub fn open_local_file(_app_handle: tauri::AppHandle, _vault_path: String, _path: String) -> AppResult<()> {
+pub fn open_local_file(
+    _app_handle: tauri::AppHandle,
+    _vault_path: String,
+    _path: String,
+) -> AppResult<()> {
     // Opening arbitrary local files is restricted/different on mobile
-    Err(AppError::General("Opening local files is not supported on mobile".to_string()))
+    Err(AppError::General(
+        "Opening local files is not supported on mobile".to_string(),
+    ))
 }
 
 #[tauri::command]
-pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String, path: String, new_filename: String, new_tags: Vec<String>) -> AppResult<String> {
+pub fn update_file_metadata(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    path: String,
+    new_filename: String,
+    new_tags: Vec<String>,
+    new_people: Vec<String>,
+) -> AppResult<String> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    
+
     // Find the file node by path
     let nodes = db.get_nodes_by_type("file")?;
-    let file_node = nodes.iter().find(|n| {
-        n.properties.get("path").and_then(|v| v.as_str()) == Some(&path)
-    }).ok_or_else(|| AppError::General("File node not found".to_string()))?;
+    let file_node = nodes
+        .iter()
+        .find(|n| n.properties.get("path").and_then(|v| v.as_str()) == Some(&path))
+        .ok_or_else(|| AppError::General("File node not found".to_string()))?;
 
     let mut updated_node = file_node.clone();
     let mut final_path = path.clone();
 
-    // 1. Update tags in properties
+    // 1. Update tags and people in properties
     if let Some(props) = updated_node.properties.as_object_mut() {
         props.insert("tags".to_string(), serde_json::json!(new_tags));
+        props.insert("people".to_string(), serde_json::json!(new_people));
     }
 
     // 2. Handle rename if needed (skip for assets folder)
-    let assets_dir = std::path::Path::new(&vault_path).join("assets").to_string_lossy().to_string();
+    let assets_dir = std::path::Path::new(&vault_path)
+        .join("assets")
+        .to_string_lossy()
+        .to_string();
     if !path.starts_with(&assets_dir) {
         path_utils::enforce_no_traversal(&path)?;
         let path_obj = std::path::Path::new(&path);
@@ -364,11 +507,16 @@ pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'
                         return Err(AppError::InvalidPath("Invalid filename".to_string()));
                     }
                     let new_path = parent.join(&new_filename);
-                    std::fs::rename(&path, &new_path)
-                        .map_err(|e| AppError::General(format!("Failed to rename file on disk: {}", e)))?;
-                    
+                    std::fs::rename(&path, &new_path).map_err(|e| {
+                        AppError::General(format!("Failed to rename file on disk: {}", e))
+                    })?;
+
                     final_path = new_path.to_string_lossy().to_string();
-                    let mut extension = new_path.extension().unwrap_or_default().to_string_lossy().to_string();
+                    let mut extension = new_path
+                        .extension()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     if let Ok(Some(kind)) = infer::get_from_path(&new_path) {
                         extension = kind.extension().to_string();
                     }
@@ -386,12 +534,30 @@ pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'
 
     db.upsert_node(&updated_node)?;
 
+    // Sync node edges for people/tags linking
+    let resolver = crate::commands::nodes::build_resolver(&db);
+    crate::commands::nodes::sync_node_edges(&db, &updated_node, &resolver);
+
     // Sync search index
     if let Some(f) = FileMetadata::from_node(&updated_node) {
         let props = format!("ext:{} source:{}", f.extension, f.source_type);
+        
+        // Append people to search index tags so they are searchable
+        let mut search_tags = f.tags.clone();
+        for person_link in &f.people {
+            search_tags.push(person_link.clone());
+        }
+
         db.upsert_search_entry(
-            &f.id, "file", &f.filename, &f.tags.join(" "),
-            &f.extension, &props, None, &f.modified_at, &f.path,
+            &f.id,
+            "file",
+            &f.filename,
+            &search_tags.join(" "),
+            &f.extension,
+            &props,
+            None,
+            &f.modified_at,
+            &f.path,
         );
     }
 
@@ -399,20 +565,24 @@ pub fn update_file_metadata(_app_handle: tauri::AppHandle, state: tauri::State<'
 }
 
 #[tauri::command]
-pub fn reindex_sources(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<()> {
+pub fn reindex_sources(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+) -> AppResult<()> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    
 
-    
     let assets_dir = std::path::Path::new(&vault_path).join("assets");
     let mut scan_paths: Vec<String> = Vec::new();
     if assets_dir.exists() {
         scan_paths.push(assets_dir.to_string_lossy().to_string());
     } else {
-        log::warn!("reindex_sources: assets_dir NOT found at {}", assets_dir.display());
+        log::warn!(
+            "reindex_sources: assets_dir NOT found at {}",
+            assets_dir.display()
+        );
     }
     if let Ok(sources) = db.get_all_file_sources() {
-
         for source in sources {
             // Avoid scanning the same path twice
             if !scan_paths.contains(&source.path) {
@@ -428,20 +598,29 @@ pub fn reindex_sources(_app_handle: tauri::AppHandle, state: tauri::State<'_, Db
             Err(e) => log::error!("reindex_sources: scan {} FAILED: {:?}", source_path, e),
         }
     }
-    
+
     // Check result
     if let Ok(nodes) = db.get_nodes_by_type("file") {
-        log::info!("reindex_sources: {} file nodes in DB after scan", nodes.len());
+        log::info!(
+            "reindex_sources: {} file nodes in DB after scan",
+            nodes.len()
+        );
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub fn read_local_file_content(state: tauri::State<'_, DbState>, vault_path: String, path: String) -> AppResult<String> {
+pub fn read_local_file_content(
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    path: String,
+) -> AppResult<String> {
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_file() {
-        return Err(AppError::InvalidPath("File not found or is a directory".to_string()));
+        return Err(AppError::InvalidPath(
+            "File not found or is a directory".to_string(),
+        ));
     }
 
     // Validate path is within vault or registered file sources
@@ -456,22 +635,29 @@ pub fn read_local_file_content(state: tauri::State<'_, DbState>, vault_path: Str
 
     let root_refs: Vec<&str> = allowed_roots.iter().map(|s| s.as_str()).collect();
     path_utils::enforce_within_roots(p, &root_refs)?;
-    
+
     // Check size limit (e.g. 5MB)
     if let Ok(meta) = p.metadata() {
         if meta.len() > 5 * 1024 * 1024 {
-            return Err(AppError::General("File is too large to preview (max 5MB)".to_string()));
+            return Err(AppError::General(
+                "File is too large to preview (max 5MB)".to_string(),
+            ));
         }
     }
-    
+
     let content = std::fs::read_to_string(p)
         .map_err(|e| AppError::General(format!("Failed to read file: {}", e)))?;
-        
+
     Ok(content)
 }
 
 #[tauri::command]
-pub fn delete_file(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, file_id: String, file_path: String) -> AppResult<()> {
+pub fn delete_file(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    file_id: String,
+    file_path: String,
+) -> AppResult<()> {
     // 1. Delete from disk
     let path = std::path::Path::new(&file_path);
     if path.exists() {
@@ -498,10 +684,22 @@ pub struct FileReference {
 }
 
 #[tauri::command]
-pub fn get_file_references(_app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String, filename: String) -> AppResult<Vec<FileReference>> {
+pub fn get_file_references(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    filename: String,
+) -> AppResult<Vec<FileReference>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let refs = db.find_nodes_referencing_file(&filename)?;
-    Ok(refs.into_iter().map(|(node_id, node_type, title)| FileReference { node_id, node_type, title }).collect())
+    Ok(refs
+        .into_iter()
+        .map(|(node_id, node_type, title)| FileReference {
+            node_id,
+            node_type,
+            title,
+        })
+        .collect())
 }
 
 /// Compute BLAKE3 hash of first 64KB of a file (partial hash for fast pre-filtering)
@@ -524,7 +722,9 @@ fn blake3_full_hash(path: &std::path::Path) -> Option<String> {
     loop {
         match f.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => { hasher.update(&buf[..n]); },
+            Ok(n) => {
+                hasher.update(&buf[..n]);
+            }
             Err(_) => return None,
         }
     }
@@ -534,7 +734,11 @@ fn blake3_full_hash(path: &std::path::Path) -> Option<String> {
 const PARTIAL_HASH_SIZE: usize = 65536; // 64KB
 
 #[tauri::command]
-pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, _vault_path: String) -> AppResult<()> {
+pub async fn find_duplicate_files(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+) -> AppResult<()> {
     use tauri::Emitter;
 
     // Read file list from DB (fast, no heavy I/O)
@@ -560,7 +764,10 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
         }
 
         let candidate_size_groups: usize = size_groups.values().filter(|g| g.len() > 1).count();
-        log::info!("Duplicate scan: {} size groups with 2+ files", candidate_size_groups);
+        log::info!(
+            "Duplicate scan: {} size groups with 2+ files",
+            candidate_size_groups
+        );
 
         // Step 2: Partial hash (first 64KB) for groups with 2+ files of same size
         let mut partial_groups: HashMap<String, (Vec<FileMetadata>, bool)> = HashMap::new();
@@ -573,8 +780,11 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
                 }
 
                 if let Some((hash, bytes_read)) = blake3_partial_hash(path) {
-                    let is_complete = bytes_read < PARTIAL_HASH_SIZE || file.size <= PARTIAL_HASH_SIZE as i64;
-                    let entry = partial_groups.entry(hash).or_insert_with(|| (Vec::new(), is_complete));
+                    let is_complete =
+                        bytes_read < PARTIAL_HASH_SIZE || file.size <= PARTIAL_HASH_SIZE as i64;
+                    let entry = partial_groups
+                        .entry(hash)
+                        .or_insert_with(|| (Vec::new(), is_complete));
                     entry.0.push(file);
                     if !is_complete {
                         entry.1 = false;
@@ -583,8 +793,12 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
             }
         }
 
-        let candidate_hash_groups: usize = partial_groups.values().filter(|(g, _)| g.len() > 1).count();
-        log::info!("Duplicate scan: {} hash groups with 2+ files", candidate_hash_groups);
+        let candidate_hash_groups: usize =
+            partial_groups.values().filter(|(g, _)| g.len() > 1).count();
+        log::info!(
+            "Duplicate scan: {} hash groups with 2+ files",
+            candidate_hash_groups
+        );
 
         // Step 3: Full hash verification + stream each verified group immediately
         let mut total_groups: usize = 0;
@@ -592,7 +806,9 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
         let mut total_wasted_bytes: i64 = 0;
 
         for (_partial_hash, (candidates, already_complete)) in partial_groups.into_iter() {
-            if candidates.len() < 2 { continue; }
+            if candidates.len() < 2 {
+                continue;
+            }
 
             let verified: Vec<Vec<FileMetadata>> = if already_complete {
                 vec![candidates]
@@ -604,7 +820,10 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
                         full_hash_map.entry(full_hash).or_default().push(file);
                     }
                 }
-                full_hash_map.into_values().filter(|g| g.len() > 1).collect()
+                full_hash_map
+                    .into_values()
+                    .filter(|g| g.len() > 1)
+                    .collect()
             };
 
             // Emit each verified group immediately
@@ -615,7 +834,10 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
                 let size = files[0].size;
                 let wasted = size * (count as i64 - 1);
                 let group = DuplicateGroup {
-                    filename, extension, size, count,
+                    filename,
+                    extension,
+                    size,
+                    count,
                     files,
                     wasted_bytes: wasted,
                 };
@@ -636,11 +858,14 @@ pub async fn find_duplicate_files(app_handle: tauri::AppHandle, state: tauri::St
             total_wasted_bytes: i64,
         }
 
-        let _ = handle.emit("duplicate-scan-complete", ScanComplete {
-            total_groups,
-            total_duplicate_files,
-            total_wasted_bytes,
-        });
+        let _ = handle.emit(
+            "duplicate-scan-complete",
+            ScanComplete {
+                total_groups,
+                total_duplicate_files,
+                total_wasted_bytes,
+            },
+        );
     });
 
     Ok(())
@@ -672,8 +897,8 @@ pub fn export_annotated_pdf(
     pdf_path: String,
     annotations: Vec<ExportAnnotation>,
 ) -> AppResult<String> {
-    use lopdf::{Document, Object, Dictionary};
     use lopdf::StringFormat;
+    use lopdf::{Dictionary, Document, Object};
 
     let source = std::path::Path::new(&pdf_path);
     if !source.exists() {
@@ -694,17 +919,21 @@ pub fn export_annotated_pdf(
         };
 
         // Get page MediaBox to convert normalized [0,1] coords to PDF coords
-        let media_box = doc.get_dictionary(page_obj_id)
+        let media_box = doc
+            .get_dictionary(page_obj_id)
             .ok()
             .and_then(|page| page.get(b"MediaBox").ok().cloned())
             .and_then(|mb| {
                 if let Object::Array(arr) = mb {
                     if arr.len() == 4 {
-                        let vals: Vec<f64> = arr.iter().filter_map(|v| match v {
-                            Object::Real(f) => Some(*f as f64),
-                            Object::Integer(i) => Some(*i as f64),
-                            _ => None,
-                        }).collect();
+                        let vals: Vec<f64> = arr
+                            .iter()
+                            .filter_map(|v| match v {
+                                Object::Real(f) => Some(*f as f64),
+                                Object::Integer(i) => Some(*i as f64),
+                                _ => None,
+                            })
+                            .collect();
                         if vals.len() == 4 {
                             return Some((vals[0], vals[1], vals[2], vals[3]));
                         }
@@ -720,10 +949,10 @@ pub fn export_annotated_pdf(
         // Map highlight color to RGB
         let (r, g, b) = match ann.color.as_str() {
             "yellow" => (1.0_f64, 0.92, 0.23),
-            "green"  => (0.30, 0.69, 0.31),
-            "blue"   => (0.13, 0.59, 0.95),
-            "pink"   => (0.91, 0.12, 0.39),
-            _        => (1.0, 0.92, 0.23),
+            "green" => (0.30, 0.69, 0.31),
+            "blue" => (0.13, 0.59, 0.95),
+            "pink" => (0.91, 0.12, 0.39),
+            _ => (1.0, 0.92, 0.23),
         };
 
         for rect in &ann.rects {
@@ -736,36 +965,60 @@ pub fn export_annotated_pdf(
             let mut annot_dict = Dictionary::new();
             annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
             annot_dict.set("Subtype", Object::Name(b"Highlight".to_vec()));
-            annot_dict.set("Rect", Object::Array(vec![
-                Object::Real(x1 as f32), Object::Real(y1 as f32),
-                Object::Real(x2 as f32), Object::Real(y2 as f32),
-            ]));
-            annot_dict.set("C", Object::Array(vec![
-                Object::Real(r as f32), Object::Real(g as f32), Object::Real(b as f32),
-            ]));
+            annot_dict.set(
+                "Rect",
+                Object::Array(vec![
+                    Object::Real(x1 as f32),
+                    Object::Real(y1 as f32),
+                    Object::Real(x2 as f32),
+                    Object::Real(y2 as f32),
+                ]),
+            );
+            annot_dict.set(
+                "C",
+                Object::Array(vec![
+                    Object::Real(r as f32),
+                    Object::Real(g as f32),
+                    Object::Real(b as f32),
+                ]),
+            );
             annot_dict.set("CA", Object::Real(0.4)); // opacity
             annot_dict.set("F", Object::Integer(4)); // Print flag
 
             // QuadPoints for highlight rendering
-            annot_dict.set("QuadPoints", Object::Array(vec![
-                Object::Real(x1 as f32), Object::Real(y2 as f32),
-                Object::Real(x2 as f32), Object::Real(y2 as f32),
-                Object::Real(x1 as f32), Object::Real(y1 as f32),
-                Object::Real(x2 as f32), Object::Real(y1 as f32),
-            ]));
+            annot_dict.set(
+                "QuadPoints",
+                Object::Array(vec![
+                    Object::Real(x1 as f32),
+                    Object::Real(y2 as f32),
+                    Object::Real(x2 as f32),
+                    Object::Real(y2 as f32),
+                    Object::Real(x1 as f32),
+                    Object::Real(y1 as f32),
+                    Object::Real(x2 as f32),
+                    Object::Real(y1 as f32),
+                ]),
+            );
 
             // Add note as Contents if present
             if !ann.note.is_empty() {
-                annot_dict.set("Contents", Object::String(ann.note.as_bytes().to_vec(), StringFormat::Literal));
+                annot_dict.set(
+                    "Contents",
+                    Object::String(ann.note.as_bytes().to_vec(), StringFormat::Literal),
+                );
             }
             if !ann.text.is_empty() {
-                annot_dict.set("T", Object::String(b"Synabit".to_vec(), StringFormat::Literal));
+                annot_dict.set(
+                    "T",
+                    Object::String(b"Synabit".to_vec(), StringFormat::Literal),
+                );
             }
 
             let annot_id = doc.add_object(Object::Dictionary(annot_dict));
 
             // Append annotation reference to the page's /Annots array
-            let existing_annots = doc.get_dictionary(page_obj_id)
+            let existing_annots = doc
+                .get_dictionary(page_obj_id)
                 .ok()
                 .and_then(|p| p.get(b"Annots").ok().cloned());
 
@@ -777,7 +1030,7 @@ pub fn export_annotated_pdf(
                     } else {
                         vec![]
                     }
-                },
+                }
                 _ => vec![],
             };
             annots_array.push(Object::Reference(annot_id));
@@ -793,10 +1046,9 @@ pub fn export_annotated_pdf(
     let stem = source.file_stem().unwrap_or_default().to_string_lossy();
     let parent = source.parent().unwrap_or_else(|| Path::new(&vault_path));
     let export_path = parent.join(format!("{}_annotated.pdf", stem));
-    
+
     doc.save(&export_path)
         .map_err(|e| AppError::General(format!("Failed to save annotated PDF: {}", e)))?;
 
     Ok(export_path.to_string_lossy().to_string())
 }
-

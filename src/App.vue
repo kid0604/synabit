@@ -81,28 +81,24 @@ watch(activeTool, async (newTool, oldTool) => {
     }
   }
   
-  if (newTool === 'chat' && hasUnreadNotifications.value && vaultPath.value) {
-     hasUnreadNotifications.value = false;
-     try {
-         const msgs = await invoke<any[]>('get_nodes', { nodeType: 'message' });
-         for (const m of msgs) {
-             if (m.properties && m.properties.is_read === false) {
-                 m.properties.is_read = true;
-                 await invoke('write_node_file', {
-                     vaultPath: vaultPath.value,
-                     relPath: m.id,
-                     title: m.title,
-                     nodeType: 'message',
-                     properties: m.properties,
-                     content: m.content
-                 });
-             }
+  if (newTool === 'chat' && vaultPath.value) {
+     if (chatAppRef.value) {
+         chatAppRef.value.fetchMessages();
+     }
+     
+     if (unreadNotificationCount.value > 0) {
+         unreadNotificationCount.value = 0;
+         try {
+             await invoke('mark_chat_read', { vaultPath: vaultPath.value });
+         } catch (e) {
+             logger.error('Failed to mark chat as read', e);
          }
-     } catch(e) { logger.error('Failed to mark messages as read', e); }
+     }
   }
 });
 
 // ─── Mini App Refs for cross-app navigation ─────────────────
+const chatAppRef = ref<any>(null);
 const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
@@ -289,13 +285,13 @@ const handleEditFromNexus = async (id: string, type: string) => {
 import { logger } from './utils/logger';
 
 // ─── Notifications & Initial Scan ─────────────────────────
-const hasUnreadNotifications = ref(false);
+const unreadNotificationCount = ref(0);
 
 const checkUnreadNotifications = async () => {
     if (!vaultPath.value) return;
     try {
-        const msgs = await invoke<any[]>('get_nodes', { nodeType: 'message' });
-        hasUnreadNotifications.value = msgs.some(m => m.properties && m.properties.is_read === false);
+        const msgs = await invoke<any[]>('get_chat_history', { vaultPath: vaultPath.value });
+        unreadNotificationCount.value = msgs.filter(m => m.read_receipt === false).length;
     } catch(e) {
         logger.error('Failed to check unread messages', e);
     }
@@ -373,6 +369,13 @@ onMounted(async () => {
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
+  }).then(fn => unlistenFns.push(fn));
+
+  listen('new-chat-message', () => {
+      checkUnreadNotifications();
+      if (chatAppRef.value) {
+          chatAppRef.value.fetchMessages();
+      }
   }).then(fn => unlistenFns.push(fn));
 
   onUnmounted(() => {
@@ -473,7 +476,7 @@ onUnmounted(() => {
 
                 <button @click="activeTool = 'chat'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'chat' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <MessageSquare class="w-5 h-5" />
-                   <div v-if="hasUnreadNotifications" class="absolute top-[8px] right-[8px] w-[6px] h-[6px] bg-red-500 rounded-full ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]"></div>
+                   <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Chat</span>
                 </button>
 
@@ -538,7 +541,7 @@ onUnmounted(() => {
 
         <!-- MINI APP CONTENT AREA (v-show keeps all apps mounted, instant switching) -->
         <div v-show="activeTool === 'chat'" class="flex-1 h-full overflow-hidden">
-            <ChatApp :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
+            <ChatApp ref="chatAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </div>
         <div v-show="activeTool === 'note'" class="flex-1 h-full overflow-hidden">
             <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />

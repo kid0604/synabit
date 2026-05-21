@@ -3,10 +3,10 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 
-use crate::models::whiteboard::WhiteboardMetadata;
-use crate::error::{AppError, AppResult};
-use crate::path_utils;
 use crate::db::DbState;
+use crate::error::{AppError, AppResult};
+use crate::models::whiteboard::WhiteboardMetadata;
+use crate::path_utils;
 
 /// Scan the Whiteboards/ directory and upsert all .whiteboard.json files into the DB cache.
 #[tauri::command]
@@ -24,7 +24,11 @@ pub fn scan_whiteboards(
     let db = state.lock().ok();
     let mut current_disk_files = std::collections::HashSet::new();
 
-    for entry in WalkDir::new(&wb_dir).max_depth(1).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&wb_dir)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -40,11 +44,13 @@ pub fn scan_whiteboards(
             let tags: Vec<String>;
 
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
-                title = parsed.get("title")
+                title = parsed
+                    .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Untitled")
                     .to_string();
-                tags = parsed.get("tags")
+                tags = parsed
+                    .get("tags")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
             } else {
@@ -52,8 +58,12 @@ pub fn scan_whiteboards(
                 tags = Vec::new();
             }
 
-            let metadata = entry.metadata().map_err(|e| AppError::General(e.to_string()))?;
-            let created = metadata.created().unwrap_or(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+            let metadata = entry
+                .metadata()
+                .map_err(|e| AppError::General(e.to_string()))?;
+            let created = metadata
+                .created()
+                .unwrap_or(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
             let modified = metadata.modified().unwrap_or(created);
 
             let created_date: chrono::DateTime<chrono::Local> = created.into();
@@ -140,9 +150,15 @@ pub fn create_whiteboard(
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.upsert_whiteboard(&wb_meta);
         db.upsert_search_entry(
-            &wb_meta.id, "whiteboard", &wb_meta.title,
-            &wb_meta.tags.join(" "), &wb_meta.content,
-            "", None, &wb_meta.created_at, &wb_meta.path,
+            &wb_meta.id,
+            "whiteboard",
+            &wb_meta.title,
+            &wb_meta.tags.join(" "),
+            &wb_meta.content,
+            "",
+            None,
+            &wb_meta.created_at,
+            &wb_meta.path,
         );
     }
 
@@ -166,7 +182,9 @@ pub fn update_whiteboard(
     {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(file_meta) = fs::metadata(&abs_path) {
-            let created = file_meta.created().unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+            let created = file_meta
+                .created()
+                .unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
             let modified = file_meta.modified().unwrap_or(created);
             let created_date: chrono::DateTime<chrono::Local> = created.into();
             let modified_date: chrono::DateTime<chrono::Local> = modified.into();
@@ -184,9 +202,15 @@ pub fn update_whiteboard(
             };
             let _ = db.upsert_whiteboard(&wb_meta);
             db.upsert_search_entry(
-                &wb_meta.id, "whiteboard", &wb_meta.title,
-                &wb_meta.tags.join(" "), &wb_meta.content,
-                "", None, &wb_meta.created_at, &wb_meta.path,
+                &wb_meta.id,
+                "whiteboard",
+                &wb_meta.title,
+                &wb_meta.tags.join(" "),
+                &wb_meta.content,
+                "",
+                None,
+                &wb_meta.created_at,
+                &wb_meta.path,
             );
         }
     }

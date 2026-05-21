@@ -10,6 +10,7 @@ pub struct FileMetadata {
     pub created_at: String,
     pub modified_at: String,
     pub tags: Vec<String>,
+    pub people: Vec<String>,
     pub source_type: String, // e.g., "local"
 }
 
@@ -21,15 +22,37 @@ impl FileMetadata {
             id: node.id.clone(),
             path: props.get("path")?.as_str()?.to_string(),
             filename: node.title.clone(),
-            extension: props.get("extension").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            extension: props
+                .get("extension")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             size: props.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
             created_at: node.created_at.clone(),
             modified_at: node.updated_at.clone(),
-            tags: props.get("tags")
+            tags: props
+                .get("tags")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            source_type: props.get("source_type").and_then(|v| v.as_str()).unwrap_or("local").to_string(),
+            people: props
+                .get("people")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            source_type: props
+                .get("source_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("local")
+                .to_string(),
         })
     }
 
@@ -47,6 +70,7 @@ impl FileMetadata {
                 "size": self.size,
                 "source_type": self.source_type,
                 "tags": self.tags,
+                "people": self.people,
             }),
             created_at: self.created_at.clone(),
             updated_at: self.modified_at.clone(),

@@ -20,13 +20,14 @@ const fetchMessages = async () => {
     try {
         const history = await invoke<any[]>('get_chat_history', { vaultPath: props.vaultPath });
         messages.value = history;
-        
-        await nextTick();
-        scrollToBottom();
     } catch (e) {
         logger.error('Failed to fetch messages', e);
     } finally {
         loading.value = false;
+        await nextTick();
+        scrollToBottom();
+        // Fallback for slower rendering / transitions
+        setTimeout(scrollToBottom, 100);
     }
 };
 

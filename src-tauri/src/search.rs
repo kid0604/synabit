@@ -175,7 +175,7 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
         // Generic key:value property filter (catch-all for unknown key:value pairs)
         if let Some(colon_pos) = lower.find(':') {
             let key = &lower[..colon_pos];
-            let val = &lower[colon_pos+1..];
+            let val = &lower[colon_pos + 1..];
             if !key.is_empty() && !val.is_empty() {
                 pq.property_filters.push((key.to_string(), val.to_string()));
                 pq.is_empty = false;
@@ -189,7 +189,12 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
     }
 
     // If we only have filters (type, status, tag) but no search terms, it's not empty
-    if pq.type_filter.is_some() || pq.status_filter.is_some() || pq.date_filter.is_some() || !pq.tag_filters.is_empty() || !pq.property_filters.is_empty() {
+    if pq.type_filter.is_some()
+        || pq.status_filter.is_some()
+        || pq.date_filter.is_some()
+        || !pq.tag_filters.is_empty()
+        || !pq.property_filters.is_empty()
+    {
         pq.is_empty = false;
     }
 
@@ -319,7 +324,10 @@ mod tests {
     fn test_property_filter() {
         let pq = parse_query("meeting priority:P2");
         assert_eq!(pq.fts_terms, vec!["meeting"]);
-        assert_eq!(pq.property_filters, vec![("priority".to_string(), "p2".to_string())]);
+        assert_eq!(
+            pq.property_filters,
+            vec![("priority".to_string(), "p2".to_string())]
+        );
         assert!(!pq.is_empty);
     }
 
@@ -327,17 +335,23 @@ mod tests {
     fn test_multiple_property_filters() {
         let pq = parse_query("is:task priority:P1 ext:pdf");
         assert_eq!(pq.type_filter, Some("task".to_string()));
-        assert_eq!(pq.property_filters, vec![
-            ("priority".to_string(), "p1".to_string()),
-            ("ext".to_string(), "pdf".to_string()),
-        ]);
+        assert_eq!(
+            pq.property_filters,
+            vec![
+                ("priority".to_string(), "p1".to_string()),
+                ("ext".to_string(), "pdf".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_property_filter_only() {
         let pq = parse_query("location:hanoi");
         assert!(pq.fts_terms.is_empty());
-        assert_eq!(pq.property_filters, vec![("location".to_string(), "hanoi".to_string())]);
+        assert_eq!(
+            pq.property_filters,
+            vec![("location".to_string(), "hanoi".to_string())]
+        );
         assert!(!pq.is_empty);
     }
 

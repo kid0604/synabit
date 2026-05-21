@@ -8,6 +8,8 @@ import { logger } from '../../utils/logger';
 const props = defineProps<{
     vaultPath: string;
     person: any | null;
+    topRelationships?: string[];
+    allRelationships?: string[];
 }>();
 
 const emit = defineEmits(['close', 'saved']);
@@ -20,7 +22,7 @@ const form = ref({
     nickname: '',
     display_name: 'fullname' as 'fullname' | 'nickname' | 'custom',
     custom_display: '',
-    relationship: '',
+    relationships: [] as string[],
     birthday: '',
     tags: [] as string[],
     avatar: '',
@@ -29,11 +31,7 @@ const form = ref({
     experiences: [] as Experience[],
 });
 
-const RELATIONSHIP_PRESETS = [
-    'Father', 'Mother', 'Wife', 'Husband', 'Child', 'Brother', 'Sister',
-    'Grandfather', 'Grandmother', 'Uncle', 'Aunt', 'Cousin',
-    'Friend', 'Colleague', 'Boss', 'Client', 'Partner',
-];
+
 
 const DETAIL_PRESETS: Array<{ label: string; type: DetailField['type']; icon: any }> = [
     { label: 'Email', type: 'email', icon: Mail },
@@ -47,6 +45,8 @@ const DETAIL_PRESETS: Array<{ label: string; type: DetailField['type']; icon: an
 ];
 
 const tagInput = ref('');
+const relInput = ref('');
+const showRelDropdown = ref(false);
 const isSaving = ref(false);
 const isDeleting = ref(false);
 const isUploadingAvatar = ref(false);
@@ -88,7 +88,8 @@ onMounted(() => {
         form.value.nickname = p.nickname || '';
         form.value.display_name = p.display_name || 'fullname';
         form.value.custom_display = p.custom_display || '';
-        form.value.relationship = p.relationship_type || '';
+        const relVal = p.relationship_type || '';
+        form.value.relationships = relVal ? relVal.split(',').map((s:string) => s.trim()).filter(Boolean) : [];
         form.value.birthday = p.birthday || '';
         form.value.tags = [...(p.tags || [])];
         form.value.avatar = p.avatar || '';
@@ -116,6 +117,31 @@ onMounted(() => {
 
 const addTag = () => { const t = tagInput.value.trim().toLowerCase(); if (t && !form.value.tags.includes(t)) form.value.tags.push(t); tagInput.value = ''; };
 const removeTag = (i: number) => form.value.tags.splice(i, 1);
+
+const addRelationship = (r?: string) => {
+    const val = (r || relInput.value).trim();
+    if (!val) return;
+    const parts = val.split(',').map(s => s.trim()).filter(Boolean);
+    parts.forEach(p => {
+        const exactMatch = props.allRelationships?.find(ar => ar.toLowerCase() === p.toLowerCase());
+        const finalVal = exactMatch || p.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        if (!form.value.relationships.includes(finalVal)) {
+            form.value.relationships.push(finalVal);
+        }
+    });
+    relInput.value = '';
+};
+const removeRelationship = (i: number) => form.value.relationships.splice(i, 1);
+
+const filteredAllRelationships = computed(() => {
+    if (!props.allRelationships) return [];
+    const query = relInput.value.toLowerCase().trim();
+    return props.allRelationships.filter(r => 
+        !form.value.relationships.includes(r) && 
+        r.toLowerCase().includes(query)
+    );
+});
+
 const addImportantDate = () => form.value.important_dates.push({ label: '', date: '' });
 const removeImportantDate = (i: number) => form.value.important_dates.splice(i, 1);
 const addExperience = () => { form.value.experiences.push({ company: '', role: '', startMonth: '', startYear: '', endMonth: '', endYear: '', current: false }); showExperiences.value = true; };
@@ -167,6 +193,7 @@ const handleAvatarUpload = async (event: Event) => {
 const savePerson = async () => {
     if (!form.value.title.trim()) { alert("Name is required"); return; }
     addTag(); // Commit any pending tag input
+    addRelationship(); // Commit any pending relationship input
     isSaving.value = true;
     try {
         const properties: Record<string, any> = {};
@@ -180,7 +207,8 @@ const savePerson = async () => {
         }
         if (form.value.birthday) properties.birthday = form.value.birthday;
         if (form.value.tags.length > 0) properties.tags = form.value.tags;
-        if (form.value.relationship.trim()) properties.relationship_type = form.value.relationship.trim();
+        if (form.value.relationships.length > 0) properties.relationship_type = form.value.relationships.join(', ');
+        else properties.relationship_type = '';
         if (props.person?.properties?.contact_frequency) properties.contact_frequency = props.person.properties.contact_frequency;
         const validDates = form.value.important_dates.filter(d => d.label && d.date);
         if (validDates.length > 0) properties.important_dates = validDates;
@@ -322,19 +350,46 @@ const getDetailPlaceholder = (d: DetailField) => {
 
                 <!-- Relationship -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Relationship</label>
-                    <div class="flex flex-wrap gap-1.5 mb-2">
-                        <button v-for="r in RELATIONSHIP_PRESETS" :key="r"
-                            @click="form.relationship = (form.relationship === r ? '' : r)"
-                            :class="['px-2.5 py-1 text-xs rounded-lg border transition-colors',
-                                form.relationship === r
-                                    ? 'bg-blue-500 text-white border-blue-500'
-                                    : 'bg-gray-50 dark:bg-[#1a1a1a] border-border dark:border-border-dark text-gray-600 dark:text-gray-400 hover:border-blue-300'
-                            ]">{{ r }}</button>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Relationships</label>
+                    
+                    <!-- Selected Relationships (Tags Style) -->
+                    <div class="flex flex-wrap gap-2 mb-2" v-if="form.relationships.length > 0">
+                        <span v-for="(rel, index) in form.relationships" :key="index" class="px-2.5 py-1 text-sm bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50 rounded-md flex items-center gap-1.5">
+                            <Heart class="w-3 h-3 opacity-70" /> {{ rel }}
+                            <button @click="removeRelationship(index)" class="ml-1 opacity-50 hover:opacity-100 hover:text-red-500 outline-none"><X class="w-3 h-3" /></button>
+                        </span>
                     </div>
+
+                    <!-- Quick Add Buttons -->
+                    <div class="flex flex-wrap gap-1.5 mb-2" v-if="props.topRelationships && props.topRelationships.length > 0">
+                        <button v-for="r in props.topRelationships" :key="r"
+                            @click="addRelationship(r)"
+                            v-show="!form.relationships.includes(r)"
+                            class="px-2.5 py-1 text-xs rounded-lg border transition-colors bg-gray-50 dark:bg-[#1a1a1a] border-border dark:border-border-dark text-gray-600 dark:text-gray-400 hover:border-blue-300">
+                            + {{ r }}
+                        </button>
+                    </div>
+
+                    <!-- Input Field -->
                     <div class="relative">
                         <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input v-model="form.relationship" type="text" placeholder="Or type custom..." class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
+                        <input v-model="relInput" 
+                            @keydown.enter.prevent="addRelationship()" 
+                            @focus="showRelDropdown = true"
+                            @blur="showRelDropdown = false"
+                            type="text" 
+                            placeholder="Add relationship and press Enter..." 
+                            class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" 
+                        />
+                        <div v-if="showRelDropdown && filteredAllRelationships.length > 0" 
+                             class="absolute left-0 top-full mt-1 w-full max-h-48 overflow-y-auto bg-white dark:bg-[#242426] border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-10 p-1">
+                            <button 
+                                v-for="r in filteredAllRelationships" :key="r"
+                                @mousedown.prevent="addRelationship(r); showRelDropdown = false"
+                                class="w-full text-left px-3 py-1.5 text-sm rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 transition-colors">
+                                {{ r }}
+                            </button>
+                        </div>
                     </div>
                 </div>
 

@@ -37,15 +37,20 @@ pub fn enforce_no_traversal(path: &str) -> Result<(), crate::error::AppError> {
     Ok(())
 }
 
-pub fn resolve_safe_path(vault_path: &str, relative_path: &str) -> Result<PathBuf, crate::error::AppError> {
+pub fn resolve_safe_path(
+    vault_path: &str,
+    relative_path: &str,
+) -> Result<PathBuf, crate::error::AppError> {
     if relative_path.contains("..") {
-        return Err(crate::error::AppError::InvalidPath("Path traversal detected".into()));
+        return Err(crate::error::AppError::InvalidPath(
+            "Path traversal detected".into(),
+        ));
     }
 
     let base = std::fs::canonicalize(vault_path)
         .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid vault path: {}", e)))?;
     let target = base.join(relative_path);
-    
+
     // We only canonicalize if the target exists.
     let canonical = if target.exists() {
         std::fs::canonicalize(&target)
@@ -54,7 +59,7 @@ pub fn resolve_safe_path(vault_path: &str, relative_path: &str) -> Result<PathBu
         // Find the deepest existing ancestor
         let mut current = target.as_path();
         let mut non_existing_parts = Vec::new();
-        
+
         while !current.exists() {
             if let Some(parent) = current.parent() {
                 if let Some(file_name) = current.file_name() {
@@ -62,13 +67,16 @@ pub fn resolve_safe_path(vault_path: &str, relative_path: &str) -> Result<PathBu
                 }
                 current = parent;
             } else {
-                return Err(crate::error::AppError::InvalidPath("Cannot resolve path root".into()));
+                return Err(crate::error::AppError::InvalidPath(
+                    "Cannot resolve path root".into(),
+                ));
             }
         }
-        
-        let mut resolved = std::fs::canonicalize(current)
-            .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid ancestor path: {}", e)))?;
-            
+
+        let mut resolved = std::fs::canonicalize(current).map_err(|e| {
+            crate::error::AppError::InvalidPath(format!("Invalid ancestor path: {}", e))
+        })?;
+
         // Re-append the non-existing parts in reverse order
         for part in non_existing_parts.into_iter().rev() {
             resolved = resolved.join(part);
@@ -77,16 +85,21 @@ pub fn resolve_safe_path(vault_path: &str, relative_path: &str) -> Result<PathBu
     };
 
     if !canonical.starts_with(&base) {
-        return Err(crate::error::AppError::InvalidPath("Path traversal detected".into()));
+        return Err(crate::error::AppError::InvalidPath(
+            "Path traversal detected".into(),
+        ));
     }
     Ok(canonical)
 }
 
 /// Validates an absolute path is within one of the allowed root directories.
-pub fn enforce_within_roots(path: &Path, allowed_roots: &[&str]) -> Result<(), crate::error::AppError> {
+pub fn enforce_within_roots(
+    path: &Path,
+    allowed_roots: &[&str],
+) -> Result<(), crate::error::AppError> {
     let canonical_path = std::fs::canonicalize(path)
         .map_err(|e| crate::error::AppError::InvalidPath(format!("Invalid path: {}", e)))?;
-        
+
     for root in allowed_roots {
         if let Ok(canonical_root) = std::fs::canonicalize(root) {
             if canonical_path.starts_with(&canonical_root) {
@@ -94,7 +107,9 @@ pub fn enforce_within_roots(path: &Path, allowed_roots: &[&str]) -> Result<(), c
             }
         }
     }
-    Err(crate::error::AppError::InvalidPath("Path is outside allowed root directories".into()))
+    Err(crate::error::AppError::InvalidPath(
+        "Path is outside allowed root directories".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -274,7 +289,10 @@ mod tests {
 
         // File in second root should be allowed
         let result = enforce_within_roots(&tmp2.join("file.txt"), &root_refs);
-        assert!(result.is_ok(), "Should allow file in any of the allowed roots");
+        assert!(
+            result.is_ok(),
+            "Should allow file in any of the allowed roots"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp1);
         let _ = std::fs::remove_dir_all(&tmp2);

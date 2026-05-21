@@ -1,5 +1,5 @@
+pub mod chat;
 pub mod files;
 pub mod nexus;
-pub mod whiteboards;
 pub mod nodes;
-pub mod chat;
+pub mod whiteboards;

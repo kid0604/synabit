@@ -1,20 +1,17 @@
-use std::fs;
-use super::{
-    GDriveTokens, TokenResponse,
-    CLIENT_ID, TOKEN_URI, AUTH_URI, SCOPE,
-    REDIRECT_PORT_START, REDIRECT_PORT_END,
-    tokens_path, generate_pkce_pair,
-};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::CLIENT_SECRET;
+use super::{
+    generate_pkce_pair, tokens_path, GDriveTokens, TokenResponse, AUTH_URI, CLIENT_ID,
+    REDIRECT_PORT_END, REDIRECT_PORT_START, SCOPE, TOKEN_URI,
+};
+use std::fs;
 
 // ──────────────────────────────────────────────
 // Token Management
 // ──────────────────────────────────────────────
 
 fn get_vault_sync_keyring() -> Result<keyring::Entry, String> {
-    keyring::Entry::new("synabit_vault_sync", "global")
-        .map_err(|e| format!("Keyring error: {}", e))
+    keyring::Entry::new("synabit_vault_sync", "global").map_err(|e| format!("Keyring error: {}", e))
 }
 
 pub(crate) fn load_tokens(_app_handle: &tauri::AppHandle) -> Option<GDriveTokens> {
@@ -35,12 +32,17 @@ pub(crate) fn load_tokens(_app_handle: &tauri::AppHandle) -> Option<GDriveTokens
     }
 }
 
-pub(crate) fn save_tokens(_app_handle: &tauri::AppHandle, tokens: &GDriveTokens) -> Result<(), String> {
+pub(crate) fn save_tokens(
+    _app_handle: &tauri::AppHandle,
+    tokens: &GDriveTokens,
+) -> Result<(), String> {
     let content = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let entry = get_vault_sync_keyring()?;
-        entry.set_password(&content).map_err(|e| format!("Failed to save tokens to keychain: {}", e))
+        entry
+            .set_password(&content)
+            .map_err(|e| format!("Failed to save tokens to keychain: {}", e))
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -286,12 +288,18 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
         urlencoding::encode(&code_challenge),
     );
 
-    app_handle.opener().open_url(auth_url, None::<String>).map_err(|e| format!("Failed to open browser: {}", e))?;
+    app_handle
+        .opener()
+        .open_url(auth_url, None::<String>)
+        .map_err(|e| format!("Failed to open browser: {}", e))?;
     Ok("WAITING_DEEP_LINK".to_string())
 }
 
 #[tauri::command]
-pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: String) -> Result<String, String> {
+pub async fn gdrive_auth_complete(
+    app_handle: tauri::AppHandle,
+    auth_code: String,
+) -> Result<String, String> {
     // Retrieve the stored PKCE code_verifier
     let code_verifier = {
         use tauri::Manager;
@@ -303,7 +311,7 @@ pub async fn gdrive_auth_complete(app_handle: tauri::AppHandle, auth_code: Strin
     };
 
     let redirect_uri = "com.synabit.app:/oauth2callback";
-    
+
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URI)

@@ -10,6 +10,50 @@ import NavButtons from '../../shared/components/NavButtons.vue';
 import FilesTabs, { type FileTab } from './components/FilesTabs.vue';
 import FilesInfoPanel from './components/FilesInfoPanel.vue';
 import type { NavEntry } from '../../stores/useNavigationStore';
+import { invoke } from '@tauri-apps/api/core';
+
+// ─── People Autocomplete ─────────────────────────────────────
+const getPersonName = (link: string) => {
+  const match = link.match(/\[([^\]]*)\]/);
+  return match ? match[1] : link;
+};
+
+interface PersonNode { id: string; title: string; }
+const allPeople = ref<PersonNode[]>([]);
+const searchPeopleQuery = ref('');
+const showPeopleDropdown = ref(false);
+const peopleInputRef = ref<HTMLInputElement | null>(null);
+
+const fetchAllPeople = async () => {
+  try {
+    const nodes = await invoke<any[]>('get_nodes', { nodeType: 'person' });
+    allPeople.value = nodes.map(n => ({ id: n.id, title: n.title }));
+  } catch (e) {
+    console.error('Failed to fetch people', e);
+  }
+};
+
+const filteredPeople = computed(() => {
+  const q = searchPeopleQuery.value.toLowerCase();
+  return allPeople.value.filter(p => {
+    if (!p.title.toLowerCase().includes(q)) return false;
+    if (selectedFile.value?.people?.some(link => link.includes(p.id))) return false;
+    return true;
+  });
+});
+
+const handleSelectPerson = async (person: PersonNode) => {
+  if (!selectedFile.value) return;
+  const link = `[${person.title}](synabit://person/${person.id})`;
+  await store.addPerson(selectedFile.value, link);
+  searchPeopleQuery.value = '';
+  showPeopleDropdown.value = false;
+};
+
+const handleRemovePerson = async (link: string) => {
+  if (!selectedFile.value) return;
+  await store.removePerson(selectedFile.value, link);
+};
 
 const props = defineProps<{ vaultPath: string }>();
 const store = useFileStore(() => props.vaultPath);
@@ -237,7 +281,12 @@ const restoreSession = () => {
 
 // ─── Lifecycle ───────────────────────────────────────────────
 let unlisten: (() => void) | null = null;
-onMounted(async () => { await store.init(); unlisten = (await store.setupAuthListener()) as any; restoreSession(); });
+onMounted(async () => { 
+  await store.init(); 
+  unlisten = (await store.setupAuthListener()) as any; 
+  restoreSession(); 
+  fetchAllPeople();
+});
 onUnmounted(() => { if (unlisten) unlisten(); });
 </script>
 
@@ -367,6 +416,44 @@ onUnmounted(() => { if (unlisten) unlisten(); });
               <button v-else @click="startAddingTag" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-indigo-500 hover:border-indigo-300 cursor-pointer transition-colors">
                 + Add
               </button>
+            </div>
+          </div>
+          <!-- Linked People -->
+          <div>
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">People</h4>
+            <div class="flex flex-wrap items-center gap-1.5 mb-2">
+              <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
+                @{{ getPersonName(link) }}
+                <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="relative">
+              <input 
+                v-if="showPeopleDropdown"
+                ref="peopleInputRef"
+                v-model="searchPeopleQuery"
+                type="text" 
+                placeholder="Search person..."
+                class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
+                @blur="setTimeout(() => showPeopleDropdown = false, 150)"
+              />
+              <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-500 hover:border-emerald-300 cursor-pointer transition-colors">
+                + Link Person
+              </button>
+              
+              <!-- Dropdown -->
+              <div v-if="showPeopleDropdown && filteredPeople.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                <button
+                  v-for="person in filteredPeople"
+                  :key="person.id"
+                  @click="handleSelectPerson(person)"
+                  class="w-full text-left px-3 py-2 text-xs font-medium hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 cursor-pointer"
+                >
+                  {{ person.title }}
+                </button>
+              </div>
             </div>
           </div>
           <!-- Used by -->
@@ -551,6 +638,44 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 <div>
                   <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Location</h4>
                   <p class="text-[10px] font-mono text-gray-500 break-all p-2 bg-white dark:bg-black/40 rounded-lg border border-gray-200/50 dark:border-white/5">{{ selectedFile.path }}</p>
+                </div>
+                <!-- Linked People -->
+                <div>
+                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">People</h4>
+                  <div class="flex flex-wrap items-center gap-1.5 mb-2">
+                    <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
+                      @{{ getPersonName(link) }}
+                      <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                      </button>
+                    </span>
+                  </div>
+                  <div class="relative">
+                    <input 
+                      v-if="showPeopleDropdown"
+                      ref="peopleInputRef"
+                      v-model="searchPeopleQuery"
+                      type="text" 
+                      placeholder="Search person..."
+                      class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
+                      @blur="setTimeout(() => showPeopleDropdown = false, 150)"
+                    />
+                    <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-500 hover:border-emerald-300 cursor-pointer transition-colors">
+                      + Link Person
+                    </button>
+                    
+                    <!-- Dropdown -->
+                    <div v-if="showPeopleDropdown && filteredPeople.length > 0" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                      <button
+                        v-for="person in filteredPeople"
+                        :key="person.id"
+                        @click="handleSelectPerson(person)"
+                        class="w-full text-left px-3 py-2 text-xs font-medium hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 cursor-pointer"
+                      >
+                        {{ person.title }}
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <!-- Used by -->
                 <div>

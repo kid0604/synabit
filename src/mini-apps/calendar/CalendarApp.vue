@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2 } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2, Bell } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -37,6 +37,11 @@ interface EventMetadata {
     path: string;
     created_at: string;
     relations?: string[];
+    recurrence?: string;
+    recurrence_end_at?: string;
+    exceptions?: string[];
+    series_id?: string;
+    reminders?: string[];
 }
 
 type ViewMode = 'day' | 'week' | 'month' | 'year';
@@ -62,7 +67,14 @@ const eventForm = ref({
     location: '',
     description: '',
     tagsStr: '',
-    relations: [] as string[]
+    relations: [] as string[],
+    recurrence: 'none',
+    recurrence_end_at: '',
+    series_id: '',
+    exceptions: [] as string[],
+    reminders: [] as string[],
+    _editScope: 'all' as 'occurrence_view' | 'this' | 'following' | 'all',
+    _originalEvent: null as EventMetadata | null
 });
 
 // --- Methods ---
@@ -133,7 +145,12 @@ const loadData = async () => {
                 content: n.content,
                 path: n.id,
                 created_at: n.created_at || '',
-                relations: props.relations || props.related_notes || []
+                relations: props.relations || props.related_notes || [],
+                recurrence: props.recurrence || 'none',
+                recurrence_end_at: props.recurrence_end_at || '',
+                exceptions: props.exceptions || [],
+                series_id: props.series_id || '',
+                reminders: props.reminders || []
             };
         });
     } catch(e) { logger.error("Error loading events:", e); }
@@ -205,7 +222,44 @@ const getEventsForDate = (dateStr: string) => {
         if (!e.start_at) return false;
         const eStartStr = e.start_at.split('T')[0];
         const eEndStr = e.end_at ? e.end_at.split('T')[0] : eStartStr;
-        return dateStr >= eStartStr && dateStr <= eEndStr;
+        
+        if (e.exceptions && e.exceptions.includes(dateStr)) return false;
+        
+        if (!e.recurrence || e.recurrence === 'none') {
+            return dateStr >= eStartStr && dateStr <= eEndStr;
+        }
+
+        if (dateStr < eStartStr) return false;
+        if (e.recurrence_end_at && dateStr > e.recurrence_end_at) return false;
+
+        const startObj = new Date(eStartStr + 'T00:00:00');
+        const endObj = new Date(eEndStr + 'T00:00:00');
+        const durationDays = Math.round((endObj.getTime() - startObj.getTime()) / 86400000);
+        const targetObj = new Date(dateStr + 'T00:00:00');
+
+        if (e.recurrence === 'daily') {
+            return true;
+        } else if (e.recurrence === 'weekly') {
+            const diffDays = Math.round((targetObj.getTime() - startObj.getTime()) / 86400000);
+            const rem = diffDays % 7;
+            const posRem = (rem + 7) % 7;
+            return posRem >= 0 && posRem <= durationDays;
+        } else if (e.recurrence === 'monthly') {
+            let cur = new Date(targetObj.getFullYear(), targetObj.getMonth(), startObj.getDate());
+            if (cur.getMonth() !== targetObj.getMonth()) {
+                cur = new Date(targetObj.getFullYear(), targetObj.getMonth() + 1, 0); 
+            }
+            const diffDays = Math.round((targetObj.getTime() - cur.getTime()) / 86400000);
+            return diffDays >= 0 && diffDays <= durationDays;
+        } else if (e.recurrence === 'yearly') {
+            let cur = new Date(targetObj.getFullYear(), startObj.getMonth(), startObj.getDate());
+            if (startObj.getMonth() === 1 && startObj.getDate() === 29 && cur.getMonth() !== 1) {
+                cur = new Date(targetObj.getFullYear(), 2, 0);
+            }
+            const diffDays = Math.round((targetObj.getTime() - cur.getTime()) / 86400000);
+            return diffDays >= 0 && diffDays <= durationDays;
+        }
+        return false;
     });
 };
 
@@ -228,7 +282,7 @@ const getEventsForDateAndHour = (dateStr: string, hour: number) => {
 const getMonthViewItems = (dateStr: string) => {
     const events = getEventsForDate(dateStr).map(e => {
         const timePart = (e.start_at && e.start_at.includes('T')) ? e.start_at.split('T')[1].substring(0, 5) : '';
-        return { id: e.id, type: 'event' as const, title: e.title, event_time: timePart, status: '' };
+        return { id: e.id, type: 'event' as const, title: e.title, event_time: timePart, status: '', event: e };
     });
     const tasks = getTasksForDate(dateStr).map(t => ({ id: t.id, type: 'task' as const, title: t.title, event_time: '', status: t.status }));
     const all = [...events, ...tasks];
@@ -281,7 +335,11 @@ const deleteRelationNode = async (bl: any) => {
                         end_at: eventForm.value.end_at,
                         location: eventForm.value.location,
                         tags: finalTags,
-                        relations: eventForm.value.relations
+                        relations: eventForm.value.relations,
+                        recurrence: eventForm.value.recurrence,
+                        recurrence_end_at: eventForm.value.recurrence_end_at,
+                        series_id: eventForm.value.series_id,
+                        exceptions: eventForm.value.exceptions
                     },
                     content: eventForm.value.description 
                 });
@@ -443,7 +501,8 @@ const openAddEventModal = (defaultDate?: Date, hr?: number) => {
     eventForm.value = {
         isEdit: false, id: '', path: '', title: '',
         isAllDay: false, start_at: `${targetDateStr}T${startHour}:00`, end_at: `${targetDateStr}T${endHour}:00`,
-        location: '', description: '', tagsStr: '', relations: [] as string[]
+        location: '', description: '', tagsStr: '', relations: [] as string[],
+        recurrence: 'none', recurrence_end_at: '', series_id: '', exceptions: [], reminders: [], _editScope: 'all', _originalEvent: null
     };
     eventBacklinks.value = [];
     isCreatingNote.value = false;
@@ -565,7 +624,11 @@ const createMeetingNote = async () => {
                     end_at: eventForm.value.end_at,
                     location: eventForm.value.location,
                     tags: finalTags,
-                    relations: eventForm.value.relations || []
+                    relations: eventForm.value.relations || [],
+                    recurrence: eventForm.value.recurrence,
+                    recurrence_end_at: eventForm.value.recurrence_end_at,
+                    series_id: eventForm.value.series_id,
+                    exceptions: eventForm.value.exceptions
                 },
                 content: eventForm.value.description 
             });
@@ -576,18 +639,54 @@ const createMeetingNote = async () => {
     }
 };
 
-const openEditEventModal = async (ev: EventMetadata) => {
-    // Ensure format is YYYY-MM-DDThh:mm for datetime-local native input compatibility
+// --- Scope Modal State ---
+const showScopeModal = ref(false);
+const scopeAction = ref<'edit' | 'delete'>('edit');
+const scopeSelection = ref<'this' | 'following' | 'all'>('this');
+const targetOccurrenceDate = ref('');
+const pendingEventAction = ref<EventMetadata | null>(null);
+
+const confirmScopeAction = () => {
+    showScopeModal.value = false;
+    if (scopeAction.value === 'edit') {
+        eventForm.value._editScope = scopeSelection.value as any;
+        submitEventActual();
+    } else {
+        deleteEventActual(pendingEventAction.value!, targetOccurrenceDate.value, scopeSelection.value);
+    }
+};
+
+const openEditEventModal = (ev: EventMetadata, dateStr: string) => {
+    targetOccurrenceDate.value = dateStr;
+    pendingEventAction.value = ev;
+    openEditEventModalActual(ev, dateStr, 'occurrence_view');
+};
+
+const openEditEventModalActual = async (ev: EventMetadata, dateStr: string, scope: 'occurrence_view' | 'this' | 'following' | 'all') => {
     let startAt = ev.start_at || '';
     if (startAt.includes('T')) startAt = startAt.slice(0, 16);
     let endAt = ev.end_at || '';
     if (endAt.includes('T')) endAt = endAt.slice(0, 16);
     
+    if (scope === 'occurrence_view' || scope === 'this' || scope === 'following') {
+        const timePartStart = startAt.includes('T') ? startAt.split('T')[1] : '12:00';
+        const timePartEnd = endAt.includes('T') ? endAt.split('T')[1] : '13:00';
+        startAt = `${dateStr}T${timePartStart}`;
+        endAt = `${dateStr}T${timePartEnd}`;
+    }
+    
     eventForm.value = {
         isEdit: true, id: ev.id, path: ev.path, title: ev.title,
         isAllDay: ev.is_all_day, start_at: startAt, end_at: endAt, location: ev.location,
         description: ev.content, tagsStr: ev.tags.join(', '),
-        relations: ev.relations || []
+        relations: [...(ev.relations || [])],
+        recurrence: ev.recurrence || 'none',
+        recurrence_end_at: ev.recurrence_end_at || '',
+        series_id: ev.series_id || '',
+        exceptions: [...(ev.exceptions || [])],
+        reminders: [...(ev.reminders || [])],
+        _editScope: scope as any,
+        _originalEvent: ev
     };
     eventBacklinks.value = [];
     isCreatingNote.value = false;
@@ -620,8 +719,47 @@ const openLinkedNote = (id: string, type: string) => {
     emit('open-node', id, type);
 };
 
+const reminderPreset = ref('');
+const customReminder = ref('');
+const addReminder = () => {
+    let val = '';
+    if (reminderPreset.value === 'custom') {
+        if (customReminder.value) {
+            val = customReminder.value.trim().toLowerCase();
+            if (!val.match(/^\d+[mhd]$/)) {
+                alert("Custom reminder must be a number followed by m, h, or d (e.g., 45m, 2h, 1d)");
+                return;
+            }
+        }
+    } else if (reminderPreset.value) {
+        val = reminderPreset.value;
+    }
+    if (val && !eventForm.value.reminders.includes(val)) {
+        eventForm.value.reminders.push(val);
+    }
+    reminderPreset.value = '';
+    customReminder.value = '';
+};
+const removeReminder = (idx: number) => {
+    eventForm.value.reminders.splice(idx, 1);
+};
+
 const submitEvent = async () => {
     if (!eventForm.value.title || !eventForm.value.start_at) return;
+    
+    if (eventForm.value.isEdit && eventForm.value._originalEvent && eventForm.value._originalEvent.recurrence && eventForm.value._originalEvent.recurrence !== 'none') {
+        if (eventForm.value._editScope === 'occurrence_view') {
+            scopeAction.value = 'edit';
+            scopeSelection.value = 'this';
+            showScopeModal.value = true;
+            return;
+        }
+    }
+    
+    await submitEventActual();
+};
+
+const submitEventActual = async () => {
     let finalTags: string[] = [];
     if (eventForm.value.tagsStr.trim()) {
         finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
@@ -631,20 +769,126 @@ const submitEvent = async () => {
     
     try {
         let relPath = eventForm.value.path;
-        if (!eventForm.value.isEdit || !relPath) {
-            relPath = `Events/${crypto.randomUUID()}.md`;
-        }
+        let isCreatingNewNode = !eventForm.value.isEdit || !relPath;
         
         const properties: any = {
             is_all_day: eventForm.value.isAllDay,
             start_at: eventForm.value.start_at,
             end_at: eventForm.value.end_at,
             location: eventForm.value.location,
-            tags: finalTags
+            tags: finalTags,
+            recurrence: eventForm.value.recurrence,
+            recurrence_end_at: eventForm.value.recurrence_end_at,
+            series_id: eventForm.value.series_id,
+            exceptions: eventForm.value.exceptions,
+            reminders: eventForm.value.reminders
         };
+        
+        if (eventForm.value.isEdit && eventForm.value._editScope === 'all' && eventForm.value._originalEvent) {
+            const parentEv = eventForm.value._originalEvent;
+            const rootId = parentEv.series_id || parentEv.id;
+            const rootEv = allEvents.value.find(e => e.id === rootId) || parentEv;
+            
+            const origStart = rootEv.start_at || '';
+            const origEnd = rootEv.end_at || '';
+            const origStartDate = origStart.split('T')[0];
+            const origEndDate = origEnd.split('T')[0];
+            
+            const occurrenceStartObj = new Date(targetOccurrenceDate.value + 'T00:00:00');
+            const newStartObj = new Date(eventForm.value.start_at.split('T')[0] + 'T00:00:00');
+            const diffMs = newStartObj.getTime() - occurrenceStartObj.getTime();
+            
+            const rootStartObj = new Date(origStartDate + 'T00:00:00');
+            rootStartObj.setTime(rootStartObj.getTime() + diffMs);
+            const shiftedOrigStartDate = rootStartObj.toISOString().split('T')[0];
+            
+            const rootEndObj = new Date(origEndDate + 'T00:00:00');
+            rootEndObj.setTime(rootEndObj.getTime() + diffMs);
+            const shiftedOrigEndDate = rootEndObj.toISOString().split('T')[0];
+            
+            const newTimeStart = eventForm.value.start_at.includes('T') ? eventForm.value.start_at.split('T')[1] : '';
+            const newTimeEnd = eventForm.value.end_at.includes('T') ? eventForm.value.end_at.split('T')[1] : '';
+            
+            properties.start_at = newTimeStart ? `${shiftedOrigStartDate}T${newTimeStart}` : shiftedOrigStartDate;
+            properties.end_at = newTimeEnd ? `${shiftedOrigEndDate}T${newTimeEnd}` : shiftedOrigEndDate;
+            
+            properties.exceptions = [];
+            properties.series_id = '';
+            
+            const familyEvents = allEvents.value.filter(e => e.id === rootId || e.series_id === rootId);
+            let maxEndAt = '';
+            let isInfinite = false;
+            for (const fam of familyEvents) {
+                if (fam.recurrence && fam.recurrence !== 'none') {
+                    if (!fam.recurrence_end_at) {
+                        isInfinite = true;
+                        break;
+                    } else if (fam.recurrence_end_at > maxEndAt) {
+                        maxEndAt = fam.recurrence_end_at;
+                    }
+                }
+            }
+            if (!eventForm.value.recurrence_end_at || eventForm.value.recurrence_end_at === parentEv.recurrence_end_at) {
+                properties.recurrence_end_at = isInfinite ? '' : maxEndAt;
+            }
+            
+            for (const famEv of familyEvents) {
+                if (famEv.path !== rootId) {
+                    await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: famEv.path });
+                }
+            }
+            
+            relPath = rootId;
+        }
         
         if (eventForm.value.relations && eventForm.value.relations.length > 0) {
             properties.relations = eventForm.value.relations;
+        }
+
+        if (eventForm.value.isEdit && (eventForm.value._editScope === 'this' || eventForm.value._editScope === 'following')) {
+            relPath = `Events/${crypto.randomUUID()}.md`;
+            isCreatingNewNode = true;
+            
+            const parentEv = eventForm.value._originalEvent!;
+            properties.recurrence = eventForm.value._editScope === 'this' ? 'none' : eventForm.value.recurrence;
+            properties.recurrence_end_at = eventForm.value._editScope === 'this' ? '' : eventForm.value.recurrence_end_at;
+            properties.series_id = parentEv.series_id || parentEv.id;
+            properties.exceptions = []; // New split event should not inherit exceptions
+            const parentProps = {
+                is_all_day: parentEv.is_all_day,
+                start_at: parentEv.start_at,
+                end_at: parentEv.end_at,
+                location: parentEv.location,
+                tags: parentEv.tags,
+                recurrence: parentEv.recurrence,
+                recurrence_end_at: parentEv.recurrence_end_at,
+                exceptions: [...(parentEv.exceptions || [])],
+                relations: [...(parentEv.relations || [])],
+                series_id: parentEv.series_id
+            };
+            
+            if (eventForm.value._editScope === 'this') {
+                if (!parentProps.exceptions.includes(targetOccurrenceDate.value)) {
+                    parentProps.exceptions.push(targetOccurrenceDate.value);
+                }
+            } else if (eventForm.value._editScope === 'following') {
+                const dt = new Date(targetOccurrenceDate.value + 'T00:00:00');
+                dt.setDate(dt.getDate() - 1);
+                parentProps.recurrence_end_at = dt.toISOString().split('T')[0];
+            }
+            
+            await invoke('write_node_file', {
+                vaultPath: props.vaultPath,
+                relPath: parentEv.path,
+                title: parentEv.title,
+                nodeType: 'event',
+                properties: parentProps,
+                content: parentEv.content
+            });
+        }
+        
+        if (isCreatingNewNode) {
+            if (!relPath) relPath = `Events/${crypto.randomUUID()}.md`;
         }
         
         await invoke('write_node_file', { 
@@ -663,18 +907,78 @@ const submitEvent = async () => {
 import { ask } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../utils/logger';
 
-const deleteEvent = async (ev: EventMetadata) => {
-    const isConfirmed = await ask('This action cannot be undone. The event will be permanently removed from your calendar.', { 
-        title: `Delete event '${ev.title}'?`, 
-        kind: 'warning',
-        okLabel: 'Delete',
-        cancelLabel: 'Cancel'
-    });
-    if (isConfirmed) {
-        try {
+const deleteEvent = async (ev: EventMetadata, dateStr: string) => {
+    if (ev.recurrence && ev.recurrence !== 'none') {
+        scopeAction.value = 'delete';
+        scopeSelection.value = 'this';
+        targetOccurrenceDate.value = dateStr;
+        pendingEventAction.value = ev;
+        showScopeModal.value = true;
+    } else {
+        const isConfirmed = await ask('This action cannot be undone. The event will be permanently removed from your calendar.', { 
+            title: `Delete event '${ev.title}'?`, 
+            kind: 'warning',
+            okLabel: 'Delete',
+            cancelLabel: 'Cancel'
+        });
+        if (isConfirmed) {
+            await deleteEventActual(ev, dateStr, 'all');
+        }
+    }
+};
+
+const deleteEventActual = async (ev: EventMetadata, dateStr: string, scope: 'this' | 'following' | 'all') => {
+    try {
+        if (scope === 'all') {
+            const rootId = ev.series_id || ev.id;
+            const familyEvents = allEvents.value.filter(e => e.id === rootId || e.series_id === rootId);
+            for (const famEv of familyEvents) {
+                if (famEv.path !== ev.path) {
+                    await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: famEv.path });
+                }
+            }
             await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: ev.path });
-            await loadData();
-        } catch(e) { logger.error("Failed to delete event:", e); }
+        } else {
+            const parentProps = {
+                is_all_day: ev.is_all_day,
+                start_at: ev.start_at,
+                end_at: ev.end_at,
+                location: ev.location,
+                tags: ev.tags,
+                recurrence: ev.recurrence,
+                recurrence_end_at: ev.recurrence_end_at,
+                exceptions: [...(ev.exceptions || [])],
+                relations: [...(ev.relations || [])],
+                series_id: ev.series_id
+            };
+            
+            if (scope === 'this') {
+                if (!parentProps.exceptions.includes(dateStr)) {
+                    parentProps.exceptions.push(dateStr);
+                }
+            } else if (scope === 'following') {
+                const dt = new Date(dateStr + 'T00:00:00');
+                dt.setDate(dt.getDate() - 1);
+                parentProps.recurrence_end_at = dt.toISOString().split('T')[0];
+            }
+            
+            await invoke('write_node_file', {
+                vaultPath: props.vaultPath,
+                relPath: ev.path,
+                title: ev.title,
+                nodeType: 'event',
+                properties: parentProps,
+                content: ev.content
+            });
+        }
+        await loadData();
+    } catch(e) { logger.error("Failed to delete event:", e); }
+};
+
+const handleDeleteFromForm = () => {
+    if (eventForm.value._originalEvent) {
+        deleteEvent(eventForm.value._originalEvent, targetOccurrenceDate.value);
+        closeEventForm();
     }
 };
 </script>
@@ -757,7 +1061,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                              <!-- Desktop Text -->
                              <div class="hidden md:flex flex-col gap-1 w-full" v-for="dayData in [getMonthViewItems(formatDateString(dayObj.date))]" :key="'ddata-'+dayObj.date.getTime()">
                                  <template v-for="item in dayData.display" :key="item.type + '-' + item.id">
-                                     <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95">
+                                     <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95 cursor-pointer" @click.stop="openEditEventModal(item.event, formatDateString(dayObj.date))">
                                          <span v-if="item.event_time" class="opacity-70 mr-0.5">{{ item.event_time }}</span> {{ item.title }}
                                      </div>
                                      <div v-else class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200/80 dark:border-[#3a3a3a]/80 text-gray-700 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#252525] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer hover:brightness-95" :class="item.status === 'done' ? 'opacity-60' : ''" @click.stop="$emit('open-node', item.id, 'task')">
@@ -787,7 +1091,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                         <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
                             <CheckSquare class="w-3 h-3 flex-shrink-0 hover:text-purple-500 transition-colors" :class="tk.status === 'done' ? 'text-green-500' : ''" @click.stop="toggleTaskStatus(tk)" /> {{ tk.title }}
                         </div>
-                        <div v-for="ev in getEventsForDate(formatDateString(currentDate)).filter(isAllDayOrMultiDay)" :key="'ad-ev-'+ev.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-sm" @click.stop="openEditEventModal(ev)">
+                        <div v-for="ev in getEventsForDate(formatDateString(currentDate)).filter(isAllDayOrMultiDay)" :key="'ad-ev-'+ev.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-sm" @click.stop="openEditEventModal(ev, formatDateString(currentDate))">
                             <CalendarIcon class="w-3 h-3 flex-shrink-0" /> {{ ev.title }}
                         </div>
                     </div>
@@ -802,7 +1106,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                             <!-- Events in this hour block -->
                             <div v-for="ev in getEventsForDateAndHour(formatDateString(currentDate), hr)" :key="'ev-'+ev.id" 
                                 class="absolute top-1 left-1 right-1 lg:static lg:flex-1 p-2 rounded-lg bg-blue-100/80 text-blue-900 border border-blue-200 dark:bg-blue-900/30 dark:border-blue-800/50 dark:text-blue-200 shadow-sm transition-transform hover:scale-[1.01] cursor-pointer"
-                                @click.stop="openEditEventModal(ev)">
+                                @click.stop="openEditEventModal(ev, formatDateString(currentDate))">
                                 <div class="font-bold text-xs truncate">{{ ev.title }}</div>
                                 <div class="flex gap-2 text-[10px] opacity-70 mt-0.5">
                                     <span v-if="formatEventTime(ev)">{{ formatEventTime(ev) }}</span>
@@ -834,7 +1138,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                             <div v-for="tk in getTasksForDate(dayObj.dateStr)" :key="'wk-tsk-'+tk.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
                                 <CheckSquare class="w-2.5 h-2.5 flex-shrink-0 hover:text-purple-500 transition-colors" :class="tk.status === 'done' ? 'text-green-500' : ''" @click.stop="toggleTaskStatus(tk)" /> {{ tk.title }}
                             </div>
-                            <div v-for="ev in getEventsForDate(dayObj.dateStr).filter(isAllDayOrMultiDay)" :key="'wk-ad-ev-'+ev.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-[0_1px_2px_rgba(0,0,0,0.05)]" @click.stop="openEditEventModal(ev)">
+                            <div v-for="ev in getEventsForDate(dayObj.dateStr).filter(isAllDayOrMultiDay)" :key="'wk-ad-ev-'+ev.id" class="truncate px-1.5 py-0.5 rounded text-[9px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 cursor-pointer shadow-[0_1px_2px_rgba(0,0,0,0.05)]" @click.stop="openEditEventModal(ev, dayObj.dateStr)">
                                 <CalendarIcon class="w-2.5 h-2.5 flex-shrink-0" /> {{ ev.title }}
                             </div>
                         </div>
@@ -856,7 +1160,7 @@ const deleteEvent = async (ev: EventMetadata) => {
                                 <div v-for="ev in getEventsForDateAndHour(dayObj.dateStr, hr)" :key="'ev-'+ev.id" 
                                     class="w-full absolute inset-x-0.5 top-0.5 p-1 rounded bg-blue-100/90 text-blue-900 border border-blue-200/50 dark:bg-blue-900/40 dark:border-blue-800/50 dark:text-blue-200 shadow-sm cursor-pointer hover:z-10 truncate text-[10px]"
                                     style="height: 56px;"
-                                    @click.stop="openEditEventModal(ev)">
+                                    @click.stop="openEditEventModal(ev, dayObj.dateStr)">
                                     <div class="font-bold truncate">{{ ev.title }}</div>
                                     <div class="opacity-70 truncate" v-if="formatEventTime(ev)">{{ formatEventTime(ev) }}</div>
                                 </div>
@@ -923,11 +1227,11 @@ const deleteEvent = async (ev: EventMetadata) => {
                  </h3>
                  <div v-if="selectedEvents.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">No events scheduled.</div>
                  <div class="space-y-2">
-                     <div v-for="ev in selectedEvents" :key="ev.id" @click="openEditEventModal(ev)" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group cursor-pointer hover:border-purple-300 dark:hover:border-purple-500/50 transition-colors">
+                     <div v-for="ev in selectedEvents" :key="ev.id" @click="openEditEventModal(ev, selectedDateFormattedStr)" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group cursor-pointer hover:border-purple-300 dark:hover:border-purple-500/50 transition-colors">
                          <div class="flex justify-between items-start mb-1">
                              <h4 class="font-bold text-base text-gray-900 dark:text-gray-100 line-clamp-1">{{ ev.title }}</h4>
                              <div class="flex items-center gap-1 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity">
-                                <button @click.stop="deleteEvent(ev)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
+                                <button @click.stop="deleteEvent(ev, selectedDateFormattedStr)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
                              </div>
                          </div>
                          <div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -966,6 +1270,33 @@ const deleteEvent = async (ev: EventMetadata) => {
                  </div>
              </div>
          </div>
+     </div>
+
+     <!-- Scope Selection Modal -->
+     <div v-if="showScopeModal" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" @click.self="showScopeModal = false">
+        <div class="bg-white dark:bg-[#1e1e1e] w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col">
+            <div class="px-6 py-4 border-b border-[#e6e6e6] dark:border-[#333]">
+                <h3 class="font-bold text-lg text-black dark:text-white">{{ scopeAction === 'edit' ? 'Edit Recurring Event' : 'Delete Recurring Event' }}</h3>
+            </div>
+            <div class="p-6 space-y-3">
+                <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'this'}">
+                    <input type="radio" v-model="scopeSelection" value="this" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
+                    <span class="text-sm font-medium text-black dark:text-white">This event</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'following'}">
+                    <input type="radio" v-model="scopeSelection" value="following" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
+                    <span class="text-sm font-medium text-black dark:text-white">This and following events</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'all'}">
+                    <input type="radio" v-model="scopeSelection" value="all" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
+                    <span class="text-sm font-medium text-black dark:text-white">All events in series</span>
+                </label>
+            </div>
+            <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex justify-end gap-3 text-sm font-semibold select-none">
+                <button @click="showScopeModal = false" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>
+                <button @click="confirmScopeAction" class="px-4 py-2 rounded-lg text-white transition-colors" :class="scopeAction === 'delete' ? 'bg-red-500 hover:bg-red-600' : 'bg-black dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400'">OK</button>
+            </div>
+        </div>
      </div>
 
      <!-- Event Modal Overlay -->
@@ -1020,6 +1351,53 @@ const deleteEvent = async (ev: EventMetadata) => {
                             </div>
                         </div>
                     </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Repeat</label>
+                             <select v-model="eventForm.recurrence" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white appearance-none cursor-pointer">
+                                 <option value="none">Does not repeat</option>
+                                 <option value="daily">Daily</option>
+                                 <option value="weekly">Weekly</option>
+                                 <option value="monthly">Monthly</option>
+                                 <option value="yearly">Yearly</option>
+                             </select>
+                        </div>
+                        <div v-if="eventForm.recurrence !== 'none'">
+                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Ends On <span class="lowercase text-[9px] font-normal">(optional)</span></label>
+                             <input v-model="eventForm.recurrence_end_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
+                        </div>
+                    </div>
+                 <div>
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Reminders</label>
+                   <div class="flex flex-col gap-2">
+                       <div class="flex items-center gap-2 flex-wrap">
+                           <div v-for="(rem, idx) in eventForm.reminders" :key="idx" class="flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-1 rounded-md text-xs font-medium">
+                               <Bell class="w-3 h-3" />
+                               {{ rem }}
+                               <button @click="removeReminder(idx)" class="hover:text-purple-900 dark:hover:text-purple-100 ml-1">
+                                   <X class="w-3 h-3" />
+                               </button>
+                           </div>
+                       </div>
+                       <div class="flex items-center gap-2">
+                           <select v-model="reminderPreset" @change="addReminder" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white appearance-none cursor-pointer">
+                               <option value="">Add Reminder...</option>
+                               <option value="5m">5 minutes before</option>
+                               <option value="15m">15 minutes before</option>
+                               <option value="30m">30 minutes before</option>
+                               <option value="1h">1 hour before</option>
+                               <option value="1d">1 day before</option>
+                               <option value="custom">Custom...</option>
+                           </select>
+                           <div v-if="reminderPreset === 'custom'" class="flex items-center gap-2 flex-1">
+                               <input v-model="customReminder" @keyup.enter="addReminder" type="text" placeholder="e.g. 45m, 2h" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white">
+                               <button @click="addReminder" class="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-lg transition-colors">
+                                   <Plus class="w-4 h-4" />
+                               </button>
+                           </div>
+                       </div>
+                   </div>
+                </div>
                 <div>
                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Location</label>
                    <input v-model="eventForm.location" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Zoom link, Office, etc.">
@@ -1069,9 +1447,12 @@ const deleteEvent = async (ev: EventMetadata) => {
                 </div>
 
             </div>
-            <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex justify-end gap-3 text-sm font-semibold select-none">
-                <button @click="closeEventForm" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>
-                <button @click="submitEvent" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400 transition-colors" :disabled="!eventForm.title">Save Event</button>
+            <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex items-center gap-3 text-sm font-semibold select-none" :class="eventForm.isEdit ? 'justify-between' : 'justify-end'">
+                <button v-if="eventForm.isEdit" @click="handleDeleteFromForm" class="px-4 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+                <div class="flex items-center gap-3">
+                    <button @click="closeEventForm" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>
+                    <button @click="submitEvent" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400 transition-colors" :disabled="!eventForm.title">Save Event</button>
+                </div>
             </div>
         </div>
      </div>

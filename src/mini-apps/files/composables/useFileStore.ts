@@ -13,6 +13,7 @@ export interface FileMetadata {
   created_at: string;
   modified_at: string;
   tags: string[];
+  people: string[];
   source_type: string;
 }
 
@@ -224,7 +225,7 @@ export function useFileStore(vaultPath: () => string) {
     if (finalName === file.filename) return;
     try {
       const newPath = await invoke<string>('update_file_metadata', {
-        vaultPath: vaultPath(), path: file.path, newFilename: finalName, newTags: file.tags
+        vaultPath: vaultPath(), path: file.path, newFilename: finalName, newTags: file.tags, newPeople: file.people || []
       });
       file.filename = finalName;
       file.path = newPath;
@@ -241,7 +242,7 @@ export function useFileStore(vaultPath: () => string) {
     const updatedTags = [...file.tags, t];
     try {
       await invoke('update_file_metadata', {
-        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: updatedTags
+        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: updatedTags, newPeople: file.people || []
       });
       file.tags = updatedTags;
       const idx = files.value.findIndex(f => f.id === file.id);
@@ -255,13 +256,42 @@ export function useFileStore(vaultPath: () => string) {
     const updatedTags = file.tags.filter(t => t !== tag);
     try {
       await invoke('update_file_metadata', {
-        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: updatedTags
+        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: updatedTags, newPeople: file.people || []
       });
       file.tags = updatedTags;
       const idx = files.value.findIndex(f => f.id === file.id);
       if (idx !== -1) files.value[idx].tags = updatedTags;
     } catch (e) {
       logger.error("Failed to remove tag", e);
+    }
+  };
+
+  const addPerson = async (file: FileMetadata, personInternalLink: string) => {
+    if (!personInternalLink || (file.people && file.people.includes(personInternalLink))) return;
+    const updatedPeople = [...(file.people || []), personInternalLink];
+    try {
+      await invoke('update_file_metadata', {
+        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: file.tags, newPeople: updatedPeople
+      });
+      file.people = updatedPeople;
+      const idx = files.value.findIndex(f => f.id === file.id);
+      if (idx !== -1) files.value[idx].people = updatedPeople;
+    } catch (e) {
+      logger.error("Failed to add person", e);
+    }
+  };
+
+  const removePerson = async (file: FileMetadata, personInternalLink: string) => {
+    const updatedPeople = (file.people || []).filter(p => p !== personInternalLink);
+    try {
+      await invoke('update_file_metadata', {
+        vaultPath: vaultPath(), path: file.path, newFilename: file.filename, newTags: file.tags, newPeople: updatedPeople
+      });
+      file.people = updatedPeople;
+      const idx = files.value.findIndex(f => f.id === file.id);
+      if (idx !== -1) files.value[idx].people = updatedPeople;
+    } catch (e) {
+      logger.error("Failed to remove person", e);
     }
   };
 
@@ -519,7 +549,10 @@ export function useFileStore(vaultPath: () => string) {
     // Sources
     fetchSources, fetchFiles, syncAllSources, addNewSource, removeSource, importFiles,
     // File ops
-    saveFileName, addTag, removeTag, openLocalFile,
+    saveFileName, addTag, removeTag,
+    addPerson,
+    removePerson,
+    openLocalFile,
     // Duplicates
     duplicateReport, isScanningDuplicates, scanDuplicates, getFileReferences, deleteFile,
     // Helpers

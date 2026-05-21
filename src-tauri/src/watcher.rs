@@ -6,13 +6,13 @@
 #[cfg(desktop)]
 mod desktop {
     use crate::error::{AppError, AppResult};
+    use crate::path_utils;
     use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Emitter};
-    use crate::path_utils;
 
     pub struct WatcherState {
         pub watcher: Mutex<Option<RecommendedWatcher>>,
@@ -111,8 +111,8 @@ mod desktop {
 
         let ds = debounce_state.clone();
         let watch_vault_path = vault_path.clone();
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
                     let dominated_by_ignored = event
                         .paths
@@ -149,9 +149,8 @@ mod desktop {
                 Err(e) => {
                     log::error!("Watcher error: {:?}", e);
                 }
-            }
-        })
-        .map_err(|e| AppError::General(format!("Failed to initialize watcher: {}", e)))?;
+            })
+            .map_err(|e| AppError::General(format!("Failed to initialize watcher: {}", e)))?;
 
         watcher
             .watch(&path, RecursiveMode::Recursive)

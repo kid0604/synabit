@@ -160,6 +160,38 @@ const needsAttentionCount = computed(() => {
     }).length;
 });
 
+const topRelationships = computed(() => {
+    const counts: Record<string, number> = {};
+    people.value.forEach(p => {
+        if (p.properties?.relationship_type) {
+            const relsArr = p.properties.relationship_type.split(',').map((s: string) => s.toLowerCase().trim());
+            relsArr.forEach((r: string) => {
+                if (r) counts[r] = (counts[r] || 0) + 1;
+            });
+        }
+    });
+    return Object.entries(counts)
+        .sort((a, b) => b[1] - a[1]) // Sort by frequency descending
+        .slice(0, 10) // Top 10
+        .map(([r]) => r.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+});
+
+const allRelationships = computed(() => {
+    const rels = new Set<string>();
+    people.value.forEach(p => {
+        if (p.properties?.relationship_type) {
+            const relsArr = p.properties.relationship_type.split(',').map((s: string) => s.toLowerCase().trim());
+            relsArr.forEach((r: string) => {
+                if (r) rels.add(r);
+            });
+        }
+    });
+    return Array.from(rels)
+        .filter(r => r)
+        .map(r => r.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '))
+        .sort();
+});
+
 const cycleSortMode = () => {
     const modes: Array<'alpha' | 'recent' | 'attention'> = ['alpha', 'recent', 'attention'];
     const idx = modes.indexOf(sortMode.value);
@@ -661,6 +693,8 @@ defineExpose({ openPersonById });
             v-if="showModal"
             :person="selectedPerson"
             :vault-path="vaultPath"
+            :top-relationships="topRelationships"
+            :all-relationships="allRelationships"
             @close="showModal = false"
             @saved="fetchPeople"
         />

@@ -7,10 +7,10 @@ pub mod path_utils;
 pub mod search;
 pub mod utils;
 
-pub mod watcher;
 pub mod chat_engine;
+pub mod watcher;
 
-use commands::{files, nexus, nodes, whiteboards, chat};
+use commands::{chat, files, nexus, nodes, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -20,15 +20,26 @@ fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let log_file = log_dir.join("Synabit.log");
 
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open").arg("-R").arg(&log_file).spawn().map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(&log_file)
+        .spawn()
+        .map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer").arg("/select,").arg(&log_file).spawn().map_err(|e| e.to_string())?;
+    std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(&log_file)
+        .spawn()
+        .map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "linux")]
     {
         let parent = log_file.parent().unwrap_or(&log_file);
-        std::process::Command::new("xdg-open").arg(parent).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -37,21 +48,23 @@ fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_log::Builder::new()
-            .level(log::LevelFilter::Info)
-            .build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .manage(watcher::WatcherState::default())
         .setup(|app| {
             use tauri::Manager;
             log::info!("Starting Synabit Backend...");
-            let db = DbBridge::init(app.handle())
-                .expect("Failed to initialize database");
+            let db = DbBridge::init(app.handle()).expect("Failed to initialize database");
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 
@@ -142,9 +155,9 @@ pub fn run() {
             gdrive::browse::get_gdrive_files,
             // Chat
             chat::get_chat_history,
+            chat::mark_chat_read,
             // System
             open_app_log_folder,
-
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

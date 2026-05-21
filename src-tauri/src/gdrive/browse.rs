@@ -10,18 +10,17 @@
 // in a local JSON file. The two never share credentials.
 // ──────────────────────────────────────────────
 
-
 use reqwest::{Client, Url};
 use serde::Deserialize;
-use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
-use crate::error::{AppError, AppResult};
-use crate::db::DbState;
-use crate::models::file::FileMetadata;
-use super::{CLIENT_ID, TOKEN_URI, generate_pkce_pair};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::CLIENT_SECRET;
+use super::{generate_pkce_pair, CLIENT_ID, TOKEN_URI};
+use crate::db::DbState;
+use crate::error::{AppError, AppResult};
+use crate::models::file::FileMetadata;
 
 const BROWSE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 
@@ -37,7 +36,11 @@ fn get_keyring_entry(key: &str, vault_path: &str) -> AppResult<keyring::Entry> {
 }
 
 #[allow(dead_code)]
-fn get_token_file_path(app_handle: &tauri::AppHandle, key: &str, vault_path: &str) -> std::path::PathBuf {
+fn get_token_file_path(
+    app_handle: &tauri::AppHandle,
+    key: &str,
+    vault_path: &str,
+) -> std::path::PathBuf {
     use tauri::Manager;
     let safe_account = vault_path.replace("/", "_").replace("\\\\", "_");
     let mut path = app_handle.path().app_data_dir().unwrap_or_default();
@@ -45,11 +48,18 @@ fn get_token_file_path(app_handle: &tauri::AppHandle, key: &str, vault_path: &st
     path
 }
 
-fn set_credential(_app_handle: &tauri::AppHandle, key: &str, vault_path: &str, value: &str) -> AppResult<()> {
+fn set_credential(
+    _app_handle: &tauri::AppHandle,
+    key: &str,
+    vault_path: &str,
+    value: &str,
+) -> AppResult<()> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let entry = get_keyring_entry(key, vault_path)?;
-        entry.set_password(value).map_err(|e| AppError::General(format!("Keyring error: {}", e)))
+        entry
+            .set_password(value)
+            .map_err(|e| AppError::General(format!("Keyring error: {}", e)))
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -61,11 +71,17 @@ fn set_credential(_app_handle: &tauri::AppHandle, key: &str, vault_path: &str, v
     }
 }
 
-fn get_credential(_app_handle: &tauri::AppHandle, key: &str, vault_path: &str) -> AppResult<String> {
+fn get_credential(
+    _app_handle: &tauri::AppHandle,
+    key: &str,
+    vault_path: &str,
+) -> AppResult<String> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let entry = get_keyring_entry(key, vault_path)?;
-        entry.get_password().map_err(|e| AppError::General(format!("Keyring error: {}", e)))
+        entry
+            .get_password()
+            .map_err(|e| AppError::General(format!("Keyring error: {}", e)))
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -90,7 +106,10 @@ fn delete_credential(_app_handle: &tauri::AppHandle, key: &str, vault_path: &str
     }
 }
 
-async fn get_valid_access_token(app_handle: &tauri::AppHandle, vault_path: &str) -> AppResult<String> {
+async fn get_valid_access_token(
+    app_handle: &tauri::AppHandle,
+    vault_path: &str,
+) -> AppResult<String> {
     use tauri::Manager;
     let db_state = app_handle.state::<DbState>();
 
@@ -100,15 +119,22 @@ async fn get_valid_access_token(app_handle: &tauri::AppHandle, vault_path: &str)
         if let Ok(Some(expires_str)) = db.get_kv("gdrive_expires_at") {
             if let Ok(expires_at) = expires_str.parse::<i64>() {
                 chrono::Utc::now().timestamp() >= expires_at - 60
-            } else { false }
-        } else { false }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }; // lock dropped here
 
     if needs_refresh {
-        if let Ok(refresh_token) = get_credential(app_handle, "synabit_gdrive_refresh_token", vault_path) {
+        if let Ok(refresh_token) =
+            get_credential(app_handle, "synabit_gdrive_refresh_token", vault_path)
+        {
             let client = Client::new();
             // Desktop: Google requires client_secret for refresh
-            let resp = client.post(TOKEN_URI)
+            let resp = client
+                .post(TOKEN_URI)
                 .form(&[
                     ("client_id", CLIENT_ID),
                     ("client_secret", CLIENT_SECRET),
@@ -121,13 +147,24 @@ async fn get_valid_access_token(app_handle: &tauri::AppHandle, vault_path: &str)
 
             if resp.status().is_success() {
                 if let Ok(token_resp) = resp.json::<super::TokenResponse>().await {
-                    set_credential(app_handle, "synabit_gdrive_access_token", vault_path, &token_resp.access_token)?;
+                    set_credential(
+                        app_handle,
+                        "synabit_gdrive_access_token",
+                        vault_path,
+                        &token_resp.access_token,
+                    )?;
                     if let Some(new_refresh) = token_resp.refresh_token {
-                        set_credential(app_handle, "synabit_gdrive_refresh_token", vault_path, &new_refresh)?;
+                        set_credential(
+                            app_handle,
+                            "synabit_gdrive_refresh_token",
+                            vault_path,
+                            &new_refresh,
+                        )?;
                     }
                     // Re-lock to update expiration
                     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                    let new_expires_at = chrono::Utc::now().timestamp() + token_resp.expires_in.unwrap_or(3600);
+                    let new_expires_at =
+                        chrono::Utc::now().timestamp() + token_resp.expires_in.unwrap_or(3600);
                     let _ = db.set_kv("gdrive_expires_at", &new_expires_at.to_string());
 
                     return Ok(token_resp.access_token);
@@ -156,7 +193,10 @@ struct OAuthTokenResponse {
 // ──────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn is_gdrive_connected(app_handle: tauri::AppHandle, vault_path: String) -> AppResult<bool> {
+pub async fn is_gdrive_connected(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+) -> AppResult<bool> {
     Ok(get_credential(&app_handle, "synabit_gdrive_access_token", &vault_path).is_ok())
 }
 
@@ -172,8 +212,17 @@ struct GDriveAboutResponse {
 }
 
 #[tauri::command]
-pub async fn get_gdrive_user_info(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<String> {
-    let cached_email = { state.lock().unwrap_or_else(|e| e.into_inner()).get_kv("gdrive_user_email")? };
+pub async fn get_gdrive_user_info(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+) -> AppResult<String> {
+    let cached_email = {
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_kv("gdrive_user_email")?
+    };
 
     // Check cache first
     if let Some(email) = cached_email {
@@ -202,7 +251,10 @@ pub async fn get_gdrive_user_info(app_handle: tauri::AppHandle, state: tauri::St
         .map_err(|e| AppError::General(format!("Failed to parse user info: {}", e)))?;
 
     let email = about.user.email_address;
-    let _ = state.lock().unwrap_or_else(|e| e.into_inner()).set_kv("gdrive_user_email", &email);
+    let _ = state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .set_kv("gdrive_user_email", &email);
 
     Ok(email)
 }
@@ -239,8 +291,11 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
 
     // 5. Wait for the browser to redirect back to localhost (with 120s timeout)
     let auth_code = tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        let (mut stream, _) = listener.accept().await.map_err(|e| format!("Accept failed: {}", e))?;
-        
+        let (mut stream, _) = listener
+            .accept()
+            .await
+            .map_err(|e| format!("Accept failed: {}", e))?;
+
         let mut buffer = vec![0; 4096];
         let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
         let request = String::from_utf8_lossy(&buffer[..bytes_read]);
@@ -267,7 +322,7 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
             <div style=\"text-align:center\"><h1>✅ Connected!</h1>\
             <p>You can close this window and return to OmniDrive.</p></div>\
             <script>window.close();</script></body></html>";
-            
+
         let _ = stream.write_all(response.as_bytes()).await;
         let _ = stream.flush().await;
 
@@ -278,7 +333,9 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         }
     })
     .await
-    .map_err(|_| AppError::General("Authentication timed out (120s). Please try again.".to_string()))?
+    .map_err(|_| {
+        AppError::General("Authentication timed out (120s). Please try again.".to_string())
+    })?
     .map_err(AppError::General)?;
 
     let code = auth_code;
@@ -319,10 +376,20 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         .map_err(|e| AppError::General(format!("Failed to parse tokens: {}", e)))?;
 
     // 7. Store tokens securely in Keychain
-    set_credential(&app_handle, "synabit_gdrive_access_token", &vault_path, &token_data.access_token)?;
+    set_credential(
+        &app_handle,
+        "synabit_gdrive_access_token",
+        &vault_path,
+        &token_data.access_token,
+    )?;
 
     if let Some(refresh_token) = token_data.refresh_token {
-        set_credential(&app_handle, "synabit_gdrive_refresh_token", &vault_path, &refresh_token)?;
+        set_credential(
+            &app_handle,
+            "synabit_gdrive_refresh_token",
+            &vault_path,
+            &refresh_token,
+        )?;
     }
 
     // Store non-secrets in DB
@@ -336,7 +403,6 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
 
     Ok("SUCCESS".to_string())
 }
-
 
 #[tauri::command]
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -361,12 +427,19 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         urlencoding::encode(&code_challenge)
     );
 
-    app_handle.opener().open_url(auth_url, None::<String>).map_err(|e| AppError::General(format!("Failed to open browser: {}", e)))?;
+    app_handle
+        .opener()
+        .open_url(auth_url, None::<String>)
+        .map_err(|e| AppError::General(format!("Failed to open browser: {}", e)))?;
     Ok("WAITING_DEEP_LINK".to_string())
 }
 
 #[tauri::command]
-pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: String, vault_path: String) -> AppResult<bool> {
+pub async fn connect_gdrive_complete(
+    app_handle: tauri::AppHandle,
+    auth_code: String,
+    vault_path: String,
+) -> AppResult<bool> {
     // Retrieve the stored PKCE code_verifier
     let code_verifier = {
         use tauri::Manager;
@@ -374,11 +447,15 @@ pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: St
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         db.get_kv("pkce_code_verifier_omnidrive")
             .map_err(|e| AppError::General(format!("DB error: {}", e)))?
-            .ok_or_else(|| AppError::General("No PKCE verifier found. Please restart authentication.".to_string()))?
+            .ok_or_else(|| {
+                AppError::General(
+                    "No PKCE verifier found. Please restart authentication.".to_string(),
+                )
+            })?
     };
 
     let redirect_uri = "com.synabit.app:/oauth2callback";
-    
+
     let client = Client::new();
     let token_res = client
         .post(TOKEN_URI)
@@ -406,10 +483,20 @@ pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: St
         .await
         .map_err(|e| AppError::General(format!("Failed to parse tokens: {}", e)))?;
 
-    set_credential(&app_handle, "synabit_gdrive_access_token", &vault_path, &token_data.access_token)?;
+    set_credential(
+        &app_handle,
+        "synabit_gdrive_access_token",
+        &vault_path,
+        &token_data.access_token,
+    )?;
 
     if let Some(refresh_token) = token_data.refresh_token {
-        set_credential(&app_handle, "synabit_gdrive_refresh_token", &vault_path, &refresh_token)?;
+        set_credential(
+            &app_handle,
+            "synabit_gdrive_refresh_token",
+            &vault_path,
+            &refresh_token,
+        )?;
     }
 
     {
@@ -426,8 +513,11 @@ pub async fn connect_gdrive_complete(app_handle: tauri::AppHandle, auth_code: St
 }
 
 #[tauri::command]
-pub async fn disconnect_gdrive(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<bool> {
-
+pub async fn disconnect_gdrive(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+) -> AppResult<bool> {
     // Delete tokens from Keychain
     let _ = delete_credential(&app_handle, "synabit_gdrive_access_token", &vault_path);
     let _ = delete_credential(&app_handle, "synabit_gdrive_refresh_token", &vault_path);
@@ -442,7 +532,11 @@ pub async fn disconnect_gdrive(app_handle: tauri::AppHandle, state: tauri::State
 }
 
 #[tauri::command]
-pub async fn get_gdrive_files(app_handle: tauri::AppHandle, state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Vec<FileMetadata>> {
+pub async fn get_gdrive_files(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+) -> AppResult<Vec<FileMetadata>> {
     let access_token = get_valid_access_token(&app_handle, &vault_path).await?;
 
     let client = Client::new();
@@ -502,10 +596,7 @@ pub async fn get_gdrive_files(app_handle: tauri::AppHandle, state: tauri::State<
             "file".to_string()
         };
 
-        let size = gfile
-            .size
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(0);
+        let size = gfile.size.and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
         let modified = gfile.modified_time.unwrap_or_else(|| now.clone());
 
         let meta = FileMetadata {
@@ -517,6 +608,7 @@ pub async fn get_gdrive_files(app_handle: tauri::AppHandle, state: tauri::State<
             created_at: modified.clone(),
             modified_at: modified,
             tags: vec!["gdrive".to_string()],
+            people: vec![],
             source_type: "gdrive".to_string(),
         };
 

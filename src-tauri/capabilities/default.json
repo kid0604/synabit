@@ -39,9 +39,12 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [
-        { "path": "**" }
+        {
+          "path": "**"
+        }
       ]
     },
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "notification:default"
   ]
 }

@@ -74,6 +74,48 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { useSettings } from '../../composables/useSettings';
 import { logger } from '../../utils/logger';
 
+const CustomTableCell = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-background-color') || element.style.backgroundColor || null,
+        renderHTML: attributes => {
+          if (!attributes.backgroundColor) {
+            return {};
+          }
+          return {
+            'data-background-color': attributes.backgroundColor,
+            style: `background-color: ${attributes.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
+const CustomTableHeader = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-background-color') || element.style.backgroundColor || null,
+        renderHTML: attributes => {
+          if (!attributes.backgroundColor) {
+            return {};
+          }
+          return {
+            'data-background-color': attributes.backgroundColor,
+            style: `background-color: ${attributes.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
 const allNodes = ref<any[]>([]);
 
 onMounted(async () => {
@@ -805,7 +847,10 @@ const updateTableControls = () => {
   });
 
   // Determine active row and col for showing specific handles
-  let cell = el;
+  let cell = domAtPos.node as HTMLElement;
+  if (cell && cell.nodeType === Node.TEXT_NODE) {
+    cell = cell.parentElement as HTMLElement;
+  }
   while (cell && cell.tagName !== 'TD' && cell.tagName !== 'TH' && cell !== activeTableEl.value) {
     cell = cell.parentElement as HTMLElement;
   }
@@ -869,6 +914,29 @@ const ctxAction = (action: string) => {
   setTimeout(updateTableControls, 50);
 };
 
+const setCellColor = (color: string | null, close = true) => {
+  if (!editor.value) return;
+  
+  if (lastCellSelection) {
+    try {
+      const tr = editor.value.state.tr.setSelection(lastCellSelection);
+      editor.value.view.dispatch(tr);
+    } catch (e) { /* positions may be stale */ }
+    lastCellSelection = null;
+    lastCanMerge = false;
+  }
+  
+  if (color) {
+    editor.value.chain().focus().setCellAttribute('backgroundColor', color).run();
+  } else {
+    editor.value.chain().focus().setCellAttribute('backgroundColor', null).run();
+  }
+  if (close) {
+    closeCtxMenu();
+  }
+  setTimeout(updateTableControls, 50);
+};
+
 // Focus a specific cell to position cursor there before operations
 
 const addRowAtBottom = () => {
@@ -898,27 +966,66 @@ const addColAtRight = () => {
   }
 };
 
-const selectColumn = (colIdx: number) => {
+const getCellPos = (domNode: Element) => {
+  if (!editor.value) return 0;
+  const pos = editor.value.view.posAtDOM(domNode, 0);
+  const $pos = editor.value.state.doc.resolve(pos);
+  for (let d = $pos.depth; d > 0; d--) {
+    const name = $pos.node(d).type.name;
+    if (name === 'tableCell' || name === 'tableHeader') {
+      return $pos.before(d);
+    }
+  }
+  return pos - 1;
+};
+
+const selectWholeTable = () => {
   if (!editor.value || !activeTableEl.value) return;
-  // Select all cells in this column
   const rows = activeTableEl.value.querySelectorAll('tr');
   if (rows.length > 0) {
-    const firstCell = rows[0].querySelectorAll('td, th')[colIdx];
-    if (firstCell) {
-      const pos = editor.value.view.posAtDOM(firstCell, 0);
-      editor.value.chain().setTextSelection(pos).focus().run();
+    const firstCell = rows[0].querySelector('td, th');
+    const lastRow = rows[rows.length - 1];
+    const lastCell = lastRow.children[lastRow.children.length - 1];
+    if (firstCell && lastCell) {
+      const anchorPos = getCellPos(firstCell);
+      const headPos = getCellPos(lastCell);
+      editor.value.chain().setCellSelection({ anchorCell: anchorPos, headCell: headPos }).run();
     }
   }
 };
 
-const selectRow = (rowIdx: number) => {
+const selectColumn = (colIdx: number, e?: MouseEvent) => {
+  if (!editor.value || !activeTableEl.value) return;
+  const rows = activeTableEl.value.querySelectorAll('tr');
+  if (rows.length > 0) {
+    const firstCell = rows[0].querySelectorAll('td, th')[colIdx];
+    const lastCell = rows[rows.length - 1].querySelectorAll('td, th')[colIdx];
+    if (firstCell && lastCell) {
+      const anchorPos = getCellPos(firstCell);
+      const headPos = getCellPos(lastCell);
+      if (e?.shiftKey && lastCellSelection) {
+        editor.value.chain().setCellSelection({ anchorCell: lastCellSelection.$anchorCell.pos, headCell: headPos }).run();
+      } else {
+        editor.value.chain().setCellSelection({ anchorCell: anchorPos, headCell: headPos }).run();
+      }
+    }
+  }
+};
+
+const selectRow = (rowIdx: number, e?: MouseEvent) => {
   if (!editor.value || !activeTableEl.value) return;
   const row = activeTableEl.value.querySelectorAll('tr')[rowIdx];
   if (row) {
-    const firstCell = row.querySelector('td, th');
-    if (firstCell) {
-      const pos = editor.value.view.posAtDOM(firstCell, 0);
-      editor.value.chain().setTextSelection(pos).focus().run();
+    const firstCell = row.children[0];
+    const lastCell = row.children[row.children.length - 1];
+    if (firstCell && lastCell) {
+      const anchorPos = getCellPos(firstCell);
+      const headPos = getCellPos(lastCell);
+      if (e?.shiftKey && lastCellSelection) {
+        editor.value.chain().setCellSelection({ anchorCell: lastCellSelection.$anchorCell.pos, headCell: headPos }).run();
+      } else {
+        editor.value.chain().setCellSelection({ anchorCell: anchorPos, headCell: headPos }).run();
+      }
     }
   }
 };
@@ -1365,8 +1472,8 @@ const editor = useEditor({
       allowTableNodeSelection: true,
     }),
     TableRow,
-    TableCell,
-    TableHeader,
+    CustomTableCell,
+    CustomTableHeader,
     TextAlign.configure({
       types: ['heading', 'paragraph'],
     }),
@@ -1776,15 +1883,19 @@ defineExpose({
 });
 
 // Close context menu on click outside
-const onDocClick = (e: MouseEvent) => {
-  const target = e.target as HTMLElement;
-  if (!target.closest('.tc-ctx-menu, .tc-corner-handle, .tc-col-handle, .tc-row-handle')) {
+const onDocMouseDown = (e: MouseEvent) => {
+  let target = e.target as HTMLElement | Node | null;
+  if (target && target.nodeType === Node.TEXT_NODE) {
+    target = target.parentElement;
+  }
+  const el = target as HTMLElement;
+  if (el && el.closest && !el.closest('.tc-ctx-menu, .tc-corner-handle, .tc-col-handle, .tc-row-handle')) {
     closeCtxMenu();
   }
 };
 
 onMounted(() => {
-  document.addEventListener('click', onDocClick);
+  document.addEventListener('mousedown', onDocMouseDown, true);
 
   // Listen for whiteboard embed "Open in Whiteboard" events
   const editorDom = editor.value?.view?.dom;
@@ -1805,7 +1916,7 @@ watch(() => props.modelValue, (newVal) => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClick);
+  document.removeEventListener('mousedown', onDocMouseDown, true);
   if (editor.value) {
     editor.value.destroy();
   }
@@ -1929,7 +2040,8 @@ onBeforeUnmount(() => {
         v-show="i === activeColIdx"
         class="tc-col-handle"
         :style="{ position: 'absolute', top: (tableRect.top - 20) + 'px', left: (col.left + col.width / 2 - 10) + 'px' }"
-        @mousedown.prevent="(e: MouseEvent) => { selectColumn(i); openContextMenu(e); }"
+        @mousedown.prevent.stop="(e: MouseEvent) => { selectColumn(i, e); openContextMenu(e); }"
+        @click.stop
       >
         <GripVertical class="w-3 h-3 rotate-90" />
       </button>
@@ -1940,7 +2052,8 @@ onBeforeUnmount(() => {
         v-show="i === activeRowIdx"
         class="tc-row-handle"
         :style="{ position: 'absolute', top: (row.top + row.height / 2 - 10) + 'px', left: (tableRect.left - 22) + 'px' }"
-        @mousedown.prevent="(e: MouseEvent) => { selectRow(i); openContextMenu(e); }"
+        @mousedown.prevent.stop="(e: MouseEvent) => { selectRow(i, e); openContextMenu(e); }"
+        @click.stop
       >
         <GripVertical class="w-3 h-3" />
       </button>
@@ -1949,7 +2062,8 @@ onBeforeUnmount(() => {
       <button
         class="tc-corner-handle"
         :style="{ position: 'absolute', top: (tableRect.top - 22) + 'px', left: (tableRect.left - 24) + 'px' }"
-        @mousedown.prevent="(e: MouseEvent) => { editor?.chain().focus().run(); openContextMenu(e); }"
+        @mousedown.prevent.stop="(e: MouseEvent) => { selectWholeTable(); openContextMenu(e); }"
+        @click.stop
       >
         <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="0" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="6" y="0" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="0" y="6" width="4" height="4" fill="currentColor" rx="0.5"/><rect x="6" y="6" width="4" height="4" fill="currentColor" rx="0.5"/></svg>
       </button>
@@ -1981,7 +2095,7 @@ onBeforeUnmount(() => {
         v-if="showCtxMenu && editor"
         class="tc-ctx-menu"
         :style="{ position: 'absolute', top: ctxMenuPos.top + 'px', left: ctxMenuPos.left + 'px' }"
-        @mousedown.prevent
+        @mousedown.prevent.stop
       >
         <button @click="ctxAction('addRowAbove')">Add row above</button>
         <button @click="ctxAction('addRowBelow')">Add row below</button>
@@ -1996,6 +2110,27 @@ onBeforeUnmount(() => {
         <button @click="ctxAction('toggleHeaderRow')">Toggle header row</button>
         <button @click="ctxAction('toggleHeaderCol')">Toggle header column</button>
         <div class="ctx-sep" />
+        
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100 dark:border-[#333]">
+          <span class="text-xs text-gray-500 font-medium w-10 shrink-0">Color:</span>
+          <div class="flex items-center gap-2 flex-1">
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 bg-transparent flex items-center justify-center text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#444] transition-colors cursor-pointer" @click="setCellColor(null)" title="Clear color">✕</div>
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 hover:scale-110 transition-transform cursor-pointer" style="background-color: #fee2e2;" @click="setCellColor('rgba(239, 68, 68, 0.15)')"></div>
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 hover:scale-110 transition-transform cursor-pointer" style="background-color: #dbeafe;" @click="setCellColor('rgba(59, 130, 246, 0.15)')"></div>
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 hover:scale-110 transition-transform cursor-pointer" style="background-color: #d1fae5;" @click="setCellColor('rgba(16, 185, 129, 0.15)')"></div>
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 hover:scale-110 transition-transform cursor-pointer" style="background-color: #fef3c7;" @click="setCellColor('rgba(245, 158, 11, 0.15)')"></div>
+            <div class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 hover:scale-110 transition-transform cursor-pointer" style="background-color: #f3e8ff;" @click="setCellColor('rgba(168, 85, 247, 0.15)')"></div>
+            <label class="w-5 h-5 shrink-0 rounded-full border border-gray-200 dark:border-gray-700 flex items-center justify-center cursor-pointer hover:bg-gray-100 dark:hover:bg-[#444] relative hover:scale-110 transition-transform" title="Custom color">
+              <Palette class="w-3 h-3 text-gray-500 dark:text-gray-400" />
+              <input 
+                type="color" 
+                @input="(e) => setCellColor((e.target as HTMLInputElement).value, false)" 
+                class="absolute opacity-0 inset-0 w-full h-full cursor-pointer"
+              />
+            </label>
+          </div>
+        </div>
+
         <button @click="ctxAction('deleteTable')" class="ctx-danger">Delete table</button>
       </div>
     </Transition>

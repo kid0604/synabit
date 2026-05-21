@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -137,8 +138,24 @@ watch(caseSensitive, () => {
     if (searchQuery.value.trim()) performSearch();
 });
 
-onMounted(() => {
+let unlistenMod: UnlistenFn;
+let unlistenDel: UnlistenFn;
+
+onMounted(async () => {
     loadAllData();
+    unlistenMod = await listen('vault-file-modified', () => {
+        loadAllData();
+        if (searchQuery.value) performSearch();
+    });
+    unlistenDel = await listen('vault-file-created-deleted', () => {
+        loadAllData();
+        if (searchQuery.value) performSearch();
+    });
+});
+
+onBeforeUnmount(() => {
+    if (unlistenMod) unlistenMod();
+    if (unlistenDel) unlistenDel();
 });
 
 const getTypeIcon = (type: string) => {
