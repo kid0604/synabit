@@ -10,6 +10,7 @@ export interface Transaction {
   date: string; // ISO string
   note: string;
   debtId?: string;
+  projectId?: string;
 }
 
 export interface Debt {
@@ -55,14 +56,14 @@ export interface FinanceConfig {
   };
 }
 
-export const SYSTEM_INCOME_CATEGORIES = ['Đi vay', 'Thu nợ'];
-export const DEFAULT_INCOME_CATEGORIES = ['Lương', 'Thưởng', 'Tiền lãi', 'Được tặng', ...SYSTEM_INCOME_CATEGORIES, 'Khác'];
+export const SYSTEM_INCOME_CATEGORIES = ['Borrowing', 'Debt Collection'];
+export const DEFAULT_INCOME_CATEGORIES = ['Salary', 'Bonus', 'Interest', 'Gift', ...SYSTEM_INCOME_CATEGORIES, 'Other'];
 
-export const SYSTEM_EXPENSE_CATEGORIES = ['Cho vay', 'Trả nợ'];
-export const DEFAULT_EXPENSE_CATEGORIES = ['Ăn uống', 'Di chuyển', 'Mua sắm', 'Hóa đơn & Tiện ích', 'Giải trí', 'Sức khỏe', 'Giáo dục', ...SYSTEM_EXPENSE_CATEGORIES, 'Khác'];
+export const SYSTEM_EXPENSE_CATEGORIES = ['Lending', 'Debt Repayment'];
+export const DEFAULT_EXPENSE_CATEGORIES = ['Food & Dining', 'Transportation', 'Shopping', 'Bills & Utilities', 'Entertainment', 'Health', 'Education', ...SYSTEM_EXPENSE_CATEGORIES, 'Other'];
 
 export const DEFAULT_ACCOUNTS: FinanceAccount[] = [
-  { id: 'acc-1', name: 'Tiền mặt', initialBalance: 0 },
-  { id: 'acc-2', name: 'Tài khoản Ngân hàng', initialBalance: 0 },
-  { id: 'acc-3', name: 'Thẻ Tín dụng', initialBalance: 0 }
+  { id: 'acc-1', name: 'Cash', initialBalance: 0 },
+  { id: 'acc-2', name: 'Bank Account', initialBalance: 0 },
+  { id: 'acc-3', name: 'Credit Card', initialBalance: 0 }
 ];

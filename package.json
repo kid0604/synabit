@@ -1,7 +1,7 @@
 {
   "name": "synabit",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.4.7",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Synabit",
   "type": "module",

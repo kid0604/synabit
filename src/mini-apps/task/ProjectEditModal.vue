@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import { X, Calendar, CheckCircle2, Trash2, Tag, Activity, PlusCircle } from 'lucide-vue-next';
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
+import { X, Calendar, CheckCircle2, Trash2, Tag, Activity, PlusCircle, DollarSign } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
 
 const props = defineProps<{
     project: any;
     vaultPath: string;
+    dynamicSpent?: number;
 }>();
 
 const emit = defineEmits(['save', 'close', 'delete']);
@@ -18,6 +19,43 @@ const editingProject = ref({
     status: props.project?.status || 'active',
     tags: Array.isArray(props.project?.tags) ? [...props.project.tags] : (props.project?.tags ? [props.project.tags] : [])
 });
+
+const getCaseInsensitiveField = (key: string, defaultValue: string = '') => {
+    if (!props.project?.custom_fields) return defaultValue;
+    const lowerKey = key.toLowerCase();
+    const foundKey = Object.keys(props.project.custom_fields).find(k => k.toLowerCase() === lowerKey);
+    return foundKey ? props.project.custom_fields[foundKey] : defaultValue;
+};
+
+const wipLimitInput = ref(getCaseInsensitiveField('wip_limit', '5'));
+
+const formatNumber = (val: string | number) => {
+    if (!val) return '';
+    const num = String(val).replace(/[^0-9.]/g, '');
+    const parts = num.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.join('.');
+};
+
+const rawBudget = ref(String(getCaseInsensitiveField('budget', '')));
+const budgetInput = ref(formatNumber(rawBudget.value));
+const rawCurrency = ref(getCaseInsensitiveField('currency', 'VND'));
+
+const handleBudgetInput = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const val = target.value;
+    const clean = val.replace(/[^0-9.]/g, '');
+    rawBudget.value = clean;
+    const formatted = formatNumber(clean);
+    budgetInput.value = formatted;
+    
+    // Force DOM sync to strip invalid chars visually
+    if (val !== formatted) {
+        target.value = formatted;
+    }
+};
+
+const spentDisplay = computed(() => formatNumber(props.dynamicSpent ?? 0));
 
 const tagInput = ref('');
 
@@ -38,11 +76,11 @@ const activeDropdown = ref<string | null>(null);
 const confirmDeleteIndex = ref<number | null>(null);
 const showDeleteConfirm = ref(false);
 
-const standardKeys = ['id', 'title', 'content', 'status', 'start_date', 'due_date', 'color', 'tags', 'created_at', 'updated_at', 'type', 'node_type', 'path', 'timestamp'];
+const standardKeys = ['id', 'title', 'content', 'status', 'start_date', 'due_date', 'color', 'tags', 'created_at', 'updated_at', 'type', 'node_type', 'path', 'timestamp', 'wip_limit', 'budget', 'spent', 'currency'];
 
 const customProperties = ref(
     Object.entries(props.project?.custom_fields || {})
-        .filter(([key]) => !standardKeys.includes(key))
+        .filter(([key]) => !standardKeys.includes(key.toLowerCase()))
         .map(([key, value]) => ({
             key,
             value: String(value)
@@ -77,6 +115,14 @@ const save = () => {
             custom_fields[prop.key.trim()] = prop.value.trim();
         }
     }
+    
+    if (wipLimitInput.value) {
+        custom_fields['wip_limit'] = String(wipLimitInput.value);
+    }
+    if (rawBudget.value) {
+        custom_fields['budget'] = rawBudget.value;
+    }
+    custom_fields['currency'] = rawCurrency.value;
     
     emit('save', {
         ...editingProject.value,
@@ -134,6 +180,38 @@ const handleBackgroundClick = () => {
                           <input type="date" v-model="editingProject.start_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
                           <span class="text-gray-400 text-xs px-1">→</span>
                           <input type="date" v-model="editingProject.due_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
+                      </div>
+                      <div class="w-[22px]"></div>
+                  </div>
+                  
+                  <!-- WIP Limit -->
+                  <div class="flex items-center gap-2">
+                      <div class="w-[120px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent rounded p-1.5 text-gray-500 dark:text-gray-400 font-medium flex items-center"><Activity class="w-3 h-3 mr-2 opacity-70"/> WIP Limit</div>
+                      <input type="number" min="1" v-model="wipLimitInput" class="flex-1 text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-[#1c1c1e] dark:text-[#f4f4f5] font-medium" placeholder="e.g. 5" />
+                      <div class="w-[22px]"></div>
+                  </div>
+                  
+                  <!-- Budget -->
+                  <div class="flex items-center gap-2">
+                      <div class="w-[120px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent rounded p-1.5 text-gray-500 dark:text-gray-400 font-medium flex items-center"><DollarSign class="w-3 h-3 mr-2 opacity-70"/> Budget</div>
+                      <div class="flex-1 flex items-center gap-1">
+                          <input type="text" :value="budgetInput" @input="handleBudgetInput" class="flex-1 text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-[#1c1c1e] dark:text-[#f4f4f5] font-medium" placeholder="e.g. 10,000,000" />
+                          <select v-model="rawCurrency" class="w-[70px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-gray-600 dark:text-gray-300 font-medium appearance-none cursor-pointer text-center">
+                              <option value="VND">VND</option>
+                              <option value="USD">USD</option>
+                              <option value="EUR">EUR</option>
+                              <option value="JPY">JPY</option>
+                          </select>
+                      </div>
+                      <div class="w-[22px]"></div>
+                  </div>
+                  
+                  <!-- Spent (Readonly) -->
+                  <div class="flex items-center gap-2">
+                      <div class="w-[120px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent rounded p-1.5 text-gray-500 dark:text-gray-400 font-medium flex items-center"><DollarSign class="w-3 h-3 mr-2 opacity-70"/> Spent</div>
+                      <div class="flex-1 text-xs bg-gray-100 dark:bg-[#222] border border-transparent rounded p-1.5 text-gray-500 dark:text-gray-400 font-medium cursor-not-allowed flex items-center justify-between">
+                          <span>{{ spentDisplay }}</span>
+                          <span class="text-[10px] font-bold text-gray-400">{{ rawCurrency }}</span>
                       </div>
                       <div class="w-[22px]"></div>
                   </div>

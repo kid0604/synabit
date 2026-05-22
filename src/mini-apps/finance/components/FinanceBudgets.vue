@@ -57,7 +57,7 @@ const totalSpentOnBudgets = computed(() => budgetStats.value.reduce((acc, b) => 
 const overallPercent = computed(() => totalBudget.value > 0 ? Math.min(Math.round((totalSpentOnBudgets.value / totalBudget.value) * 100), 100) : 0);
 
 const formatCurrency = (val: number) => {
-    return val.toLocaleString('vi-VN') + 'đ';
+    return '$' + val.toLocaleString('en-US');
 };
 
 const openAddBudget = () => {
@@ -105,21 +105,21 @@ const existingBudgetCategories = computed(() => props.budgets.map(b => b.categor
                     <Target class="w-6 h-6" />
                 </div>
                 <div>
-                    <h2 class="text-lg font-bold text-text dark:text-text-dark">Tổng Ngân Sách</h2>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">Các hạng mục đang theo dõi</p>
+                    <h2 class="text-lg font-bold text-text dark:text-text-dark">Total Budgets</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">Tracked categories</p>
                 </div>
             </div>
             
             <button @click="openAddBudget" class="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm">
                 <Plus class="w-4 h-4" />
-                Thêm ngân sách
+                Add budget
             </button>
         </div>
 
         <div v-if="budgets.length > 0" class="flex flex-col gap-3 mt-2">
             <div class="flex justify-between items-end">
                 <div>
-                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Đã chi tiêu</div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Spent</div>
                     <div class="text-2xl font-bold tracking-tight text-text dark:text-text-dark">
                         {{ formatCurrency(totalSpentOnBudgets) }}
                         <span class="text-lg font-medium text-gray-400 dark:text-gray-500">/ {{ formatCurrency(totalBudget) }}</span>
@@ -140,7 +140,7 @@ const existingBudgetCategories = computed(() => props.budgets.map(b => b.categor
             </div>
         </div>
         <div v-else class="text-center py-6 text-gray-500 dark:text-gray-400">
-            Bạn chưa thiết lập ngân sách nào. Hãy thêm một ngân sách để quản lý chi tiêu hiệu quả hơn!
+            You haven't set any budgets. Add a budget to manage your expenses effectively!
         </div>
     </div>
 
@@ -179,12 +179,12 @@ const existingBudgetCategories = computed(() => props.budgets.map(b => b.categor
 
                 <div class="flex justify-between items-center mt-1">
                     <div class="text-xs text-gray-500 dark:text-gray-400">
-                        Đã tiêu: <span class="font-bold text-text dark:text-text-dark">{{ formatCurrency(b.spent) }}</span>
+                        Spent: <span class="font-bold text-text dark:text-text-dark">{{ formatCurrency(b.spent) }}</span>
                         <span class="mx-1">/</span>
                         {{ formatCurrency(b.amount) }}
                     </div>
                     <div class="text-xs font-medium" :class="b.status === 'danger' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'">
-                        {{ b.status === 'danger' ? `Vượt quá ${formatCurrency(b.spent - b.amount)}` : `Còn lại ${formatCurrency(b.remaining)}` }}
+                        {{ b.status === 'danger' ? `Overspent by ${formatCurrency(b.spent - b.amount)}` : `Remaining ${formatCurrency(b.remaining)}` }}
                     </div>
                 </div>
             </div>

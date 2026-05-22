@@ -40,7 +40,7 @@ const totalBorrow = computed(() => {
 
 // --- Methods ---
 const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 };
 
 const formatDate = (isoStr: string) => {
@@ -122,8 +122,8 @@ const toggleStatus = (debt: Debt) => {
                         <ArrowUpRight class="w-6 h-6" />
                     </div>
                     <div>
-                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Tổng tiền Cho Vay</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">Các khoản tiền người khác nợ bạn</p>
+                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Total Lent</h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Money others owe you</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalLend) }}</p>
@@ -139,8 +139,8 @@ const toggleStatus = (debt: Debt) => {
                         <ArrowDownLeft class="w-6 h-6" />
                     </div>
                     <div>
-                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Tổng tiền Đi Vay</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">Các khoản tiền bạn đang nợ người khác</p>
+                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Total Borrowed</h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Money you owe others</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalBorrow) }}</p>
@@ -156,19 +156,19 @@ const toggleStatus = (debt: Debt) => {
                         @click="currentTab = 'lend'"
                         :class="['px-6 py-2 rounded-lg font-medium text-sm transition-colors', currentTab === 'lend' ? 'bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Khoản Phải Thu
+                        Receivables
                     </button>
                     <button 
                         @click="currentTab = 'borrow'"
                         :class="['px-6 py-2 rounded-lg font-medium text-sm transition-colors', currentTab === 'borrow' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Khoản Phải Trả
+                        Payables
                     </button>
                 </div>
 
                 <button @click="openAddDebt" class="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors font-medium text-sm">
                     <Plus class="w-4 h-4" />
-                    Thêm khoản {{ currentTab === 'lend' ? 'cho vay' : 'đi vay' }}
+                    Add {{ currentTab === 'lend' ? 'receivable' : 'payable' }}
                 </button>
             </div>
 
@@ -176,7 +176,7 @@ const toggleStatus = (debt: Debt) => {
             <div class="p-0">
                 <div v-if="displayDebts.length === 0" class="p-12 flex flex-col items-center justify-center text-gray-400">
                     <BookOpen class="w-12 h-12 mb-4 opacity-20" />
-                    <p>Chưa có khoản {{ currentTab === 'lend' ? 'cho vay' : 'đi vay' }} nào.</p>
+                    <p>No {{ currentTab === 'lend' ? 'receivables' : 'payables' }} found.</p>
                 </div>
                 
                 <div v-else class="divide-y divide-border dark:divide-border-dark">
@@ -205,15 +205,15 @@ const toggleStatus = (debt: Debt) => {
                                 <div>
                                     <h4 class="font-bold text-text dark:text-text-dark text-lg flex items-center gap-2">
                                         {{ debt.person }}
-                                        <span v-if="debt.status === 'completed'" class="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 uppercase">Đã hoàn thành</span>
+                                        <span v-if="debt.status === 'completed'" class="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 uppercase">Completed</span>
                                     </h4>
-                                    <p class="text-sm text-gray-500 mt-0.5 truncate">{{ debt.note || (debt.type === 'lend' ? 'Tiền cho vay' : 'Tiền đi vay') }}</p>
+                                    <p class="text-sm text-gray-500 mt-0.5 truncate">{{ debt.note || (debt.type === 'lend' ? 'Lent money' : 'Borrowed money') }}</p>
                                 </div>
                                 <div class="text-right shrink-0">
                                     <p class="font-bold text-lg" :class="[debt.status === 'completed' ? 'text-gray-500' : (debt.type === 'lend' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')]">
                                         {{ formatCurrency(debt.totalAmount) }}
                                     </p>
-                                    <p class="text-xs text-gray-500 mt-0.5 font-medium">Đã trả: {{ formatCurrency(debt.paidAmount) }}</p>
+                                    <p class="text-xs text-gray-500 mt-0.5 font-medium">Paid: {{ formatCurrency(debt.paidAmount) }}</p>
                                 </div>
                             </div>
 
@@ -233,7 +233,7 @@ const toggleStatus = (debt: Debt) => {
                                     </div>
                                     <div v-if="debt.dueDate" class="flex items-center gap-1.5" :class="{ 'text-red-500 font-bold': isOverdue(debt) }">
                                         <AlertCircle class="w-3.5 h-3.5" />
-                                        Hạn: {{ formatDate(debt.dueDate) }}
+                                        Due: {{ formatDate(debt.dueDate) }}
                                     </div>
                                 </div>
                                 
@@ -243,13 +243,13 @@ const toggleStatus = (debt: Debt) => {
                                         @click="toggleStatus(debt)" 
                                         class="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                                     >
-                                        {{ debt.status === 'active' ? 'Đóng khoản nợ' : 'Mở lại' }}
+                                        {{ debt.status === 'active' ? 'Close debt' : 'Reopen' }}
                                     </button>
                                     <button 
                                         @click="openEditDebt(debt)" 
                                         class="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                                     >
-                                        Sửa
+                                        Edit
                                     </button>
                                     <button 
                                         v-if="debt.status === 'active' && debt.paidAmount < debt.totalAmount"
@@ -257,7 +257,7 @@ const toggleStatus = (debt: Debt) => {
                                         class="px-4 py-1.5 text-xs font-bold rounded-lg text-white shadow-sm transition-colors flex items-center gap-1"
                                         :class="debt.type === 'lend' ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600'"
                                     >
-                                        {{ debt.type === 'lend' ? 'Thu nợ' : 'Trả nợ' }}
+                                        {{ debt.type === 'lend' ? 'Collect' : 'Repay' }}
                                     </button>
                                 </div>
                             </div>

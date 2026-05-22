@@ -32,7 +32,7 @@ watch(() => props.show, (newVal) => {
     if (newVal) {
         if (props.budget) {
             categoryId.value = props.budget.categoryId;
-            amount.value = props.budget.amount.toLocaleString('vi-VN');
+            amount.value = props.budget.amount.toLocaleString('en-US');
         } else {
             categoryId.value = availableCategories.value.length ? availableCategories.value[0] : '';
             amount.value = '';
@@ -44,7 +44,7 @@ watch(() => props.show, (newVal) => {
 const formatAmount = (val: string) => {
     const num = val.replace(/\D/g, '');
     if (!num) return '';
-    return Number(num).toLocaleString('vi-VN');
+    return Number(num).toLocaleString('en-US');
 };
 
 const handleAmountInput = (e: Event) => {
@@ -76,7 +76,7 @@ const save = () => {
       <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark bg-blue-50/50 dark:bg-blue-900/10">
         <h3 class="font-bold text-lg text-text dark:text-text-dark flex items-center gap-2">
             <Target class="w-5 h-5 text-blue-500" />
-            {{ budget ? 'Sửa ngân sách' : 'Tạo ngân sách mới' }}
+            {{ budget ? 'Edit Budget' : 'New Budget' }}
         </h3>
         <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
             <X class="w-5 h-5" />
@@ -86,12 +86,12 @@ const save = () => {
       <!-- Body -->
       <div class="p-5 space-y-4">
         <div v-if="availableCategories.length === 0 && !budget" class="text-center p-4 text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-            Tất cả danh mục chi tiêu đều đã có ngân sách!
+            All expense categories have a budget!
         </div>
         <template v-else>
             <!-- Category -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Danh mục</label>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Category</label>
                 <select 
                     v-model="categoryId" 
                     :disabled="!!budget"
@@ -103,7 +103,7 @@ const save = () => {
 
             <!-- Amount -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ngân sách tối đa</label>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Maximum budget</label>
                 <div class="relative">
                     <input 
                         type="text" 
@@ -113,7 +113,7 @@ const save = () => {
                         class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-12"
                         placeholder="0"
                     />
-                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium pointer-events-none">đ</span>
+                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium pointer-events-none">$</span>
                 </div>
             </div>
         </template>
@@ -126,12 +126,12 @@ const save = () => {
             @click="emit('delete', budget.categoryId)"
             class="px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors"
         >
-            Xóa
+            Delete
         </button>
         <div v-else class="flex-1"></div>
         <div class="flex gap-3">
             <button @click="emit('close')" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">
-                Hủy
+                Cancel
             </button>
             <button 
                 v-if="availableCategories.length > 0 || budget"
@@ -139,7 +139,7 @@ const save = () => {
                 :disabled="!canSave"
                 class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 disabled:cursor-not-allowed rounded-xl transition-colors shadow-sm"
             >
-                Lưu lại
+                Save
             </button>
         </div>
       </div>

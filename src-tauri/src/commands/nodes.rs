@@ -459,6 +459,21 @@ pub fn write_node_file(
     properties: serde_json::Value,
     content: String,
 ) -> AppResult<()> {
+    // Validate budget and spent strictly
+    if let serde_json::Value::Object(map) = &properties {
+        for key in &["budget", "spent"] {
+            if let Some(val) = map.get(*key) {
+                if let Some(s) = val.as_str() {
+                    if !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                        return Err(crate::error::AppError::General(format!("Invalid number format for {}", key)));
+                    }
+                } else if !val.is_number() && !val.is_null() {
+                    return Err(crate::error::AppError::General(format!("Invalid number format for {}", key)));
+                }
+            }
+        }
+    }
+
     let abs_path = path_utils::resolve_safe_path(&vault_path, &rel_path)?;
 
     // Ensure directory exists

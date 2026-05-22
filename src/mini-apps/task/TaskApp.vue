@@ -2,12 +2,15 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3 } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import ProjectEditModal from './ProjectEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { useSettings } from '../../composables/useSettings';
 import { logger } from '../../utils/logger';
+import TransactionModal from '../finance/TransactionModal.vue';
+import type { Transaction, FinanceAccount } from '../finance/types';
+import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS } from '../finance/types';
 
 const { taskArchiveDays } = useSettings();
 
@@ -45,6 +48,12 @@ const tasks = ref<TaskMetadata[]>([]);
 const projects = ref<any[]>([]);
 const searchQuery = ref('');
 const newProjectDraft = ref<any>(null);
+const activeProjectTab = ref<'overview' | 'notes'>('overview');
+
+const showTxModal = ref(false);
+const incomeCategories = ref<string[]>([...DEFAULT_INCOME_CATEGORIES]);
+const expenseCategories = ref<string[]>([...DEFAULT_EXPENSE_CATEGORIES]);
+const accounts = ref<FinanceAccount[]>([...DEFAULT_ACCOUNTS]);
 
 const activeCategory = ref<string>('today');
 const isMobileSidebarOpen = ref(false);
@@ -210,6 +219,11 @@ const activeCategoryTasks = computed(() => {
     return searchedTasks.value.filter(t => {
         if (activeCategory.value === 'all') return true;
 
+        if (activeCategory.value.startsWith('project:')) {
+            const projId = activeCategory.value.substring(8);
+            return t.project_id === projId;
+        }
+
         if (activeCategory.value === 'transferred') return t.is_transferred;
         if (t.is_transferred) return false; 
         
@@ -236,14 +250,16 @@ const activeCategoryTasks = computed(() => {
         if (activeCategory.value === 'upcoming') return isUpcoming;
         
         if (activeCategory.value === 'someday') return !isUpcoming;
-        
-        if (activeCategory.value.startsWith('project:')) {
-            const projId = activeCategory.value.substring(8);
-            return t.project_id === projId;
-        }
 
         return false;
     });
+});
+
+const projectProgress = computed(() => {
+    if (!activeCategoryTasks.value || activeCategoryTasks.value.length === 0) return 0;
+    const total = activeCategoryTasks.value.length;
+    const done = activeCategoryTasks.value.filter(t => t.status === 'done').length;
+    return Math.round((done / total) * 100);
 });
 
 const activeProject = computed(() => {
@@ -254,10 +270,58 @@ const activeProject = computed(() => {
     return null;
 });
 
+const formatNumber = (val: string | number | null | undefined) => {
+    if (!val) return null;
+    const num = String(val).replace(/[^0-9.]/g, '');
+    if (!num) return null;
+    const parts = num.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.join('.');
+};
+
+const projectCurrency = computed(() => {
+    if (!activeProject.value || !activeProject.value.custom_fields) return 'VND';
+    const keys = Object.keys(activeProject.value.custom_fields);
+    const currKey = keys.find(k => k.toLowerCase() === 'currency');
+    return currKey ? activeProject.value.custom_fields[currKey] || 'VND' : 'VND';
+});
+
+const projectBudget = computed(() => {
+    if (!activeProject.value || !activeProject.value.custom_fields) return null;
+    const keys = Object.keys(activeProject.value.custom_fields);
+    const budgetKey = keys.find(k => k.toLowerCase() === 'budget');
+    if (budgetKey && activeProject.value.custom_fields[budgetKey]) {
+        return formatNumber(activeProject.value.custom_fields[budgetKey]) + ' ' + projectCurrency.value;
+    }
+    return null;
+});
+
+const calculatedProjectSpent = ref(0);
+
+const projectSpent = computed(() => {
+    return (formatNumber(calculatedProjectSpent.value) || '0') + ' ' + projectCurrency.value;
+});
+
+const displayCustomFields = computed(() => {
+    if (!activeProject.value || !activeProject.value.custom_fields) return [];
+    const exclude = ['title', 'type', 'created_at', 'updated_at', 'status', 'start_date', 'due_date', 'color', 'tags', 'project_id', 'completed_at', 'order', 'budget', 'spent', 'wip_limit', 'currency', 'id', 'path', 'content'];
+    
+    const fields: {key: string, val: any}[] = [];
+    for (const [key, val] of Object.entries(activeProject.value.custom_fields)) {
+        if (!exclude.includes(key.toLowerCase())) {
+            fields.push({ key, val });
+        }
+    }
+    return fields;
+});
+
 const linkedNotes = ref<any[]>([]);
 let fetchNotesTimeout: any = null;
 
-watch(activeProject, (proj) => {
+watch(activeProject, (proj, oldProj) => {
+    if (proj && proj.id !== oldProj?.id) {
+        activeProjectTab.value = 'overview';
+    }
     clearTimeout(fetchNotesTimeout);
     if (proj) {
         fetchNotesTimeout = setTimeout(async () => {
@@ -267,15 +331,60 @@ watch(activeProject, (proj) => {
             } catch(e) {
                 console.error('Failed to get linked notes', e);
             }
+            
+            // Fetch finance transactions for dynamic spent calculation
+            recalculateProjectSpent(proj);
         }, 100);
     } else {
         linkedNotes.value = [];
+        calculatedProjectSpent.value = 0;
     }
 }, { immediate: true });
 
+const recalculateProjectSpent = async (proj: any) => {
+    try {
+        const financeNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+        let totalSpent = 0;
+        for (const node of financeNodes) {
+            if (node.properties?.transactions) {
+                for (const tx of node.properties.transactions) {
+                    if (tx.projectId === proj.id && tx.type === 'expense') {
+                        totalSpent += tx.amount;
+                    }
+                }
+            }
+        }
+        calculatedProjectSpent.value = totalSpent;
+    } catch (e) {
+        console.error('Failed to get finance data for project spent', e);
+    }
+};
+
 const viewMode = ref<'list' | 'board' | 'table' | 'gtd'>('list');
 
+watch(activeCategory, (newCat, oldCat) => {
+    const isNewProject = newCat.startsWith('project:');
+    const isOldProject = oldCat.startsWith('project:');
+    
+    if (isNewProject && !isOldProject) {
+        viewMode.value = 'board';
+    } else if (!isNewProject && isOldProject) {
+        viewMode.value = 'list';
+    }
+});
+
+const WIP_LIMIT = computed(() => {
+    if (activeProject.value && activeProject.value.custom_fields && activeProject.value.custom_fields.wip_limit) {
+        const parsed = parseInt(activeProject.value.custom_fields.wip_limit);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return 5;
+});
+const quickAddColumn = ref<string | null>(null);
+const quickAddTitle = ref<string>('');
+
 const BOARD_COLUMNS = [
+  { id: 'backlog', name: 'BACKLOG', class: 'border-t-2 border-gray-400 dark:border-gray-500' },
   { id: 'todo', name: 'TO DO', class: 'border-t-2 border-gray-300 dark:border-gray-600' },
   { id: 'in_progress', name: 'IN PROGRESS', class: 'border-t-2 border-blue-400 dark:border-blue-500' },
   { id: 'done', name: 'DONE', class: 'border-t-2 border-green-400 dark:border-green-500' }
@@ -299,7 +408,7 @@ const getOrderValueForDrop = (t: TaskMetadata) => {
 };
 
 const tasksByStatus = computed(() => {
-    const sorted: Record<string, TaskMetadata[]> = { todo: [], in_progress: [], done: [] };
+    const sorted: Record<string, TaskMetadata[]> = { backlog: [], todo: [], in_progress: [], done: [] };
     activeCategoryTasks.value.forEach(t => {
         if (sorted[t.status]) {
             sorted[t.status].push(t);
@@ -313,6 +422,73 @@ const tasksByStatus = computed(() => {
     }
     return sorted;
 });
+
+const showQuickAdd = (colId: string) => {
+    quickAddColumn.value = colId;
+    quickAddTitle.value = '';
+    setTimeout(() => {
+        const input = document.getElementById(`quick-add-input-${colId}`);
+        if (input) input.focus();
+    }, 50);
+};
+
+const handleQuickAdd = async (status: string) => {
+    const title = quickAddTitle.value.trim();
+    if (!title) {
+        quickAddColumn.value = null;
+        return;
+    }
+
+    const relPath = `Tasks/${crypto.randomUUID()}.md`;
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    
+    let targetStatus = status;
+    if (targetStatus === 'in_progress' && tasksByStatus.value['in_progress'].length >= WIP_LIMIT.value) {
+        targetStatus = 'todo';
+        showToast(`⚠️ Đã đạt giới hạn WIP (${WIP_LIMIT.value} tasks). Task được đẩy về TO DO.`);
+    }
+
+    const properties: Record<string, any> = {
+        status: targetStatus,
+        is_transferred: false,
+        track_progress: false,
+        priority: '',
+        start_date: '',
+        due_date: '',
+        tags: []
+    };
+    
+    if (activeCategory.value.startsWith('project:')) {
+        properties.project_id = activeCategory.value.substring(8);
+    }
+    
+    try {
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: relPath,
+            nodeType: 'task',
+            title: title,
+            properties: properties,
+            content: ''
+        });
+        
+        const newTask: TaskMetadata = {
+            id: relPath,
+            path: relPath,
+            title: title,
+            content: '',
+            created_at: nowStr,
+            updated_at: nowStr,
+            custom_fields: {},
+            ...properties
+        } as any;
+        
+        tasks.value.unshift(newTask);
+        quickAddTitle.value = ''; 
+    } catch(e) {
+        console.error('Failed to quick add task', e);
+    }
+};
 
 const onDragStart = (e: DragEvent, task: TaskMetadata) => {
     if (e.dataTransfer) {
@@ -328,11 +504,17 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     const task = tasks.value.find(t => t.id === taskId);
     if (!task) return;
     
+    let targetStatus = newStatus;
+    if (targetStatus === 'in_progress' && task.status !== 'in_progress' && tasksByStatus.value['in_progress'].length >= WIP_LIMIT.value) {
+        targetStatus = 'todo';
+        showToast(`⚠️ Đã đạt giới hạn WIP (${WIP_LIMIT.value} tasks). Task được đẩy về TO DO.`);
+    }
+    
     const columnElement = (e.currentTarget as HTMLElement);
     const columnContent = columnElement.querySelector('.column-content');
     let insertAfterTaskIdx = -1;
     
-    if (columnContent) {
+    if (targetStatus === newStatus && columnContent) {
         const cards = Array.from(columnContent.querySelectorAll('.task-card'));
         let filteredCardIndex = -1;
         for (let i = 0; i < cards.length; i++) {
@@ -350,7 +532,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
         }
     }
     
-    const tasksInCol = tasksByStatus.value[newStatus].filter(t => t.id !== taskId);
+    const tasksInCol = tasksByStatus.value[targetStatus].filter(t => t.id !== taskId);
     let newOrder = 0;
     
     if (tasksInCol.length === 0) {
@@ -372,7 +554,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     
     if (!task.custom_fields) task.custom_fields = {};
     task.custom_fields['order'] = newOrder;
-    task.status = newStatus;
+    task.status = targetStatus;
     
     // Track completed_at timestamp for archiving
     const nowStr = new Date().toISOString().split('T')[0];
@@ -383,13 +565,15 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     }
     
     try {
-        await invoke('update_task', {
+        await invoke('write_node_file', {
             vaultPath: props.vaultPath,
-            path: task.path,
-            metadata: {
+            relPath: task.path,
+            nodeType: 'task',
+            title: task.title,
+            properties: {
                 ...task.custom_fields,
                 title: task.title,
-                status: newStatus,
+                status: targetStatus,
                 is_transferred: task.is_transferred,
                 transferred_to: task.transferred_to,
                 track_progress: task.track_progress,
@@ -401,7 +585,8 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
                 tags: task.tags,
                 completed_at: task.completed_at
             },
-            content: task.content
+            content: task.content,
+            existingPath: task.path
         });
     } catch (err) {
         logger.error("Drag update failed", err);
@@ -512,6 +697,11 @@ const openCreateModal = () => {
 
 
 const handleModalSave = async (payload: any) => {
+    if (payload.status === 'in_progress' && editingTask.value && editingTask.value.status !== 'in_progress' && tasksByStatus.value['in_progress'].length >= WIP_LIMIT.value) {
+        payload.status = 'todo';
+        showToast(`⚠️ Đã đạt giới hạn WIP (${WIP_LIMIT.value} tasks). Task được đẩy về TO DO.`);
+    }
+
     editingTaskParams.value = payload;
     if (editingTask.value) {
         if (editingTask.value.status !== payload.status) {
@@ -529,6 +719,17 @@ const handleModalSave = async (payload: any) => {
 
 const closeEditModal = () => {
     editingTask.value = null;
+};
+
+const toastMessage = ref('');
+let toastTimeout: any = null;
+
+const showToast = (msg: string) => {
+    toastMessage.value = msg;
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+        toastMessage.value = '';
+    }, 4000);
 };
 
 const saveTask = async () => {
@@ -664,10 +865,79 @@ const loadTasks = async () => {
             color: node.properties.color || '',
             tags: node.properties.tags || [],
             custom_fields: (({ status, start_date, due_date, color, tags, ...rest }) => rest)(node.properties),
-            content: node.content
+            content: node.content,
+            created_at: node.created_at,
+            updated_at: node.updated_at
         }));
+        
+        await loadFinanceConfig();
     } catch (e) {
         logger.error("Failed to load tasks", e);
+    }
+};
+
+const loadFinanceConfig = async () => {
+    try {
+        const configs: any[] = await invoke('get_nodes', { nodeType: 'finance_config' });
+        if (configs.length > 0) {
+            const configNode = configs[0];
+            if (configNode.properties) {
+                if (configNode.properties.incomeCategories) {
+                    incomeCategories.value = configNode.properties.incomeCategories;
+                }
+                if (configNode.properties.expenseCategories) {
+                    expenseCategories.value = configNode.properties.expenseCategories;
+                }
+                if (configNode.properties.accounts) {
+                    accounts.value = configNode.properties.accounts;
+                }
+            }
+        }
+    } catch (e) {
+        logger.error('Failed to load finance config in TaskApp', e);
+    }
+};
+
+const saveFinanceTransaction = async (tx: Transaction) => {
+    const d = new Date(tx.date);
+    const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const expectedId = `Finance/${yyyy}-${mm}.json`;
+    
+    try {
+        let nodeProps: any = { transactions: [] };
+        try {
+            const existingNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+            const targetNode = existingNodes.find((n: any) => n.id === expectedId);
+            if (targetNode && targetNode.properties) {
+                nodeProps = targetNode.properties;
+            }
+        } catch(e) {}
+        
+        if (!nodeProps.transactions) nodeProps.transactions = [];
+        
+        const existingIdx = nodeProps.transactions.findIndex((t: Transaction) => t.id === tx.id);
+        if (existingIdx >= 0) {
+            nodeProps.transactions[existingIdx] = tx;
+        } else {
+            nodeProps.transactions.push(tx);
+        }
+        
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: expectedId,
+            title: `Tháng ${mm}/${yyyy}`,
+            nodeType: 'finance_month',
+            properties: nodeProps,
+            content: ''
+        });
+        
+        showTxModal.value = false;
+        if (activeProject.value) {
+            recalculateProjectSpent(activeProject.value);
+        }
+    } catch (e) {
+        logger.error('Failed to save finance transaction from Task App', e);
     }
 };
 
@@ -765,6 +1035,16 @@ const deleteProject = async () => {
     } catch (e) {
         logger.error("Failed to delete project", e);
     }
+};
+
+const isOverdue = (task: TaskMetadata) => {
+    if (task.status === 'done') return false;
+    if (!task.due_date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = new Date(task.due_date);
+    dueDate.setHours(0, 0, 0, 0);
+    return dueDate < today;
 };
 
 const toggleTaskStatus = async (task: TaskMetadata) => {
@@ -966,78 +1246,207 @@ watch(() => props.vaultPath, () => {
       <!-- Main Content -->
       <div class="flex-1 overflow-y-auto px-4 md:px-8 pb-16">
           
-          <!-- Project Header & Linked Notes -->
-          <div v-if="activeProject" class="mb-8 mt-2 max-w-4xl mx-auto space-y-6 relative group">
-              <button @click="showProjectEditModal = true" class="absolute top-2 right-2 p-2 rounded-lg bg-white/80 dark:bg-black/50 backdrop-blur-sm border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-indigo-500 shadow-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer z-10" title="Edit Project">
-                  <Edit3 class="w-4 h-4" />
-              </button>
-              
-              <div v-if="activeProject.content || activeProject.due_date || activeProject.start_date || (activeProject.tags && activeProject.tags.length > 0)" class="bg-gray-50 dark:bg-[#1a1a1a] rounded-xl p-5 border border-gray-100 dark:border-[#2c2c2c]">
-                  <div class="flex flex-wrap items-center gap-3 mb-4">
-                      <!-- Status -->
-                      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium capitalize" 
-                            :class="{
-                                'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400': activeProject.status === 'active',
-                                'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400': activeProject.status === 'completed',
-                                'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400': activeProject.status === 'on_hold'
-                            }">
-                          {{ activeProject.status.replace('_', ' ') }}
-                      </span>
-                      
-                      <!-- Dates -->
-                      <div v-if="activeProject.start_date || activeProject.due_date" class="flex items-center text-sm font-medium text-gray-600 dark:text-gray-400">
-                          <CalendarDays class="w-4 h-4 mr-1.5" />
-                          <span v-if="activeProject.start_date">{{ activeProject.start_date }}</span>
-                          <span v-if="activeProject.start_date && activeProject.due_date" class="mx-1">→</span>
-                          <span v-if="activeProject.due_date" :class="{'text-red-500': true}">{{ activeProject.due_date }}</span>
-                      </div>
-                      
-                      <!-- Tags -->
-                      <div v-if="activeProject.tags?.length > 0" class="flex flex-wrap items-center gap-1.5 ml-auto">
-                          <span v-for="tag in activeProject.tags" :key="tag" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-[#2c2c2c] text-gray-700 dark:text-gray-300">
-                              #{{ tag }}
-                          </span>
-                      </div>
+          <!-- Project Header & Navigation -->
+          <div v-if="activeProject" class="mb-6 mt-2 space-y-6 relative group">
+              <!-- Tabs Navigation -->
+              <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-2">
+                  <div class="flex items-center gap-6">
+                      <button @click="activeProjectTab = 'overview'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'overview' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
+                          Overview
+                          <div v-if="activeProjectTab === 'overview'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
+                      </button>
+                      <button @click="activeProjectTab = 'tasks'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'tasks' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
+                          Tasks
+                          <div v-if="activeProjectTab === 'tasks'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
+                      </button>
+                      <button @click="activeProjectTab = 'resources'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'resources' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
+                          Resources
+                          <div v-if="activeProjectTab === 'resources'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
+                      </button>
                   </div>
+                  <button @click="showProjectEditModal = true" class="pb-3 text-gray-400 hover:text-indigo-500 transition-colors cursor-pointer" title="Project Settings">
+                      <Settings class="w-4 h-4" />
+                  </button>
+              </div>
+
+              <div v-if="activeProjectTab === 'overview'" class="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   
-                  <div v-if="activeProject.content" class="text-sm text-gray-600 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none">
-                      <div v-html="activeProject.content"></div>
-                  </div>
-                  
-                  <!-- Custom Fields -->
-                  <div v-if="activeProject.custom_fields && Object.keys(activeProject.custom_fields).length > 0" class="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 pt-4 border-t border-gray-200 dark:border-[#333]">
-                      <div v-for="(val, key) in activeProject.custom_fields" :key="key" class="flex items-center text-sm">
-                          <span class="text-gray-400 mr-2 font-medium">{{ key }}:</span>
-                          <span class="text-gray-700 dark:text-gray-300">{{ val }}</span>
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <!-- Project Description Card -->
+                      <div class="md:col-span-1 bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm flex flex-col">
+                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Project Description</h3>
+                          <div v-if="activeProject.content" class="text-sm text-gray-600 dark:text-gray-400 prose prose-sm dark:prose-invert max-w-none mb-4 line-clamp-3">
+                              <div v-html="activeProject.content"></div>
+                          </div>
+                          <div v-else class="text-sm text-gray-400 italic mb-4">No description provided. Click to add.</div>
+                          
+                          <div class="mt-auto space-y-3 pt-3 border-t border-gray-50 dark:border-[#2c2c2c]">
+                              <div class="flex items-center justify-between">
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Status</div>
+                                  <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium capitalize" 
+                                      :class="{
+                                          'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400': activeProject.status === 'active',
+                                          'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400': activeProject.status === 'completed',
+                                          'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400': activeProject.status === 'on_hold'
+                                      }">
+                                      {{ activeProject.status.replace('_', ' ') }}
+                                  </span>
+                              </div>
+                              <div v-if="activeProject.tags?.length > 0" class="flex items-center justify-between">
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Tags</div>
+                                  <div class="flex flex-wrap items-center gap-1 justify-end">
+                                      <span v-for="tag in activeProject.tags.slice(0,3)" :key="tag" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-[#2c2c2c] text-gray-600 dark:text-gray-400">
+                                          #{{ tag }}
+                                      </span>
+                                      <span v-if="activeProject.tags.length > 3" class="text-[10px] text-gray-400">+{{activeProject.tags.length - 3}}</span>
+                                  </div>
+                              </div>
+                              <div class="flex items-center justify-between">
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Created</div>
+                                  <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.created_at ? activeProject.created_at.substring(0, 10) : '--' }}</div>
+                              </div>
+                              <div class="flex items-center justify-between">
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Updated</div>
+                                  <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.updated_at ? activeProject.updated_at.substring(0, 10) : '--' }}</div>
+                              </div>
+                          </div>
+                      </div>
+
+                      <!-- Time & Budget Card -->
+                      <div class="bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm hover:shadow-md transition-shadow">
+                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Time & Budget</h3>
+                          
+                          <div class="space-y-5">
+                              <div class="grid grid-cols-2 gap-4">
+                                  <div>
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">Start Date</div>
+                                      <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center">
+                                          <CalendarDays class="w-3.5 h-3.5 mr-1.5 text-gray-400" />
+                                          {{ activeProject.start_date || '--/--/----' }}
+                                      </div>
+                                  </div>
+                                  <div>
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">End Date</div>
+                                      <div class="text-sm font-semibold text-red-500 flex items-center">
+                                          <CalendarDays class="w-3.5 h-3.5 mr-1.5" />
+                                          {{ activeProject.due_date || '--/--/----' }}
+                                      </div>
+                                  </div>
+                              </div>
+                              
+                              <div class="pt-4 border-t border-gray-50 dark:border-[#2c2c2c]">
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">Budget</div>
+                                  <div class="text-xl font-bold text-gray-900 dark:text-gray-100">
+                                      {{ projectBudget || 'Not set' }}
+                                  </div>
+                              </div>
+                              
+                              <div v-if="projectSpent">
+                                  <div class="flex items-center justify-between mb-1">
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Spent</div>
+                                      <button @click="showTxModal = true" class="text-[10px] flex items-center bg-gray-100 hover:bg-gray-200 dark:bg-[#333] dark:hover:bg-[#444] text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded transition-colors" title="Log Expense">
+                                          <Plus class="w-3 h-3 mr-0.5" /> Add
+                                      </button>
+                                  </div>
+                                  <div class="text-lg font-semibold text-orange-500">
+                                      {{ projectSpent }}
+                                  </div>
+                              </div>
+                              
+                              <div v-if="displayCustomFields.length > 0">
+                                  <div v-for="field in displayCustomFields" :key="field.key">
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-0.5 mt-3">{{ field.key }}</div>
+                                      <div class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ field.val }}</div>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+
+                      <!-- Progress & Task Summary Card -->
+                      <div class="bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm hover:shadow-md transition-shadow flex flex-col">
+                           <div class="mb-6">
+                              <div class="flex items-center justify-between mb-2">
+                                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Project Progress</h3>
+                                  <span class="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">{{ projectProgress }}%</span>
+                              </div>
+                              <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
+                                  <div class="bg-gradient-to-r from-blue-400 to-indigo-500 h-2.5 rounded-full transition-all duration-500" :style="{ width: projectProgress + '%' }"></div>
+                              </div>
+                          </div>
+                          
+                          <div class="flex-1 border-t border-gray-50 dark:border-[#2c2c2c] pt-4">
+                              <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Task Summary</h3>
+                              <div class="grid grid-cols-3 gap-3">
+                                  <!-- Total -->
+                                  <div class="bg-gray-50 dark:bg-[#252525] rounded-xl p-3">
+                                      <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ activeCategoryTasks.length }}</div>
+                                      <div class="text-[9px] font-medium text-gray-500 uppercase tracking-wider mt-1">Total</div>
+                                  </div>
+                                  <!-- In Progress -->
+                                  <div class="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
+                                      <div class="text-xl font-bold text-blue-600 dark:text-blue-400">{{ activeCategoryTasks.filter(t => t.status === 'in_progress').length }}</div>
+                                      <div class="text-[9px] font-medium text-blue-600/70 dark:text-blue-400/70 uppercase tracking-wider mt-1">Doing</div>
+                                  </div>
+                                  <!-- To Do -->
+                                  <div class="bg-orange-50 dark:bg-orange-900/20 rounded-xl p-3">
+                                      <div class="text-xl font-bold text-orange-600 dark:text-orange-400">{{ activeCategoryTasks.filter(t => t.status === 'todo').length }}</div>
+                                      <div class="text-[9px] font-medium text-orange-600/70 dark:text-orange-400/70 uppercase tracking-wider mt-1">To Do</div>
+                                  </div>
+                                  <!-- Backlog -->
+                                  <div class="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-3">
+                                      <div class="text-xl font-bold text-purple-600 dark:text-purple-400">{{ activeCategoryTasks.filter(t => t.status === 'backlog').length }}</div>
+                                      <div class="text-[9px] font-medium text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mt-1">Backlog</div>
+                                  </div>
+                                  <!-- Completed -->
+                                  <div class="bg-green-50 dark:bg-green-900/20 rounded-xl p-3">
+                                      <div class="text-xl font-bold text-green-600 dark:text-green-400">{{ activeCategoryTasks.filter(t => t.status === 'done').length }}</div>
+                                      <div class="text-[9px] font-medium text-green-600/70 dark:text-green-400/70 uppercase tracking-wider mt-1">Done</div>
+                                  </div>
+                                  <!-- Overdue -->
+                                  <div class="bg-red-50 dark:bg-red-900/20 rounded-xl p-3">
+                                      <div class="text-xl font-bold text-red-600 dark:text-red-400">{{ activeCategoryTasks.filter(t => isOverdue(t)).length }}</div>
+                                      <div class="text-[9px] font-medium text-red-600/70 dark:text-red-400/70 uppercase tracking-wider mt-1">Overdue</div>
+                                  </div>
+                              </div>
+                          </div>
                       </div>
                   </div>
               </div>
-              <div v-else class="bg-gray-50/50 dark:bg-[#1a1a1a]/50 rounded-xl p-5 border border-dashed border-gray-200 dark:border-[#2c2c2c] flex items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a1a1a] transition-colors" @click="showProjectEditModal = true">
-                  <span class="text-gray-400 text-sm font-medium flex items-center"><Edit3 class="w-4 h-4 mr-2"/> Add description, dates, or tags</span>
-              </div>
-              
-              <div v-if="linkedNotes.length > 0">
-                  <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center"><FileText class="w-4 h-4 mr-2"/> Related Notes</h3>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      <div v-for="note in linkedNotes" :key="note.id" @click="emit('open-node', note.id, 'note')" class="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-3 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md cursor-pointer transition-all group">
-                          <div class="font-medium text-sm text-[#1c1c1e] dark:text-[#f4f4f5] truncate mb-1">{{ note.title || 'Untitled Note' }}</div>
-                          <div class="text-[11px] text-gray-400 truncate">{{ note.content ? note.content.substring(0, 50) + '...' : 'Empty note' }}</div>
+
+              <!-- RESOURCES TAB -->
+              <div v-if="activeProjectTab === 'resources'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div v-if="linkedNotes.length > 0">
+                      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                          <div v-for="note in linkedNotes" :key="note.id" @click="emit('open-node', note.id, 'note')" class="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-4 hover:border-blue-300 dark:hover:border-blue-700 shadow-sm hover:shadow-md cursor-pointer transition-all group">
+                              <div class="font-medium text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate mb-2 flex items-center">
+                                  <FileText class="w-4 h-4 mr-2 text-indigo-400" /> {{ note.title || 'Untitled Note' }}
+                              </div>
+                              <div class="text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ note.content ? note.content.replace(/<[^>]+>/g, '').substring(0, 80) + '...' : 'Empty note' }}</div>
+                          </div>
                       </div>
+                  </div>
+                  <div v-else class="flex flex-col items-center justify-center h-48 opacity-50 bg-white/50 dark:bg-black/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
+                      <FileText class="w-12 h-12 mb-3 text-gray-400"/>
+                      <p class="text-sm font-medium">No resources attached yet.</p>
                   </div>
               </div>
           </div>
           
-          <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-48 opacity-40">
+          <div v-show="!activeProject || activeProjectTab === 'tasks'" class="h-full flex-1 flex flex-col">
+              <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-48 opacity-40">
               <CheckCircle2 class="w-16 h-16 mb-4"/>
               <p>You're all caught up!</p>
           </div>
           
-          <div v-else class="h-full">
+          <div v-else class="h-full flex flex-col min-h-0">
               <!-- LIST VIEW -->
               <div v-if="viewMode === 'list'" class="space-y-2 mt-4 max-w-4xl mx-auto">
                   <div v-for="task in activeCategoryTasks" :key="task.id" 
-                      class="group flex items-center p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-[#1a1a1a] border border-transparent hover:border-gray-100 dark:hover:border-gray-800 transition-colors cursor-pointer"
-                      :class="{'opacity-50': task.status === 'done'}"
+                      class="group flex items-center p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-[#1a1a1a] border transition-colors cursor-pointer"
+                      :class="[
+                          task.status === 'done' ? 'opacity-50 border-transparent' : 
+                          isOverdue(task) ? 'border-red-200 dark:border-red-900/50 bg-red-50/20 dark:bg-red-900/5' : 'border-transparent hover:border-gray-100 dark:hover:border-gray-800'
+                      ]"
                       @click="openEditModal(task)"
                   >
                       <!-- Checkbox -->
@@ -1063,7 +1472,8 @@ watch(() => props.vaultPath, () => {
                                   <EyeOff v-else class="w-4 h-4" />
                               </div>
                               
-                              <span v-if="task.due_date" class="text-xs flex items-center text-red-500 font-medium">
+                              <span v-if="task.due_date" class="text-xs flex items-center font-medium"
+                                  :class="isOverdue(task) ? 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded' : 'text-red-500'">
                                   <CalendarDays class="w-3 h-3 mr-1" />
                                   {{ task.due_date }}
                               </span>
@@ -1090,15 +1500,21 @@ watch(() => props.vaultPath, () => {
               </div>
 
               <!-- BOARD VIEW -->
-              <div v-else-if="viewMode === 'board'" class="flex gap-6 h-full mt-6 pb-8 overflow-x-auto">
+              <div v-else-if="viewMode === 'board'" class="flex gap-6 flex-1 mt-6 pb-8 overflow-x-auto min-h-0 items-stretch">
                   <div v-for="col in BOARD_COLUMNS" :key="col.id" 
-                       class="flex-1 min-w-[280px] max-w-[350px] flex flex-col bg-gray-50/50 dark:bg-[#161616] rounded-2xl p-4 border border-[#e6e6e6] dark:border-[#2c2c2c]"
+                       class="flex-1 min-w-[280px] flex flex-col bg-gray-50/50 dark:bg-[#161616] rounded-2xl p-4 border border-[#e6e6e6] dark:border-[#2c2c2c]"
                        @dragover.prevent 
                        @drop="onDrop($event, col.id)"
                   >
                       <div class="flex items-center justify-between mb-4 px-1" :class="col.class">
-                          <h3 class="text-xs font-bold text-gray-500 pt-3">{{ col.name }} <span class="bg-gray-200 dark:bg-[#2a2a2a] text-gray-600 dark:text-gray-300 ml-2 px-2 py-0.5 rounded-full">{{ tasksByStatus[col.id].length }}</span></h3>
-                          <button class="text-gray-400 hover:text-black dark:hover:text-white pt-3"><Plus class="w-4 h-4"/></button>
+                          <h3 class="text-xs font-bold text-gray-500 pt-3 flex items-center">
+                              {{ col.name }} 
+                              <span class="ml-2 px-2 py-0.5 rounded-full transition-colors" 
+                                    :class="(col.id === 'in_progress' && tasksByStatus[col.id].length > WIP_LIMIT) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'bg-gray-200 dark:bg-[#2a2a2a] text-gray-600 dark:text-gray-300'">
+                                  {{ tasksByStatus[col.id].length }}
+                              </span>
+                          </h3>
+                          <button @click="showQuickAdd(col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3"><Plus class="w-4 h-4"/></button>
                       </div>
                       <div class="flex-1 overflow-y-auto space-y-3 pb-4 column-content">
                           <div v-for="task in tasksByStatus[col.id]" :key="task.id"
@@ -1106,7 +1522,8 @@ watch(() => props.vaultPath, () => {
                                @dragstart="onDragStart($event, task)"
                                @click="openEditModal(task)"
                                :data-task-id="task.id"
-                               class="task-card bg-white dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group relative"
+                               class="task-card p-4 rounded-xl border hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group relative"
+                               :class="isOverdue(task) ? 'border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10' : 'bg-white dark:bg-[#1e1e1e] border-[#e6e6e6] dark:border-[#2c2c2c]'"
                           >
                              <p class="text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] leading-snug mb-3">{{ task.title }}</p>
                              <div class="flex items-center justify-between mt-auto pt-2 border-t border-gray-50 dark:border-[#2c2c2c]">
@@ -1118,7 +1535,8 @@ watch(() => props.vaultPath, () => {
                                          <Eye v-if="task.track_progress" class="w-3.5 h-3.5 text-blue-500" />
                                          <EyeOff v-else class="w-3.5 h-3.5" />
                                      </div>
-                                     <span v-if="task.start_date || task.due_date" class="text-[10px] text-gray-500 bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded flex items-center">
+                                     <span v-if="task.start_date || task.due_date" class="text-[10px] px-1.5 py-0.5 rounded flex items-center"
+                                         :class="isOverdue(task) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'text-gray-500 bg-gray-100 dark:bg-[#2a2a2a]'">
                                          <CalendarDays class="w-3 h-3 mr-1" /> {{ task.start_date ? task.start_date.substring(5) : '--' }} - {{ task.due_date ? task.due_date.substring(5) : '--' }}
                                      </span>
                                      <div v-if="task.tags.length" class="flex flex-wrap gap-1">
@@ -1131,6 +1549,19 @@ watch(() => props.vaultPath, () => {
                                      <Trash2 class="w-3.5 h-3.5" />
                                  </button>
                              </div>
+                          </div>
+                          
+                          <!-- Quick Add Input -->
+                          <div v-if="quickAddColumn === col.id" class="mt-2 bg-white dark:bg-[#1e1e1e] p-3 rounded-xl border border-indigo-300 dark:border-indigo-500 shadow-sm animate-in fade-in zoom-in duration-200 shrink-0">
+                              <input :id="'quick-add-input-' + col.id" 
+                                     type="text" 
+                                     v-model="quickAddTitle" 
+                                     @keyup.enter="handleQuickAdd(col.id)"
+                                     @keyup.esc="quickAddColumn = null"
+                                     @blur="!quickAddTitle.trim() ? quickAddColumn = null : null"
+                                     placeholder="Task title... (Enter to save)" 
+                                     class="w-full bg-transparent text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] outline-none placeholder:font-normal placeholder:text-gray-400"
+                              />
                           </div>
                       </div>
                   </div>
@@ -1188,6 +1619,7 @@ watch(() => props.vaultPath, () => {
                  </table>
               </div>
           </div>
+          </div>
       </div>
 
   <!-- Edit Task Modal -->
@@ -1206,6 +1638,7 @@ watch(() => props.vaultPath, () => {
       v-if="showProjectEditModal && (activeProject || newProjectDraft)" 
       :project="newProjectDraft || activeProject" 
       :vaultPath="vaultPath"
+      :dynamic-spent="calculatedProjectSpent"
       @save="handleProjectSave" 
       @close="showProjectEditModal = false; newProjectDraft = null;" 
       @delete="deleteProject"
@@ -1273,5 +1706,24 @@ watch(() => props.vaultPath, () => {
       </div>
   </div>
   </div>
-  </div>
+      <!-- WIP Notification Toast -->
+      <transition enter-active-class="transition duration-300 ease-out" enter-from-class="transform translate-y-4 opacity-0" enter-to-class="transform translate-y-0 opacity-100" leave-active-class="transition duration-200 ease-in" leave-from-class="transform translate-y-0 opacity-100" leave-to-class="transform translate-y-4 opacity-0">
+          <div v-if="toastMessage" class="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-5 py-3 rounded-xl shadow-xl z-[100] text-sm font-semibold flex items-center gap-2 max-w-md w-max pointer-events-none">
+              {{ toastMessage }}
+          </div>
+      </transition>
+    <!-- Transaction Modal (Finance Integration) -->
+  <TransactionModal 
+      :show="showTxModal" 
+      :transaction="null" 
+      :income-categories="incomeCategories" 
+      :expense-categories="expenseCategories" 
+      :accounts="accounts" 
+      :projects="projects"
+      :default-project-id="activeProject?.id"
+      @close="showTxModal = false" 
+      @save="saveFinanceTransaction" 
+  />
+
+</div>
 </template>

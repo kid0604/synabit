@@ -31,7 +31,7 @@ const editingAccountId = ref<string | null>(null);
 const formatAmount = (val: string) => {
     const num = val.replace(/\D/g, '');
     if (!num) return '';
-    return Number(num).toLocaleString('vi-VN');
+    return Number(num).toLocaleString('en-US');
 };
 
 const handleBalanceInput = (e: Event) => {
@@ -40,7 +40,7 @@ const handleBalanceInput = (e: Event) => {
 };
 
 const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 };
 
 const getCurrentBalance = (id: string, fallbackInitial: number) => {
@@ -128,7 +128,7 @@ const save = () => {
       
       <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark shrink-0">
-        <h3 class="font-bold text-lg text-text dark:text-text-dark">Cấu hình Tài chính</h3>
+        <h3 class="font-bold text-lg text-text dark:text-text-dark">Finance Settings</h3>
         <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
             <X class="w-5 h-5" />
         </button>
@@ -139,9 +139,9 @@ const save = () => {
           
         <!-- Income Categories -->
         <div>
-            <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Danh mục Thu nhập</h4>
+            <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Income Categories</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Thêm danh mục Thu..." />
+                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Income Category..." />
                 <button @click="addIncomeCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
                     <Plus class="w-5 h-5" />
                 </button>
@@ -156,7 +156,7 @@ const save = () => {
                         <Lock class="w-3 h-3" />
                     </div>
                 </div>
-                <div v-if="!incomeCategories.length" class="text-sm text-gray-400 italic">Chưa có danh mục nào.</div>
+                <div v-if="!incomeCategories.length" class="text-sm text-gray-400 italic">No categories yet.</div>
             </div>
         </div>
 
@@ -164,9 +164,9 @@ const save = () => {
 
         <!-- Expense Categories -->
         <div>
-            <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">Danh mục Chi tiêu</h4>
+            <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">Expense Categories</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Thêm danh mục Chi..." />
+                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Expense Category..." />
                 <button @click="addExpenseCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
                     <Plus class="w-5 h-5" />
                 </button>
@@ -181,7 +181,7 @@ const save = () => {
                         <Lock class="w-3 h-3" />
                     </div>
                 </div>
-                <div v-if="!expenseCategories.length" class="text-sm text-gray-400 italic">Chưa có danh mục nào.</div>
+                <div v-if="!expenseCategories.length" class="text-sm text-gray-400 italic">No categories yet.</div>
             </div>
         </div>
 
@@ -189,17 +189,17 @@ const save = () => {
 
         <!-- Accounts -->
         <div>
-            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">Tài khoản & Số dư</h4>
+            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">Accounts & Balances</h4>
             
             <div class="flex flex-col gap-2 mb-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
-                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Tên tài khoản mới" />
+                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Account Name" />
                 <div class="flex gap-2">
                     <div class="relative flex-1">
-                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="Số dư ban đầu" />
-                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">đ</span>
+                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="Initial Balance" />
+                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
                     </div>
                     <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50">
-                        Thêm
+                        Add
                     </button>
                 </div>
             </div>
@@ -210,7 +210,7 @@ const save = () => {
                     <div v-if="editingAccountId !== acc.id" class="flex items-center justify-between text-text dark:text-text-dark">
                         <div class="flex flex-col">
                             <span class="font-medium">{{ acc.name }}</span>
-                            <span class="text-xs text-gray-500">Số dư hiện tại: <span class="font-semibold text-gray-700 dark:text-gray-300">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
+                            <span class="text-xs text-gray-500">Current Balance: <span class="font-semibold text-gray-700 dark:text-gray-300">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
                         </div>
                         <div class="flex items-center gap-1 shrink-0">
                             <button @click="editingAccountId = acc.id" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">
@@ -223,9 +223,9 @@ const save = () => {
                     </div>
                     
                     <div v-else class="flex flex-col gap-2">
-                        <input type="text" v-model="acc.name" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Tên tài khoản" />
+                        <input type="text" v-model="acc.name" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Account Name" />
                         <div class="flex items-center justify-between text-xs text-gray-500">
-                            <span>Số dư hiện tại: <span class="font-semibold">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
+                            <span>Current Balance: <span class="font-semibold">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
                             <button @click="editingAccountId = null" class="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center">
                                 <Check class="w-4 h-4" />
                             </button>
@@ -233,7 +233,7 @@ const save = () => {
                     </div>
                     
                 </div>
-                <div v-if="!accounts.length" class="text-sm text-gray-400 italic">Chưa có tài khoản nào.</div>
+                <div v-if="!accounts.length" class="text-sm text-gray-400 italic">No accounts yet.</div>
             </div>
         </div>
 
@@ -242,10 +242,10 @@ const save = () => {
       <!-- Footer -->
       <div class="p-4 border-t border-border dark:border-border-dark flex justify-end gap-3 shrink-0 bg-gray-50/50 dark:bg-gray-800/50">
         <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-            Hủy
+            Cancel
         </button>
         <button @click="save" class="px-5 py-2 rounded-xl text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors">
-            Lưu thay đổi
+            Save Changes
         </button>
       </div>
 

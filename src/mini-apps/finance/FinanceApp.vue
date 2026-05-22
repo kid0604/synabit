@@ -35,6 +35,7 @@ const debtsNode = ref<any>(null);
 const debts = ref<Debt[]>([]);
 
 const budgets = ref<Budget[]>([]);
+const projects = ref<{id: string, title: string}[]>([]);
 
 const searchQuery = ref('');
 const filterType = ref<'all' | 'income' | 'expense' | 'transfer'>('all');
@@ -162,14 +163,14 @@ const accountBalances = computed(() => {
 // --- Methods ---
 
 const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 };
 
 
 
 const getAccountName = (id: string) => {
     const acc = accounts.value.find(a => a.id === id);
-    return acc ? acc.name : 'Không rõ';
+    return acc ? acc.name : 'Unknown';
 };
 
 const ensureCurrentMonthNodeExists = async () => {
@@ -186,7 +187,7 @@ const ensureCurrentMonthNodeExists = async () => {
             await invoke('write_node_file', {
                 vaultPath: props.vaultPath,
                 relPath: expectedId,
-                title: `Tháng ${mm}/${yyyy}`,
+                title: `Month ${mm}/${yyyy}`,
                 nodeType: 'finance_month',
                 properties: nodeProps,
                 content: ''
@@ -313,7 +314,7 @@ const loadData = async () => {
                 await invoke('write_node_file', {
                     vaultPath: props.vaultPath,
                     relPath: 'Finance/Debts.json',
-                    title: 'Sổ Nợ',
+                    title: 'Debts Ledger',
                     nodeType: 'finance_debts',
                     properties: newProps,
                     content: ''
@@ -326,6 +327,16 @@ const loadData = async () => {
             } catch(e) {
                 logger.error('Failed to create default debts node', e);
             }
+        }
+        
+        // Load projects for linking
+        try {
+            const projectNodes: any[] = await invoke('get_nodes', { nodeType: 'project' });
+            projects.value = projectNodes
+                .filter(n => n.properties?.status !== 'completed' && n.properties?.status !== 'archived')
+                .map(n => ({ id: n.id, title: n.title }));
+        } catch(e) {
+            logger.error('Failed to load projects', e);
         }
         
     } catch (e) {
@@ -377,12 +388,12 @@ const handleBalanceAdjust = async (diff: number) => {
     
     // Auto-add "Điều chỉnh số dư" to categories if missing
     let needSave = false;
-    if (!expenseCategories.value.includes('Điều chỉnh số dư')) {
-        expenseCategories.value.push('Điều chỉnh số dư');
+    if (!expenseCategories.value.includes('Balance Adjustment')) {
+        expenseCategories.value.push('Balance Adjustment');
         needSave = true;
     }
-    if (!incomeCategories.value.includes('Điều chỉnh số dư')) {
-        incomeCategories.value.push('Điều chỉnh số dư');
+    if (!incomeCategories.value.includes('Balance Adjustment')) {
+        incomeCategories.value.push('Balance Adjustment');
         needSave = true;
     }
     if (needSave) {
@@ -393,10 +404,10 @@ const handleBalanceAdjust = async (diff: number) => {
         id: `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: diff > 0 ? 'income' : 'expense',
         amount: Math.abs(diff),
-        category: 'Điều chỉnh số dư',
+        category: 'Balance Adjustment',
         accountId: adjustingAccount.value.id,
         date: new Date().toISOString(),
-        note: 'Tự động điều chỉnh số dư lệch'
+        note: 'Automatic balance adjustment'
     };
 
     await saveTransaction(tx);
@@ -406,11 +417,11 @@ const saveTransaction = async (tx: Transaction) => {
     if (!currentMonth.value) return;
     
     // Auto-create debt if standalone borrow/lend
-    if (['Đi vay', 'Cho vay'].includes(tx.category) && !tx.debtId) {
+    if (['Borrowing', 'Lending'].includes(tx.category) && !tx.debtId) {
         const newDebt: Debt = {
             id: `debt-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-            type: tx.category === 'Đi vay' ? 'borrow' : 'lend',
-            person: tx.note.trim() ? tx.note.trim() : 'Người giấu tên',
+            type: tx.category === 'Borrowing' ? 'borrow' : 'lend',
+            person: tx.note.trim() ? tx.note.trim() : 'Anonymous',
             totalAmount: tx.amount,
             paidAmount: 0,
             startDate: tx.date,
@@ -436,7 +447,7 @@ const saveTransaction = async (tx: Transaction) => {
     if (!targetNode) {
         targetNode = {
             id: expectedId,
-            title: `Tháng ${mm}/${yyyy}`,
+            title: `Month ${mm}/${yyyy}`,
             node_type: 'finance_month',
             properties: { transactions: [] }
         };
@@ -458,7 +469,7 @@ const saveTransaction = async (tx: Transaction) => {
     if (!months.value.some(m => m.id === expectedId)) {
         months.value.push({
             id: expectedId,
-            label: `Tháng ${mm}/${yyyy}`,
+            label: `Month ${mm}/${yyyy}`,
             date: new Date(yyyy, parseInt(mm) - 1, 1),
             node: targetNode
         });
@@ -553,7 +564,7 @@ const saveConfig = async (config: { incomeCategories: string[], expenseCategorie
         await invoke('write_node_file', {
             vaultPath: props.vaultPath,
             relPath: 'Finance/Config.json',
-            title: 'Cấu hình Tài chính',
+            title: 'Finance Config',
             nodeType: 'finance_config',
             properties: propsToSave,
             content: ''
@@ -606,9 +617,9 @@ defineExpose({ openMonthById });
               <h1 class="text-2xl font-bold flex items-center gap-2">
                   <NavButtons />
                   <Wallet class="w-6 h-6 text-blue-500" />
-                  Tài chính
+                  Finance
               </h1>
-              <p class="text-sm text-gray-500 dark:text-gray-400">Quản lý thu chi và ngân sách cá nhân</p>
+              <p class="text-sm text-gray-500 dark:text-gray-400">Manage income, expenses and personal budget</p>
           </div>
           
           <div class="flex items-center gap-3">
@@ -617,7 +628,7 @@ defineExpose({ openMonthById });
               </button>
               <button @click="openAddTx" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">
                   <Plus class="w-5 h-5" />
-                  <span>Thêm giao dịch</span>
+                  <span>Add Transaction</span>
               </button>
           </div>
       </div>
@@ -635,28 +646,28 @@ defineExpose({ openMonthById });
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'transactions' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Wallet class="w-5 h-5" />
-                      Sổ Thu Chi
+                      Ledger
                   </button>
                   <button 
                       @click="currentView = 'reports'" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'reports' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <PieChart class="w-5 h-5" />
-                      Báo Cáo & Phân Tích
+                      Reports & Analytics
                   </button>
                   <button 
                       @click="currentView = 'debts'" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'debts' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <BookOpen class="w-5 h-5" />
-                      Sổ Nợ
+                      Debts
                   </button>
                   <button 
                       @click="currentView = 'budgets'" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'budgets' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Target class="w-5 h-5" />
-                      Ngân sách
+                      Budgets
                   </button>
               </div>
 
@@ -665,13 +676,13 @@ defineExpose({ openMonthById });
                   <div class="absolute right-0 top-0 opacity-10 pointer-events-none">
                       <Wallet class="w-32 h-32 -mt-4 -mr-4" />
                   </div>
-                  <p class="text-blue-100 text-sm font-medium mb-1">Tổng Tài Sản</p>
+                  <p class="text-blue-100 text-sm font-medium mb-1">Total Net Worth</p>
                   <h2 class="text-3xl font-bold tracking-tight">{{ formatCurrency(globalNetWorth) }}</h2>
               </div>
               
               <!-- Account Balances -->
               <div class="flex flex-col gap-2">
-                  <h3 class="font-bold text-sm text-gray-500 dark:text-gray-400 uppercase tracking-wider pl-2">Tài khoản của tôi</h3>
+                  <h3 class="font-bold text-sm text-gray-500 dark:text-gray-400 uppercase tracking-wider pl-2">My Accounts</h3>
                   <div class="flex flex-col gap-1.5">
                       <div v-for="acc in accountBalances" :key="acc.id" class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group relative">
                           <div class="p-2.5 rounded-xl bg-white dark:bg-gray-900 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-800 shrink-0">
@@ -681,7 +692,7 @@ defineExpose({ openMonthById });
                               <span class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ acc.name }}</span>
                               <span class="text-base font-bold text-text dark:text-text-dark truncate">{{ formatCurrency(acc.balance) }}</span>
                           </div>
-                          <button @click="adjustingAccount = acc; showAdjustModal = true" class="absolute right-3 p-1.5 text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700" title="Điều chỉnh số dư">
+                          <button @click="adjustingAccount = acc; showAdjustModal = true" class="absolute right-3 p-1.5 text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700" title="Adjust Balance">
                               <Scale class="w-4 h-4" />
                           </button>
                       </div>
@@ -700,7 +711,7 @@ defineExpose({ openMonthById });
                           <ChevronLeft class="w-5 h-5" />
                       </button>
                       <div class="flex flex-col items-center">
-                          <span class="text-xs text-gray-500 font-medium mb-0.5">Tháng</span>
+                          <span class="text-xs text-gray-500 font-medium mb-0.5">Month</span>
                           <span class="font-bold text-lg text-text dark:text-text-dark">{{ currentMonth.date.getMonth() + 1 }}/{{ currentMonth.date.getFullYear() }}</span>
                       </div>
                       <button @click="nextMonth" :disabled="currentMonthIdx >= months.length - 1" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:pointer-events-none transition-colors text-gray-500">
@@ -714,7 +725,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Tổng Thu</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Income</span>
                           </div>
                           <p class="text-xl font-bold text-green-600 dark:text-green-400">{{ formatCurrency(totalIncome) }}</p>
                       </div>
@@ -722,7 +733,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-red-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Tổng Chi</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Expense</span>
                           </div>
                           <p class="text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(totalExpense) }}</p>
                       </div>
@@ -730,7 +741,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-blue-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Số Dư Tháng</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Monthly Balance</span>
                           </div>
                           <p :class="['text-xl font-bold', balance >= 0 ? 'text-text dark:text-text-dark' : 'text-red-500']">{{ balance > 0 ? '+' : '' }}{{ formatCurrency(balance) }}</p>
                       </div>
@@ -740,28 +751,28 @@ defineExpose({ openMonthById });
               <!-- Transaction List -->
               <div class="flex-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden">
               <div class="p-4 border-b border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/50 shrink-0 flex flex-col gap-3">
-                  <div class="flex items-center justify-between">
-                      <h3 class="font-bold text-lg text-text dark:text-text-dark">Lịch sử Giao dịch</h3>
+                      <div class="flex items-center justify-between">
+                      <h3 class="font-bold text-lg text-text dark:text-text-dark">Transaction History</h3>
                   </div>
                   <!-- Search and Filters -->
                   <div class="flex items-center gap-2">
                       <div class="relative flex-1">
                           <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input v-model="searchQuery" type="text" placeholder="Tìm kiếm..." class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" />
+                          <input v-model="searchQuery" type="text" placeholder="Search..." class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" />
                       </div>
                       <div class="relative">
                           <select v-model="filterType" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
-                              <option value="all">Tất cả</option>
-                              <option value="income">Thu nhập</option>
-                              <option value="expense">Chi tiêu</option>
-                              <option value="transfer">Chuyển khoản</option>
+                              <option value="all">All</option>
+                              <option value="income">Income</option>
+                              <option value="expense">Expense</option>
+                              <option value="transfer">Transfer</option>
                           </select>
                           <ChevronDown class="w-4 h-4 text-gray-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                       
                       <div class="relative">
                           <select v-model="filterAccount" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[150px] truncate cursor-pointer transition-colors">
-                              <option value="all">Mọi tài khoản</option>
+                              <option value="all">All accounts</option>
                               <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                           </select>
                           <ChevronDown class="w-4 h-4 text-gray-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -775,10 +786,10 @@ defineExpose({ openMonthById });
                           <Search v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'" class="w-8 h-8 opacity-50" />
                           <Wallet v-else class="w-8 h-8 opacity-50" />
                       </div>
-                      <p v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'">Không tìm thấy giao dịch nào phù hợp với bộ lọc.</p>
+                      <p v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'">No transactions found matching the filters.</p>
                       <template v-else>
-                          <p>Không có giao dịch nào trong tháng này.</p>
-                          <button @click="openAddTx" class="mt-4 text-blue-500 hover:underline text-sm">Thêm giao dịch ngay</button>
+                          <p>No transactions this month.</p>
+                          <button @click="openAddTx" class="mt-4 text-blue-500 hover:underline text-sm">Add transaction now</button>
                       </template>
                   </div>
                   
@@ -859,7 +870,7 @@ defineExpose({ openMonthById });
           </div>
       </div>
 
-      <TransactionModal :show="showTxModal" :transaction="editingTx" :income-categories="incomeCategories" :expense-categories="expenseCategories" :accounts="accounts" @close="showTxModal = false" @save="saveTransaction" />
+      <TransactionModal :show="showTxModal" :transaction="editingTx" :income-categories="incomeCategories" :expense-categories="expenseCategories" :accounts="accounts" :projects="projects" @close="showTxModal = false" @save="saveTransaction" />
       <FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" @close="showSettingsModal = false" @save="saveConfig" />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />
   </div>

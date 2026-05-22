@@ -51,7 +51,7 @@ const formatCurrencyInput = (e: Event) => {
     const input = e.target as HTMLInputElement;
     let val = input.value.replace(/\D/g, '');
     if (val) {
-        val = new Intl.NumberFormat('vi-VN').format(parseInt(val));
+        val = new Intl.NumberFormat('en-US').format(parseInt(val));
     }
     input.value = val;
     totalAmountStr.value = val.replace(/\./g, '');
@@ -94,10 +94,10 @@ const save = () => {
             id: `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
             type: debt.type === 'lend' ? 'expense' : 'income',
             amount: debt.totalAmount,
-            category: debt.type === 'lend' ? 'Cho vay' : 'Đi vay',
+            category: debt.type === 'lend' ? 'Lending' : 'Borrowing',
             accountId: debt.accountId,
             date: debt.startDate,
-            note: `${debt.type === 'lend' ? `Cho ${debt.person} vay` : `Vay của ${debt.person}`}${debt.note ? ` - ${debt.note}` : ''}`,
+            note: `${debt.type === 'lend' ? `Lent to ${debt.person}` : `Borrowed from ${debt.person}`}${debt.note ? ` - ${debt.note}` : ''}`,
             debtId: debt.id
         };
     }
@@ -118,7 +118,7 @@ const save = () => {
             <!-- Header -->
             <div class="px-6 py-5 border-b border-border dark:border-border-dark flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/30">
                 <h3 class="text-xl font-bold text-text dark:text-text-dark flex items-center gap-2">
-                    {{ isNew ? 'Thêm Khoản Nợ Mới' : 'Sửa Khoản Nợ' }}
+                    {{ isNew ? 'New Debt' : 'Edit Debt' }}
                 </h3>
                 <button @click="emit('close')" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500">
                     <X class="w-5 h-5" />
@@ -134,13 +134,13 @@ const save = () => {
                         @click="type = 'lend'"
                         :class="['flex-1 py-2.5 rounded-lg font-bold text-sm transition-all', type === 'lend' ? 'bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Cho Vay (Phải thu)
+                        Lend (Receivable)
                     </button>
                     <button 
                         @click="type = 'borrow'"
                         :class="['flex-1 py-2.5 rounded-lg font-bold text-sm transition-all', type === 'borrow' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Đi Vay (Phải trả)
+                        Borrow (Payable)
                     </button>
                 </div>
 
@@ -148,7 +148,7 @@ const save = () => {
                 <div class="flex flex-col gap-4">
                     <!-- Person -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Người {{ type === 'lend' ? 'vay' : 'cho vay' }}</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Person</label>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                                 <Users class="w-5 h-5" />
@@ -156,7 +156,7 @@ const save = () => {
                             <input 
                                 v-model="person" 
                                 type="text" 
-                                placeholder="Nhập tên người giao dịch..."
+                                placeholder="Enter person's name..."
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600"
                             />
                         </div>
@@ -164,24 +164,24 @@ const save = () => {
 
                     <!-- Amount -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Số tiền</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Amount</label>
                         <div class="relative">
                             <input 
-                                :value="new Intl.NumberFormat('vi-VN').format(Number(totalAmountStr) || 0) === '0' ? '' : new Intl.NumberFormat('vi-VN').format(Number(totalAmountStr) || 0)"
+                                :value="new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0) === '0' ? '' : new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0)"
                                 @input="formatCurrencyInput"
                                 type="text" 
                                 placeholder="0"
                                 class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-bold text-lg placeholder-gray-400 dark:placeholder-gray-600"
                             />
                             <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500 font-medium">
-                                đ
+                                $
                             </div>
                         </div>
                     </div>
 
                     <!-- Account -->
                     <div v-if="isNew">
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Tài khoản {{ type === 'lend' ? 'rút tiền' : 'nhận tiền' }}</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ type === 'lend' ? 'Withdraw from' : 'Deposit to' }} Account</label>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                                 <Wallet class="w-5 h-5" />
@@ -190,7 +190,7 @@ const save = () => {
                                 v-model="accountId" 
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium appearance-none cursor-pointer"
                             >
-                                <option value="" disabled>Chọn tài khoản...</option>
+                                <option value="" disabled>Select account...</option>
                                 <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                             </select>
                         </div>
@@ -199,7 +199,7 @@ const save = () => {
                     <!-- Dates -->
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Ngày giao dịch</label>
+                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Date</label>
                             <div class="relative">
                                 <input 
                                     v-model="startDate" 
@@ -209,7 +209,7 @@ const save = () => {
                             </div>
                         </div>
                         <div>
-                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Hạn trả (Tùy chọn)</label>
+                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Due Date (Optional)</label>
                             <div class="relative">
                                 <input 
                                     v-model="dueDate" 
@@ -222,14 +222,14 @@ const save = () => {
 
                     <!-- Note -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Ghi chú (Tùy chọn)</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Note (Optional)</label>
                         <div class="relative">
                             <div class="absolute top-3.5 left-3.5 pointer-events-none text-gray-400">
                                 <FileText class="w-5 h-5" />
                             </div>
                             <textarea 
                                 v-model="note" 
-                                placeholder="Lý do vay mượn..."
+                                placeholder="Reason for debt..."
                                 rows="2"
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600 resize-none"
                             ></textarea>
@@ -242,14 +242,14 @@ const save = () => {
             <!-- Footer -->
             <div class="p-5 border-t border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/30 flex gap-3">
                 <button @click="emit('close')" class="flex-1 px-4 py-3 rounded-xl font-bold text-gray-600 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
-                    Hủy
+                    Cancel
                 </button>
                 <button 
                     @click="save" 
                     :disabled="!person || !totalAmountStr || !startDate || !accountId"
                     class="flex-1 px-4 py-3 rounded-xl font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                 >
-                    Lưu Khoản Nợ
+                    Save Debt
                 </button>
             </div>
             
