@@ -90,6 +90,7 @@ pub fn run() {
             nodes::scan_all_nodes,
             nodes::scan_specific_nodes,
             nodes::get_all_nodes,
+            nodes::get_node,
             nodes::get_nodes,
             nodes::get_linked_nodes,
             nodes::get_node_block,

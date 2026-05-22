@@ -197,6 +197,15 @@ pub fn get_all_nodes(
 }
 
 #[tauri::command]
+pub fn get_node(
+    state: tauri::State<'_, DbState>,
+    id: String,
+) -> AppResult<Option<crate::models::node::NodeMetadata>> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.get_node(&id)
+}
+
+#[tauri::command]
 pub fn get_nodes(
     state: tauri::State<'_, DbState>,
     node_type: String,

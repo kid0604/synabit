@@ -109,7 +109,13 @@ const financeAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
 
 // ─── Floating Note (opened in new window) ─────────────────
-const isFloatingView = ref(false);
+const isSidebarCollapsed = ref(false);
+
+watch(activeTool, (newTool) => {
+    if (newTool === 'task') {
+        taskAppRef.value?.refresh?.();
+    }
+});
 const floatingNoteId = ref<string | null>(null);
 
 // ─── GDrive (needs NoteApp's scanVault + tabContents for sync pulling) ─────
@@ -553,7 +559,7 @@ onUnmounted(() => {
             <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
         </div>
         <div v-show="activeTool === 'task'" class="flex-1 h-full overflow-hidden">
-            <Tasks ref="taskAppRef" :vaultPath="vaultPath" />
+            <Tasks ref="taskAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
         </div>
         <div v-show="activeTool === 'calendar'" class="flex-1 h-full overflow-hidden">
             <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />

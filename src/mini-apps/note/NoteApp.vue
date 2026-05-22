@@ -93,7 +93,30 @@ const loadNoteFile = async (id: string) => {
     }
     
     if (tabContents.value[id] === undefined) {
-        const note = notes.value.find(n => n.id === id);
+        let note = notes.value.find(n => n.id === id);
+        if (!note) {
+            try {
+                const fetchedNode = await invoke<any>('get_node', { id });
+                if (fetchedNode) {
+                    note = {
+                        id: fetchedNode.id,
+                        title: fetchedNode.title,
+                        content: fetchedNode.content,
+                        date: fetchedNode.created_at,
+                        path: fetchedNode.id,
+                        tags: Array.isArray(fetchedNode.properties?.tags) ? fetchedNode.properties.tags : [],
+                        pinned: !!fetchedNode.properties?.pinned,
+                        full_width: !!fetchedNode.properties?.full_width,
+                        linked_projects: Array.isArray(fetchedNode.properties?.linked_projects) ? fetchedNode.properties.linked_projects : [],
+                        summary: fetchedNode.content.substring(0, 150).trim()
+                    };
+                    notes.value.unshift(note);
+                }
+            } catch (e) {
+                console.error("Failed to fetch missing note", e);
+            }
+        }
+        
         if (note) {
             tabContents.value[id] = note.content;
         }
@@ -355,7 +378,7 @@ const editorFullWidth = computed({
                 relPath: note.id, 
                 title: note.title,
                 nodeType: 'note',
-                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
                 content: currentContent.value 
             });
         }
@@ -373,7 +396,7 @@ const togglePin = async (id: string) => {
             relPath: note.id, 
             title: note.title,
             nodeType: 'note',
-            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
             content: body 
         });
         scanVault();
@@ -466,7 +489,7 @@ const confirmRename = async () => {
             relPath: newPath, 
             title: newName,
             nodeType: 'note',
-            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
             content: contentBody 
         });
         
@@ -540,7 +563,7 @@ const renameTopTitle = async (e: Event) => {
             relPath: newPath, 
             title: newTitle,
             nodeType: 'note',
-            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
             content: contentBody 
         });
         scanVault();
@@ -566,7 +589,7 @@ const addTag = async (e: KeyboardEvent) => {
                relPath: note.id, 
                title: note.title,
                nodeType: 'note',
-               properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+               properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
                content: currentContent.value 
            });
            scanVault();
@@ -583,7 +606,7 @@ const removeTag = async (tagToRemove: string) => {
            relPath: note.id, 
            title: note.title,
            nodeType: 'note',
-           properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+           properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
            content: currentContent.value 
        });
        scanVault();
@@ -654,6 +677,7 @@ async function scanVault() {
                tags: tags,
                pinned: !!n.properties?.pinned,
                full_width: !!n.properties?.full_width,
+               linked_projects: Array.isArray(n.properties?.linked_projects) ? n.properties.linked_projects : [],
                summary: n.content.substring(0, 150).trim()
            };
        });
@@ -730,7 +754,7 @@ const saveNoteForTab = (rawTabId: string) => {
                 relPath: note.id, 
                 title: note.title,
                 nodeType: 'note',
-                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags },
+                properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
                 content: fullRaw 
             });
             note.summary = content.substring(0, 150).trim();
@@ -779,7 +803,21 @@ watch(currentNoteId, async (newId) => {
         await loadNoteFile(newId);
         try {
             const note = notes.value.find(n => n.id === newId);
-            currentBacklinks.value = await invoke('get_linked_nodes', { targetTitle: note?.title || '', targetId: newId });
+            const backlinks = await invoke<NodeMetadata[]>('get_linked_nodes', { targetTitle: note?.title || '', targetId: newId });
+            
+            let outgoingProjects: NodeMetadata[] = [];
+            const linkedProjects: string[] = (note as any)?.linked_projects || [];
+            for (const link of linkedProjects) {
+               const m = /synabit:\/\/project\/([^\s\)"']+)/.exec(link);
+               if (m && m[1]) {
+                   try {
+                       const proj = await invoke<any>('get_node', { id: decodeURIComponent(m[1]) });
+                       if (proj) outgoingProjects.push(proj);
+                   } catch(e) {}
+               }
+            }
+            
+            currentBacklinks.value = [...backlinks, ...outgoingProjects];
         } catch (e) { logger.error(String(e)); currentBacklinks.value = []; }
     } else { currentBacklinks.value = []; }
 });
@@ -1390,7 +1428,7 @@ onMounted(async () => {
       </div>
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
           <div v-if="currentBacklinks.length === 0" class="text-[13px] text-gray-400 text-center py-4">No linked mentions.</div>
-          <div v-for="bl in currentBacklinks" :key="bl.id" @click="handleOpenInternalNote(bl.id)" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group">
+          <div v-for="bl in currentBacklinks" :key="bl.id" @click="handleOpenInternalNote({ id: bl.id, type: bl.node_type })" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group">
             <h5 class="flex items-center gap-2 pr-2">
                 <Calendar v-if="bl.node_type === 'event'" class="w-3.5 h-3.5 text-rose-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
                 <CheckSquare v-else-if="bl.node_type === 'task'" class="w-3.5 h-3.5 text-emerald-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>

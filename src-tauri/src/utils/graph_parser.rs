@@ -51,7 +51,7 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
 
     // 3. Tiptap Internal Links ([Title](synabit://.../path))
     let md_link_re =
-        Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event)/([^)]+)\)")
+        Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event|project)/([^)]+)\)")
             .unwrap();
     for cap in md_link_re.captures_iter(text) {
         if let Some(m) = cap.get(2) {
@@ -323,7 +323,7 @@ pub fn rename_links_in_text(
 
     // 2. Replace Tiptap internal links
     let md_link_re =
-        Regex::new(r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event)/)([^)]+)\)")
+        Regex::new(r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event|project)/)([^)]+)\)")
             .unwrap();
     let text_with_md_links =
         md_link_re.replace_all(&text_with_wiki_links, |caps: &regex::Captures| {

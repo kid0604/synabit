@@ -11,6 +11,7 @@ import { logger } from '../../utils/logger';
 import TransactionModal from '../finance/TransactionModal.vue';
 import type { Transaction, FinanceAccount } from '../finance/types';
 import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS } from '../finance/types';
+import ResourceLinkModal from './ResourceLinkModal.vue';
 
 const { taskArchiveDays } = useSettings();
 
@@ -58,6 +59,10 @@ const accounts = ref<FinanceAccount[]>([...DEFAULT_ACCOUNTS]);
 const activeCategory = ref<string>('today');
 const isMobileSidebarOpen = ref(false);
 const showProjectEditModal = ref(false);
+
+const showEmbedPicker = ref(false);
+const allNotesForPicker = ref<any[]>([]);
+const isLinkingResource = ref(false);
 
 const backendSearchIds = ref<string[] | null>(null);
 let taskSearchTimeout: ReturnType<typeof setTimeout>;
@@ -325,12 +330,7 @@ watch(activeProject, (proj, oldProj) => {
     clearTimeout(fetchNotesTimeout);
     if (proj) {
         fetchNotesTimeout = setTimeout(async () => {
-            try {
-                const edges = await invoke<any[]>('get_linked_nodes', { targetTitle: proj.title, targetId: proj.id });
-                linkedNotes.value = edges.filter((n: any) => n.node_type === 'note');
-            } catch(e) {
-                console.error('Failed to get linked notes', e);
-            }
+            await loadProjectLinkedNotes();
             
             // Fetch finance transactions for dynamic spent calculation
             recalculateProjectSpent(proj);
@@ -340,6 +340,16 @@ watch(activeProject, (proj, oldProj) => {
         calculatedProjectSpent.value = 0;
     }
 }, { immediate: true });
+
+const loadProjectLinkedNotes = async () => {
+    if (!activeProject.value) return;
+    try {
+        const edges = await invoke<any[]>('get_linked_nodes', { targetTitle: activeProject.value.title, targetId: activeProject.value.id });
+        linkedNotes.value = edges.filter((n: any) => n.node_type === 'note');
+    } catch(e) {
+        console.error('Failed to get linked notes', e);
+    }
+};
 
 const recalculateProjectSpent = async (proj: any) => {
     try {
@@ -651,7 +661,14 @@ const openEditById = async (id: string) => {
     }
 };
 
-defineExpose({ openEditById });
+const refresh = async () => {
+    await loadTasks();
+    if (activeProject.value) {
+        await loadProjectLinkedNotes();
+    }
+};
+
+defineExpose({ openEditById, refresh });
 
 const openCreateModal = () => {
     editingTask.value = {
@@ -1007,6 +1024,99 @@ const handleProjectSave = async (updatedProject: any) => {
         }
     } catch (e) {
         logger.error("Failed to save project", e);
+    }
+};
+
+const openLinkNotePicker = async () => {
+    try {
+        isLinkingResource.value = true;
+        const result = await invoke<any[]>('get_nodes', { nodeType: 'note' });
+        // Filter out notes that are already linked to this project to avoid duplication
+        const linkedNoteIds = new Set(linkedNotes.value.map(n => n.id));
+        allNotesForPicker.value = result.filter(n => !linkedNoteIds.has(n.id));
+        showEmbedPicker.value = true;
+    } catch(e) {
+        logger.error("Failed to load notes for picker", e);
+    } finally {
+        isLinkingResource.value = false;
+    }
+};
+
+const createNewResourceNote = async () => {
+    if (!props.vaultPath || !activeProject.value) return;
+    try {
+        isLinkingResource.value = true;
+        // Create new node file
+        const newPath = await invoke<string>('create_node_file', { 
+            vaultPath: props.vaultPath, 
+            directory: 'Notes', 
+            nodeType: 'note' 
+        });
+        
+        // Read it back to get default properties
+        const node = await invoke<any>('get_node', { id: newPath });
+        if (node) {
+            const propsObj = node.properties || {};
+            const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
+            const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+            
+            if (!projectsArray.includes(projectLink)) {
+                projectsArray.push(projectLink);
+                propsObj.linked_projects = projectsArray;
+                
+                await invoke('write_node_file', {
+                    vaultPath: props.vaultPath,
+                    relPath: node.id,
+                    title: node.title,
+                    nodeType: 'note',
+                    properties: propsObj,
+                    content: node.content
+                });
+            }
+        }
+        
+        // Reload linked notes
+        await loadProjectLinkedNotes();
+        emit('open-node', newPath, 'note'); // Optionally open it immediately
+    } catch(e) {
+        logger.error("Failed to create resource note", e);
+    } finally {
+        isLinkingResource.value = false;
+    }
+};
+
+const handleEmbedResource = async (node: any) => {
+    showEmbedPicker.value = false;
+    if (!activeProject.value) return;
+    try {
+        isLinkingResource.value = true;
+        // Since we already have the node from the modal, we could use it directly
+        // but we still call get_node to get fresh properties and content
+        const fullNode = await invoke<any>('get_node', { id: node.id });
+        if (fullNode) {
+            const propsObj = fullNode.properties || {};
+            const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
+            const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+            
+            if (!projectsArray.includes(projectLink)) {
+                projectsArray.push(projectLink);
+                propsObj.linked_projects = projectsArray;
+                
+                await invoke('write_node_file', {
+                    vaultPath: props.vaultPath,
+                    relPath: node.id,
+                    title: fullNode.title,
+                    nodeType: fullNode.node_type || 'note',
+                    properties: propsObj,
+                    content: fullNode.content
+                });
+            }
+        }
+        await loadProjectLinkedNotes();
+    } catch (e) {
+        logger.error("Failed to link resource", e);
+    } finally {
+        isLinkingResource.value = false;
     }
 };
 
@@ -1415,6 +1525,17 @@ watch(() => props.vaultPath, () => {
 
               <!-- RESOURCES TAB -->
               <div v-if="activeProjectTab === 'resources'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div class="flex justify-end gap-2 mb-4">
+                      <button @click="createNewResourceNote" :disabled="isLinkingResource" class="px-3 py-1.5 flex items-center gap-1.5 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors text-sm font-medium">
+                          <Plus class="w-4 h-4" />
+                          New Note
+                      </button>
+                      <button @click="openLinkNotePicker" :disabled="isLinkingResource" class="px-3 py-1.5 flex items-center gap-1.5 rounded-lg bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium">
+                          <Link class="w-4 h-4" />
+                          Link Existing Note
+                      </button>
+                  </div>
+
                   <div v-if="linkedNotes.length > 0">
                       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                           <div v-for="note in linkedNotes" :key="note.id" @click="emit('open-node', note.id, 'note')" class="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-4 hover:border-blue-300 dark:hover:border-blue-700 shadow-sm hover:shadow-md cursor-pointer transition-all group">
@@ -1425,9 +1546,13 @@ watch(() => props.vaultPath, () => {
                           </div>
                       </div>
                   </div>
-                  <div v-else class="flex flex-col items-center justify-center h-48 opacity-50 bg-white/50 dark:bg-black/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
+                  <div v-else class="flex flex-col items-center justify-center h-48 opacity-80 bg-white/50 dark:bg-black/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
                       <FileText class="w-12 h-12 mb-3 text-gray-400"/>
-                      <p class="text-sm font-medium">No resources attached yet.</p>
+                      <p class="text-sm font-medium text-gray-500 mb-4">No resources attached yet.</p>
+                      <div class="flex gap-3">
+                          <button @click="createNewResourceNote" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">Create Note</button>
+                          <button @click="openLinkNotePicker" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Link Existing</button>
+                      </div>
                   </div>
               </div>
           </div>
@@ -1723,6 +1848,13 @@ watch(() => props.vaultPath, () => {
       :default-project-id="activeProject?.id"
       @close="showTxModal = false" 
       @save="saveFinanceTransaction" 
+  />
+
+  <ResourceLinkModal
+      :show="showEmbedPicker"
+      :available-nodes="allNotesForPicker"
+      @close="showEmbedPicker = false"
+      @select="handleEmbedResource"
   />
 
 </div>
