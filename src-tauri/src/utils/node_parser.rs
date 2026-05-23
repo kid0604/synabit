@@ -63,6 +63,8 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
             }
             if let Some(ty) = json_val.get("type").and_then(|v| v.as_str()) {
                 node_type = ty.to_string();
+            } else if file_path.file_name().unwrap_or_default().to_string_lossy().ends_with(".whiteboard.json") {
+                node_type = "whiteboard".to_string();
             } else {
                 node_type = ext.to_string();
             }

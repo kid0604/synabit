@@ -459,6 +459,52 @@ pub fn create_block_reference(
 }
 
 #[tauri::command]
+pub fn update_node_properties(
+    state: tauri::State<'_, DbState>,
+    id: String,
+    properties: serde_json::Value,
+) -> AppResult<()> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut node = db
+        .get_node(&id)?
+        .ok_or_else(|| crate::error::AppError::General("Node not found".to_string()))?;
+    
+    node.properties = properties.clone();
+    db.upsert_node(&node)?;
+    
+    let resolver = build_resolver(&db);
+    sync_node_edges(&db, &node, &resolver);
+    
+    let tags = node
+        .properties
+        .get("tags")
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<&str>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let status = node.properties.get("status").and_then(|s| s.as_str());
+    let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
+
+    db.upsert_search_entry(
+        &node.id,
+        &node.node_type,
+        &node.title,
+        &tags,
+        &node.content,
+        &props_str,
+        status,
+        &node.updated_at,
+        &node.id,
+    );
+    
+    Ok(())
+}
+
+#[tauri::command]
 pub fn write_node_file(
     state: tauri::State<'_, DbState>,
     vault_path: String,

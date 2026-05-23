@@ -96,6 +96,7 @@ pub fn run() {
             nodes::get_node_block,
             nodes::get_node_headings,
             nodes::create_block_reference,
+            nodes::update_node_properties,
             nodes::write_node_file,
             nodes::delete_node_file,
             nodes::archive_done_nodes,

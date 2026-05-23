@@ -1188,18 +1188,21 @@ onUnmounted(() => {
   window.removeEventListener('mouseup', onMouseUp);
 });
 
-// ─── Cross-app navigation ────────────────────────────────
 async function openBoardById(boardId: string, _skipNavPush = false) {
   if (!_skipNavPush && store.currentBoardId.value && store.currentBoardId.value !== boardId && !skipNavPush) {
     pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
   }
-  if (!store.boards.value.length) {
+  if (!store.boards.value.length || !store.boards.value.find((b: any) => b.id === boardId)) {
     await store.loadBoards();
   }
   await store.loadBoardData(boardId);
 }
 
-defineExpose({ openBoardById, currentBoardId: store.currentBoardId });
+async function refreshBoards() {
+    await store.loadBoards();
+}
+
+defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoards });
 </script>
 
 <template>

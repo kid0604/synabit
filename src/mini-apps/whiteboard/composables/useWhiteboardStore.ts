@@ -88,7 +88,11 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
         vaultPath: vaultPath.value,
         path: board.path,
       });
-      currentBoardData.value = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed.nodes) parsed.nodes = [];
+      if (!parsed.edges) parsed.edges = [];
+      if (!parsed.viewport) parsed.viewport = { x: 0, y: 0, zoom: 1 };
+      currentBoardData.value = parsed;
       currentBoardId.value = boardId;
       undoStack.value = [];
       redoStack.value = [];
@@ -133,13 +137,13 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       await invoke('update_whiteboard', {
         vaultPath: vaultPath.value,
         path: board.path,
-        title: currentBoardData.value.title,
-        tags: currentBoardData.value.tags,
+        title: currentBoardData.value.title || 'Untitled',
+        tags: currentBoardData.value.tags || [],
         content,
       });
       // Update local meta
-      board.title = currentBoardData.value.title;
-      board.tags = currentBoardData.value.tags;
+      board.title = currentBoardData.value.title || 'Untitled';
+      board.tags = currentBoardData.value.tags || [];
       // Notify embedded previews in notes to reload
       tauriEmit('whiteboard-updated', { path: board.path, id: board.id });
     } catch (err) {

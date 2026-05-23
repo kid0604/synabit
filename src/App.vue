@@ -95,6 +95,12 @@ watch(activeTool, async (newTool, oldTool) => {
          }
      }
   }
+
+  if (newTool === 'whiteboard' && vaultPath.value) {
+     if (whiteboardAppRef.value && typeof whiteboardAppRef.value.refreshBoards === 'function') {
+         whiteboardAppRef.value.refreshBoards();
+     }
+  }
 });
 
 // ─── Mini App Refs for cross-app navigation ─────────────────
@@ -282,7 +288,11 @@ const handleEditFromNexus = async (id: string, type: string) => {
         activeTool.value = 'finance';
         callWhenReady(() => financeAppRef.value, 'openMonthById', id);
     }
-    else if (type === 'pdf' || type === 'pdf_highlight') {
+    else if (type === 'project') {
+        activeTool.value = 'task';
+        callWhenReady(() => taskAppRef.value, 'openProjectById', id);
+    }
+    else if (type === 'pdf' || type === 'pdf_highlight' || type === 'file') {
         activeTool.value = 'file';
         callWhenReady(() => filesAppRef.value, 'openFileById', id);
     }

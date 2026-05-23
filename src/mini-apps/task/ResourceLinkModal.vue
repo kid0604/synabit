@@ -16,21 +16,23 @@
         </div>
 
         <!-- Search & Filter -->
-        <div class="px-4 py-2.5 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
-          <div class="relative flex-1">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800 flex flex-col gap-3">
+          <div class="relative w-full">
             <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               ref="searchInput"
               v-model="searchQuery"
               placeholder="Search resources..."
-              class="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 transition-all"
+              class="w-full pl-9 pr-3 py-2.5 text-sm bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 transition-all"
               @keydown.escape="$emit('close')"
             />
           </div>
-          <!-- Type Filter Placeholder for future (Files, Events) -->
-          <div class="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-             <button class="px-3 py-1 text-xs font-medium rounded-md bg-white shadow-sm dark:bg-[#333] text-gray-800 dark:text-gray-200">Notes</button>
-             <!-- <button class="px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700">Files</button> -->
+          <!-- Type Filter -->
+          <div class="flex items-center gap-2 overflow-x-auto hide-scrollbar">
+             <button @click="activeTab = 'all'" :class="activeTab === 'all' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">All</button>
+             <button @click="activeTab = 'note'" :class="activeTab === 'note' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Notes</button>
+             <button @click="activeTab = 'whiteboard'" :class="activeTab === 'whiteboard' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Whiteboards</button>
+             <button @click="activeTab = 'file'" :class="activeTab === 'file' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Files</button>
           </div>
         </div>
 
@@ -45,15 +47,23 @@
             @click="$emit('select', node)"
             class="w-full flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left border-b border-gray-50 dark:border-gray-800/50 last:border-b-0"
           >
-            <div class="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center flex-shrink-0">
-              <FileText v-if="node.node_type === 'note'" class="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              <!-- Other icons for files, events can be added here later -->
-              <File v-else class="w-4 h-4 text-gray-500" />
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                 :class="[
+                   node.node_type === 'whiteboard' ? 'bg-purple-50 dark:bg-purple-900/20' : 
+                   node.node_type === 'file' ? 'bg-emerald-50 dark:bg-emerald-900/20' : 
+                   'bg-blue-50 dark:bg-blue-900/20'
+                 ]">
+              <Palette v-if="node.node_type === 'whiteboard'" class="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <File v-else-if="node.node_type === 'file'" class="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <FileText v-else class="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </div>
             <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ node.title }}</div>
-              <div class="text-xs text-gray-400 truncate mt-0.5" v-if="node.node_type === 'note'">
-                  {{ node.content?.substring(0, 60) || 'Empty note' }}
+              <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ node.title || (node.node_type === 'whiteboard' ? 'Untitled Whiteboard' : node.node_type === 'file' ? 'Unnamed File' : 'Untitled Note') }}</div>
+              <div class="text-xs text-gray-400 truncate mt-0.5" v-if="node.node_type === 'file'">
+                  {{ node.id }}
+              </div>
+              <div class="text-xs text-gray-400 truncate mt-0.5" v-else>
+                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 60) : 'Empty ' + (node.node_type === 'whiteboard' ? 'whiteboard' : 'note') }}
               </div>
             </div>
           </button>
@@ -65,7 +75,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
-import { Link as LinkIcon, Search, X, FileText, File } from 'lucide-vue-next';
+import { Link as LinkIcon, Search, X, FileText, File, Palette } from 'lucide-vue-next';
 
 interface NodeItem {
   id: string;
@@ -86,12 +96,20 @@ const emit = defineEmits<{
 
 const searchInput = ref<HTMLInputElement | null>(null);
 const searchQuery = ref('');
+const activeTab = ref('all');
 
 const filteredNodes = computed(() => {
-  if (!searchQuery.value) return props.availableNodes;
+  let list = props.availableNodes;
+  
+  if (activeTab.value !== 'all') {
+    list = list.filter(n => (n.node_type || 'note') === activeTab.value);
+  }
+  
+  if (!searchQuery.value) return list;
+  
   const q = searchQuery.value.toLowerCase();
-  return props.availableNodes.filter(n => 
-    n.title.toLowerCase().includes(q) || 
+  return list.filter(n => 
+    n.title?.toLowerCase().includes(q) || 
     (n.content && n.content.toLowerCase().includes(q))
   );
 });
@@ -99,6 +117,7 @@ const filteredNodes = computed(() => {
 watch(() => props.show, (newVal) => {
   if (newVal) {
     searchQuery.value = '';
+    activeTab.value = 'all';
     nextTick(() => {
       searchInput.value?.focus();
     });
@@ -107,6 +126,13 @@ watch(() => props.show, (newVal) => {
 </script>
 
 <style scoped>
+.hide-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+.hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
 .animate-in {
   animation: fadeIn 0.2s ease-out;
 }

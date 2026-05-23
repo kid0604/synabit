@@ -2,7 +2,7 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import ProjectEditModal from './ProjectEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -63,6 +63,8 @@ const showProjectEditModal = ref(false);
 const showEmbedPicker = ref(false);
 const allNotesForPicker = ref<any[]>([]);
 const isLinkingResource = ref(false);
+const showAddResourceMenu = ref(false);
+const showEmptyAddMenu = ref(false);
 
 const backendSearchIds = ref<string[] | null>(null);
 let taskSearchTimeout: ReturnType<typeof setTimeout>;
@@ -320,7 +322,7 @@ const displayCustomFields = computed(() => {
     return fields;
 });
 
-const linkedNotes = ref<any[]>([]);
+const linkedResources = ref<any[]>([]);
 let fetchNotesTimeout: any = null;
 
 watch(activeProject, (proj, oldProj) => {
@@ -330,24 +332,30 @@ watch(activeProject, (proj, oldProj) => {
     clearTimeout(fetchNotesTimeout);
     if (proj) {
         fetchNotesTimeout = setTimeout(async () => {
-            await loadProjectLinkedNotes();
+            await loadProjectResources();
             
             // Fetch finance transactions for dynamic spent calculation
             recalculateProjectSpent(proj);
         }, 100);
     } else {
-        linkedNotes.value = [];
+        linkedResources.value = [];
         calculatedProjectSpent.value = 0;
     }
 }, { immediate: true });
 
-const loadProjectLinkedNotes = async () => {
+const loadProjectResources = async () => {
     if (!activeProject.value) return;
     try {
         const edges = await invoke<any[]>('get_linked_nodes', { targetTitle: activeProject.value.title, targetId: activeProject.value.id });
-        linkedNotes.value = edges.filter((n: any) => n.node_type === 'note');
+        linkedResources.value = edges.filter((n: any) => {
+            if (n.node_type === 'json' && n.id.endsWith('.whiteboard.json')) {
+                n.node_type = 'whiteboard';
+                return true;
+            }
+            return ['note', 'whiteboard', 'file'].includes(n.node_type);
+        });
     } catch(e) {
-        console.error('Failed to get linked notes', e);
+        console.error('Failed to get linked resources', e);
     }
 };
 
@@ -664,11 +672,25 @@ const openEditById = async (id: string) => {
 const refresh = async () => {
     await loadTasks();
     if (activeProject.value) {
-        await loadProjectLinkedNotes();
+        await loadProjectResources();
     }
 };
 
-defineExpose({ openEditById, refresh });
+const openProjectById = (id: string) => {
+    logger.info(`TaskApp: openProjectById called with id: ${id}`);
+    const normalizedId = id.replace(/\\/g, '/');
+    const proj = projects.value.find(p => p.id.replace(/\\/g, '/') === normalizedId) 
+              || projects.value.find(p => p.id.replace(/\\/g, '/').endsWith(normalizedId));
+              
+    if (proj) {
+        activeCategory.value = 'project:' + proj.id;
+    } else {
+        // If not found in loaded projects, fallback to the raw id
+        activeCategory.value = 'project:' + id;
+    }
+};
+
+defineExpose({ openEditById, openProjectById, refresh });
 
 const openCreateModal = () => {
     editingTask.value = {
@@ -1027,16 +1049,20 @@ const handleProjectSave = async (updatedProject: any) => {
     }
 };
 
-const openLinkNotePicker = async () => {
+const openLinkResourcePicker = async () => {
     try {
         isLinkingResource.value = true;
-        const result = await invoke<any[]>('get_nodes', { nodeType: 'note' });
-        // Filter out notes that are already linked to this project to avoid duplication
-        const linkedNoteIds = new Set(linkedNotes.value.map(n => n.id));
-        allNotesForPicker.value = result.filter(n => !linkedNoteIds.has(n.id));
+        const resultNotes = await invoke<any[]>('get_nodes', { nodeType: 'note' });
+        const resultWhiteboards = await invoke<any[]>('scan_whiteboards', { vaultPath: props.vaultPath });
+        resultWhiteboards.forEach(w => w.node_type = 'whiteboard');
+        const resultFiles = await invoke<any[]>('get_nodes', { nodeType: 'file' });
+        const allResources = [...resultNotes, ...resultWhiteboards, ...resultFiles];
+        
+        const linkedResourceIds = new Set(linkedResources.value.map(n => n.id));
+        allNotesForPicker.value = allResources.filter(n => !linkedResourceIds.has(n.id));
         showEmbedPicker.value = true;
     } catch(e) {
-        logger.error("Failed to load notes for picker", e);
+        logger.error("Failed to load resources for picker", e);
     } finally {
         isLinkingResource.value = false;
     }
@@ -1075,8 +1101,8 @@ const createNewResourceNote = async () => {
             }
         }
         
-        // Reload linked notes
-        await loadProjectLinkedNotes();
+        // Reload linked resources
+        await loadProjectResources();
         emit('open-node', newPath, 'note'); // Optionally open it immediately
     } catch(e) {
         logger.error("Failed to create resource note", e);
@@ -1085,34 +1111,197 @@ const createNewResourceNote = async () => {
     }
 };
 
+const createNewResourceWhiteboard = async () => {
+    if (!props.vaultPath || !activeProject.value) return;
+    try {
+        isLinkingResource.value = true;
+        
+        const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+        const title = 'New Whiteboard';
+        const data = {
+            title: title,
+            type: 'whiteboard',
+            metadata: {
+                linked_projects: [projectLink]
+            },
+            tags: [],
+            created_at: new Date().toISOString(),
+            viewport: { x: 0, y: 0, zoom: 1 },
+            nodes: [],
+            edges: [],
+        };
+        const content = JSON.stringify(data, null, 2);
+        
+        const meta = await invoke<any>('create_whiteboard', {
+            vaultPath: props.vaultPath,
+            title: title,
+            tags: [],
+            content: content
+        });
+        
+        // Scan the new file so that its graph edges (links to project) are indexed
+        await invoke('scan_specific_nodes', {
+            vaultPath: props.vaultPath,
+            paths: [meta.path]
+        });
+        
+        // Reload linked resources
+        await loadProjectResources();
+        emit('open-node', meta.path, 'whiteboard'); // Optionally open it immediately
+    } catch(e) {
+        logger.error("Failed to create resource whiteboard", e);
+    } finally {
+        isLinkingResource.value = false;
+    }
+};
+
+const unlinkResource = async (node: any) => {
+    if (!activeProject.value) return;
+    
+    const confirmed = await ask(`"${node.title || 'This resource'}" will no longer be linked to this project.`, {
+        title: 'Unlink resource?',
+        kind: 'warning',
+        okLabel: 'Unlink',
+        cancelLabel: 'Cancel'
+    });
+    if (!confirmed) return;
+
+    try {
+        const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+        
+        if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
+            const rawContent = await invoke<string>('read_whiteboard', {
+                vaultPath: props.vaultPath,
+                path: node.id
+            });
+            const data = JSON.parse(rawContent);
+            if (data.metadata?.linked_projects && Array.isArray(data.metadata.linked_projects)) {
+                data.metadata.linked_projects = data.metadata.linked_projects.filter((l: string) => l !== projectLink);
+                
+                await invoke('update_whiteboard', {
+                    vaultPath: props.vaultPath,
+                    path: node.id,
+                    title: data.title,
+                    tags: data.tags || [],
+                    content: JSON.stringify(data, null, 2)
+                });
+                
+                await invoke('scan_specific_nodes', {
+                    vaultPath: props.vaultPath,
+                    paths: [node.id]
+                });
+            }
+        } else if (node.node_type === 'file') {
+            const fetchedNode = await invoke<any>('get_node', { id: node.id });
+            if (fetchedNode) {
+                const propsObj = fetchedNode.properties || {};
+                if (Array.isArray(propsObj.linked_projects)) {
+                    propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
+                    await invoke('update_node_properties', {
+                        id: fetchedNode.id,
+                        properties: propsObj
+                    });
+                }
+            }
+        } else {
+            // For notes, markdown-based nodes, and corrupted whiteboard .md files
+            const fetchedNode = await invoke<any>('get_node', { id: node.id });
+            if (fetchedNode) {
+                const propsObj = fetchedNode.properties || {};
+                if (Array.isArray(propsObj.linked_projects)) {
+                    propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
+                    
+                    await invoke('write_node_file', {
+                        vaultPath: props.vaultPath,
+                        relPath: fetchedNode.id,
+                        title: fetchedNode.title,
+                        nodeType: fetchedNode.node_type,
+                        properties: propsObj,
+                        content: fetchedNode.content
+                    });
+                }
+            }
+        }
+        
+        await loadProjectResources();
+    } catch (e) {
+        logger.error('Failed to unlink resource', e);
+    }
+};
+
 const handleEmbedResource = async (node: any) => {
     showEmbedPicker.value = false;
     if (!activeProject.value) return;
     try {
         isLinkingResource.value = true;
-        // Since we already have the node from the modal, we could use it directly
-        // but we still call get_node to get fresh properties and content
-        const fullNode = await invoke<any>('get_node', { id: node.id });
-        if (fullNode) {
-            const propsObj = fullNode.properties || {};
-            const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
-            const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+        const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+        
+        if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
+            const rawContent = await invoke<string>('read_whiteboard', {
+                vaultPath: props.vaultPath,
+                path: node.id
+            });
+            const data = JSON.parse(rawContent);
+            if (!data.metadata) data.metadata = {};
             
+            const projectsArray = Array.isArray(data.metadata.linked_projects) ? data.metadata.linked_projects : [];
             if (!projectsArray.includes(projectLink)) {
                 projectsArray.push(projectLink);
-                propsObj.linked_projects = projectsArray;
+                data.metadata.linked_projects = projectsArray;
                 
-                await invoke('write_node_file', {
+                await invoke('update_whiteboard', {
                     vaultPath: props.vaultPath,
-                    relPath: node.id,
-                    title: fullNode.title,
-                    nodeType: fullNode.node_type || 'note',
-                    properties: propsObj,
-                    content: fullNode.content
+                    path: node.id,
+                    title: data.title,
+                    tags: data.tags || [],
+                    content: JSON.stringify(data, null, 2)
+                });
+                
+                await invoke('scan_specific_nodes', {
+                    vaultPath: props.vaultPath,
+                    paths: [node.id]
                 });
             }
+        } else if (node.node_type === 'file') {
+            const fullNode = await invoke<any>('get_node', { id: node.id });
+            if (fullNode) {
+                const propsObj = fullNode.properties || {};
+                const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
+                
+                if (!projectsArray.includes(projectLink)) {
+                    projectsArray.push(projectLink);
+                    propsObj.linked_projects = projectsArray;
+                    
+                    await invoke('update_node_properties', {
+                        id: fullNode.id,
+                        properties: propsObj
+                    });
+                }
+            }
+        } else {
+            // Since we already have the node from the modal, we could use it directly
+            // but we still call get_node to get fresh properties and content
+            const fullNode = await invoke<any>('get_node', { id: node.id });
+            if (fullNode) {
+                const propsObj = fullNode.properties || {};
+                const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
+                
+                if (!projectsArray.includes(projectLink)) {
+                    projectsArray.push(projectLink);
+                    propsObj.linked_projects = projectsArray;
+                    
+                    await invoke('write_node_file', {
+                        vaultPath: props.vaultPath,
+                        relPath: node.id,
+                        title: fullNode.title,
+                        nodeType: fullNode.node_type || 'note',
+                        properties: propsObj,
+                        content: fullNode.content
+                    });
+                }
+            }
         }
-        await loadProjectLinkedNotes();
+        await loadProjectResources();
     } catch (e) {
         logger.error("Failed to link resource", e);
     } finally {
@@ -1525,34 +1714,99 @@ watch(() => props.vaultPath, () => {
 
               <!-- RESOURCES TAB -->
               <div v-if="activeProjectTab === 'resources'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  <div class="flex justify-end gap-2 mb-4">
-                      <button @click="createNewResourceNote" :disabled="isLinkingResource" class="px-3 py-1.5 flex items-center gap-1.5 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors text-sm font-medium">
+                  <div class="flex justify-end gap-2 mb-4 relative">
+                      <button @click="showAddResourceMenu = !showAddResourceMenu" :disabled="isLinkingResource" class="px-4 py-2 flex items-center gap-2 rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors text-sm font-medium cursor-pointer">
                           <Plus class="w-4 h-4" />
-                          New Note
+                          Add Resource
+                          <ChevronDown class="w-4 h-4 ml-1" />
                       </button>
-                      <button @click="openLinkNotePicker" :disabled="isLinkingResource" class="px-3 py-1.5 flex items-center gap-1.5 rounded-lg bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium">
-                          <Link class="w-4 h-4" />
-                          Link Existing Note
-                      </button>
+                      
+                      <!-- Dropdown Menu -->
+                      <div v-if="showAddResourceMenu" class="absolute top-full right-0 mt-2 w-56 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-lg border border-gray-100 dark:border-[#2c2c2c] overflow-hidden z-20">
+                          <div class="p-1">
+                              <button @click="createNewResourceNote(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                  <FileText class="w-4 h-4 text-blue-500" />
+                                  New Note
+                              </button>
+                              <button @click="createNewResourceWhiteboard(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                  <Palette class="w-4 h-4 text-purple-500" />
+                                  New Whiteboard
+                              </button>
+                              <div class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1"></div>
+                              <button @click="openLinkResourcePicker(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                  <Link class="w-4 h-4 text-gray-400" />
+                                  Link Existing Resource
+                              </button>
+                          </div>
+                      </div>
                   </div>
 
-                  <div v-if="linkedNotes.length > 0">
+                  <!-- Close dropdown when clicking outside -->
+                  <div v-if="showAddResourceMenu" @click="showAddResourceMenu = false" class="fixed inset-0 z-10"></div>
+
+                  <div v-if="linkedResources.length > 0">
                       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                          <div v-for="note in linkedNotes" :key="note.id" @click="emit('open-node', note.id, 'note')" class="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-4 hover:border-blue-300 dark:hover:border-blue-700 shadow-sm hover:shadow-md cursor-pointer transition-all group">
-                              <div class="font-medium text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate mb-2 flex items-center">
-                                  <FileText class="w-4 h-4 mr-2 text-indigo-400" /> {{ note.title || 'Untitled Note' }}
+                          <div v-for="node in linkedResources" :key="node.id" @click="emit('open-node', node.id, node.node_type || 'note')" 
+                               class="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#2c2c2c] rounded-xl p-4 shadow-sm hover:shadow-md cursor-pointer transition-all group"
+                               :class="[
+                                   node.node_type === 'whiteboard' ? 'hover:border-purple-300 dark:hover:border-purple-700' :
+                                   node.node_type === 'file' ? 'hover:border-emerald-300 dark:hover:border-emerald-700' :
+                                   'hover:border-blue-300 dark:hover:border-blue-700'
+                               ]">
+                               <div class="font-medium text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] mb-2 flex items-center justify-between">
+                                  <div class="flex items-center min-w-0 pr-2">
+                                      <Palette v-if="node.node_type === 'whiteboard'" class="w-4 h-4 mr-2 text-purple-400 shrink-0" />
+                                      <File v-else-if="node.node_type === 'file'" class="w-4 h-4 mr-2 text-emerald-400 shrink-0" />
+                                      <FileText v-else class="w-4 h-4 mr-2 text-blue-400 shrink-0" />
+                                      <span class="truncate">{{ node.title || (node.node_type === 'whiteboard' ? 'Untitled Whiteboard' : node.node_type === 'file' ? 'Unnamed File' : 'Untitled Note') }}</span>
+                                  </div>
+                                  <button @click.stop="unlinkResource(node)" title="Unlink from Project" class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-red-500 transition-all shrink-0">
+                                      <Unlink class="w-3.5 h-3.5" />
+                                  </button>
+                               </div>
+                              <div v-if="node.node_type === 'file'" class="text-xs text-gray-500 mt-2 font-mono truncate">
+                                  {{ node.id }}
                               </div>
-                              <div class="text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ note.content ? note.content.replace(/<[^>]+>/g, '').substring(0, 80) + '...' : 'Empty note' }}</div>
+                              <div v-else class="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 80) + '...' : 'Empty ' + (node.node_type === 'whiteboard' ? 'whiteboard' : 'note') }}
+                              </div>
                           </div>
                       </div>
                   </div>
                   <div v-else class="flex flex-col items-center justify-center h-48 opacity-80 bg-white/50 dark:bg-black/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800">
-                      <FileText class="w-12 h-12 mb-3 text-gray-400"/>
-                      <p class="text-sm font-medium text-gray-500 mb-4">No resources attached yet.</p>
-                      <div class="flex gap-3">
-                          <button @click="createNewResourceNote" class="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">Create Note</button>
-                          <button @click="openLinkNotePicker" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Link Existing</button>
+                      <div class="flex gap-2 mb-3">
+                          <FileText class="w-10 h-10 text-gray-300" />
+                          <Palette class="w-10 h-10 text-gray-300" />
                       </div>
+                      <p class="text-sm font-medium text-gray-500 mb-4">No resources attached yet.</p>
+                      <div class="flex gap-3 relative">
+                          <button @click="showEmptyAddMenu = !showEmptyAddMenu" class="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600 transition-colors flex items-center gap-2 cursor-pointer">
+                              Add Resource
+                              <ChevronDown class="w-4 h-4" />
+                          </button>
+                          
+                          <!-- Dropdown Menu for empty state -->
+                          <div v-if="showEmptyAddMenu" class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-lg border border-gray-100 dark:border-[#2c2c2c] overflow-hidden z-20">
+                              <div class="p-1">
+                                  <button @click="createNewResourceNote(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                      <FileText class="w-4 h-4 text-blue-500" />
+                                      New Note
+                                  </button>
+                                  <button @click="createNewResourceWhiteboard(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                      <Palette class="w-4 h-4 text-purple-500" />
+                                      New Whiteboard
+                                  </button>
+                                  <div class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1"></div>
+                                  <button @click="openLinkResourcePicker(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                      <Link class="w-4 h-4 text-gray-400" />
+                                      Link Existing Resource
+                                  </button>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <!-- Close dropdown when clicking outside -->
+                      <div v-if="showEmptyAddMenu" @click="showEmptyAddMenu = false" class="fixed inset-0 z-10"></div>
                   </div>
               </div>
           </div>

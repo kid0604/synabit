@@ -326,6 +326,11 @@ fn upsert_file_node(
                                 props.insert("people".to_string(), serde_json::Value::Array(old_people.clone()));
                             }
                         }
+                        if let Some(old_linked_projects) = existing.properties.get("linked_projects").and_then(|v| v.as_array()) {
+                            if props.get("linked_projects").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_linked_projects.is_empty() {
+                                props.insert("linked_projects".to_string(), serde_json::Value::Array(old_linked_projects.clone()));
+                            }
+                        }
                     }
                     db.upsert_node(&updated)?;
                     return Ok(updated);

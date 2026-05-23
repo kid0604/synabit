@@ -35,6 +35,7 @@ export interface NoteItem {
   pinned: boolean;
   full_width: boolean;
   content: string;
+  linked_projects?: string[];
 }
 
 const emit = defineEmits(['open-node']);
@@ -404,7 +405,7 @@ const togglePin = async (id: string) => {
 };
 
 const deleteNote = async (id: string) => {
-    const isConfirmed = await ask('This action cannot be undone. The note and its contents will be permanently deleted.', { 
+    const isConfirmed = await ask('This note will be permanently deleted. This action cannot be undone.', { 
         title: 'Delete this note?', 
         kind: 'warning',
         okLabel: 'Delete',
@@ -812,7 +813,11 @@ watch(currentNoteId, async (newId) => {
                if (m && m[1]) {
                    try {
                        const proj = await invoke<any>('get_node', { id: decodeURIComponent(m[1]) });
-                       if (proj) outgoingProjects.push(proj);
+                       if (proj) {
+                           proj.node_type = 'project';
+                           proj._is_outgoing_project = true;
+                           outgoingProjects.push(proj);
+                       }
                    } catch(e) {}
                }
             }
@@ -839,6 +844,42 @@ const handleOpenInternalNote = (data: any) => {
     } else {
         // Emit up to App.vue to switch tools and open the node
         emit('open-node', noteId, type);
+    }
+};
+
+const unlinkProject = async (projectId: string, projectTitle?: string) => {
+    const isConfirmed = await ask(
+        `This note will no longer be linked to "${projectTitle || 'this project'}".`, 
+        { 
+            title: 'Unlink project?', 
+            kind: 'warning',
+            okLabel: 'Unlink',
+            cancelLabel: 'Cancel'
+        }
+    );
+    if (!isConfirmed) return;
+
+    const note = notes.value.find(n => n.id === currentNoteId.value);
+    if (!note || !note.linked_projects) return;
+    
+    const linkToRemove = note.linked_projects.find((link: string) => {
+        const m = /synabit:\/\/project\/([^\s\)"']+)/.exec(link);
+        return m && decodeURIComponent(m[1]) === projectId;
+    });
+
+    if (linkToRemove) {
+        note.linked_projects = note.linked_projects.filter((l: string) => l !== linkToRemove);
+        currentBacklinks.value = currentBacklinks.value.filter(bl => bl.id !== projectId);
+        
+        await invoke('write_node_file', { 
+            vaultPath: props.vaultPath, 
+            relPath: note.id, 
+            title: note.title,
+            nodeType: 'note',
+            properties: { pinned: note.pinned, full_width: note.full_width, tags: note.tags, linked_projects: note.linked_projects },
+            content: currentContent.value 
+        });
+        scanVault();
     }
 };
 
@@ -1125,30 +1166,9 @@ onMounted(async () => {
       </div>
 
       <div class="flex-1 overflow-y-auto" @mousedown.stop>
-         <!-- Tags Section -->
-         <div class="mb-4">
-             <div class="flex justify-between items-center px-4 mb-2 mt-3">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Top Tags</span>
-                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
-             </div>
-             <div class="px-2 space-y-0.5" v-if="topTags.length > 0">
-                 <div v-for="tag in topTags" :key="tag.name"
-                      @click="toggleTagSelection(tag.name)"
-                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-sm transition-colors cursor-pointer group"
-                      :class="selectedTags.has(tag.name) ? 'bg-black/5 dark:bg-white/10' : 'hover:bg-gray-100 dark:hover:bg-[#2a2a2a] text-[#52525b] dark:text-[#a1a1aa]'">
-                      <div class="flex items-center gap-2 truncate">
-                          <Hash class="w-3.5 h-3.5 opacity-70 group-hover:text-black dark:group-hover:text-white transition-colors" />
-                          <span class="truncate select-none group-hover:text-black dark:group-hover:text-white transition-colors">{{ tag.name.split('/').pop() }}</span>
-                      </div>
-                      <span class="text-[10px] opacity-50 bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{{ tag.count }}</span>
-                 </div>
-             </div>
-             <div v-else class="text-center p-4 text-xs text-gray-400">No tags found</div>
-         </div>
-
          <!-- Pinned Section -->
          <div class="mb-4" v-if="topPinnedNotes.length > 0">
-             <div class="flex justify-between items-center px-4 mb-2">
+             <div class="flex justify-between items-center px-4 mb-2 mt-3">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Pinned Notes</span>
                  <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
@@ -1177,6 +1197,27 @@ onMounted(async () => {
                     </div>
                  </div>
              </div>
+         </div>
+
+         <!-- Tags Section -->
+         <div class="mb-4">
+             <div class="flex justify-between items-center px-4 mb-2 mt-2">
+                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Top Tags</span>
+                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
+             </div>
+             <div class="px-2 space-y-0.5" v-if="topTags.length > 0">
+                 <div v-for="tag in topTags" :key="tag.name"
+                      @click="toggleTagSelection(tag.name)"
+                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-sm transition-colors cursor-pointer group"
+                      :class="selectedTags.has(tag.name) ? 'bg-black/5 dark:bg-white/10' : 'hover:bg-gray-100 dark:hover:bg-[#2a2a2a] text-[#52525b] dark:text-[#a1a1aa]'">
+                      <div class="flex items-center gap-2 truncate">
+                          <Hash class="w-3.5 h-3.5 opacity-70 group-hover:text-black dark:group-hover:text-white transition-colors" />
+                          <span class="truncate select-none group-hover:text-black dark:group-hover:text-white transition-colors">{{ tag.name.split('/').pop() }}</span>
+                      </div>
+                      <span class="text-[10px] opacity-50 bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{{ tag.count }}</span>
+                 </div>
+             </div>
+             <div v-else class="text-center p-4 text-xs text-gray-400">No tags found</div>
          </div>
 
          <!-- Recent Notes -->
@@ -1435,6 +1476,9 @@ onMounted(async () => {
                 <FileText v-else class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/>
                 <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ bl.title }}</span>
                 <span v-if="bl.node_type === 'event' && bl.properties && bl.properties.start_at" class="ml-auto text-[9px] text-gray-400 font-medium tracking-wider whitespace-nowrap">{{ (bl.properties.start_at as string).split('T')[0] }}</span>
+                <button v-if="bl._is_outgoing_project" @click.stop="unlinkProject(bl.id, bl.title)" class="ml-auto p-1.5 -mr-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 transition-all" title="Unlink Project">
+                   <X class="w-3.5 h-3.5" />
+                </button>
             </h5>
           </div>
       </div>
