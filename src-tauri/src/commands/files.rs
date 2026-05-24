@@ -211,7 +211,8 @@ pub fn import_files(
 }
 
 /// Internal scan logic — creates file nodes in the nodes table
-fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<()> {
+fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<Vec<String>> {
+    let mut valid_paths = Vec::new();
     let path = Path::new(source_path);
     if !path.exists() || !path.is_dir() {
         return Err(AppError::InvalidPath(
@@ -228,6 +229,7 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<(
             {
                 continue;
             }
+            valid_paths.push(abs_path.clone());
             let meta = entry.metadata().ok();
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
             let modified = meta
@@ -296,7 +298,7 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<(
             }
         }
     }
-    Ok(())
+    Ok(valid_paths)
 }
 
 /// Upsert a file node — uses path as conflict key in properties
@@ -381,7 +383,8 @@ pub fn scan_directory(
     source_path: String,
 ) -> AppResult<()> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    do_scan_directory(&db, &source_path)
+    let _ = do_scan_directory(&db, &source_path)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -597,10 +600,34 @@ pub fn reindex_sources(
     }
 
     log::info!("reindex_sources: scanning {} paths", scan_paths.len());
-    for source_path in scan_paths {
-        match do_scan_directory(&db, &source_path) {
-            Ok(()) => log::info!("reindex_sources: scanned {} OK", source_path),
+    let mut current_disk_files = std::collections::HashSet::new();
+    for source_path in &scan_paths {
+        match do_scan_directory(&db, source_path) {
+            Ok(paths) => {
+                log::info!("reindex_sources: scanned {} OK", source_path);
+                current_disk_files.extend(paths);
+            }
             Err(e) => log::error!("reindex_sources: scan {} FAILED: {:?}", source_path, e),
+        }
+    }
+
+    // GC: query all file nodes. If their path starts with one of the scan_paths,
+    // but the path is NOT in current_disk_files, delete them.
+    if let Ok(nodes) = db.get_nodes_by_type("file") {
+        let mut deleted_count = 0;
+        for node in nodes {
+            if let Some(path) = node.properties.get("path").and_then(|v| v.as_str()) {
+                let is_managed_path = scan_paths.iter().any(|sp| path.starts_with(sp));
+                if is_managed_path && !current_disk_files.contains(path) {
+                    let _ = db.delete_node(&node.id);
+                    db.delete_search_entry(&node.id);
+                    let _ = db.delete_node_edges_by_source(&node.id);
+                    deleted_count += 1;
+                }
+            }
+        }
+        if deleted_count > 0 {
+            log::info!("reindex_sources: deleted {} stale file nodes", deleted_count);
         }
     }
 

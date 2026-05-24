@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -368,6 +368,11 @@ onMounted(async () => {
          await checkUnreadNotifications();
      }).catch(logger.error);
      
+     // Trigger GC for FTS5 on startup
+     invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+     invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+     
+     
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
 
@@ -380,8 +385,15 @@ onMounted(async () => {
       const paths = event.payload as string[];
       if (paths && paths.length > 0) {
           invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+          
+          const hasFiles = paths.some(p => p.startsWith('assets/') || p.includes('Files/'));
+          const hasWhiteboards = paths.some(p => p.startsWith('Whiteboards/'));
+          if (hasFiles) invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasWhiteboards) invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
           invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
@@ -396,8 +408,15 @@ onMounted(async () => {
       const paths = event.payload as string[];
       if (paths && paths.length > 0) {
           invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+          
+          const hasFiles = paths.some(p => p.startsWith('assets/') || p.includes('Files/'));
+          const hasWhiteboards = paths.some(p => p.startsWith('Whiteboards/'));
+          if (hasFiles) invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasWhiteboards) invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
           invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
@@ -533,11 +552,7 @@ onUnmounted(() => {
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
                 </button>
                 <button @click="activeTool = 'whiteboard'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'whiteboard' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <rect x="2" y="4" width="20" height="16" rx="3" />
-                     <path d="M6 14 C 7 11, 9 11, 10 14 C 11 17, 13 10, 14 13" />
-                     <path d="M15.5 4 L 20 8.5 M 14 10.5 L 18.5 6" />
-                   </svg>
+                   <Palette class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Whiteboard</span>
                 </button>
                 <button @click="activeTool = 'people'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'people' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">

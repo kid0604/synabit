@@ -162,6 +162,7 @@ pub fn run() {
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,
+            chat::get_unread_notification_count,
             // System
             open_app_log_folder,
         ])

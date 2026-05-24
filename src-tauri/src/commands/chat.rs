@@ -73,3 +73,10 @@ pub fn mark_chat_read(vault_path: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn get_unread_notification_count(vault_path: String) -> Result<usize, String> {
+    let history = get_chat_history(vault_path)?;
+    let unread_count = history.iter().filter(|m| !m.read_receipt).count();
+    Ok(unread_count)
+}

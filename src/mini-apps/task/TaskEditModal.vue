@@ -114,7 +114,7 @@ const handleBackgroundClick = () => {
                        ref="titleInputRef"
                        v-model="editingTaskParams.title" 
                        class="flex-1 bg-transparent border-none outline-none text-[1.1rem] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 focus:ring-0 p-0 resize-none overflow-hidden leading-snug"
-                       placeholder="New To-Do"
+                       placeholder="New Task"
                        rows="1"
                        @input="adjustTitleHeight"
                        @keydown.enter.prevent="handleTitleEnter"

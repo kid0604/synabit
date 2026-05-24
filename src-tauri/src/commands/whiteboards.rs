@@ -98,6 +98,7 @@ pub fn scan_whiteboards(
             for id in existing.keys() {
                 if !current_disk_files.contains(id) {
                     let _ = db_bridge.delete_whiteboard(id);
+                    db_bridge.delete_search_entry(id);
                 }
             }
         }

@@ -49,6 +49,19 @@ const props = defineProps<{
 const appStore = useAppStore();
 const { enableDailyNotes, dailyNoteFormat, dailyNoteTag } = storeToRefs(appStore);
 
+const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    if (!dateStr.includes('T')) return dateStr;
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    } catch (e) {
+        return dateStr;
+    }
+};
+
 // ─── Note State ────────────────────────────────────────────
 const notes = ref<NoteItem[]>([]);
 const currentNoteId = ref<string | null>(null);
@@ -1171,6 +1184,7 @@ onMounted(async () => {
          <div class="mb-4" v-if="allPinnedNotes.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Pinned Notes</span>
+                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in topPinnedNotes" :key="note.id"
@@ -1370,7 +1384,7 @@ onMounted(async () => {
                 </div>
              </div>
              
-             <div class="flex-1 flex flex-col p-8 w-full max-w-4xl mx-auto">
+             <div class="flex-1 flex flex-col p-8 md:p-12 lg:p-16 w-full max-w-6xl mx-auto">
                  <div class="relative w-full mb-8">
                    <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b] dark:text-[#71717a]" />
                    <input v-model="managerSearchQuery" type="text" placeholder="Search notes or tags..." class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input">
@@ -1420,7 +1434,7 @@ onMounted(async () => {
                                   </div>
                                   <span v-else class="text-xs text-gray-400 italic">No tags</span>
                                </td>
-                               <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ note.date }}</td>
+                               <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ formatDate(note.date) }}</td>
                                <td class="py-3 px-4 w-12 text-center" @click.stop>
                                   <div class="relative flex justify-center">
                                      <button @click="(e) => toggleContext('manager_'+note.id, e)" class="p-1 rounded md:opacity-0 opacity-100 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
