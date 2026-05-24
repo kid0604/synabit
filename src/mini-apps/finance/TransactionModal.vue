@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { X } from 'lucide-vue-next';
+import { ref, watch, computed } from 'vue';
+import { X, RefreshCw, Plus, Check } from 'lucide-vue-next';
 import type { Transaction, TransactionType, FinanceAccount } from './types';
+import { currentCurrency, fetchExchangeRate } from './currency';
 
 const props = defineProps<{
   show: boolean;
@@ -16,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'save', tx: Transaction): void;
+  (e: 'addCategory', payload: { type: 'income' | 'expense', name: string }): void;
 }>();
 
 const type = ref<TransactionType>('expense');
@@ -28,7 +30,15 @@ const note = ref<string>('');
 const projectId = ref<string>('');
 const showErrors = ref(false);
 
-import { computed } from 'vue';
+const inputCurrency = ref(currentCurrency.value);
+const isFetchingRate = ref(false);
+const exchangeRate = ref<number | null>(null);
+const exchangeRateStr = ref<string>('');
+const calculatedBaseAmount = ref<number>(0);
+const CURRENCIES = ['VND', 'USD', 'EUR', 'GBP', 'JPY'];
+
+const isAddingCategory = ref(false);
+const newCategoryName = ref('');
 
 const availableCategories = computed(() => {
     if (type.value === 'income') return props.incomeCategories;
@@ -60,21 +70,77 @@ const handleAmountInput = (e: Event) => {
     amount.value = formatAmount(target.value);
 };
 
+watch([amount, inputCurrency], async ([newAmount, newCurrency], [oldAmount, oldCurrency]) => {
+    const numAmount = Number(newAmount.replace(/\D/g, '')) || 0;
+    
+    if (newCurrency === currentCurrency.value) {
+        exchangeRate.value = null;
+        exchangeRateStr.value = '';
+        calculatedBaseAmount.value = numAmount;
+        return;
+    }
+    
+    if (newCurrency !== oldCurrency && newCurrency !== currentCurrency.value) {
+        isFetchingRate.value = true;
+        const rate = await fetchExchangeRate(newCurrency, currentCurrency.value);
+        isFetchingRate.value = false;
+        
+        if (rate) {
+            exchangeRate.value = rate;
+            // Limit to 2 decimals if it's fiat normally, but keep precision if very small. Rounding appropriately.
+            const rateStr = rate > 1 ? Math.round(rate).toString() : rate.toString();
+            exchangeRateStr.value = formatAmount(rateStr);
+        }
+    }
+    
+    if (exchangeRate.value) {
+        calculatedBaseAmount.value = Math.round(numAmount * exchangeRate.value);
+    }
+});
+
+const handleRateInput = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const cleanStr = target.value.replace(/[^\d.]/g, ''); // Allow decimals in rate
+    exchangeRateStr.value = cleanStr; // Store exact string so decimal typing works
+    exchangeRate.value = Number(cleanStr) || 0;
+    
+    const numAmount = Number(amount.value.replace(/\D/g, '')) || 0;
+    calculatedBaseAmount.value = Math.round(numAmount * (exchangeRate.value || 0));
+};
+
 const initForm = () => {
     if (props.transaction) {
         type.value = props.transaction.type;
-        amount.value = props.transaction.amount.toLocaleString('vi-VN');
         category.value = props.transaction.category;
         accountId.value = props.transaction.accountId;
         toAccountId.value = props.transaction.toAccountId || '';
-        // datetime-local expects YYYY-MM-DDThh:mm
+        
+        if (props.transaction.originalCurrency && props.transaction.originalCurrency !== currentCurrency.value) {
+            inputCurrency.value = props.transaction.originalCurrency;
+            amount.value = props.transaction.originalAmount ? props.transaction.originalAmount.toLocaleString('vi-VN') : '';
+            exchangeRate.value = props.transaction.exchangeRate || null;
+            exchangeRateStr.value = exchangeRate.value ? exchangeRate.value.toString() : '';
+            calculatedBaseAmount.value = props.transaction.amount;
+        } else {
+            inputCurrency.value = currentCurrency.value;
+            amount.value = props.transaction.amount.toLocaleString('vi-VN');
+            exchangeRate.value = null;
+            exchangeRateStr.value = '';
+            calculatedBaseAmount.value = props.transaction.amount;
+        }
+
         const d = new Date(props.transaction.date);
         date.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         note.value = props.transaction.note;
         projectId.value = props.transaction.projectId || '';
     } else {
         type.value = 'expense';
+        inputCurrency.value = currentCurrency.value;
         amount.value = '';
+        exchangeRate.value = null;
+        exchangeRateStr.value = '';
+        calculatedBaseAmount.value = 0;
+        
         category.value = props.expenseCategories.length ? props.expenseCategories[0] : '';
         accountId.value = props.accounts.length ? props.accounts[0].id : '';
         toAccountId.value = props.accounts.length > 1 ? props.accounts[1].id : '';
@@ -84,6 +150,8 @@ const initForm = () => {
         projectId.value = props.defaultProjectId || '';
     }
     showErrors.value = false;
+    isAddingCategory.value = false;
+    newCategoryName.value = '';
 };
 
 watch(() => props.show, (newVal) => {
@@ -109,7 +177,7 @@ const save = () => {
     const tx: Transaction = {
         id: props.transaction?.id || `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: type.value,
-        amount: numericAmount,
+        amount: calculatedBaseAmount.value,
         category: type.value === 'transfer' ? 'Transfer' : category.value,
         accountId: accountId.value,
         date: new Date(date.value).toISOString(),
@@ -117,11 +185,27 @@ const save = () => {
         projectId: type.value === 'expense' && projectId.value ? projectId.value : undefined
     };
     
+    if (inputCurrency.value !== currentCurrency.value) {
+        tx.originalCurrency = inputCurrency.value;
+        tx.originalAmount = Number(amount.value.replace(/\D/g, ''));
+        tx.exchangeRate = exchangeRate.value || 1;
+    }
+    
     if (type.value === 'transfer') {
         tx.toAccountId = toAccountId.value;
     }
     
     emit('save', tx);
+};
+
+const saveNewCategory = () => {
+    const name = newCategoryName.value.trim();
+    if (name) {
+        emit('addCategory', { type: type.value as 'income' | 'expense', name });
+        category.value = name;
+    }
+    isAddingCategory.value = false;
+    newCategoryName.value = '';
 };
 
 // Computed property for save validation
@@ -167,10 +251,28 @@ const canSave = computed(() => {
 
         <!-- Amount -->
         <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && (!amount || Number(amount.replace(/\\D/g, '')) <= 0)" class="text-red-500 normal-case font-normal ml-1">*Must be > 0</span></label>
-            <div :class="['relative rounded-xl transition-all', showErrors && (!amount || Number(amount.replace(/\\D/g, '')) <= 0) ? 'ring-2 ring-red-500' : '']">
-                <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-12" placeholder="0" />
-                <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">đ</span>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">*Must be > 0</span></label>
+            <div class="flex gap-2">
+                <div :class="['relative rounded-xl transition-all flex-1', showErrors && calculatedBaseAmount <= 0 ? 'ring-2 ring-red-500' : '']">
+                    <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-4" placeholder="0" />
+                </div>
+                <select v-model="inputCurrency" class="bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[80px] text-center cursor-pointer">
+                    <option v-for="c in CURRENCIES" :key="c" :value="c">{{ c }}</option>
+                </select>
+            </div>
+            
+            <!-- Exchange Rate UI -->
+            <div v-if="inputCurrency !== currentCurrency" class="mt-3 p-3 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/30 flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-blue-600 dark:text-blue-400">Exchange Rate ({{ inputCurrency }} &rarr; {{ currentCurrency }})</span>
+                    <span v-if="isFetchingRate" class="text-xs text-blue-500 animate-pulse flex items-center gap-1"><RefreshCw class="w-3 h-3 animate-spin" /> Fetching...</span>
+                </div>
+                <div class="flex gap-2 items-center">
+                    <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Custom rate..." :disabled="isFetchingRate" />
+                    <span class="text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
+                        ≈ {{ new Intl.NumberFormat(currentCurrency === 'VND' ? 'vi-VN' : 'en-US', { style: 'currency', currency: currentCurrency }).format(calculatedBaseAmount) }}
+                    </span>
+                </div>
             </div>
         </div>
 
@@ -178,9 +280,25 @@ const canSave = computed(() => {
             <!-- Category (Hidden for Transfer) -->
             <div v-if="type !== 'transfer'">
                 <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Category</label>
-                <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                    <option v-for="cat in availableCategories" :key="cat" :value="cat">{{ cat }}</option>
-                </select>
+                <div class="flex items-center gap-2">
+                    <template v-if="!isAddingCategory">
+                        <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
+                            <option v-for="cat in availableCategories" :key="cat" :value="cat">{{ cat }}</option>
+                        </select>
+                        <button @click="isAddingCategory = true" class="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-colors shrink-0 border border-border dark:border-border-dark bg-gray-50 dark:bg-gray-800" title="Add new category">
+                            <Plus class="w-4 h-4" />
+                        </button>
+                    </template>
+                    <template v-else>
+                        <input type="text" v-model="newCategoryName" @keyup.enter="saveNewCategory" class="w-full bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type new category..." autofocus />
+                        <button @click="saveNewCategory" class="p-2.5 text-white bg-blue-500 hover:bg-blue-600 rounded-xl transition-colors shrink-0" title="Save category">
+                            <Check class="w-4 h-4" />
+                        </button>
+                        <button @click="isAddingCategory = false; newCategoryName = ''" class="p-2.5 text-gray-500 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-colors shrink-0" title="Cancel">
+                            <X class="w-4 h-4" />
+                        </button>
+                    </template>
+                </div>
             </div>
             
             <!-- From Account -->

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualList, useWindowSize } from '@vueuse/core';
-import { Search, LayoutGrid, List, FolderSync, Menu, ArrowLeft, FileText, ImageIcon, Video, Music, Code, FileArchive, FileType, Info, Copy } from 'lucide-vue-next';
+import { Search, LayoutGrid, List, FolderSync, Menu, ArrowLeft, FileText, ImageIcon, Video, Music, Code, FileArchive, FileType, Info, Copy, X } from 'lucide-vue-next';
 import { useFileStore, type FileMetadata, type FileReference } from './composables/useFileStore';
 import { getViewer, getViewerType } from './composables/useViewerRegistry';
 import FilesSidebar from './components/FilesSidebar.vue';
@@ -308,7 +308,10 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 cursor-pointer"><Menu class="w-5 h-5" /></button>
           <div class="flex-1 max-w-xl relative group">
             <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500" />
-            <input v-model="store.searchQuery.value" placeholder="Search files, tags..." class="w-full pl-9 pr-4 py-2 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
+            <input v-model="store.searchQuery.value" placeholder="Search files, tags..." class="w-full pl-9 pr-10 py-2 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
+            <button v-if="store.searchQuery.value" @click="store.searchQuery.value = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer transition-colors">
+              <X class="w-3.5 h-3.5" />
+            </button>
           </div>
           <div class="flex items-center gap-1 bg-white/50 dark:bg-white/5 p-1 rounded-lg border border-gray-200/50 dark:border-white/10 flex-shrink-0">
             <button @click="viewMode = 'grid'" class="p-1.5 rounded-md transition-colors cursor-pointer" :class="viewMode === 'grid' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600'"><LayoutGrid class="w-4 h-4" /></button>

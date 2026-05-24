@@ -2,23 +2,26 @@
 import { ref, watch } from 'vue';
 import { X, Plus, Trash2, Edit2, Check, Lock } from 'lucide-vue-next';
 import { type FinanceAccount, SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from './types';
+import { formatCurrency } from './currency';
 
 const props = defineProps<{
   show: boolean;
   initialIncomeCategories: string[];
   initialExpenseCategories: string[];
   initialAccounts: FinanceAccount[];
+  initialCurrency?: string;
   currentBalances?: { id: string, name: string, balance: number }[];
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'save', config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[] }): void;
+  (e: 'save', config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[], currency: string }): void;
 }>();
 
 const incomeCategories = ref<string[]>([]);
 const expenseCategories = ref<string[]>([]);
 const accounts = ref<FinanceAccount[]>([]);
+const selectedCurrency = ref('USD');
 
 const newIncomeCategory = ref('');
 const newExpenseCategory = ref('');
@@ -39,9 +42,7 @@ const handleBalanceInput = (e: Event) => {
     newAccountBalance.value = formatAmount(target.value);
 };
 
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-};
+// formatCurrency is imported from ./currency
 
 const getCurrentBalance = (id: string, fallbackInitial: number) => {
     if (!props.currentBalances) return fallbackInitial;
@@ -55,6 +56,7 @@ watch(() => props.show, (newVal) => {
         expenseCategories.value = [...props.initialExpenseCategories];
         // Deep clone accounts
         accounts.value = props.initialAccounts.map(a => ({ ...a }));
+        selectedCurrency.value = props.initialCurrency || 'USD';
         newIncomeCategory.value = '';
         newExpenseCategory.value = '';
         newAccountName.value = '';
@@ -115,7 +117,8 @@ const save = () => {
     emit('save', {
         incomeCategories: [...incomeCategories.value],
         expenseCategories: [...expenseCategories.value],
-        accounts: accounts.value.map(a => ({ ...a }))
+        accounts: accounts.value.map(a => ({ ...a })),
+        currency: selectedCurrency.value
     });
     emit('close');
 };
@@ -137,6 +140,26 @@ const save = () => {
       <!-- Body -->
       <div class="p-5 overflow-y-auto space-y-6">
           
+        <!-- General Settings -->
+        <div>
+            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">General Settings</h4>
+            <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
+                <div class="flex flex-col">
+                    <span class="font-medium text-sm text-text dark:text-text-dark">Currency</span>
+                    <span class="text-xs text-gray-500">Base currency for your transactions</span>
+                </div>
+                <select v-model="selectedCurrency" class="bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-text dark:text-text-dark cursor-pointer">
+                    <option value="USD">USD ($)</option>
+                    <option value="VND">VND (₫)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="JPY">JPY (¥)</option>
+                </select>
+            </div>
+        </div>
+
+        <hr class="border-border dark:border-border-dark" />
+
         <!-- Income Categories -->
         <div>
             <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Income Categories</h4>
@@ -195,8 +218,7 @@ const save = () => {
                 <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Account Name" />
                 <div class="flex gap-2">
                     <div class="relative flex-1">
-                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="Initial Balance" />
-                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" placeholder="Initial Balance" />
                     </div>
                     <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50">
                         Add

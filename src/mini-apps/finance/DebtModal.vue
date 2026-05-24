@@ -173,9 +173,6 @@ const save = () => {
                                 placeholder="0"
                                 class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-bold text-lg placeholder-gray-400 dark:placeholder-gray-600"
                             />
-                            <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500 font-medium">
-                                $
-                            </div>
                         </div>
                     </div>
 

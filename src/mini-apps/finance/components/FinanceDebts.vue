@@ -4,6 +4,7 @@ import { Plus, BookOpen, User, Calendar, CheckCircle2, AlertCircle, ArrowUpRight
 import type { Debt, FinanceAccount, Transaction } from '../types';
 import DebtModal from '../DebtModal.vue';
 import DebtRepaymentModal from '../DebtRepaymentModal.vue';
+import { formatCurrency } from '../currency';
 
 const props = defineProps<{
     debts: Debt[];
@@ -39,9 +40,7 @@ const totalBorrow = computed(() => {
 });
 
 // --- Methods ---
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-};
+// formatCurrency is imported from ../currency
 
 const formatDate = (isoStr: string) => {
     if (!isoStr) return '';

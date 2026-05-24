@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { X, Scale } from 'lucide-vue-next';
+import { formatCurrency } from './currency';
 
 const props = defineProps<{
     show: boolean;
@@ -27,9 +28,7 @@ const handleInput = (e: Event) => {
     actualBalanceStr.value = formatAmount(target.value);
 };
 
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-};
+// formatCurrency is imported from ./currency
 
 watch(() => props.show, (newVal) => {
     if (newVal) {
@@ -79,7 +78,6 @@ const save = () => {
               <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Actual Wallet Balance</label>
               <div class="relative">
                   <input type="text" inputmode="numeric" :value="actualBalanceStr" @input="handleInput" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
-                  <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
               </div>
           </div>
 

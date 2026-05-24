@@ -42,7 +42,7 @@ const loading = ref(true);
 const showModal = ref(false);
 const selectedPerson = ref<any | null>(null);
 const activeTab = ref<'overview' | 'timeline' | 'notes' | 'graph'>('overview');
-const sortMode = ref<'alpha' | 'recent' | 'attention'>('alpha');
+const sortMode = ref<'alpha' | 'recent' | 'attention'>('recent');
 const showGiftModal = ref(false);
 
 // Linked nodes for Notes/Timeline tabs
@@ -139,9 +139,9 @@ const filteredPeople = computed(() => {
         list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     } else if (sortMode.value === 'recent') {
         list = [...list].sort((a, b) => {
-            const aLast = a.properties?.last_contacted ? new Date(a.properties.last_contacted).getTime() : 0;
-            const bLast = b.properties?.last_contacted ? new Date(b.properties.last_contacted).getTime() : 0;
-            return bLast - aLast;
+            const aTime = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+            const bTime = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+            return bTime - aTime;
         });
     } else if (sortMode.value === 'attention') {
         list = [...list].sort((a, b) => {
@@ -151,6 +151,10 @@ const filteredPeople = computed(() => {
         });
     }
     return list;
+});
+
+const sidebarPeople = computed(() => {
+    return filteredPeople.value.slice(0, 20);
 });
 
 const needsAttentionCount = computed(() => {
@@ -532,10 +536,10 @@ defineExpose({ openPersonById });
                 <div v-if="loading" class="flex justify-center p-4">
                     <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                 </div>
-                <div v-else-if="filteredPeople.length === 0" class="text-center p-4 text-sm text-gray-500">No contacts found.</div>
+                <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500">No contacts found.</div>
                 <div v-else class="space-y-1">
                     <button
-                        v-for="person in filteredPeople" :key="person.id"
+                        v-for="person in sidebarPeople" :key="person.id"
                         @click="selectedPerson = person"
                         :class="['w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors',
                             selectedPerson?.id === person.id
@@ -563,6 +567,10 @@ defineExpose({ openPersonById });
                                 <span class="truncate">{{ person.properties.tags.join(', ') }}</span>
                             </p>
                         </div>
+                    </button>
+                    
+                    <button v-if="filteredPeople.length > 20" @click="selectedPerson = null" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                        Show {{ filteredPeople.length - 20 }} more...
                     </button>
                 </div>
             </div>

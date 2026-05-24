@@ -11,6 +11,9 @@ export interface Transaction {
   note: string;
   debtId?: string;
   projectId?: string;
+  originalCurrency?: string;
+  originalAmount?: number;
+  exchangeRate?: number;
 }
 
 export interface Debt {
@@ -53,6 +56,7 @@ export interface FinanceConfig {
     expenseCategories: string[];
     accounts: FinanceAccount[];
     budgets?: Budget[];
+    currency?: string;
   };
 }
 

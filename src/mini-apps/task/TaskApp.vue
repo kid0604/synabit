@@ -663,6 +663,34 @@ const openEditById = async (id: string) => {
     
     if (task) {
         logger.info(`TaskApp: Found task: ${task.title}, opening modal.`);
+        // Switch view context based on task's project
+        if (task.project_id) {
+            activeCategory.value = 'project:' + task.project_id;
+        } else {
+            // Determine the GTD category for orphan tasks
+            if (task.status === 'done') {
+                activeCategory.value = 'all';
+            } else if (task.is_transferred) {
+                activeCategory.value = 'transferred';
+            } else {
+                const today = todayStr.value;
+                let isToday = false;
+                if (task.due_date && task.due_date <= today) isToday = true;
+                else if (task.start_date && task.start_date <= today) isToday = true;
+                
+                let isUpcoming = false;
+                if (task.start_date && task.start_date > today) isUpcoming = true;
+                else if (task.due_date && task.due_date > today) isUpcoming = true;
+                
+                if (isToday) {
+                    activeCategory.value = 'today';
+                } else if (isUpcoming) {
+                    activeCategory.value = 'upcoming';
+                } else {
+                    activeCategory.value = 'someday';
+                }
+            }
+        }
         openEditModal(task);
     } else {
         logger.warn(`TaskApp: Task not found for id: ${id}`);

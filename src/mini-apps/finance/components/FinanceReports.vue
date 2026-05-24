@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import type { Transaction, FinanceAccount } from '../types';
 import FinanceChart from './FinanceChart.vue';
 import { Filter, Calendar, Wallet } from 'lucide-vue-next';
+import { formatCurrency } from '../currency';
 
 const props = defineProps<{
     months: { id: string, label: string, date: Date, node: any }[];
@@ -11,9 +12,7 @@ const props = defineProps<{
     accountBalances: { id: string, name: string, balance: number }[];
 }>();
 
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-};
+// formatCurrency is imported from ../currency
 
 const formatShort = (val: number) => {
     const abs = Math.abs(val);

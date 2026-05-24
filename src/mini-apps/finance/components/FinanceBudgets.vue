@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { Target, Plus, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-vue-next';
 import type { Budget, Transaction } from '../types';
 import BudgetModal from './BudgetModal.vue';
+import { formatCurrency } from '../currency';
 
 const props = defineProps<{
     budgets: Budget[];
@@ -56,9 +57,7 @@ const totalBudget = computed(() => props.budgets.reduce((acc, b) => acc + b.amou
 const totalSpentOnBudgets = computed(() => budgetStats.value.reduce((acc, b) => acc + b.spent, 0));
 const overallPercent = computed(() => totalBudget.value > 0 ? Math.min(Math.round((totalSpentOnBudgets.value / totalBudget.value) * 100), 100) : 0);
 
-const formatCurrency = (val: number) => {
-    return '$' + val.toLocaleString('en-US');
-};
+// formatCurrency is imported from ../currency
 
 const openAddBudget = () => {
     editingBudget.value = null;

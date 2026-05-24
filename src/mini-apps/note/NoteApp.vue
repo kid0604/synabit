@@ -891,7 +891,8 @@ const allTags = computed(() => {
 });
 
 const topTags = computed(() => allTags.value.slice(0, 10));
-const topPinnedNotes = computed(() => filteredNotes.value.filter(n => n.pinned).slice(0, 5));
+const allPinnedNotes = computed(() => filteredNotes.value.filter(n => n.pinned));
+const topPinnedNotes = computed(() => allPinnedNotes.value.slice(0, 5));
 const recentNotes = computed(() => filteredNotes.value.filter(n => !n.pinned).slice(0, 10));
 
 const openNoteManager = (filterType: string) => {
@@ -1167,10 +1168,9 @@ onMounted(async () => {
 
       <div class="flex-1 overflow-y-auto" @mousedown.stop>
          <!-- Pinned Section -->
-         <div class="mb-4" v-if="topPinnedNotes.length > 0">
+         <div class="mb-4" v-if="allPinnedNotes.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Pinned Notes</span>
-                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in topPinnedNotes" :key="note.id"
@@ -1196,6 +1196,10 @@ onMounted(async () => {
                         <span v-for="tag in note.tags" :key="tag" class="text-[9px] px-1.5 py-0.5 rounded bg-gray-200/60 dark:bg-[#333] text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
                     </div>
                  </div>
+                 
+                 <button v-if="allPinnedNotes.length > 5" @click="openNoteManager('pinned')" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                     Show {{ allPinnedNotes.length - 5 }} more...
+                 </button>
              </div>
          </div>
 

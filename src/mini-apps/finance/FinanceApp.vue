@@ -16,6 +16,7 @@ import FinanceSettingsModal from './FinanceSettingsModal.vue';
 import FinanceOnboarding from './FinanceOnboarding.vue';
 import AdjustBalanceModal from './AdjustBalanceModal.vue';
 import { type Transaction, type FinanceAccount, type Debt, type Budget, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS, SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from './types';
+import { currentCurrency, formatCurrency } from './currency';
 
 const props = defineProps<{
   vaultPath: string;
@@ -161,10 +162,7 @@ const accountBalances = computed(() => {
 
 
 // --- Methods ---
-
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-};
+// formatCurrency is imported from ./currency
 
 
 
@@ -241,6 +239,7 @@ const loadData = async () => {
                     });
                 }
                 accounts.value = configNode.value.properties.accounts || [...DEFAULT_ACCOUNTS];
+                currentCurrency.value = configNode.value.properties.currency || 'USD';
             }
             needsOnboarding.value = false;
         } else {
@@ -548,16 +547,20 @@ const deleteTransaction = async (txId: string) => {
     }
 };
 
-const saveConfig = async (config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[], budgets?: Budget[] }) => {
+const saveConfig = async (config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[], budgets?: Budget[], currency?: string }) => {
     if (config.budgets) {
         budgets.value = config.budgets;
+    }
+    if (config.currency) {
+        currentCurrency.value = config.currency;
     }
     
     const propsToSave = {
         incomeCategories: config.incomeCategories,
         expenseCategories: config.expenseCategories,
         accounts: config.accounts,
-        budgets: budgets.value
+        budgets: budgets.value,
+        currency: currentCurrency.value
     };
     
     try {
@@ -578,6 +581,32 @@ const saveConfig = async (config: { incomeCategories: string[], expenseCategorie
 const finishOnboarding = async (config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[] }) => {
     loading.value = true;
     await saveConfig(config);
+};
+
+const handleAddCategory = async (payload: { type: 'income' | 'expense', name: string }) => {
+    let configHasChanged = false;
+    const config = {
+        incomeCategories: [...incomeCategories.value],
+        expenseCategories: [...expenseCategories.value],
+        accounts: accounts.value,
+        budgets: budgets.value,
+        currency: currentCurrency.value
+    };
+    
+    if (payload.type === 'income' && !config.incomeCategories.includes(payload.name)) {
+        config.incomeCategories.push(payload.name);
+        configHasChanged = true;
+    } else if (payload.type === 'expense' && !config.expenseCategories.includes(payload.name)) {
+        config.expenseCategories.push(payload.name);
+        configHasChanged = true;
+    }
+    
+    if (configHasChanged) {
+        await saveConfig(config);
+        // Force refresh local lists so the modal sees it immediately without waiting for full reload
+        incomeCategories.value = config.incomeCategories;
+        expenseCategories.value = config.expenseCategories;
+    }
 };
 
 const openMonthById = async (id: string) => {
@@ -828,6 +857,9 @@ defineExpose({ openMonthById });
                                       <p :class="['font-bold', tx.type === 'income' ? 'text-green-500' : tx.type === 'expense' ? 'text-text dark:text-text-dark' : 'text-blue-500']">
                                           {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ formatCurrency(tx.amount) }}
                                       </p>
+                                      <p v-if="tx.originalCurrency && tx.originalCurrency !== currentCurrency" class="text-xs text-gray-400 mt-0.5 font-medium">
+                                          {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ tx.originalAmount?.toLocaleString('en-US') }} {{ tx.originalCurrency }}
+                                      </p>
                                   </div>
                                   
                                   <!-- Action Buttons overlay -->
@@ -870,8 +902,8 @@ defineExpose({ openMonthById });
           </div>
       </div>
 
-      <TransactionModal :show="showTxModal" :transaction="editingTx" :income-categories="incomeCategories" :expense-categories="expenseCategories" :accounts="accounts" :projects="projects" @close="showTxModal = false" @save="saveTransaction" />
-      <FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" @close="showSettingsModal = false" @save="saveConfig" />
+      <TransactionModal :show="showTxModal" :transaction="editingTx" :income-categories="incomeCategories" :expense-categories="expenseCategories" :accounts="accounts" :projects="projects" @close="showTxModal = false" @save="saveTransaction" @addCategory="handleAddCategory" />
+      <FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />
   </div>
 </template>

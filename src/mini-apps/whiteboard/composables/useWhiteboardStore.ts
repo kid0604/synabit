@@ -30,7 +30,7 @@ export interface WhiteboardData {
   edges: WBEdge[];
 }
 
-export type ToolMode = 'select' | 'draw' | 'shape' | 'mindmap' | 'text' | 'eraser';
+export type ToolMode = 'select' | 'pan' | 'draw' | 'shape' | 'mindmap' | 'text' | 'eraser';
 export type DrawSubTool = 'pen' | 'highlighter' | 'eraser';
 export type ShapeType = string;
 

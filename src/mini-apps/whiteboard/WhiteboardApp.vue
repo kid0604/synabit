@@ -892,6 +892,7 @@ function handleKeydown(e: KeyboardEvent) {
   // Tool shortcuts — only when no modifier key is held
   if (!e.ctrlKey && !e.metaKey) {
     if (e.key === 'v' || e.key === 'V') { store.activeTool.value = 'select'; return; }
+    if (e.key === 'h' || e.key === 'H') { store.activeTool.value = 'pan'; return; }
     if (e.key === 'd' || e.key === 'D') { store.activeTool.value = 'draw'; return; }
     if (e.key === 's') { store.activeTool.value = 'shape'; return; }
     if (e.key === 't' || e.key === 'T') { store.activeTool.value = 'text'; return; }
@@ -1206,7 +1207,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 </script>
 
 <template>
-  <div class="flex flex-1 h-full overflow-hidden" :class="{'cursor-col-resize': isDraggingSidebar}">
+  <div class="flex flex-1 h-full overflow-hidden bg-base dark:bg-base-dark text-text dark:text-text-dark" :class="{'cursor-col-resize': isDraggingSidebar}">
     <!-- Sidebar: Board List -->
     <div
       v-if="sidebarOpen"
@@ -1349,7 +1350,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 
     <!-- Main Canvas Area -->
     <div 
-      class="flex-1 relative transition-colors" 
+      class="flex-1 relative transition-colors bg-base dark:bg-base-dark" 
       ref="canvasRef"
       :style="{ backgroundColor: store.backgroundColor.value === 'transparent' ? '' : store.backgroundColor.value }"
     >
@@ -1418,6 +1419,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           v-model:edges="vfEdges"
           :class="[
             'flex-1',
+            store.activeTool.value === 'pan' && 'wb-cursor-grab',
             store.activeTool.value === 'draw' && store.drawSubTool.value !== 'eraser' && 'cursor-crosshair',
             store.activeTool.value === 'draw' && store.drawSubTool.value === 'eraser' && 'wb-cursor-eraser',
             store.activeTool.value === 'eraser' && 'wb-cursor-eraser',
@@ -1427,7 +1429,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           :snap-grid="[10, 10]"
           :connection-mode="ConnectionMode.Loose"
           :delete-key-code="'Delete'"
-          :pan-on-drag="store.activeTool.value === 'select' ? [1, 2] : false"
+          :pan-on-drag="store.activeTool.value === 'pan' ? [0, 1, 2] : (store.activeTool.value === 'select' ? [1, 2] : false)"
           :selection-on-drag="store.activeTool.value === 'select'"
           :pan-on-scroll="true"
           :zoom-on-scroll="true"
@@ -1478,7 +1480,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           </template>
 
           <!-- Dots Background -->
-          <Background v-if="store.backgroundPattern.value === 'dots'" variant="dots" :gap="20" :size="1" />
+          <Background v-if="store.backgroundPattern.value === 'dots'" variant="dots" :gap="20" :size="1" pattern-color="currentColor" class="text-[#a1a1aa] dark:text-[#52525b]" />
           
           <!-- Lines Background (Miro style: very subtle opacity, major every 5 blocks) -->
           <template v-if="store.backgroundPattern.value === 'lines'">
@@ -1775,13 +1777,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   background: var(--color-surface-hover-dark, #2a2a2a);
 }
 :deep(.vue-flow__background) {
-  background: var(--color-base, #fdfdfc);
-}
-.dark :deep(.vue-flow__background) {
-  background: var(--color-base-dark, #242424);
-}
-.dark :deep(.vue-flow__background pattern circle) {
-  fill: #333;
+  background: transparent !important;
 }
 .cursor-crosshair :deep(.vue-flow__pane) {
   cursor: crosshair !important;
@@ -1803,6 +1799,12 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 }
 .wb-cursor-eraser :deep(.vue-flow__pane) {
   cursor: none !important;
+}
+.wb-cursor-grab :deep(.vue-flow__pane) {
+  cursor: grab !important;
+}
+.wb-cursor-grab:active :deep(.vue-flow__pane) {
+  cursor: grabbing !important;
 }
 .wb-eraser-cursor {
   position: fixed;

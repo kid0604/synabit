@@ -191,23 +191,12 @@ const openPreview = async (item: NexusItem | SearchResult) => {
         }
         return;
     }
-    // Fetch full item data for preview (search results have snippets, not full content)
-    try {
-        const fullItem = await invoke<NexusItem>('get_nexus_item', { vaultPath: props.vaultPath, id: item.id });
-        selectedItem.value = fullItem;
-    } catch (e) {
-        logger.error("Failed to load full item", e);
-    }
+    emit('edit-item', item.id, item.item_type);
 };
 
 const openPreviewFromGraph = async (node: GraphNode) => {
     if (node.item_type === 'tag') return;
-    try {
-        const item = await invoke<NexusItem>('get_nexus_item', { vaultPath: props.vaultPath, id: node.id });
-        await openPreview(item);
-    } catch (e) {
-        logger.error("Failed to load item from graph", e);
-    }
+    emit('edit-item', node.id, node.item_type);
 };
 
 const closePreview = () => {

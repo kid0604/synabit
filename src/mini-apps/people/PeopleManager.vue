@@ -93,7 +93,7 @@ const formatDate = (d: string) => {
             <!-- Search -->
             <div class="relative w-full mb-8">
                 <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b]" />
-                <input v-model="searchQuery" type="text" placeholder="Search people..." class="w-full pl-12 pr-12 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
+                <input v-model="searchQuery" type="text" placeholder="Search people..." class="w-full pl-12 pr-12 py-3 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl text-base text-text dark:text-text-dark shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
                 <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors">
                     <X class="w-4 h-4" />
                 </button>

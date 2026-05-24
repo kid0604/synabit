@@ -1019,6 +1019,11 @@ const handleDeleteFromForm = () => {
                          <button @click="navigatePrev" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors"><ChevronLeft class="w-4 h-4" /></button>
                          <button @click="navigateNext" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors"><ChevronRight class="w-4 h-4" /></button>
                      </div>
+                     <button @click="openAddEventModal()" class="flex items-center gap-1.5 px-3 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors shadow-sm ml-0.5 md:ml-1">
+                         <Plus class="w-3.5 h-3.5" />
+                         <span class="hidden md:inline">New Event</span>
+                         <span class="md:hidden">New</span>
+                     </button>
                  </div>
              </div>
          </header>
