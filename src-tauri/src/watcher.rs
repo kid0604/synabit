@@ -66,7 +66,7 @@ mod desktop {
 
         // Update ChatEngineState
         let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
-        let mut active_vault = chat_state.active_vault_path.lock().unwrap();
+        let mut active_vault = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
 
         let emit_handle = app_handle.clone();
@@ -206,7 +206,7 @@ pub mod mobile_stub {
         use tauri::Manager;
         // Update ChatEngineState
         let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
-        let mut active_vault = chat_state.active_vault_path.lock().unwrap();
+        let mut active_vault = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
 
         // On mobile, file watching is a no-op.

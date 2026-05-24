@@ -53,6 +53,18 @@ const isUploadingAvatar = ref(false);
 const avatarFileInput = ref<HTMLInputElement | null>(null);
 const avatarSrc = ref('');
 const showPresetPicker = ref(false);
+const birthdayInputRef = ref<HTMLInputElement | null>(null);
+
+const addBirthdayFromQuickAdd = () => {
+    showKeyDates.value = true;
+    showPresetPicker.value = false;
+    setTimeout(() => {
+        birthdayInputRef.value?.focus();
+        try {
+            birthdayInputRef.value?.showPicker?.();
+        } catch(e) {}
+    }, 50);
+};
 
 // Migrate legacy fields into unified details[]
 const migrateLegacy = (p: any): DetailField[] => {
@@ -424,6 +436,10 @@ const getDetailPlaceholder = (d: DetailField) => {
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
                                 <Building class="w-3.5 h-3.5 text-gray-400" /> Company
                             </button>
+                            <button @click="addBirthdayFromQuickAdd"
+                                class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
+                                <Gift class="w-3.5 h-3.5 text-gray-400" /> Birthday
+                            </button>
                             <button v-for="p in DETAIL_PRESETS" :key="p.label"
                                 @click="addDetail(p)"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
@@ -508,7 +524,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Birthday</label>
                         <div class="relative w-48">
                             <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                            <input v-model="form.birthday" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
+                            <input ref="birthdayInputRef" v-model="form.birthday" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                     </div>
                     <div v-for="(d, i) in form.important_dates" :key="i" class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">

@@ -3,3 +3,4 @@ pub mod files;
 pub mod nexus;
 pub mod nodes;
 pub mod whiteboards;
+pub mod tags;

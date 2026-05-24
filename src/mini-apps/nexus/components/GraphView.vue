@@ -156,7 +156,7 @@ const renderGraph = () => {
         .scaleExtent([0.1, 4])
         .on("zoom", (event) => {
             transform = event.transform;
-            draw(context, width, height);
+            draw(context);
         });
 
     d3.select(canvas)
@@ -176,7 +176,7 @@ const renderGraph = () => {
         .force("collide", d3.forceCollide().radius(d => ((d as SimNode).val * 1.5 * nodeSize.value) + 5));
 
     simulation.on("tick", () => {
-        draw(context, width, height);
+        draw(context);
     });
 
     // Resize observer
@@ -204,7 +204,7 @@ const renderGraph = () => {
             const found = simulation.find(invX, invY, radiusSearch);
             if (found !== hoveredNode) {
                 hoveredNode = found || null;
-                draw(context, canvas.width, canvas.height);
+                draw(context);
             }
         })
         .on("click", (_e) => {
@@ -249,9 +249,9 @@ const renderGraph = () => {
     return () => resizeObserver.disconnect();
 };
 
-const draw = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+const draw = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.k, transform.k);
 

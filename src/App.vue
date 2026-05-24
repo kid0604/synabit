@@ -8,18 +8,9 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { documentDir } from '@tauri-apps/api/path';
 
 import { defineAsyncComponent } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 
-// Mini App Components — lazy loaded for code splitting
-const NoteApp = defineAsyncComponent(() => import('./mini-apps/note/NoteApp.vue'));
-const QuickCap = defineAsyncComponent(() => import('./mini-apps/quickcap/QuickCapApp.vue'));
-const Tasks = defineAsyncComponent(() => import('./mini-apps/task/TaskApp.vue'));
-const CalendarApp = defineAsyncComponent(() => import('./mini-apps/calendar/CalendarApp.vue'));
-const Nexus = defineAsyncComponent(() => import('./mini-apps/nexus/NexusApp.vue'));
-const FilesApp = defineAsyncComponent(() => import('./mini-apps/files/FilesApp.vue'));
-const WhiteboardApp = defineAsyncComponent(() => import('./mini-apps/whiteboard/WhiteboardApp.vue'));
-const PeopleApp = defineAsyncComponent(() => import('./mini-apps/people/PeopleApp.vue'));
-const FinanceApp = defineAsyncComponent(() => import('./mini-apps/finance/FinanceApp.vue'));
-const ChatApp = defineAsyncComponent(() => import('./mini-apps/chat/ChatApp.vue'));
+// Settings Modal is the only async component kept here
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
 
 // Composables
@@ -45,8 +36,20 @@ const { vaultPath, vaultType } = storeToRefs(appStore);
 
 const { useMobileLayout, isMobileOS } = usePlatform();
 
-// ─── App View State ───────────────────────────────────────
-const activeTool = ref<'nexus' | 'quickcap' | 'note' | 'task' | 'calendar' | 'file' | 'whiteboard' | 'people' | 'finance' | 'chat'>('nexus');
+// ─── App View State (Vue Router) ──────────────────────────
+const router = useRouter();
+const route = useRoute();
+
+const activeTool = computed({
+  get: () => (route.name as string) || 'nexus',
+  set: (val: string) => { 
+      if (route.name !== val) {
+          router.push({ name: val }).catch(err => {
+              logger.warn('Router navigation error:', err);
+          });
+      }
+  }
+});
 
 // ─── Navigation History (Back/Forward) — declared early so watcher can use them ─────
 const navStore = useNavigationStore();
@@ -105,7 +108,7 @@ watch(activeTool, async (newTool, oldTool) => {
 
 // ─── Mini App Refs for cross-app navigation ─────────────────
 const chatAppRef = ref<any>(null);
-const noteAppRef = ref<InstanceType<typeof NoteApp> | null>(null);
+const noteAppRef = ref<any>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
 const calendarAppRef = ref<any>(null);
@@ -113,6 +116,19 @@ const whiteboardAppRef = ref<any>(null);
 const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
+
+const setAppRef = (el: any, name: string) => {
+    if (!el) return;
+    if (name === 'chat') chatAppRef.value = el;
+    else if (name === 'note') noteAppRef.value = el;
+    else if (name === 'quickcap') quickCapAppRef.value = el;
+    else if (name === 'task') taskAppRef.value = el;
+    else if (name === 'calendar') calendarAppRef.value = el;
+    else if (name === 'whiteboard') whiteboardAppRef.value = el;
+    else if (name === 'people') peopleAppRef.value = el;
+    else if (name === 'finance') financeAppRef.value = el;
+    else if (name === 'file') filesAppRef.value = el;
+};
 
 // ─── Floating Note (opened in new window) ─────────────────
 const isSidebarCollapsed = ref(false);
@@ -555,36 +571,22 @@ onUnmounted(() => {
           </nav>
         </template>
 
-        <!-- MINI APP CONTENT AREA (v-show keeps all apps mounted, instant switching) -->
-        <div v-show="activeTool === 'chat'" class="flex-1 h-full overflow-hidden">
-            <ChatApp ref="chatAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'note'" class="flex-1 h-full overflow-hidden">
-            <NoteApp ref="noteAppRef" :vault-path="vaultPath" :is-floating-view="isFloatingView" :floating-note-id="floatingNoteId" @open-node="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'quickcap'" class="flex-1 h-full overflow-hidden">
-            <QuickCap ref="quickCapAppRef" :vaultPath="vaultPath" />
-        </div>
-        <div v-show="activeTool === 'nexus'" class="flex-1 h-full overflow-hidden">
-            <Nexus :vaultPath="vaultPath" @edit-item="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'task'" class="flex-1 h-full overflow-hidden">
-            <Tasks ref="taskAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'calendar'" class="flex-1 h-full overflow-hidden">
-            <CalendarApp ref="calendarAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'file'" class="flex-1 h-full overflow-hidden">
-            <FilesApp ref="filesAppRef" :vaultPath="vaultPath" />
-        </div>
-        <div v-show="activeTool === 'whiteboard'" class="flex-1 h-full overflow-hidden">
-            <WhiteboardApp ref="whiteboardAppRef" :vaultPath="vaultPath" />
-        </div>
-        <div v-show="activeTool === 'people'" class="flex-1 h-full overflow-hidden">
-            <PeopleApp ref="peopleAppRef" :vaultPath="vaultPath" @open-node="handleEditFromNexus" />
-        </div>
-        <div v-show="activeTool === 'finance'" class="flex-1 h-full overflow-hidden">
-            <FinanceApp ref="financeAppRef" :vaultPath="vaultPath" />
+        <!-- MINI APP CONTENT AREA (Vue Router + KeepAlive) -->
+        <div class="flex-1 h-full overflow-hidden relative">
+            <router-view v-slot="{ Component, route }">
+                <keep-alive>
+                    <component 
+                        :is="Component" 
+                        :key="route.name"
+                        :vault-path="vaultPath" 
+                        :is-floating-view="isFloatingView" 
+                        :floating-note-id="floatingNoteId" 
+                        @open-node="handleEditFromNexus"
+                        @edit-item="handleEditFromNexus"
+                        :ref="(el: any) => setAppRef(el, route.name as string)"
+                    />
+                </keep-alive>
+            </router-view>
         </div>
 
 

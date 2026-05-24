@@ -237,12 +237,29 @@ const openFileById = (id: string, _skipNavPush = false) => {
   if (!_skipNavPush && activeTabId.value && activeTabId.value !== id && !skipNavPush) {
     pushNavigation?.({ app: 'file', itemId: activeTabId.value });
   }
-  const file = store.files.value.find(f => f.id === id || f.path === id);
-  if (file) {
-    skipNavPush = true;
-    openFileInFocus(file);
-    skipNavPush = false;
-  }
+  
+  const tryOpen = () => {
+    const file = store.files.value.find(f => f.id === id || f.path === id);
+    if (file) {
+      skipNavPush = true;
+      openFileInFocus(file);
+      skipNavPush = false;
+    } else if (store.isLoading.value) {
+      const unwatch = watch(() => store.isLoading.value, (loading) => {
+        if (!loading) {
+          unwatch();
+          const f = store.files.value.find(f => f.id === id || f.path === id);
+          if (f) {
+            skipNavPush = true;
+            openFileInFocus(f);
+            skipNavPush = false;
+          }
+        }
+      });
+    }
+  };
+  
+  tryOpen();
 };
 
 defineExpose({ openFileById, activeTabId });

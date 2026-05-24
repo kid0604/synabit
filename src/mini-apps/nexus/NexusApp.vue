@@ -6,6 +6,7 @@ import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calenda
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
+import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
 
@@ -73,6 +74,7 @@ const queryTimeMs = ref(0);
 const totalCount = ref(0);
 const showSyntaxHints = ref(false);
 const caseSensitive = ref(false);
+const currentView = ref('graph_search'); // 'graph_search' | 'tag_manager'
 
 const hideSyntaxHints = () => {
     setTimeout(() => {
@@ -183,14 +185,6 @@ const getTypeColor = (type: string) => {
 };
 
 const openPreview = async (item: NexusItem | SearchResult) => {
-    if (item.item_type === 'file') {
-        try {
-            await invoke('open_local_file', { vaultPath: props.vaultPath, path: item.path });
-        } catch(e) {
-            logger.error("Failed to open file", e);
-        }
-        return;
-    }
     emit('edit-item', item.id, item.item_type);
 };
 
@@ -246,7 +240,8 @@ const cleanSnippet = (snippet: string) => {
     <!-- Main UI -->
     <div v-show="!selectedItem" class="flex-1 flex flex-col h-full relative transition-all">
         
-        <!-- Background Graph View -->
+        <template v-if="currentView === 'graph_search'">
+            <!-- Background Graph View -->
         <div class="absolute inset-0 z-0">
             <GraphView v-if="graphData" :graph-data="graphData" @node-click="openPreviewFromGraph" />
             <div v-else class="w-full h-full flex items-center justify-center">
@@ -263,14 +258,15 @@ const cleanSnippet = (snippet: string) => {
                        <Search class="h-5 w-5 text-gray-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors" />
                    </div>
                    <input 
-                       v-model="searchQuery" 
-                       type="text" 
-                       @focus="showSyntaxHints = true"
-                       @blur="hideSyntaxHints"
-                       class="block w-full pl-12 pr-20 py-3.5 text-lg font-medium border border-gray-200 dark:border-[#2c2c2e] rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10 focus:border-black dark:focus:ring-white/10 dark:focus:border-white transition-all shadow-lg" 
-                       placeholder="Universal Search... (e.g. is:task #urgent)" 
-                   />
-                   <div class="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-3">
+                        v-model="searchQuery"
+                        type="text" 
+                        class="block w-full h-[52px] pl-12 pr-12 bg-white/80 dark:bg-[#242426]/80 border border-gray-200 dark:border-[#2c2c2e] rounded-2xl text-base text-black dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-500 shadow-lg backdrop-blur-xl transition-all"
+                        placeholder="Universal Search... (e.g. is:task #urgent)"
+                        @focus="showSyntaxHints = true"
+                        @blur="hideSyntaxHints"
+                        @keydown.esc="searchQuery = ''"
+                    />
+                   <div class="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-3 pointer-events-auto">
                        <button
                            @click="caseSensitive = !caseSensitive"
                            :class="[
@@ -299,6 +295,15 @@ const cleanSnippet = (snippet: string) => {
                        </div>
                    </div>
                 </div>
+
+                <!-- Standalone Manage Tags Button -->
+                <button 
+                    @click="currentView = 'tag_manager'"
+                    class="flex-shrink-0 w-12 h-[52px] flex items-center justify-center rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl border border-gray-200 dark:border-[#2c2c2e] text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-[#444] shadow-lg transition-all active:scale-95 group"
+                    title="Manage Tags"
+                >
+                    <Tag class="w-5 h-5 group-hover:scale-110 transition-transform" />
+                </button>
             </div>
         </div>
 
@@ -358,6 +363,15 @@ const cleanSnippet = (snippet: string) => {
                 </div>
             </div>
         </div>
+        </template>
+
+        <!-- Main UI: Tag Management -->
+        <NexusTagManager 
+            v-else-if="currentView === 'tag_manager'" 
+            :vaultPath="vaultPath" 
+            @back="currentView = 'graph_search'" 
+            @search-tag="(tag) => { searchQuery = `tag:&#34;${tag}&#34;`; currentView = 'graph_search'; }"
+        />
     </div>
 
     <!-- Full-page Preview Panel (Unchanged logic, floating on top when active) -->
@@ -407,6 +421,9 @@ const cleanSnippet = (snippet: string) => {
             </div>
         </div>
     </div>
+
+    <!-- Tag Manager Modal -->
+    <NexusTagManager v-if="showTagManager" @close="showTagManager = false" />
 
   </div>
 </template>

@@ -97,14 +97,20 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
                 tokens.push(format!("\"{}\"", phrase.trim()));
             }
         } else {
-            // Regular word
+            // Regular word (can contain quotes, e.g. tag:"one mount" or tag:“one mount”)
             let mut word = String::new();
+            let mut in_quote = false;
             while let Some(&c) = chars.peek() {
-                if c.is_whitespace() {
+                if c == '"' || c == '“' || c == '”' {
+                    in_quote = !in_quote;
+                    word.push(c);
+                    chars.next();
+                } else if c.is_whitespace() && !in_quote {
                     break;
+                } else {
+                    word.push(c);
+                    chars.next();
                 }
-                word.push(c);
-                chars.next();
             }
             tokens.push(word);
         }
@@ -116,16 +122,9 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
         // is: filter
         if let Some(stripped) = lower.strip_prefix("is:") {
             let val = stripped.to_string();
-            match val.as_str() {
-                "note" | "task" | "event" | "quickcap" | "file" => {
-                    pq.type_filter = Some(val);
-                }
-                _ => {} // ignore unknown types
-            }
+            pq.type_filter = Some(val);
             continue;
         }
-
-        // status: filter
         if let Some(stripped) = lower.strip_prefix("status:") {
             let val = stripped.to_string();
             match val.as_str() {
@@ -161,23 +160,52 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
             pq.is_empty = false;
             continue;
         } else if lower.starts_with("tag:") && lower.len() > 4 {
-            pq.tag_filters.push(lower[4..].to_string());
+            let mut val = lower[4..].to_string();
+            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
+                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
+                && val.chars().count() >= 2
+            {
+                let mut chars = val.chars();
+                chars.next();
+                chars.next_back();
+                val = chars.collect();
+            }
+            pq.tag_filters.push(val);
             pq.is_empty = false;
             continue;
         }
 
         // -exclude term
         if token.starts_with('-') && token.len() > 1 && !token.starts_with("--") {
-            pq.exclude_terms.push(token[1..].to_string());
+            let mut val = token[1..].to_string();
+            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
+                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
+                && val.chars().count() >= 2
+            {
+                let mut chars = val.chars();
+                chars.next();
+                chars.next_back();
+                val = chars.collect();
+            }
+            pq.exclude_terms.push(val);
             continue;
         }
 
         // Generic key:value property filter (catch-all for unknown key:value pairs)
         if let Some(colon_pos) = lower.find(':') {
             let key = &lower[..colon_pos];
-            let val = &lower[colon_pos + 1..];
+            let mut val = lower[colon_pos + 1..].to_string();
+            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
+                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
+                && val.chars().count() >= 2
+            {
+                let mut chars = val.chars();
+                chars.next();
+                chars.next_back();
+                val = chars.collect();
+            }
             if !key.is_empty() && !val.is_empty() {
-                pq.property_filters.push((key.to_string(), val.to_string()));
+                pq.property_filters.push((key.to_string(), val));
                 pq.is_empty = false;
                 continue;
             }

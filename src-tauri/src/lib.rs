@@ -133,6 +133,10 @@ pub fn run() {
             nexus::search_notes,
             nexus::search_tasks,
             nexus::search_files,
+            // Tags
+            commands::tags::get_all_tags,
+            commands::tags::rename_tag,
+            commands::tags::delete_tag,
             // Google Drive
             gdrive::auth::gdrive_auth_start,
             gdrive::auth::gdrive_auth_complete,

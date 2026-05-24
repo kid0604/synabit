@@ -79,7 +79,7 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             interval.tick().await;
             
             let vault_path = {
-                let lock = vault_path_state.lock().unwrap();
+                let lock = vault_path_state.lock().unwrap_or_else(|e| e.into_inner());
                 match lock.as_ref() {
                     Some(path) => path.clone(),
                     None => continue,
@@ -115,7 +115,9 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
 
             let now = Local::now();
             let today_str = now.format("%Y-%m-%d").to_string();
-            let tomorrow_str = (now + chrono::Duration::try_days(1).unwrap()).format("%Y-%m-%d").to_string();
+            let tomorrow_str = (now + chrono::Duration::try_days(1).unwrap_or_else(|| chrono::Duration::zero())).format("%Y-%m-%d").to_string();
+            
+            let active_nodes = db.get_active_tasks_and_events().unwrap_or_default();
             
             let mut new_messages: Vec<ChatMessage> = Vec::new();
             let sender = ChatSender {
@@ -125,28 +127,98 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             };
 
             // 1. Process Tasks
-            if let Ok(tasks) = db.get_nodes_by_type("task") {
-                for task in tasks {
-                    let status = task.properties.get("status").and_then(|v: &Value| v.as_str()).unwrap_or("");
-                    if status == "done" || status == "canceled" { continue; }
+            for task in active_nodes.iter().filter(|n| n.node_type == "task") {
+                let status = task.properties.get("status").and_then(|v: &Value| v.as_str()).unwrap_or("");
+                if status == "done" || status == "canceled" { continue; }
+                
+                if let Some(due_date) = task.properties.get("due_date").and_then(|v: &Value| v.as_str()) {
+                    if due_date.is_empty() { continue; }
+                    let is_overdue = due_date < today_str.as_str();
+                    let target_date = if is_overdue || due_date == today_str.as_str() { &today_str } else { continue; };
                     
-                    if let Some(due_date) = task.properties.get("due_date").and_then(|v: &Value| v.as_str()) {
-                        if due_date.is_empty() { continue; }
-                        let is_overdue = due_date < today_str.as_str();
-                        let target_date = if is_overdue || due_date == today_str.as_str() { &today_str } else { continue; };
-                        
+                    let mut reminders = vec![];
+                    if let Some(rems) = task.properties.get("reminders").and_then(|v| v.as_array()) {
+                        for r in rems {
+                            if let Some(r_str) = r.as_str() { reminders.push(r_str.to_string()); }
+                        }
+                    }
+                    if reminders.is_empty() { reminders.push("0m".to_string()); }
+                    
+                    let start_time = task.properties.get("start_time").and_then(|v| v.as_str()).unwrap_or("09:00:00");
+                    let dt_str = format!("{}T{}", target_date, start_time);
+                    let event_dt = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
+                        NaiveDateTime::parse_from_str(&format!("{}:00", dt_str), "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
+                            NaiveDateTime::parse_from_str(&format!("{}T00:00:00", target_date), "%Y-%m-%dT%H:%M:%S").unwrap_or_default()
+                        })
+                    });
+                    
+                    if let Some(event_local) = Local.from_local_datetime(&event_dt).single() {
+                        for rem in reminders {
+                            let dur = parse_duration(&rem);
+                            let trigger_time = event_local - dur;
+                            
+                            if now >= trigger_time {
+                                let dedup_key = format!("{}_{}_{}", task.id, target_date, rem);
+                                if !notified_set.contains(&dedup_key) {
+                                    new_messages.push(ChatMessage {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        message_type: "system".to_string(),
+                                        subtype: "task_due".to_string(),
+                                        timestamp: now.to_rfc3339(),
+                                        sender: sender.clone(),
+                                        content: ChatContent {
+                                            title: if is_overdue { format!("Task Overdue: {}", task.title) } else { format!("Task Due Today: {}", task.title) },
+                                            text: "Don't forget to complete your task!".to_string(),
+                                            metadata: json!({
+                                                "target_id": task.id.clone(),
+                                                "trigger_date": target_date.to_string(),
+                                                "reminder": rem.clone()
+                                            }),
+                                        },
+                                        read_receipt: false,
+                                    });
+                                    notified_set.insert(dedup_key);
+                                    
+                                    if let Err(e) = app_handle.notification().builder()
+                                        .title(if is_overdue { "Task Overdue" } else { "Task Due" })
+                                        .body(&task.title)
+                                        .show() {
+                                            log::error!("Failed to show notification: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Process Events
+            for event in active_nodes.iter().filter(|n| n.node_type == "event") {
+                let start_at = event.properties.get("start_at").and_then(|v: &Value| v.as_str()).unwrap_or("");
+                if start_at.is_empty() { continue; }
+                
+                let start_date = start_at.split('T').next().unwrap_or(start_at);
+                let start_time = if start_at.contains('T') { start_at.split('T').nth(1).unwrap_or("00:00:00") } else { "00:00:00" };
+                
+                let recurrence = event.properties.get("recurrence").and_then(|v| v.as_str()).unwrap_or("none");
+                let recurrence_end_at = event.properties.get("recurrence_end_at").and_then(|v| v.as_str()).unwrap_or("");
+                let exceptions: Vec<String> = event.properties.get("exceptions").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+                
+                for target_date in [&today_str, &tomorrow_str] {
+                    if occurs_on_date(start_date, recurrence, recurrence_end_at, &exceptions, target_date) {
                         let mut reminders = vec![];
-                        if let Some(rems) = task.properties.get("reminders").and_then(|v| v.as_array()) {
+                        if let Some(rems) = event.properties.get("reminders").and_then(|v| v.as_array()) {
                             for r in rems {
                                 if let Some(r_str) = r.as_str() { reminders.push(r_str.to_string()); }
                             }
                         }
                         if reminders.is_empty() { reminders.push("0m".to_string()); }
                         
-                        let start_time = task.properties.get("start_time").and_then(|v| v.as_str()).unwrap_or("09:00:00");
                         let dt_str = format!("{}T{}", target_date, start_time);
                         let event_dt = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
-                            NaiveDateTime::parse_from_str(&format!("{}:00", dt_str), "%Y-%m-%dT%H:%M:%S").unwrap_or_default()
+                            NaiveDateTime::parse_from_str(&format!("{}:00", dt_str), "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
+                                NaiveDateTime::parse_from_str(&format!("{}T00:00:00", target_date), "%Y-%m-%dT%H:%M:%S").unwrap_or_default()
+                            })
                         });
                         
                         if let Some(event_local) = Local.from_local_datetime(&event_dt).single() {
@@ -155,19 +227,19 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                                 let trigger_time = event_local - dur;
                                 
                                 if now >= trigger_time {
-                                    let dedup_key = format!("{}_{}_{}", task.id, target_date, rem);
+                                    let dedup_key = format!("{}_{}_{}", event.id, target_date, rem);
                                     if !notified_set.contains(&dedup_key) {
                                         new_messages.push(ChatMessage {
                                             id: uuid::Uuid::new_v4().to_string(),
                                             message_type: "system".to_string(),
-                                            subtype: "task_due".to_string(),
+                                            subtype: "event_upcoming".to_string(),
                                             timestamp: now.to_rfc3339(),
                                             sender: sender.clone(),
                                             content: ChatContent {
-                                                title: if is_overdue { format!("Task Overdue: {}", task.title) } else { format!("Task Due Today: {}", task.title) },
-                                                text: "Don't forget to complete your task!".to_string(),
+                                                title: format!("Upcoming Event: {}", event.title),
+                                                text: if rem == "0m" { format!("Happening now: {}", event.title) } else { format!("Starts in {}", rem) },
                                                 metadata: json!({
-                                                    "target_id": task.id.clone(),
+                                                    "target_id": event.id.clone(),
                                                     "trigger_date": target_date.to_string(),
                                                     "reminder": rem.clone()
                                                 }),
@@ -176,10 +248,9 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                                         });
                                         notified_set.insert(dedup_key);
                                         
-                                        // Push Notification
                                         if let Err(e) = app_handle.notification().builder()
-                                            .title(if is_overdue { "Task Overdue" } else { "Task Due" })
-                                            .body(&task.title)
+                                            .title("Upcoming Event")
+                                            .body(&format!("{} ({})", event.title, start_time))
                                             .show() {
                                                 log::error!("Failed to show notification: {}", e);
                                         }
@@ -190,119 +261,45 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                     }
                 }
             }
-
-            // 2. Process Events
-            if let Ok(events) = db.get_nodes_by_type("event") {
-                for event in events {
-                    let start_at = event.properties.get("start_at").and_then(|v: &Value| v.as_str()).unwrap_or("");
-                    if start_at.is_empty() { continue; }
-                    
-                    let start_date = start_at.split('T').next().unwrap_or(start_at);
-                    let start_time = if start_at.contains('T') { start_at.split('T').nth(1).unwrap_or("00:00:00") } else { "00:00:00" };
-                    
-                    let recurrence = event.properties.get("recurrence").and_then(|v| v.as_str()).unwrap_or("none");
-                    let recurrence_end_at = event.properties.get("recurrence_end_at").and_then(|v| v.as_str()).unwrap_or("");
-                    let exceptions: Vec<String> = event.properties.get("exceptions").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-                    
-                    for target_date in [&today_str, &tomorrow_str] {
-                        if occurs_on_date(start_date, recurrence, recurrence_end_at, &exceptions, target_date) {
-                            let mut reminders = vec![];
-                            if let Some(rems) = event.properties.get("reminders").and_then(|v| v.as_array()) {
-                                for r in rems {
-                                    if let Some(r_str) = r.as_str() { reminders.push(r_str.to_string()); }
-                                }
-                            }
-                            if reminders.is_empty() { reminders.push("0m".to_string()); }
-                            
-                            let dt_str = format!("{}T{}", target_date, start_time);
-                            let event_dt = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
-                                NaiveDateTime::parse_from_str(&format!("{}:00", dt_str), "%Y-%m-%dT%H:%M:%S").unwrap_or_else(|_| {
-                                    NaiveDateTime::parse_from_str(&format!("{}T00:00:00", target_date), "%Y-%m-%dT%H:%M:%S").unwrap()
-                                })
-                            });
-                            
-                            if let Some(event_local) = Local.from_local_datetime(&event_dt).single() {
-                                for rem in reminders {
-                                    let dur = parse_duration(&rem);
-                                    let trigger_time = event_local - dur;
-                                    
-                                    if now >= trigger_time {
-                                        let dedup_key = format!("{}_{}_{}", event.id, target_date, rem);
-                                        if !notified_set.contains(&dedup_key) {
-                                            new_messages.push(ChatMessage {
-                                                id: uuid::Uuid::new_v4().to_string(),
-                                                message_type: "system".to_string(),
-                                                subtype: "event_upcoming".to_string(),
-                                                timestamp: now.to_rfc3339(),
-                                                sender: sender.clone(),
-                                                content: ChatContent {
-                                                    title: format!("Upcoming Event: {}", event.title),
-                                                    text: if rem == "0m" { format!("Happening now: {}", event.title) } else { format!("Starts in {}", rem) },
-                                                    metadata: json!({
-                                                        "target_id": event.id.clone(),
-                                                        "trigger_date": target_date.to_string(),
-                                                        "reminder": rem.clone()
-                                                    }),
-                                                },
-                                                read_receipt: false,
-                                            });
-                                            notified_set.insert(dedup_key);
-                                            
-                                            if let Err(e) = app_handle.notification().builder()
-                                                .title("Upcoming Event")
-                                                .body(&format!("{} ({})", event.title, start_time))
-                                                .show() {
-                                                    log::error!("Failed to show notification: {}", e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             
-            // 3. Process Birthdays (Skipped rewrite for brevity, just keeping it functional)
-            if let Ok(people) = db.get_nodes_by_type("person") {
-                let current_mmdd = today_str[5..].to_string();
-                let tomorrow_mmdd = tomorrow_str[5..].to_string();
-                for person in people {
-                    if let Some(birthday) = person.properties.get("birthday").and_then(|v: &Value| v.as_str()) {
-                        if birthday.is_empty() { continue; }
-                        let parts: Vec<&str> = birthday.split('-').collect();
-                        if parts.len() == 3 {
-                            let mmdd = format!("{}-{}", parts[1], parts[2]);
-                            if mmdd == current_mmdd || mmdd == tomorrow_mmdd {
-                                let is_today = mmdd == current_mmdd;
-                                let target_date = if is_today { &today_str } else { &tomorrow_str };
-                                let dedup_key = format!("{}_{}_0m", person.id, target_date);
-                                if !notified_set.contains(&dedup_key) {
-                                    new_messages.push(ChatMessage {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        message_type: "system".to_string(),
-                                        subtype: "birthday_upcoming".to_string(),
-                                        timestamp: now.to_rfc3339(),
-                                        sender: sender.clone(),
-                                        content: ChatContent {
-                                            title: format!("Birthday Reminder: {}", person.title),
-                                            text: if is_today { format!("Today is {}'s birthday!", person.title) } else { format!("Tomorrow is {}'s birthday!", person.title) },
-                                            metadata: json!({
-                                                "target_id": person.id.clone(),
-                                                "trigger_date": target_date.to_string(),
-                                                "reminder": "0m"
-                                            }),
-                                        },
-                                        read_receipt: false,
-                                    });
-                                    notified_set.insert(dedup_key);
-                                    
-                                    if let Err(e) = app_handle.notification().builder()
-                                        .title("Birthday Reminder")
-                                        .body(&if is_today { format!("Today is {}'s birthday!", person.title) } else { format!("Tomorrow is {}'s birthday!", person.title) })
-                                        .show() {
-                                            log::error!("Failed to show notification: {}", e);
-                                    }
+            // 3. Process Birthdays
+            let current_mmdd = today_str[5..].to_string();
+            let tomorrow_mmdd = tomorrow_str[5..].to_string();
+            for person in active_nodes.iter().filter(|n| n.node_type == "person") {
+                if let Some(birthday) = person.properties.get("birthday").and_then(|v: &Value| v.as_str()) {
+                    if birthday.is_empty() { continue; }
+                    let parts: Vec<&str> = birthday.split('-').collect();
+                    if parts.len() == 3 {
+                        let mmdd = format!("{}-{}", parts[1], parts[2]);
+                        if mmdd == current_mmdd || mmdd == tomorrow_mmdd {
+                            let is_today = mmdd == current_mmdd;
+                            let target_date = if is_today { &today_str } else { &tomorrow_str };
+                            let dedup_key = format!("{}_{}_0m", person.id, target_date);
+                            if !notified_set.contains(&dedup_key) {
+                                new_messages.push(ChatMessage {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    message_type: "system".to_string(),
+                                    subtype: "birthday_upcoming".to_string(),
+                                    timestamp: now.to_rfc3339(),
+                                    sender: sender.clone(),
+                                    content: ChatContent {
+                                        title: format!("Birthday Reminder: {}", person.title),
+                                        text: if is_today { format!("Today is {}'s birthday!", person.title) } else { format!("Tomorrow is {}'s birthday!", person.title) },
+                                        metadata: json!({
+                                            "target_id": person.id.clone(),
+                                            "trigger_date": target_date.to_string(),
+                                            "reminder": "0m"
+                                        }),
+                                    },
+                                    read_receipt: false,
+                                });
+                                notified_set.insert(dedup_key);
+                                
+                                if let Err(e) = app_handle.notification().builder()
+                                    .title("Birthday Reminder")
+                                    .body(&if is_today { format!("Today is {}'s birthday!", person.title) } else { format!("Tomorrow is {}'s birthday!", person.title) })
+                                    .show() {
+                                        log::error!("Failed to show notification: {}", e);
                                 }
                             }
                         }

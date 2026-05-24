@@ -160,7 +160,7 @@ const renderGraph = () => {
         .scaleExtent([0.3, 3])
         .on('zoom', (event) => {
             transform = event.transform;
-            draw(ctx, width, height);
+            draw(ctx);
         });
 
     d3.select(canvas)
@@ -179,7 +179,7 @@ const renderGraph = () => {
         .force('charge', d3.forceManyBody().strength(-200).distanceMax(300))
         .force('center', d3.forceCenter(width / 2, height / 2))
         .force('collide', d3.forceCollide<GraphNode>().radius(d => d.radius + 8))
-        .on('tick', () => draw(ctx, width, height));
+        .on('tick', () => draw(ctx));
 
     // Interactions
     d3.select(canvas)
@@ -191,7 +191,7 @@ const renderGraph = () => {
             if (found !== hoveredNode.value) {
                 hoveredNode.value = found || null;
                 canvas.style.cursor = found ? 'pointer' : 'grab';
-                draw(ctx, width, height);
+                draw(ctx);
             }
         })
         .on('click', () => {
@@ -222,9 +222,9 @@ const renderGraph = () => {
     d3.select(canvas).call(drag as any);
 };
 
-const draw = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+const draw = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.k, transform.k);
 
