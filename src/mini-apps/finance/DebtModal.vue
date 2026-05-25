@@ -6,6 +6,7 @@ import type { Debt, FinanceAccount, Transaction } from './types';
 const props = defineProps<{
     show: boolean;
     accounts: FinanceAccount[];
+    people?: {id: string, title: string}[];
     editingDebt?: Debt | null;
     defaultType?: 'lend' | 'borrow';
 }>();
@@ -73,10 +74,13 @@ const save = () => {
         dDue.setHours(23, 59, 59);
     }
 
+    const matchedPerson = props.people?.find(p => p.title === person.value);
+
     const debt: Debt = {
         id: props.editingDebt ? props.editingDebt.id : `debt-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: type.value,
         person: person.value,
+        personId: matchedPerson ? matchedPerson.id : undefined,
         totalAmount: amount,
         paidAmount: props.editingDebt ? props.editingDebt.paidAmount : 0,
         startDate: dStart.toISOString(),
@@ -98,7 +102,8 @@ const save = () => {
             accountId: debt.accountId,
             date: debt.startDate,
             note: `${debt.type === 'lend' ? `Lent to ${debt.person}` : `Borrowed from ${debt.person}`}${debt.note ? ` - ${debt.note}` : ''}`,
-            debtId: debt.id
+            debtId: debt.id,
+            personId: debt.personId
         };
     }
 
@@ -156,9 +161,13 @@ const save = () => {
                             <input 
                                 v-model="person" 
                                 type="text" 
+                                list="debt-people-list"
                                 placeholder="Enter person's name..."
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600"
                             />
+                            <datalist id="debt-people-list" v-if="people">
+                                <option v-for="p in people" :key="p.id" :value="p.title"></option>
+                            </datalist>
                         </div>
                     </div>
 

@@ -49,6 +49,8 @@ const showGiftModal = ref(false);
 const linkedNodes = ref<any[]>([]);
 const loadingLinks = ref(false);
 
+const allDebts = ref<any[]>([]);
+
 const fetchPeople = async () => {
     loading.value = true;
     try {
@@ -98,6 +100,20 @@ const fetchLinkedNodes = async (personTitle: string, personId: string) => {
     }
 };
 
+const fetchDebts = async () => {
+    try {
+        const debtNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_debts' });
+        if (debtNodes.length > 0 && debtNodes[0].properties && debtNodes[0].properties.debts) {
+            allDebts.value = debtNodes[0].properties.debts;
+        } else {
+            allDebts.value = [];
+        }
+    } catch (e) {
+        logger.error('Failed to fetch finance debts', e);
+        allDebts.value = [];
+    }
+};
+
 watch(selectedPerson, (newPerson) => {
     if (newPerson && newPerson.title) {
         fetchLinkedNodes(newPerson.title, newPerson.id);
@@ -109,12 +125,14 @@ watch(selectedPerson, (newPerson) => {
 
 onMounted(() => {
     fetchPeople();
+    fetchDebts();
     listen('vault-file-created-deleted', () => {
         fetchPeople();
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
     });
     listen('vault-file-modified', () => {
         fetchPeople();
+        fetchDebts();
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
     });
 });
@@ -269,7 +287,7 @@ const getContactHealthDot = (person: any) => {
 const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'timeline', label: 'Timeline', icon: Clock },
-    { id: 'notes', label: 'Notes', icon: FileText },
+    { id: 'notes', label: 'Notes & Links', icon: FileText },
     { id: 'graph', label: 'Graph', icon: Share2 },
 ];
 
@@ -686,9 +704,9 @@ defineExpose({ openPersonById });
                 </div>
 
                 <!-- Tab Content -->
-                <div class="flex-1 overflow-y-auto px-8 py-6">
+                <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark">
                     <div class="max-w-3xl mx-auto">
-                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" />
+                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" :all-debts="allDebts" @open-linked-node="openLinkedNode" />
                         <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />
                         <NotesTab v-else-if="activeTab === 'notes'" :person="selectedPerson" :linked-nodes="linkedNodes" :loading-links="loadingLinks" @open-linked-node="openLinkedNode" />
                         <GraphTab v-else-if="activeTab === 'graph'" :person="selectedPerson" :all-people="people" :vault-path="vaultPath" @select-person="(p: any) => selectedPerson = p" @unlink="unlinkPerson" @edit-link="openEditLink" />

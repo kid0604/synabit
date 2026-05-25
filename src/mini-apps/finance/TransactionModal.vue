@@ -11,6 +11,7 @@ const props = defineProps<{
   expenseCategories: string[];
   accounts: FinanceAccount[];
   projects?: {id: string, title: string}[];
+  people?: {id: string, title: string}[];
   defaultProjectId?: string;
 }>();
 
@@ -28,6 +29,7 @@ const toAccountId = ref<string>('');
 const date = ref<string>('');
 const note = ref<string>('');
 const projectId = ref<string>('');
+const personId = ref<string>('');
 const showErrors = ref(false);
 
 const inputCurrency = ref(currentCurrency.value);
@@ -133,6 +135,7 @@ const initForm = () => {
         date.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         note.value = props.transaction.note;
         projectId.value = props.transaction.projectId || '';
+        personId.value = props.transaction.personId || '';
     } else {
         type.value = 'expense';
         inputCurrency.value = currentCurrency.value;
@@ -148,6 +151,7 @@ const initForm = () => {
         date.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         note.value = '';
         projectId.value = props.defaultProjectId || '';
+        personId.value = '';
     }
     showErrors.value = false;
     isAddingCategory.value = false;
@@ -182,7 +186,8 @@ const save = () => {
         accountId: accountId.value,
         date: new Date(date.value).toISOString(),
         note: note.value.trim(),
-        projectId: type.value === 'expense' && projectId.value ? projectId.value : undefined
+        projectId: type.value === 'expense' && projectId.value ? projectId.value : undefined,
+        personId: personId.value ? personId.value : undefined
     };
     
     if (inputCurrency.value !== currentCurrency.value) {
@@ -336,6 +341,15 @@ const canSave = computed(() => {
             <select v-model="projectId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
                 <option value="">No project</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.title }}</option>
+            </select>
+        </div>
+
+        <!-- Person Link -->
+        <div v-if="people && people.length > 0">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Link to Person</label>
+            <select v-model="personId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
+                <option value="">No person</option>
+                <option v-for="p in people" :key="p.id" :value="p.id">{{ p.title }}</option>
             </select>
         </div>
 

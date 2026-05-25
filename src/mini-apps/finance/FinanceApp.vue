@@ -37,6 +37,7 @@ const debts = ref<Debt[]>([]);
 
 const budgets = ref<Budget[]>([]);
 const projects = ref<{id: string, title: string}[]>([]);
+const people = ref<{id: string, title: string}[]>([]);
 
 const searchQuery = ref('');
 const filterType = ref<'all' | 'income' | 'expense' | 'transfer'>('all');
@@ -336,6 +337,14 @@ const loadData = async () => {
                 .map(n => ({ id: n.id, title: n.title }));
         } catch(e) {
             logger.error('Failed to load projects', e);
+        }
+        
+        // Load people for linking
+        try {
+            const peopleNodes: any[] = await invoke('get_nodes', { nodeType: 'person' });
+            people.value = peopleNodes.map(n => ({ id: n.id, title: n.title }));
+        } catch(e) {
+            logger.error('Failed to load people', e);
         }
         
     } catch (e) {
@@ -886,6 +895,7 @@ defineExpose({ openMonthById });
               <FinanceDebts 
                   :debts="debts"
                   :accounts="accounts"
+                  :people="people"
                   @save-debts="saveDebts"
                   @create-transaction="(tx) => { saveTransaction(tx) }"
               />
@@ -901,9 +911,19 @@ defineExpose({ openMonthById });
               />
           </div>
       </div>
-
-      <TransactionModal :show="showTxModal" :transaction="editingTx" :income-categories="incomeCategories" :expense-categories="expenseCategories" :accounts="accounts" :projects="projects" @close="showTxModal = false" @save="saveTransaction" @addCategory="handleAddCategory" />
-      <FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" />
+      <!-- Modals -->
+      <TransactionModal 
+          :show="showTxModal"
+          :accounts="accounts"
+          :income-categories="incomeCategories"
+          :expense-categories="expenseCategories"
+          :editing-transaction="editingTx"
+          :projects="projects"
+          :people="people"
+          @close="showTxModal = false"
+          @save="saveTransaction"
+          @add-category="handleAddCategory"
+      /><FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />
   </div>
 </template>

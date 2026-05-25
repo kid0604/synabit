@@ -66,6 +66,7 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
 let simulation: d3.Simulation<SimNode, SimLink>;
 let zoomBehavior: d3.ZoomBehavior<HTMLCanvasElement, unknown>;
 let transform = d3.zoomIdentity;
+let initialZoomSet = false;
 let hoveredNode: SimNode | null = null;
 let dragSubject: SimNode | null = null;
 let currentNodes: SimNode[] = [];
@@ -158,6 +159,14 @@ const renderGraph = () => {
             transform = event.transform;
             draw(context);
         });
+
+    if (!initialZoomSet && width > 0 && height > 0) {
+        transform = d3.zoomIdentity
+            .translate(width / 2, height / 2)
+            .scale(0.7)
+            .translate(-width / 2, -height / 2);
+        initialZoomSet = true;
+    }
 
     d3.select(canvas)
         .call(zoomBehavior as any)

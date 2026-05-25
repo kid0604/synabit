@@ -9,6 +9,7 @@ import { formatCurrency } from '../currency';
 const props = defineProps<{
     debts: Debt[];
     accounts: FinanceAccount[];
+    people?: {id: string, title: string}[];
 }>();
 
 const emit = defineEmits<{
@@ -270,6 +271,7 @@ const toggleStatus = (debt: Debt) => {
             v-if="showDebtModal"
             :show="showDebtModal"
             :accounts="accounts"
+            :people="people"
             :editingDebt="editingDebt"
             :defaultType="currentTab"
             @close="showDebtModal = false"

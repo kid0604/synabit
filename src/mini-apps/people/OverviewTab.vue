@@ -6,6 +6,7 @@ import { useRelationshipHealth } from './composables/useRelationshipHealth';
 
 const props = defineProps<{
     person: any;
+    allDebts?: any[];
 }>();
 
 const personRef = toRef(props, 'person');
@@ -101,6 +102,31 @@ const getDaysUntilAnnual = (dateStr: string, now: Date, thisYear: number): numbe
 
 const hasUpcomingDates = computed(() => upcomingDates.value.length > 0);
 
+// --- Finance Data ---
+const personDebts = computed(() => {
+    if (!props.allDebts || !props.person) return [];
+    return props.allDebts.filter(d => {
+        if (d.personId && d.personId === props.person.id) return true;
+        if (!d.personId && d.person && d.person.toLowerCase() === props.person.title.toLowerCase()) return true;
+        return false;
+    }).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+});
+
+const totalLent = computed(() => {
+    return personDebts.value.filter(d => d.type === 'lend').reduce((sum, d) => sum + (d.totalAmount - d.paidAmount), 0);
+});
+
+const totalBorrowed = computed(() => {
+    return personDebts.value.filter(d => d.type === 'borrow').reduce((sum, d) => sum + (d.totalAmount - d.paidAmount), 0);
+});
+
+const hasDebts = computed(() => personDebts.value.length > 0);
+
+const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+};
+// --------------------
+
 const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
     return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -122,7 +148,7 @@ const openLink = async (url: string) => {
 
 
 const hasOverviewContent = computed(() => {
-    return howWeMet.value || relationshipType.value || hasSocial.value || hasUpcomingDates.value || recentGifts.value.length > 0 || contactFrequency.value || health.value.status !== 'unknown';
+    return howWeMet.value || relationshipType.value || hasSocial.value || hasUpcomingDates.value || recentGifts.value.length > 0 || contactFrequency.value || health.value.status !== 'unknown' || hasDebts.value;
 });
 </script>
 
@@ -174,6 +200,46 @@ const hasOverviewContent = computed(() => {
             <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-3 text-center">
                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Interactions</p>
                 <p class="text-lg font-bold text-gray-800 dark:text-gray-100">{{ health.interactionCount }}</p>
+            </div>
+        </div>
+
+        <!-- Financial Summary -->
+        <div v-if="hasDebts" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-5">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-4 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-blue-500"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"/></svg>
+                Financial Summary
+            </h3>
+            
+            <div class="grid grid-cols-2 gap-4 mb-5">
+                <div class="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 rounded-xl p-3 text-center">
+                    <p class="text-xs font-semibold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Total Lent</p>
+                    <p class="text-lg font-bold text-green-700 dark:text-green-300">{{ formatCurrency(totalLent) }}</p>
+                </div>
+                <div class="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-xl p-3 text-center">
+                    <p class="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider mb-1">Total Borrowed</p>
+                    <p class="text-lg font-bold text-red-700 dark:text-red-300">{{ formatCurrency(totalBorrowed) }}</p>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <div v-for="debt in personDebts" :key="debt.id" class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full" :class="debt.status === 'completed' ? 'bg-gray-400' : (debt.type === 'lend' ? 'bg-green-500' : 'bg-red-500')"></span>
+                        <div class="flex flex-col">
+                            <span class="font-medium text-gray-800 dark:text-gray-200" :class="{ 'line-through text-gray-400 dark:text-gray-500': debt.status === 'completed' }">
+                                {{ debt.type === 'lend' ? 'Lent' : 'Borrowed' }}: {{ formatCurrency(debt.totalAmount) }}
+                            </span>
+                            <span v-if="debt.note" class="text-xs text-gray-500">{{ debt.note }}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs">
+                        <span class="text-gray-500">{{ formatDate(debt.startDate) }}</span>
+                        <span v-if="debt.status === 'active'" class="px-2 py-0.5 rounded-full font-medium" :class="debt.type === 'lend' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'">
+                            Remaining: {{ formatCurrency(debt.totalAmount - debt.paidAmount) }}
+                        </span>
+                        <span v-else class="px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">Paid</span>
+                    </div>
+                </div>
             </div>
         </div>
 

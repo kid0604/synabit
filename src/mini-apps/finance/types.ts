@@ -11,6 +11,7 @@ export interface Transaction {
   note: string;
   debtId?: string;
   projectId?: string;
+  personId?: string;
   originalCurrency?: string;
   originalAmount?: number;
   exchangeRate?: number;
@@ -20,6 +21,7 @@ export interface Debt {
   id: string;
   type: 'borrow' | 'lend';
   person: string;
+  personId?: string;
   totalAmount: number;
   paidAmount: number;
   startDate: string;

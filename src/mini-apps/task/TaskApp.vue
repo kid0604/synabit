@@ -2,7 +2,7 @@
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink, User } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import ProjectEditModal from './ProjectEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -1374,6 +1374,24 @@ const isOverdue = (task: TaskMetadata) => {
     return dueDate < today;
 };
 
+const getTransferredName = (rawStr: string | null | undefined): string => {
+    if (!rawStr) return 'Unknown';
+    const match = rawStr.match(/^\[(.*?)\]\(synabit:\/\/person\/.*?\)$/);
+    return match ? `@${match[1]}` : rawStr;
+};
+
+const isLinkedPerson = (rawStr: string | null | undefined): boolean => {
+    return /^\[(.*?)\]\(synabit:\/\/person\/.*?\)$/.test(rawStr || '');
+};
+
+const openPerson = (transferredTo: string) => {
+    if (!transferredTo) return;
+    const match = transferredTo.match(/^\[(.*?)\]\(synabit:\/\/person\/(.*?)\)$/);
+    if (match && match[2]) {
+        emit('open-node', match[2], 'person');
+    }
+};
+
 const toggleTaskStatus = async (task: TaskMetadata) => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     const nowStr = new Date().toISOString().split('T')[0];
@@ -1874,9 +1892,10 @@ watch(() => props.vaultPath, () => {
                                   {{ task.priority }}
                               </span>
                               
-                              <div v-if="task.is_transferred" class="flex items-center shrink-0 ml-1 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
-                                  <Eye v-if="task.track_progress" class="w-4 h-4 text-blue-500" />
-                                  <EyeOff v-else class="w-4 h-4" />
+                              <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-1 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                                  <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
+                                  <span class="text-[10px] font-semibold truncate max-w-[120px]">{{ getTransferredName(task.transferred_to) }}</span>
+                                  <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" title="Tracking Progress" />
                               </div>
                               
                               <span v-if="task.due_date" class="text-xs flex items-center font-medium"
@@ -1938,9 +1957,10 @@ watch(() => props.vaultPath, () => {
                                      <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">
                                          {{ task.priority }}
                                      </span>
-                                     <div v-if="task.is_transferred" class="flex items-center shrink-0 ml-0.5 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
-                                         <Eye v-if="task.track_progress" class="w-3.5 h-3.5 text-blue-500" />
-                                         <EyeOff v-else class="w-3.5 h-3.5" />
+                                     <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-0.5 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                                         <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
+                                         <span class="text-[10px] font-semibold truncate max-w-[100px]">{{ getTransferredName(task.transferred_to) }}</span>
+                                         <Eye v-if="task.track_progress" class="w-3 h-3 ml-1 text-blue-500" title="Tracking Progress" />
                                      </div>
                                      <span v-if="task.start_date || task.due_date" class="text-[10px] px-1.5 py-0.5 rounded flex items-center"
                                          :class="isOverdue(task) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'text-gray-500 bg-gray-100 dark:bg-[#2a2a2a]'">
@@ -1997,9 +2017,10 @@ watch(() => props.vaultPath, () => {
                              </td>
                              <td class="px-6 py-3 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2" :class="task.status === 'done' ? 'line-through text-gray-400' : ''">
                                  <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
-                                 <div v-if="task.is_transferred" class="flex items-center shrink-0 text-gray-400 dark:text-gray-500 cursor-help" :title="'Transferred to: ' + (task.transferred_to || 'Unknown')">
-                                     <Eye v-if="task.track_progress" class="w-4 h-4 text-blue-500" />
-                                     <EyeOff v-else class="w-4 h-4" />
+                                 <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                                     <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
+                                     <span class="text-[10px] font-semibold truncate max-w-[120px]">{{ getTransferredName(task.transferred_to) }}</span>
+                                     <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" title="Tracking Progress" />
                                  </div>
                                  {{ task.title }}
                              </td>

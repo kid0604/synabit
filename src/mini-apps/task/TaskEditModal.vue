@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
-import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2 } from 'lucide-vue-next';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
 
 const props = defineProps<{
@@ -57,9 +58,101 @@ const adjustTitleHeight = () => {
     });
 };
 
-onMounted(() => {
+const people = ref<any[]>([]);
+const transferInput = ref('');
+const isEditingTransfer = ref(false);
+
+watch(() => editingTaskParams.value.transferred_to, (newVal) => {
+    if (isEditingTransfer.value) return;
+    const match = newVal.match(/^\[(.*?)\]\(synabit:\/\/person\/.*?\)$/);
+    transferInput.value = match ? match[1] : newVal;
+}, { immediate: true });
+
+const onTransferInput = (e: Event) => {
+    isEditingTransfer.value = true;
+    const val = (e.target as HTMLInputElement).value;
+    transferInput.value = val;
+    editingTaskParams.value.transferred_to = val;
+};
+
+const displayTransferredName = computed(() => {
+    const rawStr = editingTaskParams.value.transferred_to;
+    if (!rawStr) return '';
+    const match = rawStr.match(/^\[(.*?)\]\(synabit:\/\/person\/.*?\)$/);
+    return match ? `@${match[1]}` : rawStr;
+});
+
+const filteredPeople = computed(() => {
+    const query = transferInput.value.toLowerCase().trim();
+    if (!query) return people.value;
+    return people.value.filter(p => {
+        if (p.title.toLowerCase().includes(query)) return true;
+        if (p.properties?.nickname && p.properties.nickname.toLowerCase().includes(query)) return true;
+        return false;
+    });
+});
+
+const selectPerson = (person: any) => {
+    isEditingTransfer.value = false;
+    editingTaskParams.value.transferred_to = `[${person.title}](synabit://person/${person.id})`;
+    transferInput.value = person.title;
+    activeDropdown.value = null;
+};
+
+const createNewPerson = async () => {
+    isEditingTransfer.value = false;
+    const name = transferInput.value.trim();
+    if (!name) return;
+    try {
+        const id = crypto.randomUUID();
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: `People/${id}.md`,
+            title: name,
+            nodeType: "person",
+            properties: { tags: [], is_owner: false, details: [] },
+            content: ''
+        });
+        editingTaskParams.value.transferred_to = `[${name}](synabit://person/${id})`;
+        transferInput.value = name;
+        activeDropdown.value = null;
+        people.value = await invoke('get_nodes', { nodeType: 'person' });
+    } catch (e) {
+        console.error("Failed to create person", e);
+    }
+};
+
+const usePlainText = () => {
+    isEditingTransfer.value = false;
+    editingTaskParams.value.transferred_to = transferInput.value.trim();
+    activeDropdown.value = null;
+};
+
+const toggleTransferDropdown = () => {
+    if (!editingTaskParams.value.is_transferred) {
+        editingTaskParams.value.is_transferred = true;
+        activeDropdown.value = 'transfer';
+    } else {
+        activeDropdown.value = activeDropdown.value === 'transfer' ? null : 'transfer';
+    }
+};
+
+const clearTransfer = () => {
+    editingTaskParams.value.is_transferred = false;
+    editingTaskParams.value.transferred_to = '';
+    editingTaskParams.value.track_progress = false;
+    transferInput.value = '';
+    activeDropdown.value = null;
+};
+
+onMounted(async () => {
     document.addEventListener('click', handleGlobalClick);
     adjustTitleHeight();
+    try {
+        people.value = await invoke('get_nodes', { nodeType: 'person' });
+    } catch (e) {
+        console.error("Failed to load people", e);
+    }
 });
 
 onUnmounted(() => {
@@ -208,22 +301,22 @@ const handleBackgroundClick = () => {
               <!-- Transfer -->
               <div class="relative flex items-center group">
                   <button 
-                      @click.stop="editingTaskParams.is_transferred = !editingTaskParams.is_transferred; if(editingTaskParams.is_transferred) activeDropdown = 'transfer'; else activeDropdown = null;"
+                      @click.stop="toggleTransferDropdown"
                       class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer flex items-center transition-colors" 
                       :class="editingTaskParams.is_transferred ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" 
                       title="Transfer Task"
                   >
                       <Send class="w-[18px] h-[18px]" :class="editingTaskParams.is_transferred ? 'text-purple-500 mr-2' : ''" />
                       <span v-if="editingTaskParams.is_transferred && editingTaskParams.transferred_to" class="text-xs font-semibold max-w-[120px] truncate text-purple-600 dark:text-purple-400">
-                          {{ editingTaskParams.transferred_to }}
+                          {{ displayTransferredName }}
                       </span>
                   </button>
                   
                   <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 transition-all z-50" :class="activeDropdown === 'transfer' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-52 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
+                      <div class="w-64 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
                           <label class="block text-[10px] font-semibold text-gray-400 mb-1 w-full text-left ml-1">Transfer to:</label>
                           <div class="flex items-center gap-1.5 w-full">
-                              <input v-model="editingTaskParams.transferred_to" placeholder="Name..." class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                              <input :value="transferInput" @input="onTransferInput" @click="activeDropdown = 'transfer'" placeholder="Name..." class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
                               
                               <button 
                                   @click.stop="editingTaskParams.track_progress = !editingTaskParams.track_progress"
@@ -233,6 +326,27 @@ const handleBackgroundClick = () => {
                               >
                                   <Eye v-if="editingTaskParams.track_progress" class="w-4 h-4" />
                                   <EyeOff v-else class="w-4 h-4" />
+                              </button>
+                              
+                              <button 
+                                  @click.stop="clearTransfer"
+                                  class="p-1.5 rounded-md hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition-colors shrink-0 flex items-center justify-center text-gray-400 dark:text-gray-500 border border-transparent"
+                                  title="Remove Transfer"
+                              >
+                                  <X class="w-4 h-4" />
+                              </button>
+                          </div>
+
+                          <div v-if="activeDropdown === 'transfer'" class="w-full mt-2 max-h-48 overflow-y-auto custom-scrollbar flex flex-col gap-1 border-t border-gray-100 dark:border-[#2c2c2c] pt-2">
+                              <button v-for="p in filteredPeople" :key="p.id" @click.stop="selectPerson(p)" class="text-left px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] rounded-md truncate transition-colors shrink-0">
+                                  {{ p.title }}
+                              </button>
+                              <div v-if="filteredPeople.length > 0" class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1 shrink-0"></div>
+                              <button v-if="transferInput.trim() && !filteredPeople.find(p => p.title.toLowerCase() === transferInput.trim().toLowerCase())" @click.stop="createNewPerson" class="text-left px-2 py-1.5 text-xs text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-md truncate transition-colors flex items-center gap-1 shrink-0">
+                                  <Plus class="w-3 h-3" /> Create: "{{ transferInput }}"
+                              </button>
+                              <button v-if="transferInput.trim()" @click.stop="usePlainText" class="text-left px-2 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] rounded-md truncate transition-colors shrink-0">
+                                  Use text: "{{ transferInput }}"
                               </button>
                           </div>
                       </div>
