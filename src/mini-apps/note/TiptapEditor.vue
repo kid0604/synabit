@@ -136,6 +136,7 @@ const props = defineProps<{
   notes?: any[];
   zenMode?: boolean;
   currentNoteId?: string;
+  minHeightClass?: string;
 }>();
 
 const emit = defineEmits<{
@@ -1764,7 +1765,7 @@ const editor = useEditor({
         .replace(/bgcolor="[^"]*"/gi, '');
     },
     attributes: {
-      class: 'prose focus:outline-none dark:prose-invert max-w-none w-full min-h-[500px] break-words whitespace-pre-wrap',
+      class: `prose focus:outline-none dark:prose-invert max-w-none w-full ${props.minHeightClass || 'min-h-[500px]'} break-words whitespace-pre-wrap`,
     },
     handleClick: (_view, _pos, event) => {
       const target = event.target as HTMLElement;

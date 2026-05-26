@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Plus, Settings, ChevronLeft, ChevronRight, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
+import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
@@ -21,6 +22,9 @@ import { currentCurrency, formatCurrency } from './currency';
 const props = defineProps<{
   vaultPath: string;
 }>();
+
+const router = useRouter();
+const route = useRoute();
 
 // --- State ---
 const currentView = ref<'transactions' | 'reports' | 'debts' | 'budgets'>('transactions');
@@ -42,6 +46,11 @@ const people = ref<{id: string, title: string}[]>([]);
 const searchQuery = ref('');
 const filterType = ref<'all' | 'income' | 'expense' | 'transfer'>('all');
 const filterAccount = ref<string>('all');
+
+// Month/Year selector for summary stats
+const nowDate = new Date();
+const selectedMonthNum = ref(nowDate.getMonth() + 1); // 1-12
+const selectedYear = ref(nowDate.getFullYear());
 
 const showTxModal = ref(false);
 const editingTx = ref<Transaction | null>(null);
@@ -68,20 +77,43 @@ const currentTransactions = computed<Transaction[]>(() => {
     return txs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 });
 
+// Collect ALL transactions across all month nodes
+const allTransactionsFlat = computed<Transaction[]>(() => {
+    const all: Transaction[] = [];
+    months.value.forEach(m => {
+        if (m.node.properties?.transactions) {
+            all.push(...(m.node.properties.transactions as Transaction[]));
+        }
+    });
+    return all;
+});
+
+// Transactions for the selected month (for summary stats) — filtered by actual transaction date
+const selectedMonthTransactions = computed<Transaction[]>(() => {
+    return allTransactionsFlat.value.filter(tx => {
+        const d = new Date(tx.date);
+        return d.getMonth() + 1 === selectedMonthNum.value && d.getFullYear() === selectedYear.value;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+});
+
 const totalIncome = computed(() => {
-    return currentTransactions.value
+    return selectedMonthTransactions.value
         .filter(t => t.type === 'income')
         .reduce((sum, t) => sum + t.amount, 0);
 });
 
 const totalExpense = computed(() => {
-    return currentTransactions.value
+    return selectedMonthTransactions.value
         .filter(t => t.type === 'expense')
         .reduce((sum, t) => sum + t.amount, 0);
 });
 
+const allTransactions = computed<Transaction[]>(() => {
+    return [...allTransactionsFlat.value].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+});
+
 const filteredTransactions = computed(() => {
-    return currentTransactions.value.filter(tx => {
+    return selectedMonthTransactions.value.filter(tx => {
         if (searchQuery.value) {
             const query = searchQuery.value.toLowerCase();
             const categoryMatch = tx.category.toLowerCase().includes(query);
@@ -170,6 +202,15 @@ const accountBalances = computed(() => {
 const getAccountName = (id: string) => {
     const acc = accounts.value.find(a => a.id === id);
     return acc ? acc.name : 'Unknown';
+};
+
+const getPersonName = (id: string) => {
+    const p = people.value.find(p => p.id === id);
+    return p ? p.title : 'Unknown';
+};
+
+const goToPerson = (id: string) => {
+    router.push({ name: 'people', query: { id } });
 };
 
 const ensureCurrentMonthNodeExists = async () => {
@@ -354,9 +395,7 @@ const loadData = async () => {
     }
 };
 
-const prevMonth = () => {
-    if (currentMonthIdx.value > 0) currentMonthIdx.value--;
-};
+
 
 const saveDebts = async (updatedDebts: Debt[]) => {
     debts.value = updatedDebts;
@@ -377,9 +416,7 @@ const saveDebts = async (updatedDebts: Debt[]) => {
     }
 };
 
-const nextMonth = () => {
-    if (currentMonthIdx.value < months.value.length - 1) currentMonthIdx.value++;
-};
+
 
 const openAddTx = () => {
     editingTx.value = null;
@@ -425,10 +462,14 @@ const saveTransaction = async (tx: Transaction) => {
     if (!currentMonth.value) return;
     
     // Auto-create debt if standalone borrow/lend
-    if (['Borrowing', 'Lending'].includes(tx.category) && !tx.debtId) {
+    const catLower = tx.category.toLowerCase();
+    const isBorrowing = ['borrow', 'đi vay', 'vay', 'mượn'].some(k => catLower.includes(k)) && tx.type === 'income';
+    const isLending = ['lend', 'cho vay', 'cho mượn'].some(k => catLower.includes(k)) && tx.type === 'expense';
+    
+    if ((isBorrowing || isLending) && !tx.debtId) {
         const newDebt: Debt = {
             id: `debt-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-            type: tx.category === 'Borrowing' ? 'borrow' : 'lend',
+            type: isBorrowing ? 'borrow' : 'lend',
             person: tx.note.trim() ? tx.note.trim() : 'Anonymous',
             totalAmount: tx.amount,
             paidAmount: 0,
@@ -526,7 +567,21 @@ const saveTransaction = async (tx: Transaction) => {
 };
 
 const deleteTransaction = async (txId: string) => {
-    if (!currentMonth.value) return;
+    // Find which month node contains this transaction
+    let targetMonthNode = null;
+    let targetIdx = -1;
+    
+    for (const m of months.value) {
+        const txs = (m.node.properties?.transactions as Transaction[]) || [];
+        const idx = txs.findIndex(t => t.id === txId);
+        if (idx >= 0) {
+            targetMonthNode = m;
+            targetIdx = idx;
+            break;
+        }
+    }
+    
+    if (!targetMonthNode || targetIdx < 0) return;
     
     const confirmed = await ask('This transaction will be permanently removed. This action cannot be undone.', {
         title: 'Delete transaction?',
@@ -537,22 +592,21 @@ const deleteTransaction = async (txId: string) => {
     
     if (!confirmed) return;
     
-    const txs: Transaction[] = currentMonth.value.node.properties?.transactions || [];
-    const idx = txs.findIndex(t => t.id === txId);
-    if (idx >= 0) {
-        txs.splice(idx, 1);
-        try {
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
-                relPath: currentMonth.value.id,
-                title: currentMonth.value.label,
-                nodeType: 'finance_month',
-                properties: currentMonth.value.node.properties,
-                content: ''
-            });
-        } catch (e) {
-            logger.error('Failed to delete transaction', e);
-        }
+    const txs = targetMonthNode.node.properties.transactions as Transaction[];
+    txs.splice(targetIdx, 1);
+    
+    try {
+        await invoke('write_node_file', {
+            vaultPath: props.vaultPath,
+            relPath: targetMonthNode.id,
+            title: targetMonthNode.label,
+            nodeType: 'finance_month',
+            properties: targetMonthNode.node.properties,
+            content: ''
+        });
+        showTxModal.value = false;
+    } catch (e) {
+        logger.error('Failed to delete transaction', e);
     }
 };
 
@@ -624,9 +678,38 @@ const openMonthById = async (id: string) => {
     if (idx >= 0) currentMonthIdx.value = idx;
 };
 
+const handleRouteQuery = () => {
+    if (route.query.view === 'debts') {
+        currentView.value = 'debts';
+    } else if (route.query.txId) {
+        currentView.value = 'transactions';
+        const txId = route.query.txId as string;
+        for (let i = 0; i < months.value.length; i++) {
+            const txs = months.value[i].node.properties?.transactions || [];
+            const tx = txs.find((t: any) => t.id === txId);
+            if (tx) {
+                currentMonthIdx.value = i;
+                openEditTx(tx);
+                break;
+            }
+        }
+    }
+    // Clear query so it doesn't trigger on refresh
+    if (route.query.txId || route.query.view) {
+        router.replace({ query: {} });
+    }
+};
+
+watch(() => route.query, () => {
+    if (route.query.txId || route.query.view) {
+        handleRouteQuery();
+    }
+});
+
 // Lifecycle
-onMounted(() => {
-    loadData();
+onMounted(async () => {
+    await loadData();
+    handleRouteQuery();
     
     listen('vault-file-modified', () => {
         // Reload data if background sync changes finance files
@@ -739,22 +822,28 @@ defineExpose({ openMonthById });
           </div>
 
           <!-- Main Content (Transactions) -->
-          <div v-if="currentView === 'transactions' && currentMonth" class="flex-1 flex flex-col gap-6 overflow-hidden">
+          <div v-if="currentView === 'transactions'" class="flex-1 flex flex-col gap-6 overflow-hidden">
               
               <!-- Monthly Dashboard Header -->
               <div class="flex gap-4 shrink-0">
                   <!-- Month Selector -->
-                  <div class="w-[220px] bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex items-center justify-between shrink-0">
-                      <button @click="prevMonth" :disabled="currentMonthIdx <= 0" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:pointer-events-none transition-colors text-gray-500">
-                          <ChevronLeft class="w-5 h-5" />
-                      </button>
-                      <div class="flex flex-col items-center">
-                          <span class="text-xs text-gray-500 font-medium mb-0.5">Month</span>
-                          <span class="font-bold text-lg text-text dark:text-text-dark">{{ currentMonth.date.getMonth() + 1 }}/{{ currentMonth.date.getFullYear() }}</span>
+                  <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col items-center justify-center gap-2 shrink-0">
+                      <span class="text-xs text-gray-500 font-medium uppercase tracking-wider">Summary for</span>
+                      <div class="flex items-center gap-2">
+                          <div class="relative">
+                              <select v-model.number="selectedMonthNum" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
+                                  <option v-for="m in 12" :key="m" :value="m">{{ m.toString().padStart(2, '0') }}</option>
+                              </select>
+                              <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          </div>
+                          <span class="text-lg font-bold text-gray-400">/</span>
+                          <div class="relative">
+                              <select v-model.number="selectedYear" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
+                                  <option v-for="y in 10" :key="y" :value="nowDate.getFullYear() - 5 + y">{{ nowDate.getFullYear() - 5 + y }}</option>
+                              </select>
+                              <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          </div>
                       </div>
-                      <button @click="nextMonth" :disabled="currentMonthIdx >= months.length - 1" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:pointer-events-none transition-colors text-gray-500">
-                          <ChevronRight class="w-5 h-5" />
-                      </button>
                   </div>
                   
                   <!-- Summary Stats -->
@@ -858,6 +947,7 @@ defineExpose({ openMonthById });
                                           <span>{{ new Date(tx.date).getHours().toString().padStart(2, '0') }}:{{ new Date(tx.date).getMinutes().toString().padStart(2, '0') }}</span>
                                           <span>•</span>
                                           <span class="truncate">{{ tx.type === 'transfer' && tx.toAccountId ? getAccountName(tx.accountId) + ' ➡️ ' + getAccountName(tx.toAccountId) : getAccountName(tx.accountId) }}</span>
+                                          <span v-if="tx.personId" @click.stop="goToPerson(tx.personId)" class="px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded text-[10px] font-medium hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors ml-1">@{{ getPersonName(tx.personId) }}</span>
                                           <span v-if="tx.note" class="truncate">• {{ tx.note }}</span>
                                       </div>
                                   </div>
@@ -917,11 +1007,12 @@ defineExpose({ openMonthById });
           :accounts="accounts"
           :income-categories="incomeCategories"
           :expense-categories="expenseCategories"
-          :editing-transaction="editingTx"
+          :transaction="editingTx"
           :projects="projects"
           :people="people"
           @close="showTxModal = false"
           @save="saveTransaction"
+          @delete="deleteTransaction"
           @add-category="handleAddCategory"
       /><FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />

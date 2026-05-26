@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as d3 from 'd3';
 import { invoke } from '@tauri-apps/api/core';
-import { Share2, Users, X, Edit2 } from 'lucide-vue-next';
+import { Share2, Users, X, Edit2, Expand, Shrink } from 'lucide-vue-next';
 
 const props = defineProps<{
     person: any;
@@ -36,6 +36,7 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const hoveredNode = ref<GraphNode | null>(null);
 const linkedNodes = ref<any[]>([]);
+const showSecondDegree = ref(false);
 
 let simulation: d3.Simulation<GraphNode, GraphLink> | null = null;
 let zoomBehavior: d3.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
@@ -92,6 +93,10 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
 
     // Person connections
     const connections: Array<{ person_id: string; name: string; relation_type: string }> = props.person?.properties?.connections || [];
+    
+    // Store 1st degree persons to process their connections later if needed
+    const firstDegreeNodes: { id: string, node: GraphNode, data: any }[] = [];
+    
     for (const conn of connections) {
         if (nodeMap.has(conn.person_id)) continue;
         const personData = props.allPeople.find(p => p.id === conn.person_id);
@@ -109,6 +114,50 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
         links.push({ source: centerNode, target: pNode, label: RELATION_LABELS[conn.relation_type] || conn.relation_type });
         centerNode.degree++;
         pNode.degree++;
+        
+        if (personData) {
+            firstDegreeNodes.push({ id: conn.person_id, node: pNode, data: personData });
+        }
+    }
+    
+    // 2nd degree connections
+    if (showSecondDegree.value) {
+        for (const fd of firstDegreeNodes) {
+            const fdConnections: Array<{ person_id: string; name: string; relation_type: string }> = fd.data.properties?.connections || [];
+            for (const conn of fdConnections) {
+                // Don't link back to center node if already linked
+                if (conn.person_id === centerNode.id) continue;
+                
+                let targetNode = nodeMap.get(conn.person_id);
+                if (!targetNode) {
+                    const personData = props.allPeople.find(p => p.id === conn.person_id);
+                    targetNode = {
+                        id: conn.person_id,
+                        label: conn.name,
+                        type: 'person',
+                        relation: conn.relation_type,
+                        avatar: personData?.properties?.avatar,
+                        degree: 0,
+                        radius: 16, // slightly smaller for 2nd degree
+                    };
+                    nodes.push(targetNode);
+                    nodeMap.set(targetNode.id, targetNode);
+                }
+                
+                // Add link between 1st degree and 2nd degree
+                // Avoid duplicate links
+                const linkExists = links.some(l => 
+                    ((l.source as any).id === fd.node.id && (l.target as any).id === targetNode!.id) ||
+                    ((l.target as any).id === fd.node.id && (l.source as any).id === targetNode!.id)
+                );
+                
+                if (!linkExists) {
+                    links.push({ source: fd.node, target: targetNode, label: RELATION_LABELS[conn.relation_type] || conn.relation_type });
+                    fd.node.degree++;
+                    targetNode.degree++;
+                }
+            }
+        }
     }
 
     // Linked activity nodes (notes, tasks, etc.)
@@ -376,13 +425,21 @@ const initGraph = async () => {
     cleanupObserver = () => observer.disconnect();
 };
 
-watch(() => props.person?.id, () => {
+watch([() => props.person?.id, () => props.person?.properties?.connections?.length], () => {
     if (simulation) {
         simulation.stop();
         simulation = null;
     }
     initGraph();
 }, { immediate: false });
+
+watch(() => showSecondDegree.value, () => {
+    if (simulation) {
+        simulation.stop();
+        simulation = null;
+    }
+    initGraph();
+});
 
 onMounted(() => {
     setTimeout(() => initGraph(), 150);
@@ -435,12 +492,26 @@ onUnmounted(() => {
                 </p>
             </div>
 
-            <!-- Legend -->
-            <div v-if="connections.length > 0 || linkedNodes.length > 0" class="absolute bottom-3 left-3 flex items-center gap-3 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-[10px]">
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-500"></span> Current</span>
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> People</span>
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Notes</span>
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Tasks</span>
+            <!-- Legend and Controls -->
+            <div v-if="connections.length > 0 || linkedNodes.length > 0" class="absolute bottom-3 left-3 flex flex-col gap-2 pointer-events-none">
+                
+                <!-- Expand/Shrink Toggle -->
+                <button 
+                    @click="showSecondDegree = !showSecondDegree"
+                    class="pointer-events-auto self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-[#2a2a2d] transition-colors shadow-sm"
+                >
+                    <Expand v-if="!showSecondDegree" class="w-3.5 h-3.5" />
+                    <Shrink v-else class="w-3.5 h-3.5" />
+                    {{ showSecondDegree ? 'Show Less' : 'Show More' }}
+                </button>
+
+                <!-- Legend -->
+                <div class="flex items-center gap-3 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-[10px] shadow-sm">
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-500"></span> Current</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> People</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Notes</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Tasks</span>
+                </div>
             </div>
         </div>
     </div>

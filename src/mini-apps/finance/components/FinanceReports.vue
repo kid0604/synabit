@@ -102,8 +102,11 @@ const filteredTransactions = computed(() => {
         if (selectedAccount.value !== 'all') {
             if (tx.accountId !== selectedAccount.value && tx.toAccountId !== selectedAccount.value) return false;
         }
-        if (excludeDebts.value && (SYSTEM_INCOME_CATEGORIES.includes(tx.category) || SYSTEM_EXPENSE_CATEGORIES.includes(tx.category))) {
-            return false;
+        if (excludeDebts.value) {
+            const isSystemDebt = SYSTEM_INCOME_CATEGORIES.includes(tx.category) || SYSTEM_EXPENSE_CATEGORIES.includes(tx.category);
+            const catLower = tx.category.toLowerCase();
+            const hasDebtKeyword = ['vay', 'nợ', 'borrow', 'lend', 'debt', 'trả', 'thu', 'mượn', 'loan'].some(k => catLower.includes(k));
+            if (isSystemDebt || hasDebtKeyword) return false;
         }
         return true;
     });

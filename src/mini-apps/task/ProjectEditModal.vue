@@ -254,6 +254,7 @@ const handleBackgroundClick = () => {
                   <TiptapEditor 
                        v-model="editingProject.content" 
                        :vaultPath="props.vaultPath || ''"
+                       :minHeightClass="'min-h-[100px]'"
                        class="w-full flex-1"
                        placeholder="Add a description or notes for this project..."
                   />

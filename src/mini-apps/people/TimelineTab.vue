@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, toRef } from 'vue';
+import { useRouter } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
-import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter } from 'lucide-vue-next';
+import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
 
@@ -9,9 +10,13 @@ const props = defineProps<{
     person: any;
     vaultPath: string;
     linkedNodes: any[];
+    allDebts?: any[];
+    allTransactions?: any[];
 }>();
 
 const emit = defineEmits(['updated', 'open-linked-node']);
+
+const router = useRouter();
 
 const personRef = toRef(props, 'person');
 const { health } = useRelationshipHealth(personRef);
@@ -35,9 +40,49 @@ const moodOptions = [
     { value: 'difficult', label: 'Difficult', icon: Frown },
 ];
 
+// --- Finance Data ---
+const personDebts = computed(() => {
+    if (!props.allDebts || !props.person) return [];
+    return props.allDebts.filter(d => {
+        if (d.personId && d.personId === props.person.id) return true;
+        if (!d.personId && d.person && d.person.toLowerCase() === props.person.title.toLowerCase()) return true;
+        return false;
+    });
+});
+
+const personTransactions = computed(() => {
+    if (!props.allTransactions || !props.person) return [];
+    return props.allTransactions.filter(t => t.personId === props.person.id);
+});
+// --------------------
+
 // Unified timeline: merge manual interactions + linked activity
 const unifiedTimeline = computed(() => {
     const items: any[] = [];
+
+    // Financial Transactions
+    for (const tx of personTransactions.value) {
+        items.push({
+            id: `tx-${tx.id}`,
+            date: tx.date,
+            sortDate: new Date(tx.date).getTime(),
+            source: 'finance',
+            type: 'transaction',
+            transaction: tx,
+        });
+    }
+
+    // Debts
+    for (const debt of personDebts.value) {
+        items.push({
+            id: `debt-${debt.id}`,
+            date: debt.startDate,
+            sortDate: new Date(debt.startDate).getTime(),
+            source: 'finance',
+            type: 'debt',
+            debt: debt,
+        });
+    }
 
     // Manual interactions
     const interactions = props.person?.properties?.interactions || [];
@@ -142,6 +187,8 @@ const getTypeColor = (type: string) => {
         task: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
         note: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
         quickcap: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+        transaction: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+        debt: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
         other: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
     };
     return colors[type] || colors.other;
@@ -151,7 +198,7 @@ const getTypeIcon = (type: string) => {
     const icons: Record<string, any> = {
         meeting: Users, call: PhoneCall, message: MessageSquare,
         coffee: Coffee, gift: Gift, task: CheckSquare,
-        note: FileText, quickcap: Zap, other: Clock,
+        note: FileText, quickcap: Zap, transaction: Repeat, debt: CreditCard, other: Clock,
     };
     return icons[type] || Clock;
 };
@@ -159,7 +206,7 @@ const getTypeIcon = (type: string) => {
 const getTypeLabel = (type: string) => {
     const found = interactionTypes.find(t => t.value === type);
     if (found) return found.label;
-    const labels: Record<string, string> = { task: 'Task', note: 'Note', quickcap: 'Quick Capture' };
+    const labels: Record<string, string> = { task: 'Task', note: 'Note', quickcap: 'Quick Capture', transaction: 'Transaction', debt: 'Debt' };
     return labels[type] || type;
 };
 
@@ -176,6 +223,10 @@ const formatDate = (dateStr: string) => {
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays}d ago`;
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 };
 
 const resetForm = () => {
@@ -215,7 +266,15 @@ const deleteInteraction = async (id: string) => {
 };
 
 const handleLinkedClick = (item: any) => {
-    if (item.node) emit('open-linked-node', item.node);
+    if (item.node) {
+        emit('open-linked-node', item.node);
+    } else if (item.source === 'finance') {
+        if (item.type === 'transaction') {
+            router.push({ name: 'finance', query: { txId: item.transaction.id, date: item.transaction.date } });
+        } else if (item.type === 'debt') {
+            router.push({ name: 'finance', query: { view: 'debts', debtId: item.debt.id } });
+        }
+    }
 };
 </script>
 
@@ -335,13 +394,34 @@ const handleLinkedClick = (item: any) => {
                         <!-- Interaction note -->
                         <p v-if="item.source === 'interaction'" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ item.note }}</p>
                         <!-- Linked node -->
-                        <template v-else>
+                        <template v-else-if="item.source !== 'finance'">
                             <p class="text-sm font-medium text-blue-600 dark:text-blue-400 truncate">{{ item.title }}</p>
                             <p v-if="item.preview" class="text-xs text-gray-500 mt-1 line-clamp-2">{{ item.preview }}</p>
                             <div v-if="item.status" class="mt-1">
                                 <span :class="['text-xs px-1.5 py-0.5 rounded', item.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400']">
                                     {{ item.status }}
                                 </span>
+                            </div>
+                        </template>
+                        <!-- Finance block -->
+                        <template v-else>
+                            <div v-if="item.type === 'transaction'">
+                                <p class="text-sm font-medium" :class="item.transaction.type === 'income' ? 'text-green-600' : item.transaction.type === 'expense' ? 'text-red-600' : 'text-blue-600'">
+                                    {{ item.transaction.type === 'income' ? '+' : item.transaction.type === 'expense' ? '-' : '' }}{{ formatCurrency(item.transaction.amount) }}
+                                </p>
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">{{ item.transaction.category }} <span v-if="item.transaction.note">· {{ item.transaction.note }}</span></p>
+                            </div>
+                            <div v-else-if="item.type === 'debt'">
+                                <p class="text-sm font-medium" :class="item.debt.type === 'lend' ? 'text-green-600' : 'text-red-600'">
+                                    {{ item.debt.type === 'lend' ? 'Lent' : 'Borrowed' }}: {{ formatCurrency(item.debt.totalAmount) }}
+                                </p>
+                                <p v-if="item.debt.note" class="text-xs text-gray-600 dark:text-gray-400 mt-1">{{ item.debt.note }}</p>
+                                <div class="mt-2 text-xs">
+                                    <span v-if="item.debt.status === 'active'" class="px-2 py-0.5 rounded-full font-medium" :class="item.debt.type === 'lend' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'">
+                                        Remaining: {{ formatCurrency(item.debt.totalAmount - item.debt.paidAmount) }}
+                                    </span>
+                                    <span v-else class="px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">Paid</span>
+                                </div>
                             </div>
                         </template>
                     </div>

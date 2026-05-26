@@ -214,12 +214,12 @@ const handleBackgroundClick = () => {
                    ></textarea>
               </div>
               
-              <!-- Notes -->
               <div class="pl-9 mb-4 flex-1 flex flex-col min-h-[40px] max-h-[300px] overflow-y-auto overflow-x-hidden custom-scrollbar">
                   <TiptapEditor 
                        ref="tiptapRef"
                        v-model="editingTaskParams.content" 
                        :vaultPath="props.vaultPath || ''"
+                       :minHeightClass="'min-h-[40px]'"
                        class="w-full flex-1"
                   />
               </div>

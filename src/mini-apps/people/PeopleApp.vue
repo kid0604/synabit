@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
@@ -36,6 +37,9 @@ const props = defineProps<{
 
 const emit = defineEmits(['open-node']);
 
+const route = useRoute();
+const router = useRouter();
+
 const people = ref<any[]>([]);
 const searchQuery = ref('');
 const loading = ref(true);
@@ -50,6 +54,7 @@ const linkedNodes = ref<any[]>([]);
 const loadingLinks = ref(false);
 
 const allDebts = ref<any[]>([]);
+const allTransactions = ref<any[]>([]);
 
 const fetchPeople = async () => {
     loading.value = true;
@@ -114,18 +119,45 @@ const fetchDebts = async () => {
     }
 };
 
-watch(selectedPerson, (newPerson) => {
-    if (newPerson && newPerson.title) {
-        fetchLinkedNodes(newPerson.title, newPerson.id);
-    } else {
-        linkedNodes.value = [];
+const fetchTransactions = async () => {
+    try {
+        const monthNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+        const flat: any[] = [];
+        for (const node of monthNodes) {
+            if (node.properties && node.properties.transactions) {
+                flat.push(...node.properties.transactions);
+            }
+        }
+        allTransactions.value = flat.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    } catch (e) {
+        logger.error('Failed to fetch finance transactions', e);
+        allTransactions.value = [];
     }
-    activeTab.value = 'overview';
+};
+
+watch(() => selectedPerson.value?.id, (newId, oldId) => {
+    if (newId !== oldId) {
+        if (selectedPerson.value && selectedPerson.value.title) {
+            fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+        } else {
+            linkedNodes.value = [];
+        }
+        activeTab.value = 'overview';
+    }
 });
 
-onMounted(() => {
-    fetchPeople();
+onMounted(async () => {
+    await fetchPeople();
     fetchDebts();
+    fetchTransactions();
+    
+    // Check URL for direct person link
+    if (route.query.id) {
+        openPersonById(route.query.id as string);
+        // Clear query to avoid re-triggering later unexpectedly, or keep it.
+        router.replace({ query: {} });
+    }
+
     listen('vault-file-created-deleted', () => {
         fetchPeople();
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
@@ -133,6 +165,7 @@ onMounted(() => {
     listen('vault-file-modified', () => {
         fetchPeople();
         fetchDebts();
+        fetchTransactions();
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
     });
 });
@@ -706,8 +739,8 @@ defineExpose({ openPersonById });
                 <!-- Tab Content -->
                 <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark">
                     <div class="max-w-3xl mx-auto">
-                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" :all-debts="allDebts" @open-linked-node="openLinkedNode" />
-                        <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />
+                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" />
+                        <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" :all-debts="allDebts" :all-transactions="allTransactions" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />
                         <NotesTab v-else-if="activeTab === 'notes'" :person="selectedPerson" :linked-nodes="linkedNodes" :loading-links="loadingLinks" @open-linked-node="openLinkedNode" />
                         <GraphTab v-else-if="activeTab === 'graph'" :person="selectedPerson" :all-people="people" :vault-path="vaultPath" @select-person="(p: any) => selectedPerson = p" @unlink="unlinkPerson" @edit-link="openEditLink" />
                     </div>

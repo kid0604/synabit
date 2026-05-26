@@ -1354,7 +1354,7 @@ onMounted(async () => {
                        placeholder="Note Title"></textarea>
                    </div>
                 </div>
-                <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode}">
+                <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">
                    <TiptapEditor ref="editorRefs" :model-value="tabContents[tabId]" :vault-path="vaultPath" :notes="notes" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
                 </div>
                 </div>

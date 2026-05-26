@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, toRef, nextTick, inject } from 'vue';
+import { ref, computed, onMounted, watch, toRef, nextTick, inject, provide } from 'vue';
 import { VueFlow, useVueFlow, ConnectionMode, MarkerType, getRectOfNodes } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -15,12 +15,13 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
-// Custom nodes
+// Custom nodes and edges
 import ShapeNode from './nodes/ShapeNode.vue';
 import StrokeNode from './nodes/StrokeNode.vue';
 import MindmapNode from './nodes/MindmapNode.vue';
 import TextNode from './nodes/TextNode.vue';
 import NoteCardNode from './nodes/NoteCardNode.vue';
+import WaypointEdge from './components/WaypointEdge.vue';
 
 // Toolbar
 import WhiteboardToolbar from './components/WhiteboardToolbar.vue';
@@ -283,6 +284,23 @@ function handleEdgeDelete(edgeId: string) {
 function closeEdgeMenu() {
   selectedEdgeId.value = null;
 }
+
+function updateEdgeWaypoints(edgeId: string, waypoints: any[]) {
+  if (!store.currentBoardData.value) return;
+  const wbEdge = store.currentBoardData.value.edges.find((e: WBEdge) => e.id === edgeId);
+  if (wbEdge) {
+    wbEdge.data = { ...wbEdge.data, waypoints };
+  }
+  
+  const vfEdge = vfEdges.value.find((e: any) => e.id === edgeId);
+  if (vfEdge) {
+    if (!vfEdge.data) vfEdge.data = {};
+    vfEdge.data.waypoints = waypoints;
+  }
+  
+  scheduleSave();
+}
+provide('updateEdgeWaypoints', updateEdgeWaypoints);
 
 // ─── Shape Menu ─────────────────────────────────────────
 const selectedShapeNodeId = ref<string | null>(null);
@@ -1448,6 +1466,15 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           @dragover.prevent="handleDragOver"
           @drop.prevent="handleDrop"
         >
+          <template #edge-default="edgeProps">
+            <WaypointEdge v-bind="edgeProps" edge-type="default" />
+          </template>
+          <template #edge-straight="edgeProps">
+            <WaypointEdge v-bind="edgeProps" edge-type="straight" />
+          </template>
+          <template #edge-step="edgeProps">
+            <WaypointEdge v-bind="edgeProps" edge-type="step" />
+          </template>
           <template #node-shape="nodeProps">
             <ShapeNode
               v-bind="nodeProps"

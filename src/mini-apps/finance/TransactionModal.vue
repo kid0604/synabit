@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
-import { X, RefreshCw, Plus, Check } from 'lucide-vue-next';
+import { X, RefreshCw, Plus, Check, Trash2 } from 'lucide-vue-next';
 import type { Transaction, TransactionType, FinanceAccount } from './types';
 import { currentCurrency, fetchExchangeRate } from './currency';
 
@@ -18,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'save', tx: Transaction): void;
+  (e: 'delete', txId: string): void;
   (e: 'addCategory', payload: { type: 'income' | 'expense', name: string }): void;
 }>();
 
@@ -222,6 +223,37 @@ const canSave = computed(() => {
     return true;
 });
 
+const isDebtCategory = computed(() => {
+    const debtKeywords = ['vay', 'nợ', 'borrow', 'lend', 'debt', 'trả', 'thu', 'mượn', 'loan'];
+    const catLower = category.value.toLowerCase();
+    return debtKeywords.some(k => catLower.includes(k));
+});
+
+const personSearch = ref('');
+const isPersonDropdownOpen = ref(false);
+
+const filteredPeople = computed(() => {
+    if (!props.people) return [];
+    if (!personSearch.value) return props.people;
+    const q = personSearch.value.toLowerCase();
+    return props.people.filter(p => p.title.toLowerCase().includes(q));
+});
+
+const getPersonName = (id: string) => {
+    return props.people?.find(p => p.id === id)?.title || 'No person';
+};
+
+const openPersonDropdown = () => {
+    personSearch.value = '';
+    isPersonDropdownOpen.value = true;
+};
+
+const closePersonDropdown = () => {
+    setTimeout(() => {
+        isPersonDropdownOpen.value = false;
+    }, 200);
+};
+
 </script>
 
 <template>
@@ -344,25 +376,60 @@ const canSave = computed(() => {
             </select>
         </div>
 
-        <!-- Person Link -->
-        <div v-if="people && people.length > 0">
+        <!-- Person Link (Only for Debt categories) -->
+        <div v-if="people && people.length > 0 && isDebtCategory">
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Link to Person</label>
-            <select v-model="personId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                <option value="">No person</option>
-                <option v-for="p in people" :key="p.id" :value="p.id">{{ p.title }}</option>
-            </select>
+            <div class="relative">
+                <input 
+                    type="text" 
+                    v-model="personSearch" 
+                    @focus="openPersonDropdown"
+                    @blur="closePersonDropdown"
+                    class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                    :placeholder="personId ? getPersonName(personId) : 'Search person...'" 
+                />
+                <X v-if="personId" @click="personId = ''; personSearch = ''" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer hover:text-red-500 transition-colors" />
+                
+                <div v-if="isPersonDropdownOpen" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl shadow-lg max-h-48 overflow-y-auto hidden-scrollbar py-1">
+                    <div 
+                        class="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer transition-colors"
+                        @click="personId = ''; personSearch = ''; isPersonDropdownOpen = false"
+                    >
+                        No person
+                    </div>
+                    <div 
+                        v-for="p in filteredPeople" 
+                        :key="p.id" 
+                        class="px-3 py-2 text-sm text-text dark:text-text-dark hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+                        @click="personId = p.id; personSearch = ''; isPersonDropdownOpen = false"
+                    >
+                        {{ p.title }}
+                    </div>
+                    <div v-if="filteredPeople.length === 0" class="px-3 py-2 text-sm text-gray-400 italic">
+                        No matching people
+                    </div>
+                </div>
+            </div>
         </div>
 
       </div>
 
       <!-- Footer -->
-      <div class="p-4 border-t border-border dark:border-border-dark flex justify-end gap-3 bg-gray-50/50 dark:bg-gray-800/50">
-        <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-            Cancel
-        </button>
-        <button @click="save" class="px-5 py-2 rounded-xl text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors">
-            Save Transaction
-        </button>
+      <div class="p-4 border-t border-border dark:border-border-dark flex justify-between gap-3 bg-gray-50/50 dark:bg-gray-800/50">
+        <div>
+            <button v-if="transaction" @click="emit('delete', transaction.id)" class="px-3 py-2 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1">
+                <Trash2 class="w-4 h-4" />
+                Delete
+            </button>
+        </div>
+        <div class="flex gap-3">
+            <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                Cancel
+            </button>
+            <button @click="save" class="px-5 py-2 rounded-xl text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors">
+                Save Transaction
+            </button>
+        </div>
       </div>
 
     </div>
