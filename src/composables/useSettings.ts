@@ -10,7 +10,7 @@ let isInitialized = false;
 
 export function useSettings() {
   const appStore = useAppStore();
-  const { themeMode, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp } = storeToRefs(appStore);
+  const { themeMode, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
 
   const isValidDailyFormat = computed(() => {
     const val = dailyNoteFormat.value.toUpperCase();
@@ -58,6 +58,7 @@ export function useSettings() {
     dailyNoteTag,
     nestedNumberListStyle,
     defaultApp,
+    hiddenSidebarApps,
     isValidDailyFormat,
     openSettings,
   };

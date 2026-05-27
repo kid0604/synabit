@@ -68,7 +68,7 @@ body {
   color: var(--color-text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   overflow: hidden; /* Prevent body scroll, handle scroll in components */
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: subpixel-antialiased;
 }
 
 .dark body {

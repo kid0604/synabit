@@ -255,9 +255,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
             :class="{ 'border-accent dark:border-accent-dark ring-2 ring-accent/20 dark:ring-accent-dark/20': selected }"
           />
 
-          <!-- Expand Button Overlay -->
           <div 
-            class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity duration-200 pointer-events-none rounded-lg"
+            class="absolute inset-0 opacity-0 transition-opacity duration-200 pointer-events-none rounded-lg"
             :class="{ 'opacity-100 pointer-events-auto': selected }"
           >
             <button 

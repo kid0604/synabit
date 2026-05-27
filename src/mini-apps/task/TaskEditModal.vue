@@ -29,10 +29,10 @@ const editingTaskParams = ref({
     project_id: props.task?.project_id || ''
 });
 
-const todayStr = computed(() => {
+const getTodayStr = () => {
     const today = new Date();
     return today.toISOString().split('T')[0];
-});
+};
 
 const activeDropdown = ref<string | null>(null);
 
@@ -234,13 +234,13 @@ const handleBackgroundClick = () => {
                   
                   <span v-if="editingTaskParams.start_date || editingTaskParams.due_date" class="text-xs font-semibold">
                       <template v-if="editingTaskParams.start_date && editingTaskParams.due_date">
-                          {{ editingTaskParams.start_date === todayStr ? 'Today' : editingTaskParams.start_date }} &rarr; {{ editingTaskParams.due_date === todayStr ? 'Today' : editingTaskParams.due_date }}
+                          {{ editingTaskParams.start_date === getTodayStr() ? 'Today' : editingTaskParams.start_date }} &rarr; {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}
                       </template>
                       <template v-else-if="editingTaskParams.start_date">
-                          {{ editingTaskParams.start_date === todayStr ? 'Today' : editingTaskParams.start_date }}
+                          {{ editingTaskParams.start_date === getTodayStr() ? 'Today' : editingTaskParams.start_date }}
                       </template>
                       <template v-else-if="editingTaskParams.due_date">
-                          Due: {{ editingTaskParams.due_date === todayStr ? 'Today' : editingTaskParams.due_date }}
+                          Due: {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}
                       </template>
                   </span>
                   

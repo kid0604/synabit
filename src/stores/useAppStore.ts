@@ -18,6 +18,7 @@ export const useAppStore = defineStore('app', () => {
   
   // App Settings
   const defaultApp = ref<'nexus' | 'note' | 'task' | 'quickcap' | 'file' | 'calendar' | 'whiteboard' | 'pdf'>('nexus');
+  const hiddenSidebarApps = ref<string[]>([]);
   
   // Theme
   const themeMode = ref<'light' | 'dark' | 'system'>('system');
@@ -63,6 +64,9 @@ export const useAppStore = defineStore('app', () => {
     const defApp = await storeInstance.get('defaultApp');
     if (defApp) defaultApp.value = defApp as any;
     
+    const hApps = await storeInstance.get('hiddenSidebarApps');
+    if (hApps && Array.isArray(hApps)) hiddenSidebarApps.value = hApps as string[];
+    
     const autoSync = await storeInstance.get('gdriveAutoSyncEnabled');
     if (autoSync !== null && autoSync !== undefined) gdriveAutoSyncEnabled.value = autoSync as boolean;
     
@@ -94,6 +98,9 @@ export const useAppStore = defineStore('app', () => {
     watch(defaultApp, async (v) => {
       if (storeInstance) await storeInstance.set('defaultApp', v);
     });
+    watch(hiddenSidebarApps, async (v) => {
+      if (storeInstance) await storeInstance.set('hiddenSidebarApps', v);
+    }, { deep: true });
     watch(themeMode, async (v) => {
       if (storeInstance) await storeInstance.set('themeMode', v);
     });
@@ -138,6 +145,7 @@ export const useAppStore = defineStore('app', () => {
     dailyNoteTag,
     nestedNumberListStyle,
     defaultApp,
+    hiddenSidebarApps,
     themeMode,
     gdriveAutoSyncEnabled,
     gdriveAutoSyncInterval,

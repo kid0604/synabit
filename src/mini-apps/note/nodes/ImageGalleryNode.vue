@@ -232,7 +232,7 @@ const addImage = async () => {
         />
         
         <div 
-          class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity duration-200 pointer-events-none"
+          class="absolute inset-0 opacity-0 transition-opacity duration-200 pointer-events-none"
           :class="{ 'opacity-100': activeImageIndex === index || focusedImageIndex === index || img.caption, 'pointer-events-auto': activeImageIndex === index || focusedImageIndex === index }"
         >
           <!-- Expand Image Button -->

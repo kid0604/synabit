@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet } from 'lucide-vue-next';
 import { useSettings } from '../../composables/useSettings';
 import { ref, onMounted } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
@@ -12,8 +12,30 @@ const {
   themeMode, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
-  nestedNumberListStyle,
+  nestedNumberListStyle, hiddenSidebarApps
 } = useSettings();
+
+const availableApps = [
+  { id: 'nexus', name: 'Nexus', icon: Globe },
+  { id: 'chat', name: 'Chat', icon: MessageSquare },
+  { id: 'quickcap', name: 'QuickCap', icon: Zap },
+  { id: 'note', name: 'Notes', icon: FileText },
+  { id: 'task', name: 'Tasks', icon: CheckSquare },
+  { id: 'calendar', name: 'Calendar', icon: Calendar },
+  { id: 'file', name: 'Files', icon: FolderOpen },
+  { id: 'whiteboard', name: 'Whiteboard', icon: Palette },
+  { id: 'people', name: 'People', icon: Users },
+  { id: 'finance', name: 'Finance', icon: Wallet },
+];
+
+const toggleAppVisibility = (appId: string) => {
+  if (defaultApp.value === appId) return;
+  if (hiddenSidebarApps.value.includes(appId)) {
+    hiddenSidebarApps.value = hiddenSidebarApps.value.filter(id => id !== appId);
+  } else {
+    hiddenSidebarApps.value.push(appId);
+  }
+};
 
 const appVersion = ref('');
 const isDesktop = ref(true);
@@ -192,6 +214,33 @@ const emit = defineEmits<{
                         <option value="calendar">Calendar</option>
                         <option value="file">Files</option>
                       </select>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Sidebar Navigation -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Sidebar</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] mb-1">Visible Apps</p>
+                    <p class="text-[11px] text-gray-400 dark:text-gray-500 mb-4">Choose which apps to show on the sidebar. The default startup app cannot be hidden.</p>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label v-for="app in availableApps" :key="app.id" 
+                        class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
+                        :class="defaultApp === app.id ? 'bg-gray-100 dark:bg-[#252525] border-transparent opacity-60 cursor-not-allowed' : 'bg-white dark:bg-[#2a2a2a] border-[#e6e6e6] dark:border-[#3a3a3a] hover:border-gray-300 dark:hover:border-gray-500'"
+                      >
+                        <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
+                          <component :is="app.icon" class="w-4 h-4 text-gray-500" />
+                          {{ app.name }}
+                          <span v-if="defaultApp === app.id" class="text-[9px] px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded uppercase font-bold ml-1 tracking-wide">Default</span>
+                        </span>
+                        
+                        <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out" :class="!hiddenSidebarApps.includes(app.id) ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'">
+                          <input type="checkbox" :checked="!hiddenSidebarApps.includes(app.id)" :disabled="defaultApp === app.id" @change="toggleAppVisibility(app.id)" class="sr-only">
+                          <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="!hiddenSidebarApps.includes(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                        </div>
+                      </label>
                     </div>
                   </div>
                 </section>

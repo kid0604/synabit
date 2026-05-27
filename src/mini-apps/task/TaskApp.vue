@@ -178,10 +178,7 @@ const searchedTasks = computed(() => {
 });
 
 const categoryCounts = computed(() => {
-    const now = new Date();
-    const offset = now.getTimezoneOffset() * 60000;
-    const localNow = new Date(now.getTime() - offset);
-    const todayStr = localNow.toISOString().split('T')[0];
+    const todayStrLocal = getTodayStr();
     
     let all = 0, today = 0, upcoming = 0, someday = 0, transferred = 0;
     
@@ -194,8 +191,8 @@ const categoryCounts = computed(() => {
         }
         
         let isToday = false;
-        if (t.due_date && t.due_date <= todayStr) isToday = true;
-        else if (t.start_date && t.start_date <= todayStr) isToday = true;
+        if (t.due_date && t.due_date <= todayStrLocal) isToday = true;
+        else if (t.start_date && t.start_date <= todayStrLocal) isToday = true;
         
         if (isToday) {
             today++;
@@ -203,8 +200,8 @@ const categoryCounts = computed(() => {
         }
         
         let isUpcoming = false;
-        if (t.start_date && t.start_date > todayStr) isUpcoming = true;
-        else if (t.due_date && t.due_date > todayStr) isUpcoming = true;
+        if (t.start_date && t.start_date > todayStrLocal) isUpcoming = true;
+        else if (t.due_date && t.due_date > todayStrLocal) isUpcoming = true;
         
         if (isUpcoming) upcoming++;
         else someday++;
@@ -213,15 +210,15 @@ const categoryCounts = computed(() => {
     return { all, today, upcoming, someday, transferred };
 });
 
-const todayStr = computed(() => {
+const getTodayStr = () => {
     const now = new Date();
     const offset = now.getTimezoneOffset() * 60000;
     const localNow = new Date(now.getTime() - offset);
     return localNow.toISOString().split('T')[0];
-});
+};
 
 const activeCategoryTasks = computed(() => {
-    const today = todayStr.value;
+    const today = getTodayStr();
     
     return searchedTasks.value.filter(t => {
         if (activeCategory.value === 'all') return true;
@@ -673,7 +670,7 @@ const openEditById = async (id: string) => {
             } else if (task.is_transferred) {
                 activeCategory.value = 'transferred';
             } else {
-                const today = todayStr.value;
+                const today = getTodayStr();
                 let isToday = false;
                 if (task.due_date && task.due_date <= today) isToday = true;
                 else if (task.start_date && task.start_date <= today) isToday = true;

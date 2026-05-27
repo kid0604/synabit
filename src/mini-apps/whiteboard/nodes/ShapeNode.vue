@@ -121,12 +121,12 @@ const handleOffsets = computed(() => {
   if (leftX === Infinity) leftX = 0;
   if (rightX === -Infinity) rightX = 100;
 
-  // Add 1% padding so it sits just inside the stroke visually
+  // Transform path coordinates (2-98) to div percentage (0-100%)
   return {
-    top: `${Math.max(0, topY - 1)}%`,
-    bottom: `${Math.max(0, 100 - botY - 1)}%`,
-    left: `${Math.max(0, leftX - 1)}%`,
-    right: `${Math.max(0, 100 - rightX - 1)}%`,
+    top: `${Math.max(0, (topY - 2) / 96 * 100)}%`,
+    bottom: `${Math.max(0, (98 - botY) / 96 * 100)}%`,
+    left: `${Math.max(0, (leftX - 2) / 96 * 100)}%`,
+    right: `${Math.max(0, (98 - rightX) / 96 * 100)}%`,
   };
 });
 
@@ -160,11 +160,11 @@ function onResizeEnd(event: any) {
     />
 
     <!-- SVG Shape — all shapes rendered through same SVG pipeline for consistent stroke -->
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="wb-shape-svg">
+    <svg viewBox="2 2 96 96" preserveAspectRatio="none" class="wb-shape-svg" style="overflow: visible;">
       <!-- Rounded Rect: use native <rect> with compensated rx/ry for circular corners -->
       <rect
         v-if="data.shapeType === 'roundedRect'"
-        x="1" y="1" width="98" height="98"
+        x="2" y="2" width="96" height="96"
         :rx="roundedRectRx"
         :ry="roundedRectRy"
         :fill="fillColor"
@@ -199,6 +199,16 @@ function onResizeEnd(event: any) {
         vector-effect="non-scaling-stroke"
         stroke-linejoin="round"
         :opacity="shapeOpacity"
+      />
+      <!-- Selection Border (non-scaling, perfectly snug) -->
+      <rect
+        v-if="selected"
+        x="2" y="2" width="96" height="96"
+        fill="none"
+        stroke="var(--color-accent, #7c3aed)"
+        stroke-width="1.5"
+        vector-effect="non-scaling-stroke"
+        stroke-dasharray="6 4"
       />
     </svg>
 

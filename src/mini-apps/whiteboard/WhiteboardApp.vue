@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, toRef, nextTick, inject, provide } from 'vue';
+import { ref, computed, onMounted, watch, toRef, nextTick, inject, provide, onActivated, onDeactivated } from 'vue';
 import { VueFlow, useVueFlow, ConnectionMode, MarkerType, getRectOfNodes } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -56,6 +56,10 @@ const switchBoard = (boardId: string) => {
     }
     store.loadBoardData(boardId);
 };
+
+const isAppActive = ref(true);
+onActivated(() => { isAppActive.value = true; });
+onDeactivated(() => { isAppActive.value = false; });
 
 // ─── Vue Flow ───────────────────────────────────────────
 const { setViewport, getViewport, getNodes } = useVueFlow({ id: 'whiteboard-flow' });
@@ -1576,7 +1580,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         <!-- Edge Properties Panel (docked right side) -->
         <Teleport to="body">
           <EdgeMenu
-            v-if="selectedEdgeId && selectedEdgeData"
+            v-if="isAppActive && selectedEdgeId && selectedEdgeData"
             :edge-id="selectedEdgeId"
             :edge-data="selectedEdgeData"
             @update="handleEdgeUpdate"
@@ -1588,7 +1592,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         <!-- Shape Properties Panel (docked right side) -->
         <Teleport to="body">
           <ShapeMenu
-            v-if="selectedShapeNodeId && selectedShapeData"
+            v-if="isAppActive && selectedShapeNodeId && selectedShapeData"
             :node-id="selectedShapeNodeId"
             :node-data="selectedShapeData"
             @update="handleShapeUpdate"
@@ -1600,7 +1604,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         <!-- Text Properties Panel (docked right side) -->
         <Teleport to="body">
           <TextMenu
-            v-if="selectedTextNodeId && selectedTextData"
+            v-if="isAppActive && selectedTextNodeId && selectedTextData"
             :node-id="selectedTextNodeId"
             :node-data="selectedTextData"
             @update="handleTextUpdate"
@@ -1612,7 +1616,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         <!-- Multi-Select Panel (docked right side) -->
         <Teleport to="body">
           <MultiSelectMenu
-            v-if="showMultiSelectMenu"
+            v-if="isAppActive && showMultiSelectMenu"
             :selected-nodes="multiSelectedNodes"
             @group="handleMultiGroup"
             @ungroup="handleMultiUngroup"
@@ -1861,5 +1865,10 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 /* Re-enable pointer-events on resize handles so they remain interactive */
 :deep(.vue-flow__node-shape .vue-flow__resize-control) {
   pointer-events: auto !important;
+}
+
+/* Hide the annoying scaling border from NodeResizer */
+:deep(.vue-flow__resize-control.line) {
+  display: none !important;
 }
 </style>
