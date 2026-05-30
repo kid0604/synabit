@@ -11,6 +11,7 @@ pub mod chat_engine;
 pub mod watcher;
 pub mod crdt_bridge;
 pub mod sync;
+pub mod secrets;
 
 use commands::{chat, files, nexus, nodes, whiteboards};
 use db::DbBridge;
@@ -142,6 +143,7 @@ pub fn run() {
             
             // E2EE
             commands::e2ee::set_e2ee_password,
+            commands::e2ee::change_e2ee_password,
             commands::e2ee::clear_e2ee_password,
             commands::e2ee::is_e2ee_enabled,
 

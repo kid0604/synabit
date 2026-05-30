@@ -1,10 +1,12 @@
 import { ref, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useAppStore } from '../stores/useAppStore';
+import { listen } from '@tauri-apps/api/event';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
 const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security'>('general');
+const e2eeMismatch = ref(false);
 
 let isInitialized = false;
 
@@ -21,6 +23,14 @@ export function useSettings() {
     if (isInitialized) return;
     await appStore.initialize();
     applyTheme();
+    
+    // Listen for Strict E2EE aborts from backend
+    listen('e2ee-password-required', () => {
+      showSettingsModal.value = true;
+      settingsTab.value = 'security';
+      e2eeMismatch.value = true;
+    });
+    
     isInitialized = true;
 
     // Watch for theme changes to apply class
@@ -61,5 +71,6 @@ export function useSettings() {
     hiddenSidebarApps,
     isValidDailyFormat,
     openSettings,
+    e2eeMismatch,
   };
 }

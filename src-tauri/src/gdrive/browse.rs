@@ -28,82 +28,30 @@ const BROWSE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 // Keychain helpers (per-vault token isolation)
 // ──────────────────────────────────────────────
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn get_keyring_entry(key: &str, vault_path: &str) -> AppResult<keyring::Entry> {
-    let safe_account = vault_path.replace("/", "_").replace("\\\\", "_");
-    keyring::Entry::new(key, &safe_account)
-        .map_err(|e| AppError::General(format!("Keyring error: {}", e)))
-}
-
-#[allow(dead_code)]
-fn get_token_file_path(
-    app_handle: &tauri::AppHandle,
-    key: &str,
-    vault_path: &str,
-) -> std::path::PathBuf {
-    use tauri::Manager;
-    let safe_account = vault_path.replace("/", "_").replace("\\\\", "_");
-    let mut path = app_handle.path().app_data_dir().unwrap_or_default();
-    path.push(format!("{}_{}.json", key, safe_account));
-    path
-}
+use crate::secrets::SecretManager;
 
 fn set_credential(
-    _app_handle: &tauri::AppHandle,
+    app_handle: &tauri::AppHandle,
     key: &str,
     vault_path: &str,
     value: &str,
 ) -> AppResult<()> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let entry = get_keyring_entry(key, vault_path)?;
-        entry
-            .set_password(value)
-            .map_err(|e| AppError::General(format!("Keyring error: {}", e)))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let path = get_token_file_path(app_handle, key, vault_path);
-        if let Some(p) = path.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        std::fs::write(path, value).map_err(|e| AppError::General(format!("FS error: {}", e)))
-    }
+    SecretManager::set_vault_token(Some(app_handle), key, vault_path, value.to_string())
+        .map_err(|e| AppError::General(e))
 }
 
 fn get_credential(
-    _app_handle: &tauri::AppHandle,
+    app_handle: &tauri::AppHandle,
     key: &str,
     vault_path: &str,
 ) -> AppResult<String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let entry = get_keyring_entry(key, vault_path)?;
-        entry
-            .get_password()
-            .map_err(|e| AppError::General(format!("Keyring error: {}", e)))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let path = get_token_file_path(app_handle, key, vault_path);
-        std::fs::read_to_string(path).map_err(|e| AppError::General(format!("FS error: {}", e)))
-    }
+    SecretManager::get_vault_token(Some(app_handle), key, vault_path)
+        .ok_or_else(|| AppError::AuthFailed("No token found".to_string()))
 }
 
-fn delete_credential(_app_handle: &tauri::AppHandle, key: &str, vault_path: &str) -> AppResult<()> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        if let Ok(entry) = get_keyring_entry(key, vault_path) {
-            let _ = entry.delete_credential();
-        }
-        Ok(())
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let path = get_token_file_path(app_handle, key, vault_path);
-        let _ = std::fs::remove_file(path);
-        Ok(())
-    }
+fn delete_credential(app_handle: &tauri::AppHandle, key: &str, vault_path: &str) -> AppResult<()> {
+    let _ = SecretManager::delete_vault_token(Some(app_handle), key, vault_path);
+    Ok(())
 }
 
 async fn get_valid_access_token(

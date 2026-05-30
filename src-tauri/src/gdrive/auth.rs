@@ -10,48 +10,19 @@ use std::fs;
 // Token Management
 // ──────────────────────────────────────────────
 
-fn get_vault_sync_keyring() -> Result<keyring::Entry, String> {
-    keyring::Entry::new("synabit_vault_sync", "global").map_err(|e| format!("Keyring error: {}", e))
-}
+use crate::secrets::SecretManager;
 
-pub(crate) fn load_tokens(_app_handle: &tauri::AppHandle) -> Option<GDriveTokens> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let entry = get_vault_sync_keyring().ok()?;
-        let content = entry.get_password().ok()?;
-        serde_json::from_str(&content).ok()
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let path = tokens_path(app_handle);
-        if let Ok(content) = fs::read_to_string(&path) {
-            serde_json::from_str(&content).ok()
-        } else {
-            None
-        }
-    }
+pub(crate) fn load_tokens(app_handle: &tauri::AppHandle) -> Option<GDriveTokens> {
+    let content = SecretManager::get_vault_sync_config(Some(app_handle))?;
+    serde_json::from_str(&content).ok()
 }
 
 pub(crate) fn save_tokens(
-    _app_handle: &tauri::AppHandle,
+    app_handle: &tauri::AppHandle,
     tokens: &GDriveTokens,
 ) -> Result<(), String> {
     let content = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let entry = get_vault_sync_keyring()?;
-        entry
-            .set_password(&content)
-            .map_err(|e| format!("Failed to save tokens to keychain: {}", e))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let path = tokens_path(app_handle);
-        if let Some(p) = path.parent() {
-            let _ = fs::create_dir_all(p);
-        }
-        fs::write(&path, content).map_err(|e| format!("Failed to save tokens: {}", e))
-    }
+    SecretManager::set_vault_sync_config(Some(app_handle), content)
 }
 
 pub(crate) async fn get_valid_token(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -87,13 +58,7 @@ pub(crate) async fn get_valid_token(app_handle: &tauri::AppHandle) -> Result<Str
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
             if err_text.contains("invalid_grant") {
-                #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                {
-                    if let Ok(entry) = get_vault_sync_keyring() {
-                        let _ = entry.delete_credential();
-                    }
-                }
-                let _ = fs::remove_file(tokens_path(app_handle)); // Cleanup JSON file
+                let _ = SecretManager::clear_vault_sync_config(Some(app_handle));
                 return Err("Google Drive session expired. Please reconnect.".to_string());
             }
             return Err(format!("Token refresh failed: {}", err_text));
@@ -126,16 +91,7 @@ pub fn gdrive_auth_status(app_handle: tauri::AppHandle) -> Result<bool, String> 
 
 #[tauri::command]
 pub fn gdrive_disconnect(app_handle: tauri::AppHandle) -> Result<(), String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        if let Ok(entry) = get_vault_sync_keyring() {
-            let _ = entry.delete_credential();
-        }
-    }
-    let path = tokens_path(&app_handle);
-    if path.exists() {
-        let _ = fs::remove_file(&path);
-    }
+    let _ = SecretManager::clear_vault_sync_config(Some(&app_handle));
     Ok(())
 }
 

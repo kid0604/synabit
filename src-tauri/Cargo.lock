@@ -5608,7 +5608,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "argon2",
  "async-trait",

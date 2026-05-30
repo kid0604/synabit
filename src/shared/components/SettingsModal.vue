@@ -12,7 +12,7 @@ const {
   themeMode, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
-  nestedNumberListStyle, hiddenSidebarApps
+  nestedNumberListStyle, hiddenSidebarApps, e2eeMismatch
 } = useSettings();
 
 const availableApps = [
@@ -83,6 +83,8 @@ const emit = defineEmits<{
 
 // ─── E2EE Security State ─────────────────────────────────
 const e2eeEnabled = ref(false);
+const showChangePasswordForm = ref(false);
+const e2eeOldPassword = ref('');
 const e2eePassword = ref('');
 const e2eeConfirmPassword = ref('');
 const e2eeError = ref('');
@@ -102,7 +104,33 @@ const setE2EEPassword = async () => {
   try {
     await invoke('set_e2ee_password', { password: e2eePassword.value });
     e2eeEnabled.value = true;
+    e2eeMismatch.value = false;
     e2eeSuccess.value = 'Master password set successfully.';
+    e2eePassword.value = '';
+    e2eeConfirmPassword.value = '';
+  } catch (err) {
+    e2eeError.value = String(err);
+  }
+};
+
+const changeE2EEPassword = async () => {
+  e2eeError.value = '';
+  e2eeSuccess.value = '';
+  if (!e2eeOldPassword.value || !e2eePassword.value) {
+    e2eeError.value = 'Passwords cannot be empty';
+    return;
+  }
+  if (e2eePassword.value !== e2eeConfirmPassword.value) {
+    e2eeError.value = 'New passwords do not match';
+    return;
+  }
+  try {
+    await invoke('change_e2ee_password', { 
+      oldPassword: e2eeOldPassword.value,
+      newPassword: e2eePassword.value 
+    });
+    e2eeSuccess.value = 'Password change scheduled! It will apply during the next sync.';
+    e2eeOldPassword.value = '';
     e2eePassword.value = '';
     e2eeConfirmPassword.value = '';
   } catch (err) {
@@ -401,8 +429,25 @@ const clearE2EEPassword = async () => {
                       </strong>
                     </p>
 
-                    <!-- Set Password Form (if disabled) -->
-                    <div v-if="!e2eeEnabled" class="space-y-4">
+                    <!-- Set Password Form (if disabled or mismatch) -->
+                    <div v-if="!e2eeEnabled || e2eeMismatch" class="space-y-4">
+                      
+                      <!-- Mismatch Alert -->
+                      <div v-if="e2eeMismatch" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 rounded-lg flex items-start gap-2">
+                        <span class="text-red-500 text-lg leading-none mt-0.5">⚠️</span>
+                        <p class="text-[12px] text-red-600 dark:text-red-400 font-medium">
+                          Mật khẩu hiện tại không thể giải mã dữ liệu trên Google Drive (có thể mật khẩu đã được thay đổi trên thiết bị khác). Vui lòng nhập mật khẩu mới để tiếp tục đồng bộ.
+                        </p>
+                      </div>
+
+                      <!-- STRICT E2EE ALERT -->
+                      <div v-else class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 rounded-lg flex items-start gap-2">
+                        <span class="text-red-500 text-lg leading-none mt-0.5">⚠️</span>
+                        <p class="text-[12px] text-red-600 dark:text-red-400 font-medium">
+                          Phát hiện file bị mã hóa từ Google Drive! Vui lòng nhập Master Password để đồng bộ tiếp.
+                        </p>
+                      </div>
+
                       <div class="space-y-1">
                         <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Master Password</label>
                         <input type="password" v-model="e2eePassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
@@ -412,15 +457,44 @@ const clearE2EEPassword = async () => {
                         <input type="password" v-model="e2eeConfirmPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
                       </div>
                       <button @click="setE2EEPassword" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2">
-                        <Lock class="w-4 h-4" /> Enable Encryption
+                        <Lock class="w-4 h-4" /> {{ e2eeMismatch ? 'Update Password' : 'Enable Encryption' }}
                       </button>
                     </div>
 
-                    <!-- Remove Password (if enabled) -->
-                    <div v-else class="space-y-4 pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
-                      <button @click="clearE2EEPassword" class="px-4 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-[13px] font-medium transition-all w-full">
-                        Disable Encryption / Remove Password
-                      </button>
+                    <!-- Manage Encryption (if enabled and no mismatch) -->
+                    <div v-else class="space-y-6 pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
+                      <div class="space-y-4">
+                        <button @click="showChangePasswordForm = !showChangePasswordForm" class="flex items-center justify-between w-full text-left hover:bg-gray-50 dark:hover:bg-[#2a2a2a] p-2 -mx-2 rounded-lg transition-colors">
+                          <h5 class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Change Master Password</h5>
+                          <span class="text-[11px] font-medium px-2 py-1 bg-gray-100 dark:bg-[#333] text-gray-500 dark:text-gray-400 rounded">{{ showChangePasswordForm ? 'Hide' : 'Show' }}</span>
+                        </button>
+                        
+                        <div v-if="showChangePasswordForm" class="space-y-4 pt-2">
+                          <div class="space-y-1">
+                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Old Password</label>
+                            <input type="password" v-model="e2eeOldPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                          </div>
+                          <div class="space-y-1">
+                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">New Password</label>
+                            <input type="password" v-model="e2eePassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                          </div>
+                          <div class="space-y-1">
+                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Confirm New Password</label>
+                            <input type="password" v-model="e2eeConfirmPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                          </div>
+                          <button @click="changeE2EEPassword" class="px-4 py-2 bg-[#f0f0f0] dark:bg-[#333] hover:bg-[#e0e0e0] dark:hover:bg-[#444] text-[#1c1c1e] dark:text-[#f4f4f5] rounded-lg text-[13px] font-medium transition-all w-full flex items-center justify-center gap-2">
+                            <Lock class="w-4 h-4" /> Change Password
+                          </button>
+                        </div>
+
+                      </div>
+
+                      <div class="pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
+                        <h5 class="text-[13px] font-semibold text-red-600 dark:text-red-400 mb-3">Danger Zone</h5>
+                        <button @click="clearE2EEPassword" class="px-4 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-[13px] font-medium transition-all w-full">
+                          Disable Encryption & Sync Plaintext
+                        </button>
+                      </div>
                     </div>
 
                     <!-- Messages -->
