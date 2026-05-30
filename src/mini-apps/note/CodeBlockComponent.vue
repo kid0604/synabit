@@ -66,9 +66,21 @@
   </node-view-wrapper>
 </template>
 
+<script lang="ts">
+// Shared state across all instances of CodeBlockComponent
+let diagramIdCounter = 0;
+// Global queue to prevent concurrent mermaid rendering which causes race conditions
+let renderPromise = Promise.resolve();
+</script>
+
 <script setup lang="ts">
 import { NodeViewWrapper, NodeViewContent, nodeViewProps } from '@tiptap/vue-3';
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import mermaid from 'mermaid';
+import { Transformer } from 'markmap-lib';
+import { Markmap, deriveOptions } from 'markmap-view';
+import { Toolbar } from 'markmap-toolbar';
+import 'markmap-toolbar/dist/style.css';
 
 const props = defineProps(nodeViewProps);
 
@@ -99,13 +111,9 @@ const copyCode = () => {
 };
 
 // --- Mermaid Rendering Logic ---
-import mermaid from 'mermaid';
-import { watch, onMounted, onUnmounted, nextTick } from 'vue';
-
 const mermaidSvg = ref('');
 const mermaidError = ref('');
 let renderTimeout: number | null = null;
-let diagramIdCounter = 0;
 let observer: MutationObserver | null = null;
 
 const applyMermaidTheme = () => {
@@ -117,7 +125,7 @@ const applyMermaidTheme = () => {
   });
 };
 
-const renderMermaid = async () => {
+const renderMermaid = () => {
   if (selectedLanguage.value !== 'mermaid') return;
   const content = props.node.textContent;
   if (!content.trim()) {
@@ -127,23 +135,26 @@ const renderMermaid = async () => {
   }
   
   const id = `mermaid-diagram-${Date.now()}-${diagramIdCounter++}`;
-  try {
-    mermaidError.value = '';
-    const { svg } = await mermaid.render(id, content);
-    mermaidSvg.value = svg;
-  } catch (err: any) {
-    mermaidError.value = err.message || 'Syntax Error in Mermaid graph';
-    // Remove the error SVG that mermaid sometimes injects into the body
-    const errorEl = document.querySelector(`#${err.hash || id}`);
-    if (errorEl) errorEl.remove();
-  }
+  
+  // Chain render calls to prevent concurrent execution bugs in mermaid
+  renderPromise = renderPromise.then(async () => {
+    // Re-check if content changed while waiting in queue
+    if (content !== props.node.textContent) return;
+    
+    try {
+      mermaidError.value = '';
+      const { svg } = await mermaid.render(id, content);
+      mermaidSvg.value = svg;
+    } catch (err: any) {
+      mermaidError.value = err.message || 'Syntax Error in Mermaid graph';
+      // Remove the error SVG that mermaid sometimes injects into the body
+      const errorEl = document.querySelector(`#${err.hash || id}`);
+      if (errorEl) errorEl.remove();
+    }
+  }).catch(() => {});
 };
 
 // --- Markmap Rendering Logic ---
-import { Transformer } from 'markmap-lib';
-import { Markmap, deriveOptions } from 'markmap-view';
-import { Toolbar } from 'markmap-toolbar';
-import 'markmap-toolbar/dist/style.css';
 
 const markmapSvgRef = ref<SVGSVGElement | null>(null);
 const markmapContainerRef = ref<HTMLDivElement | null>(null);
@@ -343,8 +354,19 @@ onUnmounted(() => {
 }
 </style>
 
-<!-- Unscoped styles for markmap (markmap injects its own DOM that scoped styles can't reach) -->
+/* Unscoped styles for markmap and mermaid to prevent layout thrashing */
 <style>
+.mermaid-preview {
+  /* 
+   * CRITICAL PERFORMANCE FIX: 
+   * Mermaid diagrams can contain thousands of DOM elements. 
+   * When Tiptap updates or measures the DOM on keystrokes, the browser recalculates layout.
+   * 'contain: content' tells the browser this element's layout doesn't affect the outside,
+   * completely eliminating typing lag in notes with multiple heavy diagrams.
+   */
+  contain: content;
+}
+
 .markmap-container {
   margin-top: 0.5rem;
   border-radius: 0.5rem;
@@ -352,6 +374,7 @@ onUnmounted(() => {
   background: #ffffff;
   overflow: hidden;
   position: relative;
+  contain: content; /* Prevent layout thrashing */
 }
 
 .dark .markmap-container {

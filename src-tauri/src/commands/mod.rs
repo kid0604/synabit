@@ -1,6 +1,8 @@
 pub mod chat;
 pub mod files;
 pub mod nexus;
+pub mod e2ee;
+pub mod migration;
 pub mod nodes;
 pub mod whiteboards;
 pub mod tags;

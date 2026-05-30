@@ -181,6 +181,7 @@ const selectVault = async () => {
             const dataDir = await appDataDir();
             const vaultDir = `${dataDir}/vault`;
             await appStore.setVaultPath(vaultDir, 'local');
+            await runMigration(vaultPath.value);
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
             return;
         }
@@ -194,6 +195,7 @@ const selectVault = async () => {
         });
         if (selected) {
             await appStore.setVaultPath(selected as string, 'local');
+            await runMigration(vaultPath.value);
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
         }
     } catch(err) { logger.error(String(err)); }
@@ -345,6 +347,24 @@ const checkUnreadNotifications = async () => {
     }
 };
 
+// ─── Migration Logic ───────────────────────────────────────
+const isMigrating = ref(false);
+const migrationMessage = ref('Upgrading your Vault to Event-Sourced CRDT...');
+
+const runMigration = async (path: string) => {
+    if (!path) return;
+    isMigrating.value = true;
+    try {
+        logger.info(`Starting migration for ${path}`);
+        const result = await invoke<string>('run_crdt_migration', { vaultPath: path });
+        logger.info(`Migration result: ${result}`);
+    } catch (e) {
+        logger.error('Migration failed:', e);
+    } finally {
+        isMigrating.value = false;
+    }
+};
+
 // ─── Keyboard shortcuts for navigation ───────────────────
 const handleKeyboardNav = (e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;
@@ -377,6 +397,9 @@ onMounted(async () => {
   }
 
   if (vaultPath.value) {
+     // Run migration on startup if a vault is already selected
+     await runMigration(vaultPath.value);
+     
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
@@ -659,6 +682,13 @@ onUnmounted(() => {
         </template>
       </component>
     </template>
+
+    <!-- Migration Overlay Spinner -->
+    <div v-if="isMigrating" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-white" @mousedown.stop>
+        <RefreshCw class="w-12 h-12 text-blue-500 animate-spin mb-4" />
+        <h2 class="text-xl font-bold mb-2 text-center">Migrating Data</h2>
+        <p class="text-sm text-gray-300 max-w-sm text-center">{{ migrationMessage }}<br/>Please do not close the app.</p>
+    </div>
   </div>
 </template>
 

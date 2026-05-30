@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock } from 'lucide-vue-next';
 import { useSettings } from '../../composables/useSettings';
 import { ref, onMounted } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
@@ -45,8 +45,11 @@ onMounted(async () => {
     appVersion.value = await getVersion();
     const osType = type();
     isDesktop.value = osType === 'macos' || osType === 'windows' || osType === 'linux';
+    
+    // Check E2EE status
+    e2eeEnabled.value = await invoke<boolean>('is_e2ee_enabled');
   } catch(e) {
-    logger.error("Failed to get version/os", e);
+    logger.error("Failed to get version/os or E2EE status", e);
   }
 });
 
@@ -77,6 +80,47 @@ const emit = defineEmits<{
   (e: 'update:gdriveAutoSyncEnabled', val: boolean): void;
   (e: 'update:gdriveAutoSyncInterval', val: number): void;
 }>();
+
+// ─── E2EE Security State ─────────────────────────────────
+const e2eeEnabled = ref(false);
+const e2eePassword = ref('');
+const e2eeConfirmPassword = ref('');
+const e2eeError = ref('');
+const e2eeSuccess = ref('');
+
+const setE2EEPassword = async () => {
+  e2eeError.value = '';
+  e2eeSuccess.value = '';
+  if (!e2eePassword.value) {
+    e2eeError.value = 'Password cannot be empty';
+    return;
+  }
+  if (e2eePassword.value !== e2eeConfirmPassword.value) {
+    e2eeError.value = 'Passwords do not match';
+    return;
+  }
+  try {
+    await invoke('set_e2ee_password', { password: e2eePassword.value });
+    e2eeEnabled.value = true;
+    e2eeSuccess.value = 'Master password set successfully.';
+    e2eePassword.value = '';
+    e2eeConfirmPassword.value = '';
+  } catch (err) {
+    e2eeError.value = String(err);
+  }
+};
+
+const clearE2EEPassword = async () => {
+  e2eeError.value = '';
+  e2eeSuccess.value = '';
+  try {
+    await invoke('clear_e2ee_password');
+    e2eeEnabled.value = false;
+    e2eeSuccess.value = 'Master password removed.';
+  } catch (err) {
+    e2eeError.value = String(err);
+  }
+};
 </script>
 
 <template>
@@ -108,6 +152,11 @@ const emit = defineEmits<{
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'tasks' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
                 <CheckSquare class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">Tasks</span>
+              </button>
+              <button @click="settingsTab = 'security'" 
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'security' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <Lock class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">Security</span>
               </button>
               <button @click="settingsTab = 'about'" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'about' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
@@ -329,6 +378,54 @@ const emit = defineEmits<{
                       <input type="number" v-model.number="taskArchiveDays" min="1" max="365" class="w-20 px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
                       <span class="text-[12px] text-gray-500 dark:text-gray-400">days</span>
                     </div>
+                  </div>
+                </section>
+              </div>
+              <!-- === SECURITY TAB === -->
+              <div v-else-if="settingsTab === 'security'" class="space-y-6">
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">End-to-End Encryption</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <div class="flex items-center gap-2 mb-4">
+                      <div :class="['w-2.5 h-2.5 rounded-full', e2eeEnabled ? 'bg-green-500' : 'bg-gray-400']"></div>
+                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
+                        Status: {{ e2eeEnabled ? 'Enabled' : 'Disabled' }}
+                      </p>
+                    </div>
+
+                    <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
+                      Enable End-to-End Encryption (E2EE) by setting a Master Password. 
+                      Your data will be encrypted locally before syncing to Google Drive. 
+                      <strong class="text-red-500 dark:text-red-400 block mt-2">
+                        ⚠️ WARNING: If you lose this password, your data on Google Drive cannot be recovered.
+                      </strong>
+                    </p>
+
+                    <!-- Set Password Form (if disabled) -->
+                    <div v-if="!e2eeEnabled" class="space-y-4">
+                      <div class="space-y-1">
+                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Master Password</label>
+                        <input type="password" v-model="e2eePassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                      </div>
+                      <div class="space-y-1">
+                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Confirm Password</label>
+                        <input type="password" v-model="e2eeConfirmPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
+                      </div>
+                      <button @click="setE2EEPassword" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2">
+                        <Lock class="w-4 h-4" /> Enable Encryption
+                      </button>
+                    </div>
+
+                    <!-- Remove Password (if enabled) -->
+                    <div v-else class="space-y-4 pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
+                      <button @click="clearE2EEPassword" class="px-4 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-[13px] font-medium transition-all w-full">
+                        Disable Encryption / Remove Password
+                      </button>
+                    </div>
+
+                    <!-- Messages -->
+                    <p v-if="e2eeError" class="mt-4 text-[12px] text-red-500 font-medium p-2 bg-red-50 dark:bg-red-900/20 rounded">{{ e2eeError }}</p>
+                    <p v-if="e2eeSuccess" class="mt-4 text-[12px] text-green-600 dark:text-green-400 font-medium p-2 bg-green-50 dark:bg-green-900/20 rounded">{{ e2eeSuccess }}</p>
                   </div>
                 </section>
               </div>

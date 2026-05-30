@@ -184,6 +184,27 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Index Error (node_edges): {}", e)))?;
 
+        // ─── CRDT Core Tables (Synabit V2) ──────────────────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS crdt_documents (
+                doc_id TEXT PRIMARY KEY,
+                snapshot BLOB NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (crdt_documents): {}", e)))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS crdt_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_id TEXT NOT NULL,
+                delta BLOB NOT NULL,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (crdt_updates): {}", e)))?;
+
         // ─── FTS5 Full-Text Search Index ────────────────────────
         // DROP + CREATE to ensure schema includes the `properties` column.
         // Data is repopulated by reindex_search() on every app startup.
@@ -1459,6 +1480,89 @@ impl DbBridge {
             nodes.push(n);
         }
         Ok(nodes)
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  CRDT STORAGE LOGIC (Phase 1)
+    // ═══════════════════════════════════════════════════════════
+
+    pub fn get_crdt_doc(&self, doc_id: &str) -> AppResult<loro::LoroDoc> {
+        let mut stmt = self.conn.prepare("SELECT snapshot FROM crdt_documents WHERE doc_id = ?1")
+            .map_err(|e| AppError::General(format!("DB Error prepare get_crdt_doc: {}", e)))?;
+        let mut rows = stmt.query(params![doc_id])
+            .map_err(|e| AppError::General(format!("DB Error querying crdt_documents: {}", e)))?;
+        
+        let doc = loro::LoroDoc::new();
+        
+        if let Some(row) = rows.next().unwrap_or(None) {
+            let snapshot: Vec<u8> = row.get(0).unwrap_or_default();
+            if !snapshot.is_empty() {
+                doc.import(&snapshot).map_err(|e| AppError::General(format!("Failed to import Loro snapshot: {:?}", e)))?;
+            }
+        }
+        
+        // Load pending deltas
+        let mut delta_stmt = self.conn.prepare("SELECT delta FROM crdt_updates WHERE doc_id = ?1 ORDER BY id ASC")
+            .map_err(|e| AppError::General(format!("DB Error prepare crdt_updates: {}", e)))?;
+        let delta_rows = delta_stmt.query_map(params![doc_id], |row| {
+            let delta: Vec<u8> = row.get(0)?;
+            Ok(delta)
+        }).map_err(|e| AppError::General(format!("DB Error querying crdt_updates: {}", e)))?;
+        
+        for delta in delta_rows.flatten() {
+            if !delta.is_empty() {
+                doc.import(&delta).map_err(|e| AppError::General(format!("Failed to import Loro delta: {:?}", e)))?;
+            }
+        }
+        
+        Ok(doc)
+    }
+
+    pub fn save_crdt_delta(&self, doc_id: &str, delta: Vec<u8>) -> AppResult<()> {
+        if delta.is_empty() {
+            return Ok(());
+        }
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        self.conn.execute(
+            "INSERT INTO crdt_updates (doc_id, delta, timestamp) VALUES (?1, ?2, ?3)",
+            params![doc_id, delta, timestamp]
+        ).map_err(|e| AppError::General(format!("DB Error saving crdt_delta: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn save_crdt_snapshot(&self, doc_id: &str, snapshot: Vec<u8>) -> AppResult<()> {
+        self.conn.execute(
+            "INSERT INTO crdt_documents (doc_id, snapshot) VALUES (?1, ?2)
+             ON CONFLICT(doc_id) DO UPDATE SET snapshot=excluded.snapshot",
+            params![doc_id, snapshot]
+        ).map_err(|e| AppError::General(format!("DB Error saving crdt_snapshot: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn compact_crdt_history(&self, doc_id: &str) -> AppResult<()> {
+        let doc = self.get_crdt_doc(doc_id)?;
+        let snapshot = doc.export_snapshot();
+        self.save_crdt_snapshot(doc_id, snapshot)?;
+        
+        self.conn.execute(
+            "DELETE FROM crdt_updates WHERE doc_id = ?1",
+            params![doc_id]
+        ).map_err(|e| AppError::General(format!("DB Error compacting crdt_updates: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn compact_all_crdt(&self) -> AppResult<()> {
+        let mut stmt = self.conn.prepare("SELECT DISTINCT doc_id FROM crdt_updates")
+            .map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
+        let rows = stmt.query_map([], |row| {
+            let doc_id: String = row.get(0)?;
+            Ok(doc_id)
+        }).map_err(|e| AppError::General(format!("DB Map error in compaction: {}", e)))?;
+        
+        for doc_id in rows.flatten() {
+            let _ = self.compact_crdt_history(&doc_id);
+        }
+        Ok(())
     }
 }
 

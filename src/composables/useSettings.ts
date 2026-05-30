@@ -4,7 +4,7 @@ import { useAppStore } from '../stores/useAppStore';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
-const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about'>('general');
+const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security'>('general');
 
 let isInitialized = false;
 

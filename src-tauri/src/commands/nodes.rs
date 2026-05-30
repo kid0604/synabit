@@ -121,6 +121,16 @@ pub fn scan_all_nodes(
 
                     if needs_update {
                         if let Some(node) = parse_file_to_node(&vault_path, path) {
+                            // --- Phase 1: External Edit Bridge ---
+                            if let Ok(file_content) = std::fs::read_to_string(path) {
+                                if let Ok(doc) = db.get_crdt_doc(&rel_path) {
+                                    if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                                        let _ = db.save_crdt_delta(&rel_path, delta);
+                                    }
+                                }
+                            }
+                            // -------------------------------------
+
                             let _ = db.upsert_node(&node);
                             sync_node_edges(&db, &node, &resolver);
                             sync_node_to_search(&db, &node);
@@ -172,6 +182,16 @@ pub fn scan_specific_nodes(
 
         if abs_path.exists() && abs_path.is_file() {
             if let Some(node) = parse_file_to_node(&vault_path, &abs_path) {
+                // --- Phase 1: External Edit Bridge ---
+                if let Ok(file_content) = std::fs::read_to_string(&abs_path) {
+                    if let Ok(doc) = db.get_crdt_doc(&rel_path) {
+                        if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                            let _ = db.save_crdt_delta(&rel_path, delta);
+                        }
+                    }
+                }
+                // -------------------------------------
+
                 let _ = db.upsert_node(&node);
                 sync_node_edges(&db, &node, &resolver);
                 sync_node_to_search(&db, &node);
@@ -612,8 +632,19 @@ pub fn write_node_file(
         format!("---\n{}---\n{}", yaml_str, content)
     };
 
+    // --- Phase 1: CRDT Bridge ---
+    {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(doc) = db.get_crdt_doc(&rel_path) {
+            if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                let _ = db.save_crdt_delta(&rel_path, delta);
+            }
+        }
+    }
+    // ----------------------------
+
     // Write to disk
-    std::fs::write(&abs_path, file_content)?;
+    std::fs::write(&abs_path, &file_content)?;
 
     // Update DB immediately
     let db = state.lock().unwrap_or_else(|e| e.into_inner());

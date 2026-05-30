@@ -9,6 +9,8 @@ pub mod utils;
 
 pub mod chat_engine;
 pub mod watcher;
+pub mod crdt_bridge;
+pub mod sync;
 
 use commands::{chat, files, nexus, nodes, whiteboards};
 use db::DbBridge;
@@ -137,6 +139,15 @@ pub fn run() {
             commands::tags::get_all_tags,
             commands::tags::rename_tag,
             commands::tags::delete_tag,
+            
+            // E2EE
+            commands::e2ee::set_e2ee_password,
+            commands::e2ee::clear_e2ee_password,
+            commands::e2ee::is_e2ee_enabled,
+
+            // Migration
+            commands::migration::run_crdt_migration,
+
             // Google Drive
             gdrive::auth::gdrive_auth_start,
             gdrive::auth::gdrive_auth_complete,
