@@ -124,8 +124,15 @@ pub fn scan_all_nodes(
                             // --- Phase 1: External Edit Bridge ---
                             if let Ok(file_content) = std::fs::read_to_string(path) {
                                 if let Ok(doc) = db.get_crdt_doc(&rel_path) {
-                                    if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
-                                        let _ = db.save_crdt_delta(&rel_path, delta);
+                                    match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                                        Ok(delta) => {
+                                            if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
+                                                log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::warn!("CRDT update failed for {}: {}", rel_path, e);
+                                        }
                                     }
                                 }
                             }
@@ -152,6 +159,7 @@ pub fn scan_all_nodes(
             delete_node_edges_for(&db, &n.id);
             let _ = db.delete_node_blocks(&n.id);
             db.delete_search_entry(&n.id);
+            let _ = db.delete_crdt_doc(&n.id);
         }
     }
 
@@ -185,8 +193,15 @@ pub fn scan_specific_nodes(
                 // --- Phase 1: External Edit Bridge ---
                 if let Ok(file_content) = std::fs::read_to_string(&abs_path) {
                     if let Ok(doc) = db.get_crdt_doc(&rel_path) {
-                        if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
-                            let _ = db.save_crdt_delta(&rel_path, delta);
+                        match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                            Ok(delta) => {
+                                if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
+                                    log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("CRDT update failed for {}: {}", rel_path, e);
+                            }
                         }
                     }
                 }
@@ -636,8 +651,17 @@ pub fn write_node_file(
     {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(doc) = db.get_crdt_doc(&rel_path) {
-            if let Ok(delta) = crate::crdt_bridge::apply_text_update(&doc, &file_content) {
-                let _ = db.save_crdt_delta(&rel_path, delta);
+            match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                Ok(delta) => {
+                    if !delta.is_empty() {
+                        if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
+                            log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("CRDT update failed for {}: {}", rel_path, e);
+                }
             }
         }
     }
@@ -785,6 +809,8 @@ pub fn delete_node_file(
     let _ = db.delete_node(&rel_path);
     delete_node_edges_for(&db, &rel_path);
     db.delete_search_entry(&rel_path);
+    // Cleanup CRDT data for deleted document
+    let _ = db.delete_crdt_doc(&rel_path);
 
     Ok(())
 }

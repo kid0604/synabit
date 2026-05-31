@@ -189,7 +189,7 @@ impl NodeResolver {
     }
 
     /// Resolve a target string to a node ID, or return ghost:<target>
-    pub fn resolve(&self, target: &str, link_type: &str) -> String {
+    pub fn resolve(&self, target: &str, _link_type: &str) -> String {
         let lower = target.to_lowercase();
         let no_md = lower.replace(".md", "");
 

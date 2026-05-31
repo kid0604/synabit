@@ -12,10 +12,14 @@ import { useRouter, useRoute } from 'vue-router';
 
 // Settings Modal is the only async component kept here
 const SettingsModal = defineAsyncComponent(() => import('./shared/components/SettingsModal.vue'));
+const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2eeOnboarding.vue'));
+const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
+const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
 import { useGDrive } from './composables/useGDrive';
+import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 
 
@@ -25,11 +29,12 @@ import MobileLayout from './layouts/MobileLayout.vue';
 // Stores
 import { useAppStore } from './stores/useAppStore';
 import { useNavigationStore, type NavEntry } from './stores/useNavigationStore';
+import { useAppLockStore } from './stores/useAppLockStore';
 import { storeToRefs } from 'pinia';
 
 // ─── Settings ─────────────────────────────────────────────
 const {
-  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps
+  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, showE2eeOnboarding
 } = useSettings();
 
 const ALL_APPS = [
@@ -44,6 +49,17 @@ const ALL_APPS = [
   { id: 'people', name: 'People', icon: Users },
   { id: 'finance', name: 'Finance', icon: Wallet },
 ];
+
+const getAppName = (appId: string): string => {
+  return ALL_APPS.find(a => a.id === appId)?.name || appId;
+};
+
+// ─── App Lock ─────────────────────────────────────────────
+const appLockStore = useAppLockStore();
+const currentAppIdRef = computed(() => (route.name as string) || null);
+useAppLock(currentAppIdRef); // Activity monitoring + session refresh
+const showSetupPinModal = ref(false);
+const setupPinMode = ref<'setup' | 'change'>('setup');
 
 const showHiddenAppsMenu = ref(false);
 
@@ -155,6 +171,7 @@ watch(activeTool, (newTool) => {
     }
 });
 const floatingNoteId = ref<string | null>(null);
+const isFloatingView = ref(false);
 
 // ─── GDrive (needs NoteApp's scanVault + tabContents for sync pulling) ─────
 const dummyScanVault = async () => {
@@ -377,6 +394,8 @@ const handleKeyboardNav = (e: KeyboardEvent) => {
     }
 };
 
+let unlistenFns: (() => void)[] = [];
+
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
   logger.info("Synabit Frontend App Mounting...");
@@ -416,8 +435,6 @@ onMounted(async () => {
   }
 
   gdrive.checkGDriveAuth().then(() => { gdrive.setupAutoSync(); });
-
-  let unlistenFns: (() => void)[] = [];
 
   listen('vault-file-created-deleted', (event) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
@@ -468,10 +485,6 @@ onMounted(async () => {
       }
   }).then(fn => unlistenFns.push(fn));
 
-  onUnmounted(() => {
-      unlistenFns.forEach(fn => fn());
-      unlistenFns = [];
-  });
 
   getCurrentWindow().onCloseRequested(async () => {
       // NoteApp handles its own save-on-close internally
@@ -507,6 +520,8 @@ onMounted(async () => {
 onUnmounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   window.removeEventListener('keydown', handleKeyboardNav);
+  unlistenFns.forEach(fn => fn());
+  unlistenFns = [];
 });
 </script>
 
@@ -645,7 +660,14 @@ onUnmounted(() => {
         <!-- MINI APP CONTENT AREA (Vue Router + KeepAlive) -->
         <div class="flex-1 h-full overflow-hidden relative">
             <router-view v-slot="{ Component, route }">
-                <keep-alive>
+                <!-- Tier 2: Show PIN pad directly for protected mini-apps -->
+                <LockScreen
+                    v-if="appLockStore.isEnabled && appLockStore.isAppProtected(route.name as string) && !appLockStore.isMiniAppAccessible(route.name as string)"
+                    :title="`Enter PIN to access ${getAppName(route.name as string)}`"
+                    @unlocked="appLockStore.unlockMiniApp(route.name as string)"
+                    @cancelled="router.back()"
+                />
+                <keep-alive v-else>
                     <component 
                         :is="Component" 
                         :key="route.name"
@@ -678,10 +700,30 @@ onUnmounted(() => {
             @disconnect-gdrive="gdrive.disconnectGDrive().then(clearVault)"
             @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
             @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"
+            @show-setup-pin="(mode: 'setup' | 'change') => { setupPinMode = mode; showSetupPinModal = true; }"
           />
         </template>
       </component>
     </template>
+
+    <!-- E2EE Onboarding Modal -->
+    <E2eeOnboarding v-if="showE2eeOnboarding" @done="showE2eeOnboarding = false" />
+
+    <!-- Tier 1: App Lock Screen -->
+    <LockScreen
+      v-if="appLockStore.isEnabled && appLockStore.isAppLocked"
+      title="Enter PIN to unlock Synabit"
+      :cancellable="false"
+      @unlocked="appLockStore.unlockApp()"
+    />
+
+    <!-- Setup PIN Modal -->
+    <SetupPinModal
+      v-if="showSetupPinModal"
+      :mode="setupPinMode"
+      @done="showSetupPinModal = false; appLockStore.refreshConfig();"
+      @cancel="showSetupPinModal = false"
+    />
 
     <!-- Migration Overlay Spinner -->
     <div v-if="isMigrating" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-white" @mousedown.stop>

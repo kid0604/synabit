@@ -7,10 +7,10 @@ use std::pin::Pin;
 // ──────────────────────────────────────────────
 
 pub(crate) async fn drive_list_files(
+    client: &reqwest::Client,
     token: &str,
     folder_id: &str,
 ) -> Result<Vec<DriveFile>, String> {
-    let client = reqwest::Client::new();
     let mut all_files = Vec::new();
     let mut page_token: Option<String> = None;
 
@@ -48,8 +48,7 @@ pub(crate) async fn drive_list_files(
     Ok(all_files)
 }
 
-pub(crate) async fn drive_download_file(token: &str, file_id: &str) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::new();
+pub(crate) async fn drive_download_file(client: &reqwest::Client, token: &str, file_id: &str) -> Result<Vec<u8>, String> {
     let url = format!(
         "https://www.googleapis.com/drive/v3/files/{}?alt=media",
         file_id
@@ -73,12 +72,12 @@ pub(crate) async fn drive_download_file(token: &str, file_id: &str) -> Result<Ve
 }
 
 pub(crate) async fn drive_upload_file(
+    client: &reqwest::Client,
     token: &str,
     folder_id: &str,
     name: &str,
     content: &[u8],
 ) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
 
     let metadata = serde_json::json!({
         "name": name,
@@ -128,11 +127,11 @@ pub(crate) async fn drive_upload_file(
 }
 
 pub(crate) async fn drive_update_file(
+    client: &reqwest::Client,
     token: &str,
     file_id: &str,
     content: &[u8],
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
     let url = format!(
         "https://www.googleapis.com/upload/drive/v3/files/{}?uploadType=media&fields=id,modifiedTime",
         file_id
@@ -161,8 +160,7 @@ pub(crate) async fn drive_update_file(
     Ok(modified_time)
 }
 
-pub(crate) async fn drive_delete_file(token: &str, file_id: &str) -> Result<(), String> {
-    let client = reqwest::Client::new();
+pub(crate) async fn drive_delete_file(client: &reqwest::Client, token: &str, file_id: &str) -> Result<(), String> {
     let url = format!("https://www.googleapis.com/drive/v3/files/{}", file_id);
 
     let resp = client
@@ -181,11 +179,11 @@ pub(crate) async fn drive_delete_file(token: &str, file_id: &str) -> Result<(), 
 }
 
 pub(crate) async fn drive_create_folder(
+    client: &reqwest::Client,
     token: &str,
     parent_id: &str,
     name: &str,
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
 
     let metadata = serde_json::json!({
         "name": name,
@@ -215,8 +213,7 @@ pub(crate) async fn drive_create_folder(
 }
 
 /// Find the "Synabit Vault" root folder on Drive, or create it.
-pub(crate) async fn find_or_create_vault_folder(token: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+pub(crate) async fn find_or_create_vault_folder(client: &reqwest::Client, token: &str) -> Result<String, String> {
 
     let query = format!(
         "name='{}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
@@ -275,6 +272,7 @@ pub(crate) async fn find_or_create_vault_folder(token: &str) -> Result<String, S
 /// Ensure a nested folder path exists on Drive.
 /// Returns the folder ID of the deepest folder.
 pub(crate) async fn ensure_drive_folder_path(
+    client: &reqwest::Client,
     token: &str,
     manifest: &mut SyncManifest,
     relative_dir: &str,
@@ -302,7 +300,7 @@ pub(crate) async fn ensure_drive_folder_path(
             continue;
         }
 
-        let existing = drive_list_files(token, &parent_id).await?;
+        let existing = drive_list_files(client, token, &parent_id).await?;
         let folder = existing.iter().find(|f| {
             f.name.as_deref() == Some(part)
                 && f.mime_type.as_deref() == Some("application/vnd.google-apps.folder")
@@ -311,7 +309,7 @@ pub(crate) async fn ensure_drive_folder_path(
         let folder_id = if let Some(f) = folder {
             f.id.clone().unwrap_or_default()
         } else {
-            drive_create_folder(token, &parent_id, part).await?
+            drive_create_folder(client, token, &parent_id, part).await?
         };
 
         manifest
@@ -326,13 +324,14 @@ pub(crate) async fn ensure_drive_folder_path(
 /// Recursively collect all files from Drive folder tree.
 #[allow(clippy::type_complexity)]
 pub(crate) fn collect_drive_files<'a>(
+    client: &'a reqwest::Client,
     token: &'a str,
     folder_id: &'a str,
     prefix: &'a str,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<(String, DriveFile)>, String>> + Send + 'a>> {
     Box::pin(async move {
         let mut result = Vec::new();
-        let files = drive_list_files(token, folder_id).await?;
+        let files = drive_list_files(client, token, folder_id).await?;
 
         for f in files {
             let name = f.name.clone().unwrap_or_default();
@@ -344,7 +343,7 @@ pub(crate) fn collect_drive_files<'a>(
 
             if f.mime_type.as_deref() == Some("application/vnd.google-apps.folder") {
                 let sub_id = f.id.clone().unwrap_or_default();
-                let sub_files = collect_drive_files(token, &sub_id, &relative).await?;
+                let sub_files = collect_drive_files(client, token, &sub_id, &relative).await?;
                 result.extend(sub_files);
             } else {
                 result.push((relative, f));

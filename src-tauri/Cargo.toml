@@ -1,6 +1,6 @@
 [package]
 name = "synabit"
-version = "0.6.1"
+version = "0.6.2"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"
@@ -61,6 +61,8 @@ async-trait = "0.1.89"
 chacha20poly1305 = "0.10.1"
 argon2 = "0.5.3"
 zeroize = "1.8.2"
+bip39 = "2"
+futures = "0.3"
 zip = "8.6.0"
 
 [dev-dependencies]

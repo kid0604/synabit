@@ -1,17 +1,20 @@
 import { ref, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useAppStore } from '../stores/useAppStore';
+import { useAppLockStore } from '../stores/useAppLockStore';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
 const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security'>('general');
-const e2eeMismatch = ref(false);
+const showE2eeOnboarding = ref(false);
 
 let isInitialized = false;
 
 export function useSettings() {
   const appStore = useAppStore();
+  const appLockStore = useAppLockStore();
   const { themeMode, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
 
   const isValidDailyFormat = computed(() => {
@@ -24,12 +27,23 @@ export function useSettings() {
     await appStore.initialize();
     applyTheme();
     
-    // Listen for Strict E2EE aborts from backend
-    listen('e2ee-password-required', () => {
-      showSettingsModal.value = true;
-      settingsTab.value = 'security';
-      e2eeMismatch.value = true;
+    // Initialize App Lock state
+    await appLockStore.initialize();
+    
+    // Listen for E2EE setup required from backend
+    listen('e2ee-setup-required', () => {
+      showE2eeOnboarding.value = true;
     });
+    
+    // Check E2EE status on startup
+    try {
+      const status = await invoke<{ key_available: boolean; needs_setup: boolean }>('check_e2ee_status');
+      if (status.needs_setup) {
+        showE2eeOnboarding.value = true;
+      }
+    } catch (e) {
+      // E2EE check may fail if DB not ready yet — will be caught on first sync
+    }
     
     isInitialized = true;
 
@@ -71,6 +85,6 @@ export function useSettings() {
     hiddenSidebarApps,
     isValidDailyFormat,
     openSettings,
-    e2eeMismatch,
+    showE2eeOnboarding,
   };
 }

@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::models::file::{
-    DuplicateGroup, DuplicateReport, FileManagerSettings, FileMetadata, FileSource,
+    DuplicateGroup, FileMetadata, FileSource,
 };
 use crate::path_utils;
 
@@ -398,23 +398,6 @@ pub fn query_files(
     Ok(nodes.iter().filter_map(FileMetadata::from_node).collect())
 }
 
-// ─── Legacy/Compatibility endpoints (to not break compilation if used elsewhere) ───
-
-#[tauri::command]
-pub fn get_file_items(_vault_path: String) -> AppResult<Vec<crate::models::file::FileItem>> {
-    // For now return empty or dummy to avoid compilation errors if something still expects this
-    Ok(vec![])
-}
-
-#[tauri::command]
-pub fn get_settings(_vault_path: String) -> AppResult<FileManagerSettings> {
-    Ok(FileManagerSettings::default())
-}
-
-#[tauri::command]
-pub fn save_settings(_vault_path: String, _settings: FileManagerSettings) -> AppResult<()> {
-    Ok(())
-}
 
 #[cfg(desktop)]
 #[tauri::command]

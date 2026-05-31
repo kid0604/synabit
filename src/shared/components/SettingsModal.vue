@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2 } from 'lucide-vue-next';
 import { useSettings } from '../../composables/useSettings';
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch, defineAsyncComponent } from 'vue';
+
+const LockScreenVerify = defineAsyncComponent(() => import('./LockScreen.vue'));
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { type } from '@tauri-apps/plugin-os';
 import { logger } from '../../utils/logger';
+import { useAppLockStore } from '../../stores/useAppLockStore';
 
 const {
   showSettingsModal, settingsTab,
   themeMode, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
-  nestedNumberListStyle, hiddenSidebarApps, e2eeMismatch
+  nestedNumberListStyle, hiddenSidebarApps
 } = useSettings();
 
 const availableApps = [
@@ -47,10 +50,15 @@ onMounted(async () => {
     isDesktop.value = osType === 'macos' || osType === 'windows' || osType === 'linux';
     
     // Check E2EE status
-    e2eeEnabled.value = await invoke<boolean>('is_e2ee_enabled');
+    await checkE2eeStatus();
   } catch(e) {
     logger.error("Failed to get version/os or E2EE status", e);
   }
+});
+
+// Re-check E2EE status whenever the settings modal is opened
+watch(showSettingsModal, (visible) => {
+  if (visible) checkE2eeStatus();
 });
 
 const openLogFolder = async () => {
@@ -79,74 +87,128 @@ const emit = defineEmits<{
   (e: 'connect-gdrive'): void;
   (e: 'update:gdriveAutoSyncEnabled', val: boolean): void;
   (e: 'update:gdriveAutoSyncInterval', val: number): void;
+  (e: 'show-setup-pin', mode: 'setup' | 'change'): void;
 }>();
 
+// ─── App Lock ─────────────────────────────────────────────────
+const appLockStore = useAppLockStore();
+const removingLock = ref(false);
+const autoLockOptions = [
+  { value: 60, label: '1 minute' },
+  { value: 300, label: '5 minutes' },
+  { value: 900, label: '15 minutes' },
+  { value: 1800, label: '30 minutes' },
+  { value: 0, label: 'Never' },
+];
+
+const handleRemoveLock = async () => {
+  removingLock.value = true;
+  try {
+    await invoke('remove_app_lock');
+    await appLockStore.refreshConfig();
+  } catch (e) {
+    logger.error('Failed to remove app lock:', e);
+  } finally {
+    removingLock.value = false;
+  }
+};
+
+// ─── PIN Verification for destructive actions ─────────────
+const showPinVerify = ref(false);
+const pinVerifyTitle = ref('');
+const pendingAction = ref<(() => void) | null>(null);
+
+const requirePin = (title: string, action: () => void) => {
+  pinVerifyTitle.value = title;
+  pendingAction.value = action;
+  showPinVerify.value = true;
+};
+
+const onPinVerified = () => {
+  showPinVerify.value = false;
+  if (pendingAction.value) {
+    pendingAction.value();
+    pendingAction.value = null;
+  }
+};
+
+const handleToggleTier1 = () => {
+  if (appLockStore.appLockActive) {
+    // Turning OFF → require PIN
+    requirePin('Enter PIN to disable app lock', () => appLockStore.setAppLockActive(false));
+  } else {
+    // Turning ON → free
+    appLockStore.setAppLockActive(true);
+  }
+};
+
+const handleToggleProtectedApp = (appId: string, appName: string) => {
+  if (appLockStore.isAppProtected(appId)) {
+    // Removing protection → require PIN
+    requirePin(`Enter PIN to unprotect ${appName}`, () => appLockStore.toggleProtectedApp(appId));
+  } else {
+    // Adding protection → free
+    appLockStore.toggleProtectedApp(appId);
+  }
+};
+
 // ─── E2EE Security State ─────────────────────────────────
-const e2eeEnabled = ref(false);
-const showChangePasswordForm = ref(false);
-const e2eeOldPassword = ref('');
-const e2eePassword = ref('');
-const e2eeConfirmPassword = ref('');
+interface E2eeStatus {
+  key_available: boolean;
+  needs_setup: boolean;
+}
+interface SetupResult {
+  recovery_phrase: string;
+}
+
+const e2eeStatus = ref<E2eeStatus>({ key_available: false, needs_setup: true });
+const restorePhrase = ref('');
+const showRestoreForm = ref(false);
 const e2eeError = ref('');
 const e2eeSuccess = ref('');
+const e2eeLoading = ref(false);
 
-const setE2EEPassword = async () => {
-  e2eeError.value = '';
-  e2eeSuccess.value = '';
-  if (!e2eePassword.value) {
-    e2eeError.value = 'Password cannot be empty';
-    return;
-  }
-  if (e2eePassword.value !== e2eeConfirmPassword.value) {
-    e2eeError.value = 'Passwords do not match';
-    return;
-  }
+const checkE2eeStatus = async () => {
   try {
-    await invoke('set_e2ee_password', { password: e2eePassword.value });
-    e2eeEnabled.value = true;
-    e2eeMismatch.value = false;
-    e2eeSuccess.value = 'Master password set successfully.';
-    e2eePassword.value = '';
-    e2eeConfirmPassword.value = '';
-  } catch (err) {
-    e2eeError.value = String(err);
+    e2eeStatus.value = await invoke<E2eeStatus>('check_e2ee_status');
+  } catch (e) {
+    logger.error("Failed to check E2EE status", e);
   }
 };
 
-const changeE2EEPassword = async () => {
+const setupE2ee = async () => {
   e2eeError.value = '';
-  e2eeSuccess.value = '';
-  if (!e2eeOldPassword.value || !e2eePassword.value) {
-    e2eeError.value = 'Passwords cannot be empty';
-    return;
-  }
-  if (e2eePassword.value !== e2eeConfirmPassword.value) {
-    e2eeError.value = 'New passwords do not match';
-    return;
-  }
+  e2eeLoading.value = true;
   try {
-    await invoke('change_e2ee_password', { 
-      oldPassword: e2eeOldPassword.value,
-      newPassword: e2eePassword.value 
-    });
-    e2eeSuccess.value = 'Password change scheduled! It will apply during the next sync.';
-    e2eeOldPassword.value = '';
-    e2eePassword.value = '';
-    e2eeConfirmPassword.value = '';
+    await invoke<SetupResult>('setup_e2ee');
+    e2eeStatus.value.key_available = true;
+    e2eeStatus.value.needs_setup = false;
+    e2eeSuccess.value = 'Encryption is active.';
   } catch (err) {
     e2eeError.value = String(err);
+  } finally {
+    e2eeLoading.value = false;
   }
 };
 
-const clearE2EEPassword = async () => {
+const restoreFromPhrase = async () => {
   e2eeError.value = '';
-  e2eeSuccess.value = '';
+  if (!restorePhrase.value.trim()) {
+    e2eeError.value = 'Please enter your Recovery Phrase';
+    return;
+  }
+  e2eeLoading.value = true;
   try {
-    await invoke('clear_e2ee_password');
-    e2eeEnabled.value = false;
-    e2eeSuccess.value = 'Master password removed.';
+    await invoke('restore_e2ee_from_phrase', { phrase: restorePhrase.value.trim().toLowerCase() });
+    e2eeStatus.value.key_available = true;
+    e2eeStatus.value.needs_setup = false;
+    showRestoreForm.value = false;
+    restorePhrase.value = '';
+    e2eeSuccess.value = 'Restored successfully! You can sync now.';
   } catch (err) {
     e2eeError.value = String(err);
+  } finally {
+    e2eeLoading.value = false;
   }
 };
 </script>
@@ -411,90 +473,125 @@ const clearE2EEPassword = async () => {
               </div>
               <!-- === SECURITY TAB === -->
               <div v-else-if="settingsTab === 'security'" class="space-y-6">
+                <!-- App Lock (Tier 1) -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">App Lock</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <template v-if="!appLockStore.isEnabled">
+                      <div class="flex items-center gap-3 mb-3">
+                        <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                          <Shield class="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div>
+                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Protect your app</p>
+                          <p class="text-[11px] text-gray-400 dark:text-gray-500">Set a 6-digit PIN to lock Synabit when idle.</p>
+                        </div>
+                      </div>
+                      <button @click="emit('show-setup-pin', 'setup')" class="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2">
+                        <Lock class="w-4 h-4" /> Set Up PIN
+                      </button>
+                    </template>
+                    <template v-else>
+                      <!-- Idle Timeout (global, affects all tiers) -->
+                      <div class="flex items-center justify-between mb-4">
+                        <div>
+                          <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Idle timeout</p>
+                          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Re-lock protected content after inactivity.</p>
+                        </div>
+                        <select :value="appLockStore.autoLockTimeoutSecs" @change="appLockStore.setAutoLockTimeout(Number(($event.target as HTMLSelectElement).value))" class="appearance-none px-3 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-colors cursor-pointer text-center pr-8 bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%239ca3af%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_10px] bg-[right_10px_center] bg-no-repeat">
+                          <option v-for="opt in autoLockOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                        </select>
+                      </div>
+                      <!-- Tier 1 Toggle: Lock entire app -->
+                      <div class="flex items-center justify-between mb-4">
+                        <div>
+                          <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Lock entire app</p>
+                          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Also require PIN to access the whole app.</p>
+                        </div>
+                        <div class="relative inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.appLockActive ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleTier1">
+                          <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.appLockActive ? 'translate-x-2' : '-translate-x-2'"/>
+                        </div>
+                      </div>
+                      <hr class="border-[#e6e6e6] dark:border-[#2c2c2c] mb-4" />
+                      <div class="flex gap-2">
+                        <button @click="emit('show-setup-pin', 'change')" class="flex-1 px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] rounded-lg text-[12px] font-medium transition-all flex items-center justify-center gap-2">
+                          <Lock class="w-3.5 h-3.5" /> Change PIN
+                        </button>
+                        <button @click="requirePin('Enter PIN to remove lock', handleRemoveLock)" :disabled="removingLock" class="px-4 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-[12px] font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+                          <Trash2 class="w-3.5 h-3.5" /> Remove PIN
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+                </section>
+
+                <!-- Protected Apps (Tier 2) -->
+                <section v-if="appLockStore.isEnabled">
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Protected Apps</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">
+                      These apps require PIN when accessed. Once unlocked, they stay accessible until the app locks again.
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label v-for="app in availableApps" :key="app.id"
+                        class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
+                        :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800' : 'bg-white dark:bg-[#2a2a2a] border-[#e6e6e6] dark:border-[#3a3a3a] hover:border-gray-300 dark:hover:border-gray-500'"
+                      >
+                        <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
+                          <component :is="app.icon" class="w-4 h-4 text-gray-500" />
+                          {{ app.name }}
+                        </span>
+                        <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleProtectedApp(app.id, app.name)">
+                          <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isAppProtected(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- E2EE (existing) -->
                 <section>
                   <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">End-to-End Encryption</h4>
                   <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
                     <div class="flex items-center gap-2 mb-4">
-                      <div :class="['w-2.5 h-2.5 rounded-full', e2eeEnabled ? 'bg-green-500' : 'bg-gray-400']"></div>
-                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
-                        Status: {{ e2eeEnabled ? 'Enabled' : 'Disabled' }}
-                      </p>
+                      <div class="w-2.5 h-2.5 rounded-full" :class="e2eeStatus.key_available ? 'bg-green-500' : 'bg-amber-500'"></div>
+                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ e2eeStatus.key_available ? 'Always Active' : 'Setup Required' }}</p>
                     </div>
 
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
-                      Enable End-to-End Encryption (E2EE) by setting a Master Password. 
-                      Your data will be encrypted locally before syncing to Google Drive. 
-                      <strong class="text-red-500 dark:text-red-400 block mt-2">
-                        ⚠️ WARNING: If you lose this password, your data on Google Drive cannot be recovered.
-                      </strong>
+                      Your data is always encrypted before syncing. 
+                      No one — not even your cloud provider — can read your data.
                     </p>
 
-                    <!-- Set Password Form (if disabled or mismatch) -->
-                    <div v-if="!e2eeEnabled || e2eeMismatch" class="space-y-4">
-                      
-                      <!-- Mismatch Alert -->
-                      <div v-if="e2eeMismatch" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 rounded-lg flex items-start gap-2">
-                        <span class="text-red-500 text-lg leading-none mt-0.5">⚠️</span>
-                        <p class="text-[12px] text-red-600 dark:text-red-400 font-medium">
-                          Mật khẩu hiện tại không thể giải mã dữ liệu trên Google Drive (có thể mật khẩu đã được thay đổi trên thiết bị khác). Vui lòng nhập mật khẩu mới để tiếp tục đồng bộ.
-                        </p>
-                      </div>
-
-                      <!-- STRICT E2EE ALERT -->
-                      <div v-else class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 rounded-lg flex items-start gap-2">
-                        <span class="text-red-500 text-lg leading-none mt-0.5">⚠️</span>
-                        <p class="text-[12px] text-red-600 dark:text-red-400 font-medium">
-                          Phát hiện file bị mã hóa từ Google Drive! Vui lòng nhập Master Password để đồng bộ tiếp.
-                        </p>
-                      </div>
-
-                      <div class="space-y-1">
-                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Master Password</label>
-                        <input type="password" v-model="e2eePassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
-                      </div>
-                      <div class="space-y-1">
-                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Confirm Password</label>
-                        <input type="password" v-model="e2eeConfirmPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
-                      </div>
-                      <button @click="setE2EEPassword" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2">
-                        <Lock class="w-4 h-4" /> {{ e2eeMismatch ? 'Update Password' : 'Enable Encryption' }}
+                    <!-- First time setup -->
+                    <div v-if="e2eeStatus.needs_setup && !showRestoreForm" class="space-y-4">
+                      <button @click="setupE2ee" :disabled="e2eeLoading" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2 disabled:opacity-60">
+                        <Lock class="w-4 h-4" /> {{ e2eeLoading ? 'Setting up...' : 'Set Up Encryption' }}
+                      </button>
+                      <button @click="showRestoreForm = true" class="px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] rounded-lg text-[13px] font-medium transition-all w-full">
+                        Existing vault? Enter Recovery Phrase
                       </button>
                     </div>
 
-                    <!-- Manage Encryption (if enabled and no mismatch) -->
-                    <div v-else class="space-y-6 pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
-                      <div class="space-y-4">
-                        <button @click="showChangePasswordForm = !showChangePasswordForm" class="flex items-center justify-between w-full text-left hover:bg-gray-50 dark:hover:bg-[#2a2a2a] p-2 -mx-2 rounded-lg transition-colors">
-                          <h5 class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Change Master Password</h5>
-                          <span class="text-[11px] font-medium px-2 py-1 bg-gray-100 dark:bg-[#333] text-gray-500 dark:text-gray-400 rounded">{{ showChangePasswordForm ? 'Hide' : 'Show' }}</span>
-                        </button>
-                        
-                        <div v-if="showChangePasswordForm" class="space-y-4 pt-2">
-                          <div class="space-y-1">
-                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Old Password</label>
-                            <input type="password" v-model="e2eeOldPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
-                          </div>
-                          <div class="space-y-1">
-                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">New Password</label>
-                            <input type="password" v-model="e2eePassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
-                          </div>
-                          <div class="space-y-1">
-                            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Confirm New Password</label>
-                            <input type="password" v-model="e2eeConfirmPassword" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white" />
-                          </div>
-                          <button @click="changeE2EEPassword" class="px-4 py-2 bg-[#f0f0f0] dark:bg-[#333] hover:bg-[#e0e0e0] dark:hover:bg-[#444] text-[#1c1c1e] dark:text-[#f4f4f5] rounded-lg text-[13px] font-medium transition-all w-full flex items-center justify-center gap-2">
-                            <Lock class="w-4 h-4" /> Change Password
-                          </button>
-                        </div>
-
+                    <!-- Restore from phrase -->
+                    <div v-else-if="showRestoreForm && !e2eeStatus.key_available" class="space-y-4">
+                      <div class="space-y-1">
+                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Recovery Phrase (12 words)</label>
+                        <textarea v-model="restorePhrase" rows="3" placeholder="word1 word2 word3 ... word12" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none font-mono"></textarea>
                       </div>
-
-                      <div class="pt-4 border-t border-[#e6e6e6] dark:border-[#333]">
-                        <h5 class="text-[13px] font-semibold text-red-600 dark:text-red-400 mb-3">Danger Zone</h5>
-                        <button @click="clearE2EEPassword" class="px-4 py-2 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-[13px] font-medium transition-all w-full">
-                          Disable Encryption & Sync Plaintext
+                      <div class="flex gap-2">
+                        <button @click="restoreFromPhrase" :disabled="e2eeLoading" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-60">
+                          {{ e2eeLoading ? 'Restoring...' : 'Restore' }}
+                        </button>
+                        <button @click="showRestoreForm = false; restorePhrase = ''" class="px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] rounded-lg text-[13px] font-medium transition-all">
+                          Cancel
                         </button>
                       </div>
+                    </div>
+
+                    <!-- Key available: just show status -->
+                    <div v-else-if="e2eeStatus.key_available" class="">
+                      <p class="text-[12px] text-green-600 dark:text-green-400 font-medium">✓ Encryption key is stored securely on your device.</p>
                     </div>
 
                     <!-- Messages -->
@@ -528,6 +625,16 @@ const clearE2EEPassword = async () => {
         </div>
       </div>
     </Transition>
+  </Teleport>
+
+  <!-- PIN Verification Overlay -->
+  <Teleport to="body">
+    <LockScreenVerify
+      v-if="showPinVerify"
+      :title="pinVerifyTitle"
+      @unlocked="onPinVerified"
+      @cancelled="showPinVerify = false; pendingAction = null"
+    />
   </Teleport>
 </template>
 

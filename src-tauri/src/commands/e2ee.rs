@@ -1,53 +1,85 @@
 use crate::secrets::SecretManager;
-use tauri::Manager;
+use serde::Serialize;
 
+#[derive(Serialize)]
+pub struct E2eeStatus {
+    /// Whether an encryption key is available
+    pub key_available: bool,
+    /// Whether the user needs to set up E2EE (first time or new device)
+    pub needs_setup: bool,
+}
+
+#[derive(Serialize)]
+pub struct SetupResult {
+    pub recovery_phrase: String,
+}
+
+/// Check E2EE status — determines what UI to show
 #[tauri::command]
-pub async fn set_e2ee_password(app_handle: tauri::AppHandle, password: String) -> Result<(), String> {
-    SecretManager::set_e2ee_password(Some(&app_handle), password)?;
+pub async fn check_e2ee_status(app_handle: tauri::AppHandle) -> Result<E2eeStatus, String> {
+    let has_key = SecretManager::has_e2ee_key(Some(&app_handle));
+    
+    Ok(E2eeStatus {
+        key_available: has_key,
+        needs_setup: !has_key,
+    })
+}
+
+/// First-time setup: generate key, return recovery phrase
+#[tauri::command]
+pub async fn setup_e2ee(app_handle: tauri::AppHandle) -> Result<SetupResult, String> {
+    use tauri::Manager;
+    // Don't overwrite existing key
+    if SecretManager::has_e2ee_key(Some(&app_handle)) {
+        return Err("E2EE key already exists. Use get_recovery_phrase instead.".to_string());
+    }
+
+    let key = crate::sync::crypto::generate_key();
+    let phrase = crate::sync::crypto::key_to_mnemonic(&key)?;
+    
+    SecretManager::set_e2ee_key(Some(&app_handle), &key)?;
+    
+    // Clear any legacy password that might exist
+    let _ = SecretManager::clear_e2ee_password(Some(&app_handle));
+    
+    // Set flag to encrypt all existing data on next sync
     let db_state = app_handle.state::<crate::db::DbState>();
     if let Ok(db) = db_state.lock() {
+        let _ = db.set_kv("e2ee_key_version", "3");
         let _ = db.set_kv("force_e2ee_sync", "1");
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn clear_e2ee_password(app_handle: tauri::AppHandle) -> Result<(), String> {
-    // DO NOT CLEAR SECRET YET. Set flag for Sync Engine to disable safely.
-    let db_state = app_handle.state::<crate::db::DbState>();
-    if let Ok(db) = db_state.lock() {
-        let _ = db.set_kv("pending_e2ee_disable", "1");
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn change_e2ee_password(app_handle: tauri::AppHandle, old_password: String, new_password: String) -> Result<(), String> {
-    // Verify old password
-    if let Some(current) = SecretManager::get_e2ee_password(Some(&app_handle)) {
-        if current != old_password {
-            return Err("Old password is incorrect".to_string());
-        }
-    } else {
-        return Err("E2EE is not enabled".to_string());
+        let _ = db.delete_kv("pending_key_migration");
     }
     
-    // Store new password in a temporary KV flag, Sync Engine will pick it up
+    Ok(SetupResult { recovery_phrase: phrase })
+}
+
+/// Restore key from recovery phrase (new device)
+#[tauri::command]
+pub async fn restore_e2ee_from_phrase(
+    app_handle: tauri::AppHandle,
+    phrase: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let key = crate::sync::crypto::mnemonic_to_key(&phrase)?;
+    
+    SecretManager::set_e2ee_key(Some(&app_handle), &key)?;
+    
+    // Clear any legacy password
+    let _ = SecretManager::clear_e2ee_password(Some(&app_handle));
+    
     let db_state = app_handle.state::<crate::db::DbState>();
     if let Ok(db) = db_state.lock() {
-        let _ = db.set_kv("pending_e2ee_reencrypt", &new_password);
+        let _ = db.set_kv("e2ee_key_version", "3");
+        let _ = db.delete_kv("pending_key_migration");
     }
+    
     Ok(())
 }
 
+/// Get recovery phrase for display (key must already exist)
 #[tauri::command]
-pub async fn is_e2ee_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
-    let db_state = app_handle.state::<crate::db::DbState>();
-    if let Ok(db) = db_state.lock() {
-        if db.get_kv("pending_e2ee_disable").unwrap_or_default().is_some() {
-            // Technically it's in the process of being disabled, but for UI it's "enabled but turning off"
-            // We can return true here, UI should just show it's syncing
-        }
-    }
-    Ok(SecretManager::get_e2ee_password(Some(&app_handle)).is_some())
+pub async fn get_recovery_phrase(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let key = SecretManager::get_e2ee_key(Some(&app_handle))
+        .ok_or("No encryption key found")?;
+    crate::sync::crypto::key_to_mnemonic(&key)
 }

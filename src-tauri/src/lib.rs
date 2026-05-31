@@ -86,6 +86,9 @@ pub fn run() {
             app.manage(chat_engine::ChatEngineState::default());
             chat_engine::init_engine(app.handle().clone());
 
+            // App Lock
+            app.manage(commands::app_lock::AppLockState::default());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -116,9 +119,6 @@ pub fn run() {
             files::remove_file_source,
             files::scan_directory,
             files::query_files,
-            files::get_file_items,
-            files::get_settings,
-            files::save_settings,
             files::open_local_file,
             files::update_file_metadata,
             files::reindex_sources,
@@ -142,10 +142,10 @@ pub fn run() {
             commands::tags::delete_tag,
             
             // E2EE
-            commands::e2ee::set_e2ee_password,
-            commands::e2ee::change_e2ee_password,
-            commands::e2ee::clear_e2ee_password,
-            commands::e2ee::is_e2ee_enabled,
+            commands::e2ee::check_e2ee_status,
+            commands::e2ee::setup_e2ee,
+            commands::e2ee::restore_e2ee_from_phrase,
+            commands::e2ee::get_recovery_phrase,
 
             // Migration
             commands::migration::run_crdt_migration,
@@ -176,6 +176,13 @@ pub fn run() {
             chat::get_chat_history,
             chat::mark_chat_read,
             chat::get_unread_notification_count,
+            // App Lock
+            commands::app_lock::setup_app_lock,
+            commands::app_lock::verify_app_lock,
+            commands::app_lock::remove_app_lock,
+            commands::app_lock::change_app_lock,
+            commands::app_lock::get_app_lock_config,
+            commands::app_lock::update_app_lock_config,
             // System
             open_app_log_folder,
         ])

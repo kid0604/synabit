@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor, Download } from 'lucide-vue-next';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject, defineAsyncComponent } from 'vue';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor, Download, Lock, Unlock } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
 import { ask, save } from '@tauri-apps/plugin-dialog';
@@ -20,6 +20,9 @@ import { storeToRefs } from 'pinia';
 import type { NodeMetadata } from '../../types/ipc';
 import { logger } from '../../utils/logger';
 import type { NavEntry } from '../../stores/useNavigationStore';
+import { useAppLockStore } from '../../stores/useAppLockStore';
+
+const LockScreenComponent = defineAsyncComponent(() => import('../../shared/components/LockScreen.vue'));
 
 // ─── Intra-app navigation ──────────────────────────────────
 const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
@@ -47,7 +50,42 @@ const props = defineProps<{
 }>();
 
 const appStore = useAppStore();
+const appLockStore = useAppLockStore();
 const { enableDailyNotes, dailyNoteFormat, dailyNoteTag } = storeToRefs(appStore);
+
+// ─── Per-Note Lock (Tier 3) ──────────────────────────────
+const showNoteLockScreen = ref(false);
+const pendingNoteId = ref<string | null>(null);
+const pendingNoteAction = ref<'view' | 'unprotect'>('view');
+const noteLockTitle = ref('Enter PIN to view this note');
+
+const handleNoteLockUnlocked = () => {
+  showNoteLockScreen.value = false;
+  if (pendingNoteId.value) {
+    const id = pendingNoteId.value;
+    pendingNoteId.value = null;
+    if (pendingNoteAction.value === 'view') {
+      appLockStore.unlockNote(id);
+      handleNoteSelect(id);
+    } else if (pendingNoteAction.value === 'unprotect') {
+      appLockStore.toggleProtectedNote(id);
+    }
+  }
+};
+
+const toggleNoteLock = (noteId: string) => {
+  activeContextMenu.value = null;
+  if (appLockStore.isNoteProtected(noteId)) {
+    // Removing protection → require PIN
+    pendingNoteId.value = noteId;
+    pendingNoteAction.value = 'unprotect';
+    noteLockTitle.value = 'Enter PIN to unlock this note';
+    showNoteLockScreen.value = true;
+  } else {
+    // Adding protection → free
+    appLockStore.toggleProtectedNote(noteId);
+  }
+};
 
 const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
@@ -75,7 +113,11 @@ const tabAccessTime = new Map<string, number>();
 const currentContent = computed({
    get: () => currentNoteId.value ? tabContents.value[currentNoteId.value] || '' : '',
    set: (val) => {
-       if (currentNoteId.value) tabContents.value[currentNoteId.value] = val;
+       if (currentNoteId.value) {
+           tabContents.value[currentNoteId.value] = val;
+           // Refresh note session while actively editing
+           appLockStore.touchNoteSession(currentNoteId.value);
+       }
    }
 });
 
@@ -366,6 +408,14 @@ const isValidDailyFormat = computed(() => {
 
 // ─── Note CRUD Operations ──────────────────────────────────
 const handleNoteSelect = (id: string) => {
+    // Tier 3: Check if note is locked
+    if (appLockStore.isEnabled && appLockStore.isNoteProtected(id) && !appLockStore.isNoteAccessible(id)) {
+      pendingNoteId.value = id;
+      pendingNoteAction.value = 'view';
+      noteLockTitle.value = 'Enter PIN to view this note';
+      showNoteLockScreen.value = true;
+      return;
+    }
     if (id !== currentNoteId.value && currentNoteId.value && !skipNavPush) {
         pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
     }
@@ -1199,11 +1249,13 @@ onMounted(async () => {
                           <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? 'Unpin' : 'Pin' }}</button>
                           <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> Open in New Window</button>
                           <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> Rename</button>
+                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? 'Unlock Note' : 'Lock Note' }}</button>
                           <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> Delete</button>
                        </div>
                     </div>
                     <div class="flex items-center gap-2 mb-1.5 pr-6">
                         <Pin class="w-3 h-3 text-orange-500 shrink-0 fill-orange-500/20" />
+                        <Lock v-if="appLockStore.isNoteProtected(note.id)" class="w-3 h-3 text-amber-500 shrink-0" />
                         <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || 'Untitled Note' }}</span>
                     </div>
                     <div class="flex flex-wrap gap-1" v-if="note.tags.length">
@@ -1257,11 +1309,13 @@ onMounted(async () => {
                           <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? 'Unpin' : 'Pin' }}</button>
                           <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> Open in New Window</button>
                           <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> Rename</button>
+                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? 'Unlock Note' : 'Lock Note' }}</button>
                           <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> Delete</button>
                        </div>
                     </div>
                     <div class="flex items-center gap-2 mb-1.5 pr-6">
                         <FileText class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80" />
+                        <Lock v-if="appLockStore.isNoteProtected(note.id)" class="w-3 h-3 text-amber-500 shrink-0" />
                         <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || 'Untitled Note' }}</span>
                     </div>
                     <div class="flex flex-wrap gap-1" v-if="note.tags.length">
@@ -1527,6 +1581,14 @@ onMounted(async () => {
       v-if="exportModalVisible" 
       @close="exportModalVisible = false" 
       @export="handleExportOption" 
+    />
+
+    <!-- Per-Note Lock Screen (Tier 3) -->
+    <LockScreenComponent
+      v-if="showNoteLockScreen"
+      :title="noteLockTitle"
+      @unlocked="handleNoteLockUnlocked"
+      @cancelled="showNoteLockScreen = false; pendingNoteId = null"
     />
 
   </div>

@@ -2,13 +2,14 @@
 import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
+import { useAppLockStore } from '../../stores/useAppLockStore';
 
 const emit = defineEmits<{
     (e: 'edit-item', id: string, type: string): void
@@ -75,6 +76,8 @@ const totalCount = ref(0);
 const showSyntaxHints = ref(false);
 const caseSensitive = ref(false);
 const currentView = ref('graph_search'); // 'graph_search' | 'tag_manager'
+
+const appLockStore = useAppLockStore();
 
 const hideSyntaxHints = () => {
     setTimeout(() => {
@@ -350,7 +353,11 @@ const cleanSnippet = (snippet: string) => {
                                 </span>
                             </div>
                             
-                            <p v-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="cleanSnippet(item.snippet)"></p>
+                            <p v-if="appLockStore.isEnabled && appLockStore.isNoteProtected(item.id)" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed flex items-center gap-1.5">
+                              <Lock class="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              <span class="italic text-gray-400 dark:text-gray-500">Content protected</span>
+                            </p>
+                            <p v-else-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="cleanSnippet(item.snippet)"></p>
                             <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono break-words" v-html="cleanSnippet(item.snippet)"></p>
                             
                             <div class="flex items-center gap-2 mt-3" v-if="item.tags.length > 0">
@@ -422,8 +429,6 @@ const cleanSnippet = (snippet: string) => {
         </div>
     </div>
 
-    <!-- Tag Manager Modal -->
-    <NexusTagManager v-if="showTagManager" @close="showTagManager = false" />
 
   </div>
 </template>

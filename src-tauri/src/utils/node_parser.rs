@@ -118,7 +118,7 @@ pub fn extract_blocks(content: &str) -> Vec<(String, String)> {
     use regex::Regex;
 
     let mut blocks = Vec::new();
-    let mut options = Options::all();
+    let options = Options::all();
     let parser = Parser::new_ext(content, options).into_offset_iter();
 
     // Regex to find ` ^block-id` at the end of the block

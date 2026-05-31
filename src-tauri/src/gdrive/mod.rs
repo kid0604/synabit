@@ -53,7 +53,7 @@ pub(crate) const VAULT_FOLDER_NAME: &str = "Synabit Vault";
 // Shared Data Structures
 // ──────────────────────────────────────────────
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use md5::{Digest as Md5Digest, Md5};
+
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -139,10 +139,6 @@ pub(crate) fn config_dir(app_handle: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-pub(crate) fn tokens_path(app_handle: &tauri::AppHandle) -> PathBuf {
-    config_dir(app_handle).join("gdrive_tokens.json")
-}
-
 pub(crate) fn manifest_path(vault_path: &str) -> PathBuf {
     Path::new(vault_path).join(".synabit_sync_manifest.json")
 }
@@ -156,17 +152,6 @@ pub(crate) fn file_sha256(path: &Path) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         format!("{:x}", hasher.finalize())
-    } else {
-        String::new()
-    }
-}
-
-pub(crate) fn file_md5(path: &Path) -> String {
-    if let Ok(bytes) = fs::read(path) {
-        let mut hasher = Md5::new();
-        hasher.update(&bytes);
-        let result = hasher.finalize();
-        result.iter().map(|b| format!("{:02x}", b)).collect::<String>()
     } else {
         String::new()
     }

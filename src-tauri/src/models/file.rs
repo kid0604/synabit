@@ -105,13 +105,3 @@ pub struct FileSource {
     pub name: String,
 }
 
-// Dummy structs for compatibility until frontend is fully refactored
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct FileItem {
-    pub id: String,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct FileManagerSettings {
-    pub tracked_sources: Vec<String>,
-}

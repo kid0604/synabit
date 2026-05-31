@@ -205,6 +205,10 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (crdt_updates): {}", e)))?;
 
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_crdt_updates_doc_id ON crdt_updates(doc_id);"
+        ).map_err(|e| AppError::General(format!("DB Index Error (crdt_updates): {}", e)))?;
+
         // ─── FTS5 Full-Text Search Index ────────────────────────
         // DROP + CREATE to ensure schema includes the `properties` column.
         // Data is repopulated by reindex_search() on every app startup.
@@ -1486,6 +1490,21 @@ impl DbBridge {
     //  CRDT STORAGE LOGIC (Phase 1)
     // ═══════════════════════════════════════════════════════════
 
+    /// Get or create a stable device peer ID for CRDT operations.
+    /// This ensures all CRDT operations from this device use the same peer ID,
+    /// preventing version vector bloat.
+    pub fn get_or_create_peer_id(&self) -> AppResult<u64> {
+        if let Ok(Some(id_str)) = self.get_kv("device_peer_id") {
+            if let Ok(id) = id_str.parse::<u64>() {
+                return Ok(id);
+            }
+        }
+        // Generate a new peer ID from UUID
+        let id = uuid::Uuid::new_v4().as_u128() as u64;
+        self.set_kv("device_peer_id", &id.to_string())?;
+        Ok(id)
+    }
+
     pub fn get_crdt_doc(&self, doc_id: &str) -> AppResult<loro::LoroDoc> {
         let mut stmt = self.conn.prepare("SELECT snapshot FROM crdt_documents WHERE doc_id = ?1")
             .map_err(|e| AppError::General(format!("DB Error prepare get_crdt_doc: {}", e)))?;
@@ -1493,6 +1512,11 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("DB Error querying crdt_documents: {}", e)))?;
         
         let doc = loro::LoroDoc::new();
+
+        // Set stable peer ID to prevent version vector bloat
+        if let Ok(peer_id) = self.get_or_create_peer_id() {
+            doc.set_peer_id(peer_id).ok();
+        }
         
         if let Some(row) = rows.next().unwrap_or(None) {
             let snapshot: Vec<u8> = row.get(0).unwrap_or_default();
@@ -1552,8 +1576,10 @@ impl DbBridge {
     }
 
     pub fn compact_all_crdt(&self) -> AppResult<()> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT doc_id FROM crdt_updates")
-            .map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
+        // Only compact documents that have accumulated significant deltas
+        let mut stmt = self.conn.prepare(
+            "SELECT doc_id, COUNT(*) as cnt FROM crdt_updates GROUP BY doc_id HAVING cnt > 20"
+        ).map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
         let rows = stmt.query_map([], |row| {
             let doc_id: String = row.get(0)?;
             Ok(doc_id)
@@ -1562,6 +1588,18 @@ impl DbBridge {
         for doc_id in rows.flatten() {
             let _ = self.compact_crdt_history(&doc_id);
         }
+        Ok(())
+    }
+
+    /// Delete all CRDT data for a document (snapshot + deltas).
+    /// Called when a node file is deleted.
+    pub fn delete_crdt_doc(&self, doc_id: &str) -> AppResult<()> {
+        self.conn
+            .execute("DELETE FROM crdt_documents WHERE doc_id = ?1", params![doc_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting crdt_documents: {}", e)))?;
+        self.conn
+            .execute("DELETE FROM crdt_updates WHERE doc_id = ?1", params![doc_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting crdt_updates: {}", e)))?;
         Ok(())
     }
 }
