@@ -473,26 +473,32 @@ const restoreFromPhrase = async () => {
               </div>
               <!-- === SECURITY TAB === -->
               <div v-else-if="settingsTab === 'security'" class="space-y-6">
-                <!-- App Lock (Tier 1) -->
+                <!-- Local Security (App Lock) -->
                 <section>
                   <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">App Lock</h4>
-                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
-                    <template v-if="!appLockStore.isEnabled">
-                      <div class="flex items-center gap-3 mb-3">
-                        <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                          <Shield class="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                        </div>
-                        <div>
-                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Protect your app</p>
-                          <p class="text-[11px] text-gray-400 dark:text-gray-500">Set a 6-digit PIN to lock Synabit when idle.</p>
-                        </div>
+                  
+                  <!-- Setup or Managed States -->
+                  <div v-if="!appLockStore.isEnabled" class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <div class="flex items-center gap-3 mb-3">
+                      <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                        <Shield class="w-5 h-5 text-purple-600 dark:text-purple-400" />
                       </div>
-                      <button @click="emit('show-setup-pin', 'setup')" class="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2">
-                        <Lock class="w-4 h-4" /> Set Up PIN
-                      </button>
-                    </template>
-                    <template v-else>
-                      <!-- Idle Timeout (global, affects all tiers) -->
+                      <div>
+                        <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Protect your app</p>
+                        <p class="text-[11px] text-gray-400 dark:text-gray-500">Set a 6-digit PIN to lock Synabit when idle.</p>
+                      </div>
+                    </div>
+                    <button @click="emit('show-setup-pin', 'setup')" class="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2">
+                      <Lock class="w-4 h-4" /> Set Up PIN
+                    </button>
+                  </div>
+
+                  <template v-else>
+                    <!-- Part 1: PIN Settings -->
+                    <div class="mb-4 bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">PIN Settings</p>
+                      
+                      <!-- Idle Timeout -->
                       <div class="flex items-center justify-between mb-4">
                         <div>
                           <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Idle timeout</p>
@@ -502,17 +508,10 @@ const restoreFromPhrase = async () => {
                           <option v-for="opt in autoLockOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                         </select>
                       </div>
-                      <!-- Tier 1 Toggle: Lock entire app -->
-                      <div class="flex items-center justify-between mb-4">
-                        <div>
-                          <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Lock entire app</p>
-                          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">Also require PIN to access the whole app.</p>
-                        </div>
-                        <div class="relative inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.appLockActive ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleTier1">
-                          <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.appLockActive ? 'translate-x-2' : '-translate-x-2'"/>
-                        </div>
-                      </div>
+
                       <hr class="border-[#e6e6e6] dark:border-[#2c2c2c] mb-4" />
+                      
+                      <!-- PIN Actions -->
                       <div class="flex gap-2">
                         <button @click="emit('show-setup-pin', 'change')" class="flex-1 px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] rounded-lg text-[12px] font-medium transition-all flex items-center justify-center gap-2">
                           <Lock class="w-3.5 h-3.5" /> Change PIN
@@ -521,35 +520,46 @@ const restoreFromPhrase = async () => {
                           <Trash2 class="w-3.5 h-3.5" /> Remove PIN
                         </button>
                       </div>
-                    </template>
-                  </div>
-                </section>
-
-                <!-- Protected Apps (Tier 2) -->
-                <section v-if="appLockStore.isEnabled">
-                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">Protected Apps</h4>
-                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
-                    <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">
-                      These apps require PIN when accessed. Once unlocked, they stay accessible until the app locks again.
-                    </p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <label v-for="app in availableApps" :key="app.id"
-                        class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
-                        :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800' : 'bg-white dark:bg-[#2a2a2a] border-[#e6e6e6] dark:border-[#3a3a3a] hover:border-gray-300 dark:hover:border-gray-500'"
-                      >
-                        <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
-                          <component :is="app.icon" class="w-4 h-4 text-gray-500" />
-                          {{ app.name }}
-                        </span>
-                        <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleProtectedApp(app.id, app.name)">
-                          <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isAppProtected(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
-                        </div>
-                      </label>
                     </div>
-                  </div>
+
+                    <!-- Part 2: Lock Entire App -->
+                    <div class="mb-4 bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <div class="flex items-center justify-between">
+                        <div>
+                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Lock Entire App</p>
+                          <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Require PIN immediately when opening the application.</p>
+                        </div>
+                        <div class="relative inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.appLockActive ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleTier1">
+                          <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.appLockActive ? 'translate-x-2' : '-translate-x-2'"/>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Part 3: Protected Mini Apps -->
+                    <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-2">Protected Mini Apps</p>
+                      <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">
+                        Require PIN to access specific apps. They will automatically re-lock after the idle timeout.
+                      </p>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label v-for="app in availableApps" :key="app.id"
+                          class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
+                          :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800' : 'bg-white dark:bg-[#2a2a2a] border-[#e6e6e6] dark:border-[#3a3a3a] hover:border-gray-300 dark:hover:border-gray-500'"
+                        >
+                          <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
+                            <component :is="app.icon" class="w-4 h-4 text-gray-500" />
+                            {{ app.name }}
+                          </span>
+                          <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleProtectedApp(app.id, app.name)">
+                            <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isAppProtected(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </template>
                 </section>
 
-                <!-- E2EE (existing) -->
+                <!-- Cloud Security (E2EE) -->
                 <section>
                   <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">End-to-End Encryption</h4>
                   <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
