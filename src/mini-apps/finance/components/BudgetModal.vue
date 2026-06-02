@@ -13,28 +13,27 @@ const props = defineProps<{
 const emit = defineEmits<{
     (e: 'close'): void;
     (e: 'save', budget: Budget): void;
-    (e: 'delete', categoryId: string): void;
+    (e: 'delete', id: string): void;
 }>();
 
-const categoryId = ref<string>('');
+const name = ref<string>('');
+const selectedCategories = ref<string[]>([]);
 const amount = ref<string>('');
 
-const availableCategories = computed(() => {
-    // If editing, show the current category too
-    if (props.budget) {
-        return props.expenseCategories.filter(c => c === props.budget!.categoryId || !props.existingBudgetCategories.includes(c));
-    }
-    // If adding, only show categories that don't have a budget yet
-    return props.expenseCategories.filter(c => !props.existingBudgetCategories.includes(c));
-});
+const isCategoryDisabled = (cat: string) => {
+    if (selectedCategories.value.includes(cat)) return false;
+    return props.existingBudgetCategories.includes(cat);
+};
 
 watch(() => props.show, (newVal) => {
     if (newVal) {
         if (props.budget) {
-            categoryId.value = props.budget.categoryId;
+            name.value = props.budget.name || (props.budget as any).categoryId || '';
+            selectedCategories.value = [...(props.budget.categories || ((props.budget as any).categoryId ? [(props.budget as any).categoryId] : []))];
             amount.value = props.budget.amount.toLocaleString('en-US');
         } else {
-            categoryId.value = availableCategories.value.length ? availableCategories.value[0] : '';
+            name.value = '';
+            selectedCategories.value = [];
             amount.value = '';
         }
     }
@@ -54,14 +53,16 @@ const handleAmountInput = (e: Event) => {
 
 const canSave = computed(() => {
     const numericAmount = Number(amount.value.replace(/\D/g, ''));
-    return categoryId.value && numericAmount > 0;
+    return name.value.trim() !== '' && selectedCategories.value.length > 0 && numericAmount > 0;
 });
 
 const save = () => {
     if (!canSave.value) return;
     
     emit('save', {
-        categoryId: categoryId.value,
+        id: props.budget?.id || `budget-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        name: name.value.trim(),
+        categories: [...selectedCategories.value],
         amount: Number(amount.value.replace(/\D/g, ''))
     });
 };
@@ -85,20 +86,47 @@ const save = () => {
 
       <!-- Body -->
       <div class="p-5 space-y-4">
-        <div v-if="availableCategories.length === 0 && !budget" class="text-center p-4 text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+        <div v-if="expenseCategories.length === existingBudgetCategories.length && !budget" class="text-center p-4 text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
             All expense categories have a budget!
         </div>
         <template v-else>
-            <!-- Category -->
+            <!-- Name -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Category</label>
-                <select 
-                    v-model="categoryId" 
-                    :disabled="!!budget"
-                    class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50"
-                >
-                    <option v-for="cat in availableCategories" :key="cat" :value="cat">{{ cat }}</option>
-                </select>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Budget Name</label>
+                <input 
+                    type="text" 
+                    v-model="name" 
+                    class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. Food & Dining"
+                />
+            </div>
+
+            <!-- Categories -->
+            <div class="space-y-1.5">
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Categories</label>
+                <div class="max-h-40 overflow-y-auto hidden-scrollbar bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl p-3 flex flex-wrap gap-2">
+                    <label 
+                        v-for="cat in expenseCategories" 
+                        :key="cat" 
+                        class="flex items-center px-3 py-1.5 rounded-lg border transition-all cursor-pointer select-none text-sm"
+                        :class="[
+                            selectedCategories.includes(cat) 
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-400 shadow-sm' 
+                                : isCategoryDisabled(cat) && !selectedCategories.includes(cat)
+                                    ? 'bg-gray-100 border-gray-200 text-gray-400 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-500 cursor-not-allowed opacity-60'
+                                    : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                        ]"
+                    >
+                        <input 
+                            type="checkbox" 
+                            :value="cat" 
+                            v-model="selectedCategories"
+                            :disabled="isCategoryDisabled(cat) && !selectedCategories.includes(cat)"
+                            class="hidden"
+                        />
+                        <span>{{ cat }}</span>
+                    </label>
+                </div>
             </div>
 
             <!-- Amount -->
@@ -123,7 +151,7 @@ const save = () => {
       <div class="p-4 border-t border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/50 flex items-center justify-between gap-3">
         <button 
             v-if="budget" 
-            @click="emit('delete', budget.categoryId)"
+            @click="emit('delete', budget.id || (budget as any).categoryId)"
             class="px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors"
         >
             Delete
@@ -134,7 +162,6 @@ const save = () => {
                 Cancel
             </button>
             <button 
-                v-if="availableCategories.length > 0 || budget"
                 @click="save"
                 :disabled="!canSave"
                 class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 disabled:cursor-not-allowed rounded-xl transition-colors shadow-sm"

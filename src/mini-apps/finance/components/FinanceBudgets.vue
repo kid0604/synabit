@@ -33,7 +33,8 @@ const spentByCategory = computed(() => {
 // Enriched budgets with spent amounts and percentages
 const budgetStats = computed(() => {
     return props.budgets.map(b => {
-        const spent = spentByCategory.value[b.categoryId] || 0;
+        const categories = b.categories || [b.categoryId];
+        const spent = categories.reduce((sum, cat) => sum + (spentByCategory.value[cat] || 0), 0);
         const percent = b.amount > 0 ? Math.min(Math.round((spent / b.amount) * 100), 100) : 0;
         const realPercent = b.amount > 0 ? (spent / b.amount) * 100 : 0;
         
@@ -43,6 +44,9 @@ const budgetStats = computed(() => {
 
         return {
             ...b,
+            displayId: b.id || b.categoryId,
+            displayName: b.name || b.categoryId,
+            displayCategories: categories,
             spent,
             percent,
             realPercent,
@@ -71,7 +75,8 @@ const openEditBudget = (budget: Budget) => {
 
 const handleSaveBudget = (budget: Budget) => {
     const newBudgets = [...props.budgets];
-    const idx = newBudgets.findIndex(b => b.categoryId === budget.categoryId);
+    const targetId = budget.id || budget.categoryId;
+    const idx = newBudgets.findIndex(b => (b.id || b.categoryId) === targetId);
     
     if (idx >= 0) {
         newBudgets[idx] = budget;
@@ -83,13 +88,13 @@ const handleSaveBudget = (budget: Budget) => {
     showBudgetModal.value = false;
 };
 
-const handleDeleteBudget = (categoryId: string) => {
-    const newBudgets = props.budgets.filter(b => b.categoryId !== categoryId);
+const handleDeleteBudget = (id: string) => {
+    const newBudgets = props.budgets.filter(b => (b.id || b.categoryId) !== id);
     emit('save-budgets', newBudgets);
     showBudgetModal.value = false;
 };
 
-const existingBudgetCategories = computed(() => props.budgets.map(b => b.categoryId));
+const existingBudgetCategories = computed(() => props.budgets.flatMap(b => b.categories || [b.categoryId]));
 
 </script>
 
@@ -147,7 +152,7 @@ const existingBudgetCategories = computed(() => props.budgets.map(b => b.categor
     <div v-if="budgetStats.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div 
             v-for="b in budgetStats" 
-            :key="b.categoryId"
+            :key="b.displayId"
             @click="openEditBudget(b)"
             class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-5 hover:border-blue-300 dark:hover:border-blue-700/50 transition-colors cursor-pointer group shadow-sm flex flex-col gap-4 relative overflow-hidden"
         >
@@ -155,14 +160,25 @@ const existingBudgetCategories = computed(() => props.budgets.map(b => b.categor
                 <Target class="w-24 h-24 -mt-4 -mr-4" />
             </div>
 
-            <div class="flex items-center justify-between">
-                <div class="font-bold text-lg text-text dark:text-text-dark flex items-center gap-2">
-                    {{ b.categoryId }}
-                    <CheckCircle2 v-if="b.status === 'safe'" class="w-4 h-4 text-green-500" />
-                    <AlertCircle v-else-if="b.status === 'warning'" class="w-4 h-4 text-orange-500" />
-                    <TrendingUp v-else-if="b.status === 'danger'" class="w-4 h-4 text-red-500" />
+            <div class="flex items-start justify-between gap-4">
+                <div class="flex flex-col gap-1">
+                    <div class="font-bold text-lg text-text dark:text-text-dark flex items-center gap-2">
+                        {{ b.displayName }}
+                        <CheckCircle2 v-if="b.status === 'safe'" class="w-4 h-4 text-green-500 shrink-0" />
+                        <AlertCircle v-else-if="b.status === 'warning'" class="w-4 h-4 text-orange-500 shrink-0" />
+                        <TrendingUp v-else-if="b.status === 'danger'" class="w-4 h-4 text-red-500 shrink-0" />
+                    </div>
+                    <div class="flex flex-wrap gap-1.5 mt-0.5">
+                        <span 
+                            v-for="cat in b.displayCategories" 
+                            :key="cat"
+                            class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700/50"
+                        >
+                            {{ cat }}
+                        </span>
+                    </div>
                 </div>
-                <div class="text-sm font-medium" :class="b.status === 'danger' ? 'text-red-500' : b.status === 'warning' ? 'text-orange-500' : 'text-green-500'">
+                <div class="text-sm font-medium pt-1" :class="b.status === 'danger' ? 'text-red-500' : b.status === 'warning' ? 'text-orange-500' : 'text-green-500'">
                     {{ b.realPercent > 100 ? b.realPercent.toFixed(1) : Math.round(b.realPercent) }}%
                 </div>
             </div>

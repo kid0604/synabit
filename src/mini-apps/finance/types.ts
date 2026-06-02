@@ -32,7 +32,9 @@ export interface Debt {
 }
 
 export interface Budget {
-  categoryId: string; // The expense category this budget applies to
+  id: string;         // Unique ID for the budget
+  name: string;       // Name of the budget group
+  categories: string[]; // List of expense categories this budget applies to
   amount: number;     // The maximum amount allowed per month
 }
 
@@ -63,10 +65,10 @@ export interface FinanceConfig {
 }
 
 export const SYSTEM_INCOME_CATEGORIES = ['Borrowing', 'Debt Collection'];
-export const DEFAULT_INCOME_CATEGORIES = ['Salary', 'Bonus', 'Interest', 'Gift', ...SYSTEM_INCOME_CATEGORIES, 'Other'];
+export const DEFAULT_INCOME_CATEGORIES = ['Salary', 'Bonus', 'Allowance', 'Savings Interest', 'Investment Return', 'Gift', 'Business', 'Freelance', ...SYSTEM_INCOME_CATEGORIES, 'Other Income'];
 
 export const SYSTEM_EXPENSE_CATEGORIES = ['Lending', 'Debt Repayment'];
-export const DEFAULT_EXPENSE_CATEGORIES = ['Food & Dining', 'Transportation', 'Shopping', 'Bills & Utilities', 'Entertainment', 'Health', 'Education', ...SYSTEM_EXPENSE_CATEGORIES, 'Other'];
+export const DEFAULT_EXPENSE_CATEGORIES = ['Food & Dining', 'Transportation', 'Bills & Utilities', 'Housing', 'Gifts & Donations', 'Health & Medical', 'Clothing', 'Entertainment', 'Education', 'Family & Kids', 'Investment', 'Insurance', ...SYSTEM_EXPENSE_CATEGORIES, 'Other Expense'];
 
 export const DEFAULT_ACCOUNTS: FinanceAccount[] = [
   { id: 'acc-1', name: 'Cash', initialBalance: 0 },
