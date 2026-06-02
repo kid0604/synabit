@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
-import { emit as emitTauri } from '@tauri-apps/api/event';
+import { emit as emitTauri, listen } from '@tauri-apps/api/event';
 import { ask, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
@@ -647,6 +647,18 @@ const confirmTurnIntoTask = async (payload: any) => {
 onMounted(() => {
     loadCaps();
     window.addEventListener('paste', handleGlobalPaste);
+
+    listen('vault-file-modified', () => {
+        loadCaps();
+    });
+
+    listen('vault-file-created-deleted', () => {
+        loadCaps();
+    });
+
+    listen('vault-sync-completed', () => {
+        loadCaps();
+    });
 });
 
 onUnmounted(() => {

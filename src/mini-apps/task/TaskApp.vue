@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink, User } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
@@ -1466,6 +1467,18 @@ const handleModalDelete = async () => {
 
 onMounted(() => {
     loadTasks();
+
+    listen('vault-file-modified', () => {
+        loadTasks();
+    });
+
+    listen('vault-file-created-deleted', () => {
+        loadTasks();
+    });
+
+    listen('vault-sync-completed', () => {
+        loadTasks();
+    });
 });
 
 watch(() => props.vaultPath, () => {

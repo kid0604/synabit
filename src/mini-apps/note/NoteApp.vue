@@ -1184,6 +1184,24 @@ onMounted(async () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
   }).then(fn => unlistenFns.push(fn));
+
+  // Handle GDrive sync pull — invalidate cached tabs and reload affected notes
+  listen('vault-sync-completed', async (event: any) => {
+      const { pulled_files } = event.payload as { pulled_files: string[], pulled: number };
+      if (pulled_files && pulled_files.length > 0) {
+          pulled_files.forEach((p) => {
+              delete tabContents.value[p];
+          });
+      }
+      await scanVault();
+      if (
+          currentNoteId.value &&
+          pulled_files &&
+          pulled_files.includes(currentNoteId.value)
+      ) {
+          await loadNoteFile(currentNoteId.value);
+      }
+  }).then(fn => unlistenFns.push(fn));
 });
 </script>
 

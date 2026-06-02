@@ -170,12 +170,14 @@ pub(crate) async fn drive_delete_file(client: &reqwest::Client, token: &str, fil
         .await
         .map_err(|e| format!("Delete failed: {}", e))?;
 
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if status.is_success() || status.as_u16() == 404 {
+        // 404 = file already gone, which is the desired outcome
+        Ok(())
+    } else {
         let err = resp.text().await.unwrap_or_default();
-        return Err(format!("Delete error: {}", err));
+        Err(format!("Delete error: {}", err))
     }
-
-    Ok(())
 }
 
 pub(crate) async fn drive_create_folder(

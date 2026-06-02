@@ -27,6 +27,7 @@ import { PdfExtension } from './PdfExtension';
 import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
+import { DetailsExtension } from './extensions/DetailsExtension';
 import { BlockIdHider } from './extensions/BlockIdHider';
 import EmbedPickerModal from './EmbedPickerModal.vue';
 import 'katex/dist/katex.min.css';
@@ -51,7 +52,8 @@ import {
   PenTool as PenToolIcon,
   Link2 as EmbedIcon,
   BookOpen as BookOpenIcon,
-  Network as MarkmapIcon
+  Network as MarkmapIcon,
+  ChevronRight as ChevronRightIcon
 } from 'lucide-vue-next';
 import {
   Bold as BoldIcon,
@@ -1306,6 +1308,14 @@ const slashCommandItems = (): SlashCommandItem[] => [
       pdfModal.value = { show: true };
     },
   },
+  {
+    title: 'Toggle list',
+    description: 'Toggles can hide and show content inside',
+    icon: ChevronRightIcon,
+    command: ({ editor, range }: any) => {
+      editor.chain().focus().deleteRange(range).setDetails({ summary: 'Toggle heading' }).run();
+    },
+  },
 ];
 
 // --- Slash Command Extension ---
@@ -1468,6 +1478,7 @@ const editor = useEditor({
     VideoExtension,
     AudioExtension,
     PdfExtension,
+    DetailsExtension,
     Table.configure({
       resizable: true,
       allowTableNodeSelection: true,

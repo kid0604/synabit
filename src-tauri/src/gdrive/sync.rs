@@ -70,6 +70,17 @@ fn epoch_secs_now() -> String {
         .unwrap_or_default()
 }
 
+/// Get a file's actual modification time as epoch seconds string.
+/// Falls back to epoch_secs_now() if the file metadata is unavailable.
+fn file_mtime_secs(path: &Path) -> String {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(epoch_secs_now)
+}
+
 /// Encrypt payload with the auto-key, aborting sync on failure (C5 fix).
 fn encrypt_or_abort(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, String> {
     crate::sync::crypto::encrypt(key, payload)
@@ -241,6 +252,11 @@ pub async fn gdrive_sync_full(
                 }
             }
 
+            if rel_path.contains("Tasks/") || rel_path.contains("tasks/") {
+                log::debug!("PULL decision for {}: local_changed={} remote_changed={} drive_mtime={} manifest_drive_mtime={} local_mtime={} manifest_local_mtime={}", 
+                    rel_path, local_changed, remote_changed, drive_mtime, entry.drive_modified_time, local_mtime, manifest_mtime);
+            }
+
             match (local_changed, remote_changed) {
                 (false, false) => (false, false),
                 (false, true) => (true, false),
@@ -248,11 +264,16 @@ pub async fn gdrive_sync_full(
                 (true, true) => (true, true),
             }
         } else {
-            (false, false)
+            // File exists locally and on Drive but NOT in manifest.
+            // This can happen after manifest reset, migration, or on a new device.
+            // Treat as conflict so CRDT merge preserves both local and remote changes.
+            log::info!("PULL: file not in manifest but exists locally and on Drive: {} (will merge via CRDT)", rel_path);
+            (true, true)
         };
 
         if should_pull {
             let is_asset = rel_path.starts_with("assets/");
+            log::info!("PULL will download: {} is_conflict={} is_asset={}", rel_path, is_conflict, is_asset);
             
             pull_items.push(PullItem {
                 rel_path: rel_path.clone(),
@@ -372,9 +393,33 @@ pub async fn gdrive_sync_full(
                 local_sha256: hash,
                 local_md5: if item.is_asset { "e2ee_asset".to_string() } else { "crdt".to_string() },
                 drive_modified_time: item.drive_mtime.clone(),
-                local_modified_time: epoch_secs_now(),
+                local_modified_time: file_mtime_secs(&local_path),
             },
         );
+        
+        // Immediately update DB for pulled node files so frontend sees changes
+        // without waiting for the file watcher to catch up
+        if !item.is_asset {
+            if let Some(node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &local_path) {
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = db.upsert_node(&node);
+                
+                // Also update search index
+                let tags = node.properties.get("tags")
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>().join(" "))
+                    .unwrap_or_default();
+                let status = node.properties.get("status").and_then(|s| s.as_str());
+                let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
+                db.upsert_search_entry(
+                    &node.id, &node.node_type, &node.title, &tags,
+                    &node.content, &props_str, status, &node.updated_at, &node.id,
+                );
+                log::info!("PULL: updated DB for node: {} ({})", rel_path, node.title);
+            }
+        }
+        
         result.pulled += 1;
         result.pulled_files.push(rel_path.clone());
     }
@@ -399,6 +444,16 @@ pub async fn gdrive_sync_full(
         if current_hash == entry_hash {
             let _ = fs::remove_file(&local_path);
             manifest.files.remove(key);
+            
+            // Clean up DB for deleted node
+            if !key.starts_with("assets/") {
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = db.delete_node(key);
+                db.delete_search_entry(key);
+                let _ = db.delete_crdt_doc(key);
+            }
+            
             result.deleted += 1;
         } else {
             manifest.files.remove(key);
@@ -457,6 +512,7 @@ pub async fn gdrive_sync_full(
                 .unwrap_or_default();
             
             if local_mtime == entry.local_modified_time && !force_full_push {
+                log::debug!("PUSH skip hash (mtime match): {} mtime={}", rel_path, local_mtime);
                 entry.local_sha256.clone()
             } else {
                 file_sha256(&local_path)
@@ -484,6 +540,7 @@ pub async fn gdrive_sync_full(
                 }
                 
                 if remote_changed && !force_full_push {
+                    log::info!("PUSH skip (remote changed, conflict avoided): {} remote_mtime={} manifest_mtime={}", rel_path, remote_mtime, entry.drive_modified_time);
                     continue;
                 }
 
@@ -494,6 +551,8 @@ pub async fn gdrive_sync_full(
                         continue;
                     }
                 }
+                
+                log::info!("PUSH will update: {} hash_changed={} on_drive={}", rel_path, current_hash != entry.local_sha256, drive_map.contains_key(rel_path));
                 
                 match fs::read(&local_path) {
                     Ok(mut content) => {
@@ -555,10 +614,13 @@ pub async fn gdrive_sync_full(
                                     .unwrap_or_else(|| manifest.vault_folder_id.clone());
                                 let filename = Path::new(rel_path).file_name().unwrap_or_default().to_string_lossy().to_string();
                                 
+                                let crdt_drive_id = crdt_drive_map.get(rel_path).and_then(|c| c.id.clone());
+                                log::info!("PUSH CRDT: {} -> drive_id={:?} snap_size={}", rel_path, crdt_drive_id, encrypted_snap.len());
+                                
                                 push_items.push(PushItem {
                                     rel_path: rel_path.clone(),
                                     content: encrypted_snap,
-                                    target_drive_id: crdt_drive_map.get(rel_path).and_then(|c| c.id.clone()),
+                                    target_drive_id: crdt_drive_id,
                                     folder_id: crdt_folder_id,
                                     is_asset: false,
                                     needs_id_update: false, // CRDT files are always in .synabit_crdt/
@@ -572,15 +634,22 @@ pub async fn gdrive_sync_full(
                         result.errors.push(format!("Read {}: {}", rel_path, e));
                     }
                 }
+            } else {
+                log::debug!("PUSH skip (hash unchanged): {} hash={}", rel_path, current_hash);
             }
         }
         // NEW file — not in manifest and not on Drive
         else if !drive_map.contains_key(rel_path) {
-            let rel_dir = Path::new(rel_path)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default()
-                .replace('\\', "/");
+            let parent = Path::new(rel_path).parent().unwrap_or(Path::new(""));
+            let mut current = String::new();
+            for comp in parent.components() {
+                if !current.is_empty() { current.push('/'); }
+                current.push_str(&comp.as_os_str().to_string_lossy());
+                needed_dirs.insert(current.clone());
+                needed_dirs.insert(format!(".synabit_crdt/{}", current));
+            }
+            
+            let rel_dir = parent.to_string_lossy().to_string().replace('\\', "/");
 
             let filename = Path::new(rel_path)
                 .file_name()
@@ -721,7 +790,7 @@ pub async fn gdrive_sync_full(
                         local_sha256: item.local_sha256.clone(),
                         local_md5: if *is_asset { "e2ee_asset".to_string() } else { "crdt".to_string() },
                         drive_modified_time: new_mtime.clone(),
-                        local_modified_time: epoch_secs_now(),
+                        local_modified_time: file_mtime_secs(&vault.join(rel_path)),
                     },
                 );
                 result.pushed += 1;
@@ -865,8 +934,29 @@ pub async fn gdrive_sync_full(
                     if let Some(entry) = manifest.files.get_mut(&key) {
                         entry.local_sha256 = hash;
                         entry.drive_modified_time = remote_mtime;
-                        entry.local_modified_time = epoch_secs_now();
+                        entry.local_modified_time = file_mtime_secs(&local_path);
                     }
+                    
+                    // Update DB immediately for non-asset files
+                    let is_asset_file = key.starts_with("assets/");
+                    if !is_asset_file {
+                        if let Some(node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &local_path) {
+                            let db_state = app_handle.state::<crate::db::DbState>();
+                            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                            let _ = db.upsert_node(&node);
+                            let tags = node.properties.get("tags")
+                                .and_then(|t| t.as_array())
+                                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>().join(" "))
+                                .unwrap_or_default();
+                            let status = node.properties.get("status").and_then(|s| s.as_str());
+                            let props_str = serde_json::to_string(&node.properties).unwrap_or_default();
+                            db.upsert_search_entry(
+                                &node.id, &node.node_type, &node.title, &tags,
+                                &node.content, &props_str, status, &node.updated_at, &node.id,
+                            );
+                        }
+                    }
+                    
                     result.pulled += 1;
                     result.pulled_files.push(key);
                 }

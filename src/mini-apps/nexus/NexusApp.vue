@@ -156,6 +156,10 @@ onMounted(async () => {
         loadAllData();
         if (searchQuery.value) performSearch();
     });
+
+    await listen('vault-sync-completed', () => {
+        loadAllData();
+    });
 });
 
 onBeforeUnmount(() => {

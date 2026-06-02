@@ -168,6 +168,10 @@ onMounted(async () => {
         fetchTransactions();
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
     });
+
+    listen('vault-sync-completed', () => {
+        fetchPeople();
+    });
 });
 
 const filteredPeople = computed(() => {

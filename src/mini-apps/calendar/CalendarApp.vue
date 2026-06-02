@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2, Bell } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
@@ -196,7 +197,21 @@ const toggleTaskStatus = async (partialTask: { id: string, status: string }) => 
     }
 };
 
-onMounted(() => { loadData(); });
+onMounted(() => {
+    loadData();
+
+    listen('vault-file-modified', () => {
+        loadData();
+    });
+
+    listen('vault-file-created-deleted', () => {
+        loadData();
+    });
+
+    listen('vault-sync-completed', () => {
+        loadData();
+    });
+});
 watch(() => props.vaultPath, () => { loadData(); });
 
 // --- Helpers ---

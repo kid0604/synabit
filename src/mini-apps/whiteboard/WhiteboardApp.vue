@@ -13,6 +13,7 @@ import MultiSelectMenu from './components/MultiSelectMenu.vue';
 import { toPng } from 'html-to-image';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
 // Custom nodes and edges
@@ -1201,6 +1202,18 @@ onMounted(async () => {
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+
+  listen('vault-file-modified', () => {
+      store.loadBoards();
+  });
+
+  listen('vault-file-created-deleted', () => {
+      store.loadBoards();
+  });
+
+  listen('vault-sync-completed', () => {
+      store.loadBoards();
+  });
 });
 
 import { onUnmounted } from 'vue';

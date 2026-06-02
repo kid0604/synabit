@@ -1,5 +1,6 @@
 import { ref, watch, computed, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as tauriEmit } from '@tauri-apps/api/event';
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
@@ -7,15 +8,12 @@ import { logger } from '../utils/logger';
 
 /**
  * Composable for Google Drive sync state and operations.
- * Accepts external dependencies as refs to avoid circular coupling.
+ * Decoupled from specific mini-apps — emits 'vault-sync-completed' event
+ * so each app can independently handle post-sync data refresh.
  */
 export function useGDrive(
   vaultPath: Ref<string>,
   vaultType: Ref<'local' | 'gdrive'>,
-  scanVault: () => Promise<void>,
-  tabContents: Ref<Record<string, string>>,
-  loadNoteFile: (id: string) => Promise<void>,
-  currentNoteId: Ref<string | null>,
 ) {
   const appStore = useAppStore();
 
@@ -81,7 +79,6 @@ export function useGDrive(
           const cachePath = await invoke<string>('gdrive_get_cache_path');
           await appStore.setVaultPath(cachePath, 'gdrive');
           await syncGDrive();
-          scanVault();
           setupAutoSync();
       } catch (e: any) {
           gdriveSyncError.value = e?.toString() || 'Vault initialization failed';
@@ -166,25 +163,17 @@ export function useGDrive(
           await store.set('gdriveLastSyncTime', now);
           await store.save();
       }
+      logger.info(`Sync completed: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted} errors=${result.errors.length}`, result.pulled_files);
       if (result.errors.length > 0) {
         gdriveSyncError.value = `${result.errors.length} error(s)`;
         logger.warn('Sync errors:', result.errors);
       }
-      // Re-scan vault after sync to pick up pulled changes
+      // Emit event so all mini-apps can independently refresh their data
       if (result.pulled > 0) {
-        if (result.pulled_files) {
-          result.pulled_files.forEach((p) => {
-            delete tabContents.value[p];
-          });
-        }
-        await scanVault();
-        if (
-          currentNoteId.value &&
-          result.pulled_files &&
-          result.pulled_files.includes(currentNoteId.value)
-        ) {
-          await loadNoteFile(currentNoteId.value);
-        }
+        await tauriEmit('vault-sync-completed', {
+          pulled_files: result.pulled_files || [],
+          pulled: result.pulled,
+        });
       }
     } catch (e: any) {
       gdriveSyncError.value = e?.toString() || 'Sync failed';

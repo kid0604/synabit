@@ -173,21 +173,8 @@ watch(activeTool, (newTool) => {
 const floatingNoteId = ref<string | null>(null);
 const isFloatingView = ref(false);
 
-// ─── GDrive (needs NoteApp's scanVault + tabContents for sync pulling) ─────
-const dummyScanVault = async () => {
-    if (noteAppRef.value) await noteAppRef.value.scanVault();
-};
-const dummyTabContents = ref<Record<string, string>>({});
-const dummyLoadNoteFile = async (id: string) => {
-    if (noteAppRef.value) await noteAppRef.value.loadNoteFile(id);
-};
-const dummyCurrentNoteId = ref<string | null>(null);
-
-// Keep sync with NoteApp refs when NoteApp exists
-watch(() => noteAppRef.value?.tabContents, (v) => { if (v) dummyTabContents.value = v; }, { deep: true });
-watch(() => noteAppRef.value?.currentNoteId, (v) => { dummyCurrentNoteId.value = v ?? null; });
-
-const gdrive = useGDrive(vaultPath, vaultType, dummyScanVault, dummyTabContents, dummyLoadNoteFile, dummyCurrentNoteId);
+// ─── GDrive ─────────────────────────────────────────────────
+const gdrive = useGDrive(vaultPath, vaultType);
 
 import { appDataDir } from '@tauri-apps/api/path';
 

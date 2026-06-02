@@ -716,6 +716,10 @@ onMounted(async () => {
         // We can do a quick loadData here
         loadData();
     });
+
+    listen('vault-sync-completed', () => {
+        loadData();
+    });
 });
 
 defineExpose({ openMonthById });
