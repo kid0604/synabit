@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
@@ -25,6 +25,8 @@ const props = defineProps<{
 
 const router = useRouter();
 const route = useRoute();
+const bus = useEventBus();
+const ns = useNodeService();
 
 // --- State ---
 const currentView = ref<'transactions' | 'reports' | 'debts' | 'budgets'>('transactions');
@@ -224,13 +226,14 @@ const ensureCurrentMonthNodeExists = async () => {
         // Create new node
         const nodeProps = { transactions: [] };
         try {
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: expectedId,
                 title: `Month ${mm}/${yyyy}`,
                 nodeType: 'finance_month',
                 properties: nodeProps,
-                content: ''
+                content: '',
+                eventType: 'created',
+                silent: true,
             });
             await loadData();
         } catch (e) {
@@ -247,7 +250,7 @@ const loadData = async () => {
     loading.value = true;
     try {
         // Load config
-        const configs: any[] = await invoke('get_nodes', { nodeType: 'finance_config' });
+        const configs: any[] = await ns.getNodes('finance_config');
         if (configs.length > 0) {
             configNode.value = configs[0];
             if (configNode.value.properties) {
@@ -292,7 +295,7 @@ const loadData = async () => {
         }
 
         // Load months
-        const monthNodes: any[] = await invoke('get_nodes', { nodeType: 'finance_month' });
+        const monthNodes: any[] = await ns.getNodes('finance_month');
         
         // Auto-migration for legacy transactions
         
@@ -313,13 +316,13 @@ const loadData = async () => {
             
             if (nodeModified) {
                 // Save migrated node back to disk
-                invoke('write_node_file', {
-                    vaultPath: props.vaultPath,
+                ns.writeNode({
                     relPath: node.id,
                     title: node.title,
                     nodeType: 'finance_month',
                     properties: node.properties,
-                    content: ''
+                    content: '',
+                    silent: true,
                 }).catch(e => logger.error('Auto-migration save failed', e));
             }
             
@@ -344,7 +347,7 @@ const loadData = async () => {
         }
 
         // Load debts
-        const debtNodes: any[] = await invoke('get_nodes', { nodeType: 'finance_debts' });
+        const debtNodes: any[] = await ns.getNodes('finance_debts');
         if (debtNodes.length > 0) {
             debtsNode.value = debtNodes[0];
             debts.value = debtsNode.value.properties.debts || [];
@@ -352,15 +355,16 @@ const loadData = async () => {
             // Create default debts node
             const newProps = { debts: [] };
             try {
-                await invoke('write_node_file', {
-                    vaultPath: props.vaultPath,
+                await ns.writeNode({
                     relPath: 'Finance/Debts.json',
                     title: 'Debts Ledger',
                     nodeType: 'finance_debts',
                     properties: newProps,
-                    content: ''
+                    content: '',
+                    eventType: 'created',
+                    silent: true,
                 });
-                const loaded: any[] = await invoke('get_nodes', { nodeType: 'finance_debts' });
+                const loaded: any[] = await ns.getNodes('finance_debts');
                 if (loaded.length > 0) {
                     debtsNode.value = loaded[0];
                     debts.value = debtsNode.value.properties.debts || [];
@@ -372,7 +376,7 @@ const loadData = async () => {
         
         // Load projects for linking
         try {
-            const projectNodes: any[] = await invoke('get_nodes', { nodeType: 'project' });
+            const projectNodes: any[] = await ns.getNodes('project');
             projects.value = projectNodes
                 .filter(n => n.properties?.status !== 'completed' && n.properties?.status !== 'archived')
                 .map(n => ({ id: n.id, title: n.title }));
@@ -382,7 +386,7 @@ const loadData = async () => {
         
         // Load people for linking
         try {
-            const peopleNodes: any[] = await invoke('get_nodes', { nodeType: 'person' });
+            const peopleNodes: any[] = await ns.getNodes('person');
             people.value = peopleNodes.map(n => ({ id: n.id, title: n.title }));
         } catch(e) {
             logger.error('Failed to load people', e);
@@ -402,13 +406,12 @@ const saveDebts = async (updatedDebts: Debt[]) => {
     if (debtsNode.value) {
         debtsNode.value.properties.debts = updatedDebts;
         try {
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: debtsNode.value.id,
                 title: debtsNode.value.title,
                 nodeType: 'finance_debts',
                 properties: debtsNode.value.properties,
-                content: debtsNode.value.content || ''
+                content: debtsNode.value.content || '',
             });
         } catch(e) {
             logger.error('Failed to save debts node', e);
@@ -534,25 +537,23 @@ const saveTransaction = async (tx: Transaction) => {
         if (oldIdx >= 0) {
             currTxs.splice(oldIdx, 1);
             // Save the old month to remove it
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: currentMonth.value.id,
                 title: currentMonth.value.label,
                 nodeType: 'finance_month',
                 properties: currentMonth.value.node.properties,
-                content: ''
+                content: '',
             });
         }
     }
     
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: targetNode.id,
             title: targetNode.title,
             nodeType: 'finance_month',
             properties: targetNode.properties,
-            content: ''
+            content: '',
         });
         showTxModal.value = false;
         
@@ -596,13 +597,12 @@ const deleteTransaction = async (txId: string) => {
     txs.splice(targetIdx, 1);
     
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: targetMonthNode.id,
             title: targetMonthNode.label,
             nodeType: 'finance_month',
             properties: targetMonthNode.node.properties,
-            content: ''
+            content: '',
         });
         showTxModal.value = false;
     } catch (e) {
@@ -627,13 +627,12 @@ const saveConfig = async (config: { incomeCategories: string[], expenseCategorie
     };
     
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: 'Finance/Config.json',
             title: 'Finance Config',
             nodeType: 'finance_config',
             properties: propsToSave,
-            content: ''
+            content: '',
         });
         await loadData();
     } catch (e) {
@@ -706,19 +705,38 @@ watch(() => route.query, () => {
     }
 });
 
+// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
+let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedLoad = (fn: () => void, ms = 300) => {
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fn, ms);
+};
+
 // Lifecycle
 onMounted(async () => {
     await loadData();
     handleRouteQuery();
     
-    listen('vault-file-modified', () => {
+    bus.on('vault:file-modified', () => {
         // Reload data if background sync changes finance files
-        // We can do a quick loadData here
-        loadData();
+        debouncedLoad(() => loadData());
     });
 
-    listen('vault-sync-completed', () => {
-        loadData();
+    bus.on('vault:file-created-deleted', () => {
+        debouncedLoad(() => loadData());
+    });
+
+    bus.on('vault:sync-completed', () => {
+        debouncedLoad(() => loadData());
+    });
+
+    // Cross-app: refresh when finance data changes from other apps (e.g., TaskApp saves a finance_month)
+    bus.on('node:created', ({ nodeType }) => {
+        if (nodeType === 'finance_month' || nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
+    });
+
+    bus.on('node:updated', ({ nodeType }) => {
+        if (nodeType === 'finance_month' || nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
     });
 });
 

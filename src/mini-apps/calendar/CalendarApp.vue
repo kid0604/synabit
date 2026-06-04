@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, Clock, MapPin, Hash, CheckSquare, Trash2, FileText, Check, User, Link2, Bell } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
+
+const bus = useEventBus();
+const ns = useNodeService();
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ (e: 'open-node', id: string, type: string): void }>();
@@ -103,11 +106,11 @@ const mapNodeToTask = (node: any): TaskMetadata => {
 const loadData = async () => {
     if (!props.vaultPath) return;
     try {
-        const rawTasks: any[] = await invoke('get_nodes', { nodeType: 'task' });
+        const rawTasks: any[] = await ns.getNodes('task');
         allTasks.value = rawTasks.map(mapNodeToTask);
     } catch(e) { logger.error("Error loading tasks:", e); }
     try {
-        const rawEvents: any[] = await invoke('get_nodes', { nodeType: 'event' });
+        const rawEvents: any[] = await ns.getNodes('event');
         allEvents.value = rawEvents.map(n => {
             const props = n.properties || {};
             
@@ -178,8 +181,7 @@ const toggleTaskStatus = async (partialTask: { id: string, status: string }) => 
             tags: task.tags,
             completed_at: newCompletedAt
         };
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: task.path,
             nodeType: 'task',
             title: task.title,
@@ -197,19 +199,39 @@ const toggleTaskStatus = async (partialTask: { id: string, status: string }) => 
     }
 };
 
+// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
+let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedLoad = (fn: () => void, ms = 300) => {
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fn, ms);
+};
+
 onMounted(() => {
     loadData();
 
-    listen('vault-file-modified', () => {
-        loadData();
+    bus.on('vault:file-modified', () => {
+        debouncedLoad(() => loadData());
     });
 
-    listen('vault-file-created-deleted', () => {
-        loadData();
+    bus.on('vault:file-created-deleted', () => {
+        debouncedLoad(() => loadData());
     });
 
-    listen('vault-sync-completed', () => {
-        loadData();
+    bus.on('vault:sync-completed', () => {
+        debouncedLoad(() => loadData());
+    });
+
+    bus.on('task:status-changed', () => {
+        debouncedLoad(() => loadData());
+    });
+
+    // Cross-app: refresh when events are created from other apps (e.g., People birthday sync)
+    bus.on('node:created', ({ nodeType }) => {
+        if (nodeType === 'event' || nodeType === 'task') debouncedLoad(() => loadData());
+    });
+
+    bus.on('node:deleted', ({ nodeType }) => {
+        if (nodeType === 'event' || nodeType === 'task') debouncedLoad(() => loadData());
     });
 });
 watch(() => props.vaultPath, () => { loadData(); });
@@ -328,7 +350,7 @@ const deleteRelationNode = async (bl: any) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: bl.id });
+        await ns.deleteNode({ relPath: bl.id });
         
         if (eventForm.value.relations) {
             const originalLength = eventForm.value.relations.length;
@@ -339,8 +361,7 @@ const deleteRelationNode = async (bl: any) => {
                 if (eventForm.value.tagsStr.trim()) {
                     finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
                 }
-                await invoke('write_node_file', { 
-                    vaultPath: props.vaultPath, 
+                await ns.writeNode({ 
                     relPath: eventForm.value.path,
                     title: eventForm.value.title,
                     nodeType: 'event',
@@ -356,7 +377,8 @@ const deleteRelationNode = async (bl: any) => {
                         series_id: eventForm.value.series_id,
                         exceptions: eventForm.value.exceptions
                     },
-                    content: eventForm.value.description 
+                    content: eventForm.value.description,
+                    silent: true,
                 });
             }
         }
@@ -575,7 +597,7 @@ const newNoteTitle = ref('');
 
 const loadEventBacklinks = async (title: string, id: string) => {
     try {
-        eventBacklinks.value = await invoke('get_linked_nodes', { targetTitle: title, targetId: id });
+        eventBacklinks.value = await ns.getLinkedNodes(title, id);
     } catch (e) {
         console.error("Failed to load event backlinks", e);
         eventBacklinks.value = [];
@@ -605,14 +627,13 @@ const createMeetingNote = async () => {
     if (!newNoteTitle.value.trim() || !eventForm.value.title) return;
     try {
         const relPath = `Notes/note_${Date.now()}.md`;
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath,
             nodeType: 'note',
             title: newNoteTitle.value.trim(),
             properties: {},
             content: ``,
-            existingPath: ''
+            eventType: 'created',
         });
         
         const noteMention = `[${newNoteTitle.value.trim()}](synabit://note/${relPath})`;
@@ -628,8 +649,7 @@ const createMeetingNote = async () => {
             if (eventForm.value.tagsStr.trim()) {
                 finalTags = eventForm.value.tagsStr.split(',').map(s => s.trim().replace(/^#/, '')).filter(s => s);
             }
-            await invoke('write_node_file', { 
-                vaultPath: props.vaultPath, 
+            await ns.writeNode({ 
                 relPath: eventForm.value.path,
                 title: eventForm.value.title,
                 nodeType: 'event',
@@ -645,7 +665,8 @@ const createMeetingNote = async () => {
                     series_id: eventForm.value.series_id,
                     exceptions: eventForm.value.exceptions
                 },
-                content: eventForm.value.description 
+                content: eventForm.value.description,
+                silent: true,
             });
             await loadEventBacklinks(eventForm.value.title, eventForm.value.id);
         }
@@ -849,7 +870,7 @@ const submitEventActual = async () => {
             
             for (const famEv of familyEvents) {
                 if (famEv.path !== rootId) {
-                    await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: famEv.path });
+                    await ns.deleteNode({ relPath: famEv.path, silent: true });
                 }
             }
             
@@ -892,13 +913,13 @@ const submitEventActual = async () => {
                 parentProps.recurrence_end_at = dt.toISOString().split('T')[0];
             }
             
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: parentEv.path,
                 title: parentEv.title,
                 nodeType: 'event',
                 properties: parentProps,
-                content: parentEv.content
+                content: parentEv.content,
+                silent: true,
             });
         }
         
@@ -906,13 +927,13 @@ const submitEventActual = async () => {
             if (!relPath) relPath = `Events/${crypto.randomUUID()}.md`;
         }
         
-        await invoke('write_node_file', { 
-            vaultPath: props.vaultPath, 
+        await ns.writeNode({ 
             relPath,
             title: eventForm.value.title,
             nodeType: 'event',
             properties,
-            content: eventForm.value.description 
+            content: eventForm.value.description,
+            eventType: isCreatingNewNode ? 'created' : 'updated',
         });
         closeEventForm();
         await loadData();
@@ -949,10 +970,10 @@ const deleteEventActual = async (ev: EventMetadata, dateStr: string, scope: 'thi
             const familyEvents = allEvents.value.filter(e => e.id === rootId || e.series_id === rootId);
             for (const famEv of familyEvents) {
                 if (famEv.path !== ev.path) {
-                    await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: famEv.path });
+                    await ns.deleteNode({ relPath: famEv.path, silent: true });
                 }
             }
-            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: ev.path });
+            await ns.deleteNode({ relPath: ev.path });
         } else {
             const parentProps = {
                 is_all_day: ev.is_all_day,
@@ -977,13 +998,12 @@ const deleteEventActual = async (ev: EventMetadata, dateStr: string, scope: 'thi
                 parentProps.recurrence_end_at = dt.toISOString().split('T')[0];
             }
             
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: ev.path,
                 title: ev.title,
                 nodeType: 'event',
                 properties: parentProps,
-                content: ev.content
+                content: ev.content,
             });
         }
         await loadData();

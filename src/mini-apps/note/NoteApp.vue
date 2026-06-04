@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject, defineAsyncComponent } from 'vue';
 import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, Trash2, Edit2, X, ArrowLeft, ArrowRight, ExternalLink, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Palette, Monitor, Download, Lock, Unlock } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask, save } from '@tauri-apps/plugin-dialog';
 
 
@@ -42,6 +43,8 @@ export interface NoteItem {
 }
 
 const emit = defineEmits(['open-node']);
+const bus = useEventBus();
+const ns = useNodeService();
 
 const props = defineProps<{
   vaultPath: string;
@@ -152,7 +155,7 @@ const loadNoteFile = async (id: string) => {
         let note = notes.value.find(n => n.id === id);
         if (!note) {
             try {
-                const fetchedNode = await invoke<any>('get_node', { id });
+                const fetchedNode = await ns.getNode(id);
                 if (fetchedNode) {
                     note = {
                         id: fetchedNode.id,
@@ -437,8 +440,7 @@ const editorFullWidth = computed({
         const note = notes.value.find(n => n.id === currentNoteId.value);
         if (note) {
             note.full_width = val;
-            await invoke('write_node_file', { 
-                vaultPath: props.vaultPath, 
+            await ns.writeNode({ 
                 relPath: note.id, 
                 title: note.title,
                 nodeType: 'note',
@@ -455,8 +457,7 @@ const togglePin = async (id: string) => {
     note.pinned = !note.pinned;
     try {
         const body = tabContents.value[id] !== undefined ? tabContents.value[id] : note.content;
-        await invoke('write_node_file', { 
-            vaultPath: props.vaultPath, 
+        await ns.writeNode({ 
             relPath: note.id, 
             title: note.title,
             nodeType: 'note',
@@ -480,7 +481,7 @@ const deleteNote = async (id: string) => {
            clearTimeout(saveTimeouts.get(id)!);
            saveTimeouts.delete(id);
         }
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: id });
+        await ns.deleteNode({ relPath: id });
         delete tabContents.value[id];
         activeTabs.value = activeTabs.value.filter(t => t !== id);
         tabAccessTime.delete(id);
@@ -516,7 +517,7 @@ const confirmRename = async () => {
             saveTimeouts.delete(oldId);
         }
         const savedContent = tabContents.value[oldId];
-        const newPath = await invoke<string>('rename_node_file', { vaultPath: props.vaultPath, oldRelPath: oldId, newName });
+        const newPath = await ns.renameNode({ oldRelPath: oldId, newName });
         
         // Secondary cancellation: if the user typed during the await rename_node_file, a new timeout for the old path might have been created.
         let needsSave = false;
@@ -548,8 +549,7 @@ const confirmRename = async () => {
         }
         
         const contentBody = tabContents.value[newPath] || savedContent || note.content;
-        await invoke('write_node_file', { 
-            vaultPath: props.vaultPath, 
+        await ns.writeNode({ 
             relPath: newPath, 
             title: newName,
             nodeType: 'note',
@@ -595,7 +595,7 @@ const renameTopTitle = async (e: Event) => {
             saveTimeouts.delete(oldId);
         }
         const savedContent = tabContents.value[oldId] || '';
-        const newPath = await invoke<string>('rename_node_file', { vaultPath: props.vaultPath, oldRelPath: oldId, newName: newTitle });
+        const newPath = await ns.renameNode({ oldRelPath: oldId, newName: newTitle });
         
         // Secondary cancellation: if the user typed during the await rename_node_file, a new timeout for the old path might have been created.
         let needsSave = false;
@@ -622,8 +622,7 @@ const renameTopTitle = async (e: Event) => {
 
         currentNoteId.value = newPath;
         const contentBody = tabContents.value[newPath] || savedContent || note.content;
-        await invoke('write_node_file', { 
-            vaultPath: props.vaultPath, 
+        await ns.writeNode({ 
             relPath: newPath, 
             title: newTitle,
             nodeType: 'note',
@@ -648,8 +647,7 @@ const addTag = async (e: KeyboardEvent) => {
        if (note && !note.tags.includes(newTagInput.value.trim())) {
            note.tags.push(newTagInput.value.trim());
            newTagInput.value = '';
-           await invoke('write_node_file', { 
-               vaultPath: props.vaultPath, 
+           await ns.writeNode({ 
                relPath: note.id, 
                title: note.title,
                nodeType: 'note',
@@ -665,8 +663,7 @@ const removeTag = async (tagToRemove: string) => {
    const note = notes.value.find(n => n.id === currentNoteId.value);
    if (note) {
        note.tags = note.tags.filter(t => t !== tagToRemove);
-       await invoke('write_node_file', { 
-           vaultPath: props.vaultPath, 
+       await ns.writeNode({ 
            relPath: note.id, 
            title: note.title,
            nodeType: 'note',
@@ -728,7 +725,7 @@ const toggleTagSelection = (tagName: string) => {
 async function scanVault() {
    if (!props.vaultPath) return;
    try {
-       const scannedNodes = await invoke<NodeMetadata[]>('get_nodes', { nodeType: 'note' });
+       const scannedNodes = await ns.getNodes('note');
        const scannedNotes = scannedNodes.map(n => {
            let tags: string[] = [];
            if (Array.isArray(n.properties?.tags)) tags = n.properties.tags as string[];
@@ -760,7 +757,7 @@ const createNewNote = async () => {
     isCreatingNote = true;
     suppressWatcherUntil = Date.now() + 3000;
     try {
-        const newPath = await invoke<string>('create_node_file', { vaultPath: props.vaultPath, directory: 'Notes', nodeType: 'note' });
+        const newPath = await ns.createNode({ directory: 'Notes', nodeType: 'note' });
         await scanVault();
         if (newPath) {
             currentNoteId.value = newPath;
@@ -813,8 +810,7 @@ const saveNoteForTab = (rawTabId: string) => {
         const content = tabContents.value[tabId] || '';
         let fullRaw = content;
         try {
-            await invoke('write_node_file', { 
-                vaultPath: props.vaultPath, 
+            await ns.writeNode({ 
                 relPath: note.id, 
                 title: note.title,
                 nodeType: 'note',
@@ -822,7 +818,7 @@ const saveNoteForTab = (rawTabId: string) => {
                 content: fullRaw 
             });
             note.summary = content.substring(0, 150).trim();
-            tauriEmit('note-updated', { id: note.id, content });
+            bus.emit('note:updated-external', { id: note.id, content });
             // Notify transclusion nodes that this note's blocks may have changed
             window.dispatchEvent(new CustomEvent('synabit-block-refresh', {
               detail: { nodeId: note.id }
@@ -857,7 +853,7 @@ const onEditorUpdate = (val: string, rawTabId: string) => {
     }
     tabContents.value[tabId] = val;
     if (currentNoteId.value === tabId) {
-        tauriEmit('note-updated', { id: tabId, content: val });
+        bus.emit('note:updated-external', { id: tabId, content: val });
     }
     saveNoteForTab(tabId);
 };
@@ -867,7 +863,7 @@ watch(currentNoteId, async (newId) => {
         await loadNoteFile(newId);
         try {
             const note = notes.value.find(n => n.id === newId);
-            const backlinks = await invoke<NodeMetadata[]>('get_linked_nodes', { targetTitle: note?.title || '', targetId: newId });
+            const backlinks = await ns.getLinkedNodes(note?.title || '', newId);
             
             let outgoingProjects: NodeMetadata[] = [];
             const linkedProjects: string[] = (note as any)?.linked_projects || [];
@@ -875,7 +871,7 @@ watch(currentNoteId, async (newId) => {
                const m = /synabit:\/\/project\/([^\s\)"']+)/.exec(link);
                if (m && m[1]) {
                    try {
-                       const proj = await invoke<any>('get_node', { id: decodeURIComponent(m[1]) });
+                       const proj = await ns.getNode(decodeURIComponent(m[1]));
                        if (proj) {
                            proj.node_type = 'project';
                            proj._is_outgoing_project = true;
@@ -934,8 +930,7 @@ const unlinkProject = async (projectId: string, projectTitle?: string) => {
         note.linked_projects = note.linked_projects.filter((l: string) => l !== linkToRemove);
         currentBacklinks.value = currentBacklinks.value.filter(bl => bl.id !== projectId);
         
-        await invoke('write_node_file', { 
-            vaultPath: props.vaultPath, 
+        await ns.writeNode({ 
             relPath: note.id, 
             title: note.title,
             nodeType: 'note',
@@ -1128,7 +1123,7 @@ defineExpose({ openNoteById, scanVault, notes, tabContents, loadNoteFile, curren
 
 // ─── Lifecycle ─────────────────────────────────────────────
 const onClickOutside = () => { activeContextMenu.value = null; };
-let unlistenFns: (() => void)[] = [];
+
 
 // --- Handle transclusion "Open source note" navigation ---
 const onSynabitNavigate = (e: Event) => {
@@ -1144,8 +1139,6 @@ onUnmounted(() => {
     window.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('click', onClickOutside);
     window.removeEventListener('synabit-navigate', onSynabitNavigate as EventListener);
-    unlistenFns.forEach(fn => fn());
-    unlistenFns = [];
 });
 
 onMounted(async () => {
@@ -1165,43 +1158,52 @@ onMounted(async () => {
      await scanVault();
   }
 
-  listen('note-updated', (event: any) => {
-      const data = event.payload as { id: string, content: string };
+  bus.on('note:updated-external', (data) => {
       if (currentNoteId.value === data.id) return;
       if (tabContents.value[data.id] !== undefined) {
          tabContents.value[data.id] = data.content;
       }
-  }).then(fn => unlistenFns.push(fn));
+  });
 
-  listen('vault-changed', () => { scanVault(); }).then(fn => unlistenFns.push(fn));
+  bus.on('vault:changed', () => { scanVault(); });
   
-  listen('vault-file-modified', () => {
+  bus.on('vault:file-modified', () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
-  }).then(fn => unlistenFns.push(fn));
+  });
   
-  listen('vault-file-created-deleted', () => {
+  bus.on('vault:file-created-deleted', () => {
       if (Date.now() < suppressWatcherUntil) return;
       scanVault();
-  }).then(fn => unlistenFns.push(fn));
+  });
 
   // Handle GDrive sync pull — invalidate cached tabs and reload affected notes
-  listen('vault-sync-completed', async (event: any) => {
-      const { pulled_files } = event.payload as { pulled_files: string[], pulled: number };
+  bus.on('vault:sync-completed', (payload: any) => {
+      const pulled_files = payload?.pulled_files as string[] | undefined;
       if (pulled_files && pulled_files.length > 0) {
-          pulled_files.forEach((p) => {
+          pulled_files.forEach((p: string) => {
               delete tabContents.value[p];
           });
       }
-      await scanVault();
-      if (
-          currentNoteId.value &&
-          pulled_files &&
-          pulled_files.includes(currentNoteId.value)
-      ) {
-          await loadNoteFile(currentNoteId.value);
-      }
-  }).then(fn => unlistenFns.push(fn));
+      scanVault().then(async () => {
+          if (
+              currentNoteId.value &&
+              pulled_files &&
+              pulled_files.includes(currentNoteId.value)
+          ) {
+              await loadNoteFile(currentNoteId.value);
+          }
+      });
+  });
+
+  // Cross-app: refresh note list when notes are created from other apps (QuickCap → Note, Calendar meeting note)
+  bus.on('node:created', ({ nodeType }) => {
+      if (nodeType === 'note') scanVault();
+  });
+
+  bus.on('node:deleted', ({ nodeType }) => {
+      if (nodeType === 'note') scanVault();
+  });
 });
 </script>
 

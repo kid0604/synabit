@@ -1,5 +1,5 @@
 import { ref, computed, type Ref } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { useNodeService } from '../../../composables/useNodeService';
 
 export interface PdfAnnotation {
   id: string;
@@ -18,6 +18,8 @@ export interface PdfAnnotation {
 }
 
 export function usePdfAnnotations(vaultPath: Ref<string>) {
+  const ns = useNodeService();
+  // vaultPath is kept in signature for backward compatibility but node ops use ns internally
   const annotations = ref<PdfAnnotation[]>([]);
   const isLoading = ref(false);
 
@@ -25,7 +27,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
   const loadAnnotations = async (fileId: string, pdfPath: string) => {
     isLoading.value = true;
     try {
-      const nodes = await invoke<any[]>('get_nodes', { nodeType: 'pdf_highlight' });
+      const nodes = await ns.getNodes('pdf_highlight');
       annotations.value = nodes
         .filter(n => n.properties?.pdf_id === fileId || (!n.properties?.pdf_id && n.properties?.pdf_path === pdfPath))
         .map(nodeToAnnotation)
@@ -79,13 +81,14 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     };
 
     try {
-      await invoke('write_node_file', {
-        vaultPath: vaultPath.value,
+      await ns.writeNode({
         relPath: id,
         title,
         nodeType: 'pdf_highlight',
         properties,
         content: opts.note || '',
+        silent: true,
+        eventType: 'created',
       });
 
       // Add to local state immediately
@@ -125,8 +128,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     const newText = updates.text !== undefined ? updates.text : ann.text;
 
     try {
-      await invoke('write_node_file', {
-        vaultPath: vaultPath.value,
+      await ns.writeNode({
         relPath: id,
         title: ann.title,
         nodeType: 'pdf_highlight',
@@ -140,6 +142,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
           rects: ann.rects,
         },
         content: newContent,
+        silent: true,
       });
 
       ann.color = newColor;
@@ -154,7 +157,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
   /** Delete an annotation */
   const deleteAnnotation = async (id: string) => {
     try {
-      await invoke('delete_node_file', { vaultPath: vaultPath.value, relPath: id });
+      await ns.deleteNode({ relPath: id, silent: true });
       annotations.value = annotations.value.filter(a => a.id !== id);
     } catch (e) {
       console.error('Failed to delete annotation:', e);
@@ -198,7 +201,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
 
   const loadDrawings = async (fileId: string, pdfPath: string) => {
     try {
-      const nodes = await invoke<any[]>('get_nodes', { nodeType: 'pdf_drawing' });
+      const nodes = await ns.getNodes('pdf_drawing');
       drawings.value = nodes
         .filter(n => n.properties?.pdf_id === fileId || (!n.properties?.pdf_id && n.properties?.pdf_path === pdfPath))
         .map(n => ({
@@ -218,8 +221,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     const id = existing ? existing.id : `PDFAnnotations/${crypto.randomUUID()}.json`;
 
     try {
-      await invoke('write_node_file', {
-        vaultPath: vaultPath.value,
+      await ns.writeNode({
         relPath: id,
         title: `Drawing on page ${page}`,
         nodeType: 'pdf_drawing',
@@ -231,6 +233,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
           strokes,
         },
         content: '',
+        silent: true,
       });
 
       if (existing) {
@@ -256,7 +259,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
 
     try {
       // Delete all corresponding files
-      await Promise.all(nodesToDelete.map(id => invoke('delete_node_file', { vaultPath: vaultPath.value, relPath: id })));
+      await Promise.all(nodesToDelete.map(id => ns.deleteNode({ relPath: id, silent: true })));
       // Reset state
       annotations.value = [];
       drawings.value = [];

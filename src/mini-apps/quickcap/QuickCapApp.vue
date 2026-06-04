@@ -2,7 +2,8 @@
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
-import { emit as emitTauri, listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask, message, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
@@ -14,6 +15,9 @@ import TaskEditModal from '../task/TaskEditModal.vue';
 import NoteEditModal from '../note/NoteEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
+
+const bus = useEventBus();
+const ns = useNodeService();
 
 const props = defineProps<{
   vaultPath: string;
@@ -151,7 +155,7 @@ const saveInlineTag = async (cap: NodeMetadata) => {
     const formattedTag = isMultiWord ? `#${rawTag}#` : `#${rawTag}`;
     const updatedContent = `${cap.content}\n\n${formattedTag}`;
     try {
-        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
         taggingCapId.value = null;
         tagInputText.value = '';
@@ -185,7 +189,7 @@ const changeCapColor = async (cap: NodeMetadata, colorValue: string) => {
     }
     
     try {
-        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: { ...cap.properties, color: colorValue }, content: rawContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: { ...cap.properties, color: colorValue }, content: rawContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to update color", e);
@@ -213,7 +217,7 @@ const mapNodeToQuickCap = (node: any): NodeMetadata => {
 const loadCaps = async () => {
     if (!props.vaultPath) return;
     try {
-        const nodes: any[] = await invoke('get_nodes', { vaultPath: props.vaultPath, nodeType: 'quickcap' });
+        const nodes: any[] = await ns.getNodes('quickcap');
         quickCaps.value = nodes.map(mapNodeToQuickCap);
     } catch (e) {
         logger.error("Failed to load quick caps", e);
@@ -245,7 +249,7 @@ const saveSelectedCap = async () => {
     if (selectedCap.value.content === finalPayload) return;
     
     try {
-        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: selectedCap.value.id, title: selectedCap.value.title, nodeType: selectedCap.value.node_type, properties: selectedCap.value.properties, content: finalPayload });
+        await ns.writeNode({ relPath: selectedCap.value.id, title: selectedCap.value.title, nodeType: selectedCap.value.node_type, properties: selectedCap.value.properties, content: finalPayload });
         selectedCap.value.content = finalPayload;
     } catch(e) {
         logger.error("Failed to update note", e);
@@ -395,13 +399,13 @@ const submitCap = async () => {
     try {
         const relPath = `QuickCaps/${crypto.randomUUID()}.md`;
 
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: relPath,
             title: newCapText.value.substring(0, 50),
             nodeType: 'quickcap',
             content: newCapText.value,
-            properties: { tags: [] }
+            properties: { tags: [] },
+            eventType: 'created',
         });
         
         await loadCaps();
@@ -485,7 +489,7 @@ const pickImageForExistingCap = async (cap: NodeMetadata) => {
             });
             const imgMd = `\n\n![Image](${relPath})`;
             const updatedContent = cap.content + imgMd;
-            await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+            await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
             cap.content = updatedContent;
         }
     } catch(e) {
@@ -571,27 +575,28 @@ const confirmTurnIntoNote = async (payload: any) => {
         const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const relPath = `Notes/${safeName}_${Date.now()}.md`;
 
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: relPath,
             nodeType: 'note',
             title: payload.title || 'Untitled',
             properties: {
                 tags: tagsArray
             },
-            content: payload.content
+            content: payload.content,
+            eventType: 'created',
         });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
+            await ns.deleteNode({ relPath: cap.id });
             quickCaps.value.splice(index, 1);
         }
         if (selectedCap.value?.id === cap.id) {
             selectedCap.value = null;
         }
         
-        await emitTauri('vault-changed');
+        bus.emit('vault:changed');
+        bus.emit('navigate:to-item', { app: 'note', itemId: relPath });
         closeNoteModal();
     } catch(e) {
         logger.error("Failed to convert to note", e);
@@ -608,8 +613,7 @@ const confirmTurnIntoTask = async (payload: any) => {
         const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const relPath = `Tasks/${safeName}_${Date.now()}.md`;
         
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: relPath,
             nodeType: 'task',
             title: payload.title || 'Untitled',
@@ -625,18 +629,20 @@ const confirmTurnIntoTask = async (payload: any) => {
                 source_link: cap.id,
                 tags: tagArray
             },
-            content: payload.content
+            content: payload.content,
+            eventType: 'created',
         });
         
         const index = quickCaps.value.findIndex(c => c.id === cap.id);
         if (index !== -1) {
-            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
+            await ns.deleteNode({ relPath: cap.id });
             quickCaps.value.splice(index, 1);
         }
         if (selectedCap.value?.id === cap.id) {
             selectedCap.value = null;
         }
         
+        bus.emit('navigate:to-item', { app: 'task', itemId: relPath });
         closeTaskModal();
     } catch(e) {
         logger.error("Failed to create task", e);
@@ -648,15 +654,15 @@ onMounted(() => {
     loadCaps();
     window.addEventListener('paste', handleGlobalPaste);
 
-    listen('vault-file-modified', () => {
+    bus.on('vault:file-modified', () => {
         loadCaps();
     });
 
-    listen('vault-file-created-deleted', () => {
+    bus.on('vault:file-created-deleted', () => {
         loadCaps();
     });
 
-    listen('vault-sync-completed', () => {
+    bus.on('vault:sync-completed', () => {
         loadCaps();
     });
 });
@@ -712,7 +718,7 @@ const removeTag = async (cap: NodeMetadata, tag: string) => {
     updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
     
     try {
-        await invoke('write_node_file', { vaultPath: props.vaultPath, relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to remove tag", e);
@@ -810,7 +816,7 @@ const deleteCap = async (id: string) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: id });
+        await ns.deleteNode({ relPath: id });
         quickCaps.value.splice(index, 1);
         if (selectedCap.value?.id === id) {
             selectedCap.value = null;

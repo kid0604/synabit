@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { useNodeService } from '../../composables/useNodeService';
 import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
 
@@ -12,6 +12,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['save', 'close', 'delete']);
+const ns = useNodeService();
 
 // Create a reactive clone of the passed task params
 const editingTaskParams = ref({
@@ -105,18 +106,18 @@ const createNewPerson = async () => {
     if (!name) return;
     try {
         const id = crypto.randomUUID();
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: `People/${id}.md`,
             title: name,
-            nodeType: "person",
+            nodeType: 'person',
             properties: { tags: [], is_owner: false, details: [] },
-            content: ''
+            content: '',
+            eventType: 'created',
         });
         editingTaskParams.value.transferred_to = `[${name}](synabit://person/${id})`;
         transferInput.value = name;
         activeDropdown.value = null;
-        people.value = await invoke('get_nodes', { nodeType: 'person' });
+        people.value = await ns.getNodes('person');
     } catch (e) {
         console.error("Failed to create person", e);
     }
@@ -149,7 +150,7 @@ onMounted(async () => {
     document.addEventListener('click', handleGlobalClick);
     adjustTitleHeight();
     try {
-        people.value = await invoke('get_nodes', { nodeType: 'person' });
+        people.value = await ns.getNodes('person');
     } catch (e) {
         console.error("Failed to load people", e);
     }

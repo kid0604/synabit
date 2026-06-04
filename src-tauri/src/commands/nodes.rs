@@ -191,18 +191,16 @@ pub fn scan_specific_nodes(
         if abs_path.exists() && abs_path.is_file() {
             if let Some(node) = parse_file_to_node(&vault_path, &abs_path) {
                 // --- Phase 1: External Edit Bridge ---
+                let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let is_json_file = ext == "json" || ext == "canvas";
                 if let Ok(file_content) = std::fs::read_to_string(&abs_path) {
-                    if let Ok(doc) = db.get_crdt_doc(&rel_path) {
-                        match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
-                            Ok(delta) => {
-                                if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
-                                    log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("CRDT update failed for {}: {}", rel_path, e);
-                            }
-                        }
+                    if is_json_file {
+                        // JSON files: use snapshot replacement (last-write-wins)
+                        // Character-level CRDT merge is unsuitable for structured JSON data
+                        crdt_snapshot_replace(&db, &rel_path, &file_content);
+                    } else {
+                        // Markdown files: use character-level CRDT merge with panic recovery
+                        crdt_apply_safe(&db, &rel_path, &file_content);
                     }
                 }
                 // -------------------------------------
@@ -650,19 +648,12 @@ pub fn write_node_file(
     // --- Phase 1: CRDT Bridge ---
     {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Ok(doc) = db.get_crdt_doc(&rel_path) {
-            match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
-                Ok(delta) => {
-                    if !delta.is_empty() {
-                        if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
-                            log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!("CRDT update failed for {}: {}", rel_path, e);
-                }
-            }
+        if ext == "json" || ext == "canvas" {
+            // JSON files: snapshot replacement (last-write-wins)
+            crdt_snapshot_replace(&db, &rel_path, &file_content);
+        } else {
+            // Markdown files: character-level CRDT merge with panic recovery
+            crdt_apply_safe(&db, &rel_path, &file_content);
         }
     }
     // ----------------------------
@@ -1309,4 +1300,61 @@ pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
     });
 
     Ok(pdfs)
+}
+
+/// Apply CRDT update for JSON files using snapshot replacement (last-write-wins).
+/// JSON structured data is unsuitable for character-level CRDT merge — merging
+/// individual characters of `{"amount":123}` between two devices produces garbage.
+/// Instead, we replace the entire CRDT document with a fresh snapshot each time.
+fn crdt_snapshot_replace(db: &crate::db::DbBridge, doc_id: &str, content: &str) {
+    // Delete any existing corrupt CRDT data and start fresh
+    let _ = db.delete_crdt_doc(doc_id);
+    
+    let doc = loro::LoroDoc::new();
+    if let Ok(peer_id) = db.get_or_create_peer_id() {
+        doc.set_peer_id(peer_id).ok();
+    }
+    let text = doc.get_text("content");
+    if text.insert(0, content).is_ok() {
+        doc.commit();
+        let snapshot = doc.export_snapshot();
+        let _ = db.save_crdt_snapshot(doc_id, snapshot);
+    }
+}
+
+/// Apply CRDT update for Markdown files using character-level diff merge.
+/// Wrapped in catch_unwind to prevent Loro panics from crashing the entire app.
+/// If the CRDT document is corrupted, it falls back to snapshot replacement.
+fn crdt_apply_safe(db: &crate::db::DbBridge, doc_id: &str, content: &str) {
+    match db.get_crdt_doc(doc_id) {
+        Ok(doc) => {
+            // Use catch_unwind to prevent Loro internal panics from killing the tokio runtime
+            let doc_ref = &doc;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::crdt_bridge::apply_text_update(doc_ref, content)
+            }));
+            
+            match result {
+                Ok(Ok(delta)) => {
+                    if !delta.is_empty() {
+                        if let Err(e) = db.save_crdt_delta(doc_id, delta) {
+                            log::warn!("CRDT delta save failed for {}: {}", doc_id, e);
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    log::warn!("CRDT update error for {}: {}, falling back to snapshot replacement", doc_id, e);
+                    crdt_snapshot_replace(db, doc_id, content);
+                }
+                Err(_panic) => {
+                    log::error!("CRDT panic caught for {}, resetting CRDT document to clean state", doc_id);
+                    crdt_snapshot_replace(db, doc_id, content);
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to load CRDT doc for {}: {}, creating fresh", doc_id, e);
+            crdt_snapshot_replace(db, doc_id, content);
+        }
+    }
 }

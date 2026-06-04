@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Clock, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
@@ -13,6 +14,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['close', 'saved']);
+const ns = useNodeService();
 
 interface DetailField { label: string; value: string; type: 'text' | 'email' | 'phone' | 'url' }
 interface Experience { company: string; role: string; startMonth: string; startYear: string; endMonth: string; endYear: string; current: boolean }
@@ -253,9 +255,9 @@ const savePerson = async () => {
         if (props.person?.properties?.is_owner) properties.is_owner = true;
 
         let relPath = props.person ? props.person.id : `People/${crypto.randomUUID()}.md`;
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath, relPath, title: form.value.title,
-            nodeType: "person", properties, content: props.person?.content || ''
+        await ns.writeNode({
+            relPath, title: form.value.title,
+            nodeType: 'person', properties, content: props.person?.content || ''
         });
         emit('saved');
         emit('close');
@@ -272,7 +274,7 @@ const deletePerson = async () => {
     if (yes) {
         isDeleting.value = true;
         try {
-            await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: props.person.id });
+            await ns.deleteNode({ relPath: props.person.id });
             emit('saved'); emit('close');
         } catch (e) { logger.error('Failed to delete person', e); }
         finally { isDeleting.value = false; }

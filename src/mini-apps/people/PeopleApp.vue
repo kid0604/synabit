@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
@@ -17,6 +18,9 @@ import LinkPersonModal from './LinkPersonModal.vue';
 import PeopleManager from './PeopleManager.vue';
 
 import { logger } from '../../utils/logger';
+
+const bus = useEventBus();
+const ns = useNodeService();
 
 // Helper: get first detail value by label keyword
 const getPersonDetail = (person: any, keyword: string): string => {
@@ -59,7 +63,7 @@ const allTransactions = ref<any[]>([]);
 const fetchPeople = async () => {
     loading.value = true;
     try {
-        const nodes = await invoke<any[]>('get_nodes', { nodeType: 'person' });
+        const nodes = await ns.getNodes('person');
         people.value = nodes;
         if (selectedPerson.value) {
             const updated = nodes.find(n => n.id === selectedPerson.value.id);
@@ -79,13 +83,15 @@ const ensureOwner = async () => {
     if (hasOwner) return;
     try {
         const relPath = `People/owner.md`;
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath, relPath, title: 'Me',
+        await ns.writeNode({
+            relPath, title: 'Me',
             nodeType: 'person',
             properties: { is_owner: true, tags: ['owner'] },
-            content: ''
+            content: '',
+            eventType: 'created',
+            silent: true,
         });
-        const nodes = await invoke<any[]>('get_nodes', { nodeType: 'person' });
+        const nodes = await ns.getNodes('person');
         people.value = nodes;
     } catch (e) {
         logger.error('Failed to create owner person', e);
@@ -95,7 +101,7 @@ const ensureOwner = async () => {
 const fetchLinkedNodes = async (personTitle: string, personId: string) => {
     loadingLinks.value = true;
     try {
-        const links = await invoke<any[]>('get_linked_nodes', { targetTitle: personTitle, targetId: personId });
+        const links = await ns.getLinkedNodes(personTitle, personId);
         linkedNodes.value = links;
     } catch (e) {
         logger.error('Failed to fetch linked nodes', e);
@@ -107,7 +113,7 @@ const fetchLinkedNodes = async (personTitle: string, personId: string) => {
 
 const fetchDebts = async () => {
     try {
-        const debtNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_debts' });
+        const debtNodes = await ns.getNodes('finance_debts');
         if (debtNodes.length > 0 && debtNodes[0].properties && debtNodes[0].properties.debts) {
             allDebts.value = debtNodes[0].properties.debts;
         } else {
@@ -121,7 +127,7 @@ const fetchDebts = async () => {
 
 const fetchTransactions = async () => {
     try {
-        const monthNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+        const monthNodes = await ns.getNodes('finance_month');
         const flat: any[] = [];
         for (const node of monthNodes) {
             if (node.properties && node.properties.transactions) {
@@ -146,6 +152,22 @@ watch(() => selectedPerson.value?.id, (newId, oldId) => {
     }
 });
 
+// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
+let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedLoad = (fn: () => void, ms = 300) => {
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fn, ms);
+};
+
+const debouncedRefreshAll = () => {
+    debouncedLoad(() => {
+        fetchPeople();
+        fetchDebts();
+        fetchTransactions();
+        if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+    });
+};
+
 onMounted(async () => {
     await fetchPeople();
     fetchDebts();
@@ -158,19 +180,42 @@ onMounted(async () => {
         router.replace({ query: {} });
     }
 
-    listen('vault-file-created-deleted', () => {
-        fetchPeople();
-        if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+    bus.on('vault:file-created-deleted', () => {
+        debouncedLoad(() => {
+            fetchPeople();
+            if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+        });
     });
-    listen('vault-file-modified', () => {
-        fetchPeople();
-        fetchDebts();
-        fetchTransactions();
-        if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+    bus.on('vault:file-modified', () => {
+        debouncedRefreshAll();
     });
 
-    listen('vault-sync-completed', () => {
-        fetchPeople();
+    bus.on('vault:sync-completed', () => {
+        debouncedLoad(() => fetchPeople());
+    });
+
+    // Cross-app: refresh when person nodes change from other apps
+    bus.on('node:created', ({ nodeType }) => {
+        if (nodeType === 'person') debouncedLoad(() => fetchPeople());
+        if (nodeType === 'finance_month' || nodeType === 'finance_debts') {
+            debouncedLoad(() => { fetchDebts(); fetchTransactions(); });
+        }
+    });
+
+    bus.on('node:updated', ({ nodeType }) => {
+        if (nodeType === 'person') {
+            debouncedLoad(() => {
+                fetchPeople();
+                if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
+            });
+        }
+        if (nodeType === 'finance_month' || nodeType === 'finance_debts') {
+            debouncedLoad(() => { fetchDebts(); fetchTransactions(); });
+        }
+    });
+
+    bus.on('node:deleted', ({ nodeType }) => {
+        if (nodeType === 'person') debouncedLoad(() => fetchPeople());
     });
 });
 
@@ -338,8 +383,8 @@ const handleGiftSaved = async (gift: any) => {
         const currentGifts = [...(selectedPerson.value.properties.gifts || [])];
         currentGifts.unshift(gift);
         const properties = { ...selectedPerson.value.properties, gifts: currentGifts };
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath, relPath: selectedPerson.value.id,
+        await ns.writeNode({
+            relPath: selectedPerson.value.id,
             title: selectedPerson.value.title, nodeType: 'person',
             properties, content: selectedPerson.value.content || ''
         });
@@ -381,8 +426,7 @@ const syncBirthdaysToCalendar = async () => {
         const relPath = `Events/bday_${p.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${thisYear}.md`;
 
         try {
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath,
                 title: eventTitle,
                 nodeType: 'event',
@@ -393,7 +437,8 @@ const syncBirthdaysToCalendar = async () => {
                     tags: ['birthday', 'people'],
                     source_person: p.title,
                 },
-                content: `Birthday reminder for ${p.title}.`
+                content: `Birthday reminder for ${p.title}.`,
+                eventType: 'created',
             });
             synced++;
         } catch (e) {
@@ -441,8 +486,7 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
     }
 
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: src.id,
             title: src.title,
             nodeType: 'person',
@@ -477,8 +521,7 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
                 tgtRelations.push(srcMention);
                 tgtProps.relations = tgtRelations;
             }
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: targetPerson.id,
                 title: targetPerson.title,
                 nodeType: 'person',
@@ -505,8 +548,7 @@ const unlinkPerson = async (targetPersonId: string) => {
     srcProps.relations = (srcProps.relations || []).filter((r: string) => !r.includes(targetPersonId));
 
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: src.id,
             title: src.title,
             nodeType: 'person',
@@ -520,8 +562,7 @@ const unlinkPerson = async (targetPersonId: string) => {
             const tgtProps = { ...(target.properties || {}) };
             tgtProps.connections = (tgtProps.connections || []).filter((c: any) => c.person_id !== src.id);
             tgtProps.relations = (tgtProps.relations || []).filter((r: string) => !r.includes(src.id));
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: target.id,
                 title: target.title,
                 nodeType: 'person',
@@ -639,7 +680,7 @@ defineExpose({ openPersonById });
                 :vault-path="vaultPath"
                 @select="(p: any) => { selectedPerson = p; }"
                 @edit="(p: any) => editPerson(p)"
-                @delete="async (p: any) => { if (p.properties?.is_owner) return; const yes = await ask(`This will permanently delete &quot;${p.title}&quot; and all associated data. This action cannot be undone.`, { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }); if (yes) { await invoke('delete_node_file', { vaultPath, relPath: p.id }); fetchPeople(); } }"
+                @delete="async (p: any) => { if (p.properties?.is_owner) return; const yes = await ask(`This will permanently delete &quot;${p.title}&quot; and all associated data. This action cannot be undone.`, { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }); if (yes) { await ns.deleteNode({ relPath: p.id }); fetchPeople(); } }"
             />
 
             <div v-if="selectedPerson" class="flex-1 flex flex-col overflow-hidden">

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
+import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink, User } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
@@ -15,6 +16,8 @@ import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS
 import ResourceLinkModal from './ResourceLinkModal.vue';
 
 const { taskArchiveDays } = useSettings();
+const bus = useEventBus();
+const ns = useNodeService();
 
 const props = defineProps<{
   vaultPath: string;
@@ -344,7 +347,7 @@ watch(activeProject, (proj, oldProj) => {
 const loadProjectResources = async () => {
     if (!activeProject.value) return;
     try {
-        const edges = await invoke<any[]>('get_linked_nodes', { targetTitle: activeProject.value.title, targetId: activeProject.value.id });
+        const edges = await ns.getLinkedNodes(activeProject.value.title, activeProject.value.id);
         linkedResources.value = edges.filter((n: any) => {
             if (n.node_type === 'json' && n.id.endsWith('.whiteboard.json')) {
                 n.node_type = 'whiteboard';
@@ -359,7 +362,7 @@ const loadProjectResources = async () => {
 
 const recalculateProjectSpent = async (proj: any) => {
     try {
-        const financeNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+        const financeNodes = await ns.getNodes('finance_month');
         let totalSpent = 0;
         for (const node of financeNodes) {
             if (node.properties?.transactions) {
@@ -479,13 +482,13 @@ const handleQuickAdd = async (status: string) => {
     }
     
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: relPath,
             nodeType: 'task',
             title: title,
             properties: properties,
-            content: ''
+            content: '',
+            eventType: 'created'
         });
         
         const newTask: TaskMetadata = {
@@ -581,8 +584,7 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
     }
     
     try {
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: task.path,
             nodeType: 'task',
             title: task.title,
@@ -832,13 +834,13 @@ const saveTask = async () => {
         if (editingTask.value.isNew) {
             const relPath = `Tasks/${crypto.randomUUID()}.md`;
             
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: relPath,
                 nodeType: 'task',
                 title: editingTaskParams.value.title || 'Untitled',
                 properties: properties,
-                content: editingTaskParams.value.content
+                content: editingTaskParams.value.content,
+                eventType: 'created'
             });
             
             const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -854,8 +856,7 @@ const saveTask = async () => {
             } as any;
             tasks.value.unshift(newTask);
         } else if (editingTask.value.path) {
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: editingTask.value.path,
                 nodeType: 'task',
                 title: editingTaskParams.value.title,
@@ -916,10 +917,10 @@ const loadTasks = async () => {
     try {
         const archiveDays = taskArchiveDays.value;
         await invoke('archive_done_nodes', { vaultPath: props.vaultPath, nodeType: 'task', days: archiveDays });
-        const nodes = await invoke<any[]>('get_nodes', { nodeType: 'task' });
+        const nodes = await ns.getNodes('task');
         tasks.value = nodes.map(mapNodeToTask);
         
-        const projNodes = await invoke<any[]>('get_nodes', { nodeType: 'project' });
+        const projNodes = await ns.getNodes('project');
         projects.value = projNodes.map(node => ({
             id: node.id,
             path: node.id,
@@ -943,7 +944,7 @@ const loadTasks = async () => {
 
 const loadFinanceConfig = async () => {
     try {
-        const configs: any[] = await invoke('get_nodes', { nodeType: 'finance_config' });
+        const configs: any[] = await ns.getNodes('finance_config');
         if (configs.length > 0) {
             const configNode = configs[0];
             if (configNode.properties) {
@@ -972,7 +973,7 @@ const saveFinanceTransaction = async (tx: Transaction) => {
     try {
         let nodeProps: any = { transactions: [] };
         try {
-            const existingNodes = await invoke<any[]>('get_nodes', { nodeType: 'finance_month' });
+            const existingNodes = await ns.getNodes('finance_month');
             const targetNode = existingNodes.find((n: any) => n.id === expectedId);
             if (targetNode && targetNode.properties) {
                 nodeProps = targetNode.properties;
@@ -988,13 +989,13 @@ const saveFinanceTransaction = async (tx: Transaction) => {
             nodeProps.transactions.push(tx);
         }
         
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: expectedId,
             title: `Tháng ${mm}/${yyyy}`,
             nodeType: 'finance_month',
             properties: nodeProps,
-            content: ''
+            content: '',
+            silent: true
         });
         
         showTxModal.value = false;
@@ -1024,8 +1025,7 @@ const handleProjectSave = async (updatedProject: any) => {
             // Create new project
             if (!updatedProject.title.trim()) updatedProject.title = 'Untitled Project';
             const relPath = `Projects/${crypto.randomUUID()}.md`;
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: relPath,
                 nodeType: 'project',
                 title: updatedProject.title,
@@ -1037,7 +1037,8 @@ const handleProjectSave = async (updatedProject: any) => {
                     color: '',
                     ...(updatedProject.custom_fields || {})
                 },
-                content: updatedProject.content
+                content: updatedProject.content,
+                eventType: 'created'
             });
             
             showProjectEditModal.value = false;
@@ -1051,8 +1052,7 @@ const handleProjectSave = async (updatedProject: any) => {
             }
         } else if (activeProject.value) {
             // Update existing project
-            await invoke('write_node_file', {
-                vaultPath: props.vaultPath,
+            await ns.writeNode({
                 relPath: activeProject.value.path,
                 nodeType: 'project',
                 title: updatedProject.title,
@@ -1078,10 +1078,10 @@ const handleProjectSave = async (updatedProject: any) => {
 const openLinkResourcePicker = async () => {
     try {
         isLinkingResource.value = true;
-        const resultNotes = await invoke<any[]>('get_nodes', { nodeType: 'note' });
+        const resultNotes = await ns.getNodes('note');
         const resultWhiteboards = await invoke<any[]>('scan_whiteboards', { vaultPath: props.vaultPath });
         resultWhiteboards.forEach(w => w.node_type = 'whiteboard');
-        const resultFiles = await invoke<any[]>('get_nodes', { nodeType: 'file' });
+        const resultFiles = await ns.getNodes('file');
         const allResources = [...resultNotes, ...resultWhiteboards, ...resultFiles];
         
         const linkedResourceIds = new Set(linkedResources.value.map(n => n.id));
@@ -1099,14 +1099,13 @@ const createNewResourceNote = async () => {
     try {
         isLinkingResource.value = true;
         // Create new node file
-        const newPath = await invoke<string>('create_node_file', { 
-            vaultPath: props.vaultPath, 
+        const newPath = await ns.createNode({ 
             directory: 'Notes', 
             nodeType: 'note' 
         });
         
         // Read it back to get default properties
-        const node = await invoke<any>('get_node', { id: newPath });
+        const node = await ns.getNode(newPath);
         if (node) {
             const propsObj = node.properties || {};
             const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
@@ -1116,8 +1115,7 @@ const createNewResourceNote = async () => {
                 projectsArray.push(projectLink);
                 propsObj.linked_projects = projectsArray;
                 
-                await invoke('write_node_file', {
-                    vaultPath: props.vaultPath,
+                await ns.writeNode({
                     relPath: node.id,
                     title: node.title,
                     nodeType: 'note',
@@ -1166,10 +1164,7 @@ const createNewResourceWhiteboard = async () => {
         });
         
         // Scan the new file so that its graph edges (links to project) are indexed
-        await invoke('scan_specific_nodes', {
-            vaultPath: props.vaultPath,
-            paths: [meta.path]
-        });
+        await ns.scanSpecificNodes([meta.path]);
         
         // Reload linked resources
         await loadProjectResources();
@@ -1212,33 +1207,26 @@ const unlinkResource = async (node: any) => {
                     content: JSON.stringify(data, null, 2)
                 });
                 
-                await invoke('scan_specific_nodes', {
-                    vaultPath: props.vaultPath,
-                    paths: [node.id]
-                });
+                await ns.scanSpecificNodes([node.id]);
             }
         } else if (node.node_type === 'file') {
-            const fetchedNode = await invoke<any>('get_node', { id: node.id });
+            const fetchedNode = await ns.getNode(node.id);
             if (fetchedNode) {
                 const propsObj = fetchedNode.properties || {};
                 if (Array.isArray(propsObj.linked_projects)) {
                     propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
-                    await invoke('update_node_properties', {
-                        id: fetchedNode.id,
-                        properties: propsObj
-                    });
+                    await ns.updateNodeProperties(fetchedNode.id, propsObj);
                 }
             }
         } else {
             // For notes, markdown-based nodes, and corrupted whiteboard .md files
-            const fetchedNode = await invoke<any>('get_node', { id: node.id });
+            const fetchedNode = await ns.getNode(node.id);
             if (fetchedNode) {
                 const propsObj = fetchedNode.properties || {};
                 if (Array.isArray(propsObj.linked_projects)) {
                     propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
                     
-                    await invoke('write_node_file', {
-                        vaultPath: props.vaultPath,
+                    await ns.writeNode({
                         relPath: fetchedNode.id,
                         title: fetchedNode.title,
                         nodeType: fetchedNode.node_type,
@@ -1283,13 +1271,10 @@ const handleEmbedResource = async (node: any) => {
                     content: JSON.stringify(data, null, 2)
                 });
                 
-                await invoke('scan_specific_nodes', {
-                    vaultPath: props.vaultPath,
-                    paths: [node.id]
-                });
+                await ns.scanSpecificNodes([node.id]);
             }
         } else if (node.node_type === 'file') {
-            const fullNode = await invoke<any>('get_node', { id: node.id });
+            const fullNode = await ns.getNode(node.id);
             if (fullNode) {
                 const propsObj = fullNode.properties || {};
                 const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
@@ -1298,16 +1283,13 @@ const handleEmbedResource = async (node: any) => {
                     projectsArray.push(projectLink);
                     propsObj.linked_projects = projectsArray;
                     
-                    await invoke('update_node_properties', {
-                        id: fullNode.id,
-                        properties: propsObj
-                    });
+                    await ns.updateNodeProperties(fullNode.id, propsObj);
                 }
             }
         } else {
             // Since we already have the node from the modal, we could use it directly
             // but we still call get_node to get fresh properties and content
-            const fullNode = await invoke<any>('get_node', { id: node.id });
+            const fullNode = await ns.getNode(node.id);
             if (fullNode) {
                 const propsObj = fullNode.properties || {};
                 const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
@@ -1316,8 +1298,7 @@ const handleEmbedResource = async (node: any) => {
                     projectsArray.push(projectLink);
                     propsObj.linked_projects = projectsArray;
                     
-                    await invoke('write_node_file', {
-                        vaultPath: props.vaultPath,
+                    await ns.writeNode({
                         relPath: node.id,
                         title: fullNode.title,
                         nodeType: fullNode.node_type || 'note',
@@ -1353,7 +1334,7 @@ const deleteProject = async () => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: activeProject.value.path });
+        await ns.deleteNode({ relPath: activeProject.value.path });
         showProjectEditModal.value = false;
         activeCategory.value = 'all';
         await loadTasks();
@@ -1410,8 +1391,7 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
             tags: task.tags,
             completed_at: newCompletedAt
         };
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath,
+        await ns.writeNode({
             relPath: task.path,
             nodeType: 'task',
             title: task.title,
@@ -1421,6 +1401,10 @@ const toggleTaskStatus = async (task: TaskMetadata) => {
         });
         task.status = newStatus;
         task.completed_at = newCompletedAt;
+        bus.emit('task:status-changed', { id: task.id, oldStatus: newStatus === 'done' ? 'todo' : 'done', newStatus, title: task.title });
+        if (newStatus === 'done') {
+            bus.emit('task:completed', { id: task.id, title: task.title, projectId: activeProject.value?.id });
+        }
     } catch (e) {
         logger.error("Failed to update task", e);
     }
@@ -1443,7 +1427,7 @@ const deleteTask = async (task: TaskMetadata) => {
     if (!isConfirmed) return;
     
     try {
-        await invoke('delete_node_file', { vaultPath: props.vaultPath, relPath: task.path });
+        await ns.deleteNode({ relPath: task.path });
         const idx = tasks.value.findIndex(t => t.id === task.id);
         if (idx !== -1) tasks.value.splice(idx, 1);
     } catch (e) {
@@ -1465,19 +1449,35 @@ const handleModalDelete = async () => {
 };
 
 
+// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
+let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedLoad = (fn: () => void, ms = 300) => {
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fn, ms);
+};
+
 onMounted(() => {
     loadTasks();
 
-    listen('vault-file-modified', () => {
-        loadTasks();
+    bus.on('vault:file-modified', () => {
+        debouncedLoad(() => loadTasks());
     });
 
-    listen('vault-file-created-deleted', () => {
-        loadTasks();
+    bus.on('vault:file-created-deleted', () => {
+        debouncedLoad(() => loadTasks());
     });
 
-    listen('vault-sync-completed', () => {
-        loadTasks();
+    bus.on('vault:sync-completed', () => {
+        debouncedLoad(() => loadTasks());
+    });
+
+    // Cross-app: refresh when tasks/projects are created from other apps (e.g., QuickCap → Task)
+    bus.on('node:created', ({ nodeType }) => {
+        if (nodeType === 'task' || nodeType === 'project') debouncedLoad(() => loadTasks());
+    });
+
+    bus.on('node:deleted', ({ nodeType }) => {
+        if (nodeType === 'task' || nodeType === 'project') debouncedLoad(() => loadTasks());
     });
 });
 

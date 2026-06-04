@@ -13,7 +13,7 @@ import MultiSelectMenu from './components/MultiSelectMenu.vue';
 import { toPng } from 'html-to-image';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
 // Custom nodes and edges
@@ -34,6 +34,8 @@ import type { WBNode, WBEdge } from './composables/useWhiteboardStore';
 import { SHAPES_MAP } from './shapes';
 import { logger } from '../../utils/logger';
 import type { NavEntry } from '../../stores/useNavigationStore';
+
+const bus = useEventBus();
 
 // CSS
 import '@vue-flow/core/dist/style.css';
@@ -1203,15 +1205,15 @@ onMounted(async () => {
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
 
-  listen('vault-file-modified', () => {
+  bus.on('vault:file-modified', () => {
       store.loadBoards();
   });
 
-  listen('vault-file-created-deleted', () => {
+  bus.on('vault:file-created-deleted', () => {
       store.loadBoards();
   });
 
-  listen('vault-sync-completed', () => {
+  bus.on('vault:sync-completed', () => {
       store.loadBoards();
   });
 });

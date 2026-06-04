@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { useEventBus } from '../../composables/useEventBus';
 import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -10,6 +10,8 @@ import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
 import { useAppLockStore } from '../../stores/useAppLockStore';
+
+const bus = useEventBus();
 
 const emit = defineEmits<{
     (e: 'edit-item', id: string, type: string): void
@@ -143,28 +145,30 @@ watch(caseSensitive, () => {
     if (searchQuery.value.trim()) performSearch();
 });
 
-let unlistenMod: UnlistenFn;
-let unlistenDel: UnlistenFn;
+// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
+let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedLoad = (fn: () => void, ms = 300) => {
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fn, ms);
+};
 
-onMounted(async () => {
+onMounted(() => {
     loadAllData();
-    unlistenMod = await listen('vault-file-modified', () => {
-        loadAllData();
-        if (searchQuery.value) performSearch();
+    bus.on('vault:file-modified', () => {
+        debouncedLoad(() => { loadAllData(); if (searchQuery.value) performSearch(); });
     });
-    unlistenDel = await listen('vault-file-created-deleted', () => {
-        loadAllData();
-        if (searchQuery.value) performSearch();
+    bus.on('vault:file-created-deleted', () => {
+        debouncedLoad(() => { loadAllData(); if (searchQuery.value) performSearch(); });
     });
 
-    await listen('vault-sync-completed', () => {
-        loadAllData();
+    bus.on('vault:sync-completed', () => {
+        debouncedLoad(() => loadAllData());
     });
-});
 
-onBeforeUnmount(() => {
-    if (unlistenMod) unlistenMod();
-    if (unlistenDel) unlistenDel();
+    // Cross-app subscribers: reload when nodes are mutated elsewhere
+    bus.on('node:created', () => { debouncedLoad(() => loadAllData()); });
+    bus.on('node:updated', () => { debouncedLoad(() => loadAllData()); });
+    bus.on('node:deleted', () => { debouncedLoad(() => loadAllData()); });
 });
 
 const getTypeIcon = (type: string) => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as d3 from 'd3';
-import { invoke } from '@tauri-apps/api/core';
+import { useNodeService } from '../../composables/useNodeService';
 import { Share2, Users, X, Edit2, Expand, Shrink } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -16,6 +16,7 @@ const emit = defineEmits<{
     (e: 'unlink', personId: string): void;
     (e: 'edit-link', personId: string): void;
 }>();
+const ns = useNodeService();
 
 // --- Data ---
 interface GraphNode extends d3.SimulationNodeDatum {
@@ -64,10 +65,7 @@ const RELATION_LABELS: Record<string, string> = {
 const loadLinkedNodes = async () => {
     if (!props.person?.title) return;
     try {
-        linkedNodes.value = await invoke('get_linked_nodes', {
-            targetTitle: props.person.title,
-            targetId: props.person.id
-        });
+        linkedNodes.value = await ns.getLinkedNodes(props.person.title, props.person.id);
     } catch (e) {
         linkedNodes.value = [];
     }

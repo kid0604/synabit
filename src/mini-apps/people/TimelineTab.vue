@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, toRef } from 'vue';
 import { useRouter } from 'vue-router';
-import { invoke } from '@tauri-apps/api/core';
+import { useNodeService } from '../../composables/useNodeService';
 import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
@@ -17,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits(['updated', 'open-linked-node']);
 
 const router = useRouter();
+const ns = useNodeService();
 
 const personRef = toRef(props, 'person');
 const { health } = useRelationshipHealth(personRef);
@@ -240,8 +241,8 @@ const saveInteraction = async () => {
         const currentInteractions = [...(props.person.properties.interactions || [])];
         currentInteractions.push({ id: crypto.randomUUID(), ...newInteraction.value });
         const properties = { ...props.person.properties, interactions: currentInteractions, last_contacted: newInteraction.value.date };
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath, relPath: props.person.id,
+        await ns.writeNode({
+            relPath: props.person.id,
             title: props.person.title, nodeType: 'person', properties, content: props.person.content || ''
         });
         resetForm();
@@ -255,8 +256,8 @@ const deleteInteraction = async (id: string) => {
     try {
         const currentInteractions = (props.person.properties.interactions || []).filter((i: any) => i.id !== id);
         const properties = { ...props.person.properties, interactions: currentInteractions };
-        await invoke('write_node_file', {
-            vaultPath: props.vaultPath, relPath: props.person.id,
+        await ns.writeNode({
+            relPath: props.person.id,
             title: props.person.title, nodeType: 'person', properties, content: props.person.content || ''
         });
         emit('updated');

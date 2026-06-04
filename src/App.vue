@@ -2,7 +2,9 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
 import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
-import { emit, listen } from '@tauri-apps/api/event';
+import { emit } from '@tauri-apps/api/event';
+import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
+import { useNodeService } from './composables/useNodeService';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { documentDir } from '@tauri-apps/api/path';
@@ -31,6 +33,9 @@ import { useAppStore } from './stores/useAppStore';
 import { useNavigationStore, type NavEntry } from './stores/useNavigationStore';
 import { useAppLockStore } from './stores/useAppLockStore';
 import { storeToRefs } from 'pinia';
+
+const bus = useEventBus();
+const ns = useNodeService();
 
 // ─── Settings ─────────────────────────────────────────────
 const {
@@ -381,13 +386,14 @@ const handleKeyboardNav = (e: KeyboardEvent) => {
     }
 };
 
-let unlistenFns: (() => void)[] = [];
+
 
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
   logger.info("Synabit Frontend App Mounting...");
   await appStore.initialize();
   await initSettings();
+  await initEventBus();
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   window.addEventListener('keydown', handleKeyboardNav);
@@ -423,9 +429,9 @@ onMounted(async () => {
 
   gdrive.checkGDriveAuth().then(() => { gdrive.setupAutoSync(); });
 
-  listen('vault-file-created-deleted', (event) => {
+  bus.on('vault:file-created-deleted', (payload: any) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      const paths = event.payload as string[];
+      const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
           invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
           
@@ -444,11 +450,11 @@ onMounted(async () => {
       if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
-  }).then(fn => unlistenFns.push(fn));
+  });
 
-  listen('vault-file-modified', (event) => {
+  bus.on('vault:file-modified', (payload: any) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
-      const paths = event.payload as string[];
+      const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
           invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
           
@@ -463,15 +469,20 @@ onMounted(async () => {
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
-  }).then(fn => unlistenFns.push(fn));
+  });
 
-  listen('new-chat-message', () => {
+  bus.on('chat:new-message', () => {
       checkUnreadNotifications();
       if (chatAppRef.value) {
           chatAppRef.value.fetchMessages();
       }
-  }).then(fn => unlistenFns.push(fn));
+  });
 
+  // ─── Cross-App Navigation via Event Bus ──────────────────
+  bus.on('navigate:to-item', ({ app, itemId }) => {
+      activeTool.value = app;
+      navigateToItem(app, itemId);
+  });
 
   getCurrentWindow().onCloseRequested(async () => {
       // NoteApp handles its own save-on-close internally
@@ -483,8 +494,7 @@ onMounted(async () => {
               const note = nApp.notes.find((n: any) => n.id === noteId);
               if (note) {
                   try {
-                      await invoke('write_node_file', {
-                          vaultPath: vaultPath.value,
+                      await ns.writeNode({
                           relPath: note.id,
                           nodeType: 'note',
                           title: note.title,
@@ -492,7 +502,8 @@ onMounted(async () => {
                               pinned: note.pinned,
                               tags: note.tags
                           },
-                          content: nApp.tabContents[noteId]
+                          content: nApp.tabContents[noteId],
+                          silent: true,
                       });
                       emit('note-updated', { id: note.id, content: nApp.tabContents[noteId] });
                   } catch(e) { logger.error('Save before close failed', e); }
@@ -507,8 +518,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   window.removeEventListener('keydown', handleKeyboardNav);
-  unlistenFns.forEach(fn => fn());
-  unlistenFns = [];
+  destroyEventBus();
 });
 </script>
 

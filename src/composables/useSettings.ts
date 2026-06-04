@@ -2,7 +2,7 @@ import { ref, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useAppStore } from '../stores/useAppStore';
 import { useAppLockStore } from '../stores/useAppLockStore';
-import { listen } from '@tauri-apps/api/event';
+import { useEventBus } from './useEventBus';
 import { invoke } from '@tauri-apps/api/core';
 
 // UI State (singleton)
@@ -22,6 +22,8 @@ export function useSettings() {
     return val.includes('YY') && val.includes('MM') && (val.includes('DD') || val.includes('D'));
   });
 
+  const bus = useEventBus();
+
   async function initSettings() {
     if (isInitialized) return;
     await appStore.initialize();
@@ -31,7 +33,7 @@ export function useSettings() {
     await appLockStore.initialize();
     
     // Listen for E2EE setup required from backend
-    listen('e2ee-setup-required', () => {
+    bus.on('e2ee:setup-required', () => {
       showE2eeOnboarding.value = true;
     });
     

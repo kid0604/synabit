@@ -16,6 +16,7 @@ import {
   FileDown, RotateCcw
 } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
+import { useNodeService } from '../../../composables/useNodeService';
 
 const props = defineProps<{
   fileId: string;
@@ -24,6 +25,7 @@ const props = defineProps<{
 }>();
 
 const renderer = usePdfRenderer();
+const ns = useNodeService();
 const vaultPathRef = ref(props.vaultPath);
 watch(() => props.vaultPath, (v) => { vaultPathRef.value = v; });
 const annotations = usePdfAnnotations(vaultPathRef);
@@ -355,13 +357,13 @@ const exportToNote = async () => {
   if (!md) return;
   try {
     const relPath = `Notes/${renderer.pdfTitle.value} — Annotations.md`;
-    await invoke('write_node_file', {
-      vaultPath: props.vaultPath,
+    await ns.writeNode({
       relPath,
       title: `${renderer.pdfTitle.value} — Annotations`,
       nodeType: 'note',
       properties: {},
       content: md,
+      eventType: 'created',
     });
   } catch (e) {
     logger.error('Failed to export annotations to note:', e);
