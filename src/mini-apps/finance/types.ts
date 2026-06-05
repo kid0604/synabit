@@ -31,11 +31,23 @@ export interface Debt {
   status: 'active' | 'completed';
 }
 
+export type BudgetType = 'monthly' | 'custom';
+
+export interface BudgetItem {
+  id: string;
+  name: string;
+  categories: string[];
+  amount: number;
+  monthlyOverrides?: Record<string, number>; // key: "YYYY-MM" → override amount for that month
+}
+
 export interface Budget {
-  id: string;         // Unique ID for the budget
-  name: string;       // Name of the budget group
-  categories: string[]; // List of expense categories this budget applies to
-  amount: number;     // The maximum amount allowed per month
+  id: string;
+  name: string;           // e.g. "Monthly Budget", "Business 2026"
+  type?: BudgetType;      // 'monthly' (default) or 'custom'
+  items: BudgetItem[];    // Sub-items (category allocations)
+  startDate?: string;     // ISO date — only for type 'custom'
+  endDate?: string;       // ISO date — only for type 'custom'
 }
 
 export interface FinanceMonth {

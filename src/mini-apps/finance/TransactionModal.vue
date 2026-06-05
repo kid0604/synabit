@@ -40,6 +40,14 @@ const exchangeRateStr = ref<string>('');
 const calculatedBaseAmount = ref<number>(0);
 const CURRENCIES = ['VND', 'USD', 'EUR', 'GBP', 'JPY'];
 
+const getLocaleForCurrency = (currency: string): string => {
+    if (currency === 'VND') return 'vi-VN';
+    if (currency === 'EUR') return 'de-DE';
+    if (currency === 'JPY') return 'ja-JP';
+    if (currency === 'GBP') return 'en-GB';
+    return 'en-US';
+};
+
 const isAddingCategory = ref(false);
 const newCategoryName = ref('');
 
@@ -65,7 +73,7 @@ watch(type, (newType, oldType) => {
 const formatAmount = (val: string) => {
     const num = val.replace(/\D/g, '');
     if (!num) return '';
-    return Number(num).toLocaleString('vi-VN');
+    return Number(num).toLocaleString(getLocaleForCurrency(inputCurrency.value));
 };
 
 const handleAmountInput = (e: Event) => {
@@ -120,13 +128,13 @@ const initForm = () => {
         
         if (props.transaction.originalCurrency && props.transaction.originalCurrency !== currentCurrency.value) {
             inputCurrency.value = props.transaction.originalCurrency;
-            amount.value = props.transaction.originalAmount ? props.transaction.originalAmount.toLocaleString('vi-VN') : '';
+            amount.value = props.transaction.originalAmount ? props.transaction.originalAmount.toLocaleString(getLocaleForCurrency(inputCurrency.value)) : '';
             exchangeRate.value = props.transaction.exchangeRate || null;
             exchangeRateStr.value = exchangeRate.value ? exchangeRate.value.toString() : '';
             calculatedBaseAmount.value = props.transaction.amount;
         } else {
             inputCurrency.value = currentCurrency.value;
-            amount.value = props.transaction.amount.toLocaleString('vi-VN');
+            amount.value = props.transaction.amount.toLocaleString(getLocaleForCurrency(inputCurrency.value));
             exchangeRate.value = null;
             exchangeRateStr.value = '';
             calculatedBaseAmount.value = props.transaction.amount;

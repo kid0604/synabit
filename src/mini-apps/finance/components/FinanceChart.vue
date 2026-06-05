@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import * as d3 from 'd3';
+import { formatCurrency } from '../currency';
 
 const props = defineProps<{
   data: { label: string; value: number }[];
@@ -90,7 +91,7 @@ const drawChart = () => {
           
         // Add tooltip or update center text
         svg.select('.center-text-value')
-          .text(new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(d.data.value));
+          .text(formatCurrency(d.data.value));
         svg.select('.center-text-label')
           .text(d.data.label);
     })
@@ -103,7 +104,7 @@ const drawChart = () => {
           
         // Reset center text
         svg.select('.center-text-value')
-          .text(props.total ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(props.total) : '');
+          .text(props.total ? formatCurrency(props.total) : '');
         svg.select('.center-text-label')
           .text(props.title || '');
     });
@@ -116,7 +117,7 @@ const drawChart = () => {
     .style('font-size', '16px')
     .style('font-weight', 'bold')
     .style('fill', 'currentColor')
-    .text(props.total ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(props.total) : '');
+    .text(props.total ? formatCurrency(props.total) : '');
     
   svg.append('text')
     .attr('class', 'center-text-label')
@@ -144,7 +145,7 @@ onMounted(() => {
 <template>
   <div class="w-full h-full min-h-[250px] relative flex flex-col items-center">
       <div v-if="!data.length" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-          <p class="text-sm">Chưa có dữ liệu giao dịch</p>
+          <p class="text-sm">No transaction data yet</p>
       </div>
       <div ref="chartContainer" class="w-full h-full flex-1"></div>
       

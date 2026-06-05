@@ -92,6 +92,20 @@ fn decrypt_payload(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, String> {
     crate::sync::crypto::decrypt(key, payload)
 }
 
+/// Extract `updated_at` timestamp from JSON file content for conflict resolution.
+/// Returns the timestamp string, or empty string if not found.
+fn extract_json_updated_at(json_text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(json_text)
+        .ok()
+        .and_then(|v| {
+            v.get("metadata")
+                .and_then(|m| m.get("updated_at"))
+                .and_then(|u| u.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn gdrive_sync_full(
     app_handle: tauri::AppHandle,
@@ -342,7 +356,7 @@ pub async fn gdrive_sync_full(
                 continue;
             }
         } else {
-            // ── Markdown pull: content IS the encrypted CRDT snapshot ──
+            // ── Non-asset pull: content IS the encrypted CRDT snapshot ──
             let decrypted_crdt = match decrypt_payload(&e2ee_key, content) {
                 Ok(dec) => dec,
                 Err(_) => {
@@ -353,11 +367,74 @@ pub async fn gdrive_sync_full(
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
-            if item.is_conflict {
-                // Conflict: merge remote CRDT with local CRDT
+            // Check if this is a JSON/canvas file — these MUST NOT use character-level CRDT merge
+            let is_json_file = rel_path.ends_with(".json") || rel_path.ends_with(".canvas");
+
+            if is_json_file {
+                // JSON files: skip CRDT merge entirely, use last-write-wins
+                // Character-level CRDT merge on structured JSON produces garbage
+                // (e.g., "category" → "catFood &oDi"in")
+                let _ = db.delete_crdt_doc(rel_path);
+                
+                // Create fresh CRDT doc from remote content
+                let fresh_doc = loro::LoroDoc::new();
+                if let Ok(peer_id) = db.get_or_create_peer_id() {
+                    fresh_doc.set_peer_id(peer_id).ok();
+                }
+                // Try to extract text from the remote CRDT snapshot
+                let remote_text = if fresh_doc.import(&decrypted_crdt).is_ok() {
+                    fresh_doc.get_text("content").to_string()
+                } else {
+                    // If import fails, it might be raw text (legacy)
+                    String::from_utf8_lossy(&decrypted_crdt).to_string()
+                };
+                
+                if item.is_conflict {
+                    // For JSON conflicts: compare timestamps, pick newer version
+                    let local_text = fs::read_to_string(&local_path).unwrap_or_default();
+                    let local_updated = extract_json_updated_at(&local_text);
+                    let remote_updated = extract_json_updated_at(&remote_text);
+                    
+                    if remote_updated >= local_updated {
+                        log::info!("JSON conflict for {}: remote wins (remote={} >= local={})", rel_path, remote_updated, local_updated);
+                        if let Err(e) = fs::write(&local_path, &remote_text) {
+                            result.errors.push(format!("Write JSON {}: {}", rel_path, e));
+                        }
+                    } else {
+                        log::info!("JSON conflict for {}: local wins (local={} > remote={})", rel_path, local_updated, remote_updated);
+                        // Keep local version, don't overwrite
+                    }
+                } else {
+                    // Normal pull: just write remote content
+                    if let Err(e) = fs::write(&local_path, &remote_text) {
+                        result.errors.push(format!("Write {}: {}", rel_path, e));
+                        continue;
+                    }
+                }
+                
+                // Save fresh snapshot from current file content
+                let final_content = fs::read_to_string(&local_path).unwrap_or_default();
+                let new_doc = loro::LoroDoc::new();
+                if let Ok(peer_id) = db.get_or_create_peer_id() {
+                    new_doc.set_peer_id(peer_id).ok();
+                }
+                let text_handler = new_doc.get_text("content");
+                if text_handler.insert(0, &final_content).is_ok() {
+                    new_doc.commit();
+                    let _ = db.save_crdt_snapshot(rel_path, new_doc.export_snapshot());
+                }
+            } else if item.is_conflict {
+                // Markdown conflict: merge remote CRDT with local CRDT (character-level is fine for text)
                 if let Ok(doc) = db.get_crdt_doc(rel_path) {
-                    match crate::crdt_bridge::merge_remote_snapshot(&doc, &decrypted_crdt) {
-                        Ok((delta, merged_text)) => {
+                    // Use catch_unwind to prevent Loro panics from crashing the app
+                    let doc_ref = &doc;
+                    let crdt_ref = &decrypted_crdt;
+                    let merge_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        crate::crdt_bridge::merge_remote_snapshot(doc_ref, crdt_ref)
+                    }));
+                    
+                    match merge_result {
+                        Ok(Ok((delta, merged_text))) => {
                             if let Err(e) = db.save_crdt_delta(rel_path, delta) {
                                 log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
                             }
@@ -365,14 +442,29 @@ pub async fn gdrive_sync_full(
                                 result.errors.push(format!("Write merged {}: {}", rel_path, e));
                             }
                         }
-                        Err(e) => {
-                            log::warn!("CRDT merge failed for {}: {}", rel_path, e);
-                            result.errors.push(format!("CRDT merge {}: {}", rel_path, e));
+                        Ok(Err(e)) => {
+                            log::warn!("CRDT merge failed for {}: {}, falling back to remote", rel_path, e);
+                            // Fallback: reset CRDT and use remote content
+                            let _ = db.delete_crdt_doc(rel_path);
+                            let _ = db.save_crdt_snapshot(rel_path, decrypted_crdt.clone());
+                            if let Ok(doc) = db.get_crdt_doc(rel_path) {
+                                let text = doc.get_text("content").to_string();
+                                let _ = fs::write(&local_path, &text);
+                            }
+                        }
+                        Err(_panic) => {
+                            log::error!("CRDT merge panicked for {}, resetting to remote snapshot", rel_path);
+                            let _ = db.delete_crdt_doc(rel_path);
+                            let _ = db.save_crdt_snapshot(rel_path, decrypted_crdt.clone());
+                            if let Ok(doc) = db.get_crdt_doc(rel_path) {
+                                let text = doc.get_text("content").to_string();
+                                let _ = fs::write(&local_path, &text);
+                            }
                         }
                     }
                 }
             } else {
-                // Normal pull: save CRDT snapshot, extract text, write file
+                // Normal Markdown pull: save CRDT snapshot, extract text, write file
                 let _ = db.save_crdt_snapshot(rel_path, decrypted_crdt);
                 if let Ok(doc) = db.get_crdt_doc(rel_path) {
                     let text = doc.get_text("content").to_string();
@@ -584,21 +676,50 @@ pub async fn gdrive_sync_full(
                                 filename,
                             });
                         } else {
-                            // Markdown: apply text to CRDT, encrypt CRDT snapshot, upload .loro
+                            // Non-asset: apply text to CRDT, encrypt CRDT snapshot, upload .loro
+                            let is_json_push = rel_path.ends_with(".json") || rel_path.ends_with(".canvas");
+                            
                             if let Ok(file_str) = String::from_utf8(content.clone()) {
                                 let db_state = app_handle.state::<crate::db::DbState>();
                                 let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                                if let Ok(doc) = db.get_crdt_doc(rel_path) {
-                                    let old_vv = doc.oplog_vv();
-                                    match crate::crdt_bridge::apply_text_update(&doc, &file_str) {
-                                        Ok(delta) => {
-                                            if doc.oplog_vv() != old_vv {
-                                                if let Err(e) = db.save_crdt_delta(rel_path, delta) {
-                                                    log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                
+                                if is_json_push {
+                                    // JSON: snapshot replacement (last-write-wins)
+                                    let _ = db.delete_crdt_doc(rel_path);
+                                    let fresh_doc = loro::LoroDoc::new();
+                                    if let Ok(peer_id) = db.get_or_create_peer_id() {
+                                        fresh_doc.set_peer_id(peer_id).ok();
+                                    }
+                                    let text_h = fresh_doc.get_text("content");
+                                    if text_h.insert(0, &file_str).is_ok() {
+                                        fresh_doc.commit();
+                                        let _ = db.save_crdt_snapshot(rel_path, fresh_doc.export_snapshot());
+                                    }
+                                } else {
+                                    // Markdown: character-level CRDT diff with panic recovery
+                                    if let Ok(doc) = db.get_crdt_doc(rel_path) {
+                                        let old_vv = doc.oplog_vv();
+                                        let doc_ref = &doc;
+                                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                            crate::crdt_bridge::apply_text_update(doc_ref, &file_str)
+                                        }));
+                                        match result {
+                                            Ok(Ok(delta)) => {
+                                                if doc.oplog_vv() != old_vv {
+                                                    if let Err(e) = db.save_crdt_delta(rel_path, delta) {
+                                                        log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                                    }
                                                 }
                                             }
+                                            Ok(Err(e)) => {
+                                                log::warn!("CRDT update failed for {}: {}, resetting", rel_path, e);
+                                                crate::commands::nodes::sync_crdt_snapshot_replace(&db, rel_path, &file_str);
+                                            }
+                                            Err(_) => {
+                                                log::error!("CRDT panic for {}, resetting doc", rel_path);
+                                                crate::commands::nodes::sync_crdt_snapshot_replace(&db, rel_path, &file_str);
+                                            }
                                         }
-                                        Err(e) => log::warn!("CRDT update failed for {}: {}", rel_path, e),
                                     }
                                 }
                             }
@@ -623,7 +744,7 @@ pub async fn gdrive_sync_full(
                                     target_drive_id: crdt_drive_id,
                                     folder_id: crdt_folder_id,
                                     is_asset: false,
-                                    needs_id_update: false, // CRDT files are always in .synabit_crdt/
+                                    needs_id_update: false,
                                     local_sha256: current_hash,
                                     filename: format!("{}.loro", filename),
                                 });
@@ -677,21 +798,50 @@ pub async fn gdrive_sync_full(
                             filename,
                         });
                     } else {
-                        // Markdown: apply to CRDT, encrypt snapshot, upload .loro
+                        // Non-asset: apply to CRDT, encrypt snapshot, upload .loro
+                        let is_json_push = rel_path.ends_with(".json") || rel_path.ends_with(".canvas");
+                        
                         if let Ok(file_str) = String::from_utf8(content.clone()) {
                             let db_state = app_handle.state::<crate::db::DbState>();
                             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                            if let Ok(doc) = db.get_crdt_doc(rel_path) {
-                                let old_vv = doc.oplog_vv();
-                                match crate::crdt_bridge::apply_text_update(&doc, &file_str) {
-                                    Ok(delta) => {
-                                        if doc.oplog_vv() != old_vv {
-                                            if let Err(e) = db.save_crdt_delta(rel_path, delta) {
-                                                log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                            
+                            if is_json_push {
+                                // JSON: snapshot replacement
+                                let _ = db.delete_crdt_doc(rel_path);
+                                let fresh_doc = loro::LoroDoc::new();
+                                if let Ok(peer_id) = db.get_or_create_peer_id() {
+                                    fresh_doc.set_peer_id(peer_id).ok();
+                                }
+                                let text_h = fresh_doc.get_text("content");
+                                if text_h.insert(0, &file_str).is_ok() {
+                                    fresh_doc.commit();
+                                    let _ = db.save_crdt_snapshot(rel_path, fresh_doc.export_snapshot());
+                                }
+                            } else {
+                                // Markdown: character-level diff with panic recovery
+                                if let Ok(doc) = db.get_crdt_doc(rel_path) {
+                                    let old_vv = doc.oplog_vv();
+                                    let doc_ref = &doc;
+                                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        crate::crdt_bridge::apply_text_update(doc_ref, &file_str)
+                                    }));
+                                    match result {
+                                        Ok(Ok(delta)) => {
+                                            if doc.oplog_vv() != old_vv {
+                                                if let Err(e) = db.save_crdt_delta(rel_path, delta) {
+                                                    log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                                }
                                             }
                                         }
+                                        Ok(Err(e)) => {
+                                            log::warn!("CRDT update failed for {}: {}, resetting", rel_path, e);
+                                            crate::commands::nodes::sync_crdt_snapshot_replace(&db, rel_path, &file_str);
+                                        }
+                                        Err(_) => {
+                                            log::error!("CRDT panic for {}, resetting doc", rel_path);
+                                            crate::commands::nodes::sync_crdt_snapshot_replace(&db, rel_path, &file_str);
+                                        }
                                     }
-                                    Err(e) => log::warn!("CRDT update failed for {}: {}", rel_path, e),
                                 }
                             }
                         }

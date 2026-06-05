@@ -271,6 +271,23 @@ const loadData = async () => {
                     expenseCategories.value = configNode.value.properties.expenseCategories || [...DEFAULT_EXPENSE_CATEGORIES];
                     budgets.value = configNode.value.properties.budgets || [];
                     
+                    // Auto-migrate old flat budget format → new container format
+                    if (budgets.value.length > 0 && !budgets.value[0].items) {
+                        const oldItems = budgets.value as any[];
+                        budgets.value = [{
+                            id: 'budget-default-monthly',
+                            name: 'Monthly Budget',
+                            type: 'monthly',
+                            items: oldItems.map((item: any) => ({
+                                id: item.id || `bi-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+                                name: item.name || item.categoryId || '',
+                                categories: item.categories || (item.categoryId ? [item.categoryId] : []),
+                                amount: item.amount || 0,
+                                monthlyOverrides: item.monthlyOverrides,
+                            }))
+                        }];
+                    }
+                    
                     // Ensure system categories exist in loaded arrays
                     SYSTEM_INCOME_CATEGORIES.forEach(sysCat => {
                         if (!incomeCategories.value.includes(sysCat)) {
@@ -964,7 +981,7 @@ defineExpose({ openMonthById });
                                   </div>
                                   
                                   <div class="flex-1 min-w-0">
-                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? 'Chuyển khoản nội bộ' : tx.category }}</p>
+                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? 'Internal Transfer' : tx.category }}</p>
                                       <div class="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
                                           <span>{{ new Date(tx.date).getHours().toString().padStart(2, '0') }}:{{ new Date(tx.date).getMinutes().toString().padStart(2, '0') }}</span>
                                           <span>•</span>
@@ -985,7 +1002,7 @@ defineExpose({ openMonthById });
                                   
                                   <!-- Action Buttons overlay -->
                                   <div class="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button @click.stop="deleteTransaction(tx.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" title="Xóa giao dịch">
+                                      <button @click.stop="deleteTransaction(tx.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" title="Delete transaction">
                                           <Trash2 class="w-4 h-4" />
                                       </button>
                                   </div>
@@ -1017,9 +1034,15 @@ defineExpose({ openMonthById });
           <div v-else-if="currentView === 'budgets'" class="flex-1 overflow-hidden">
               <FinanceBudgets 
                   :budgets="budgets"
-                  :transactions="currentTransactions"
+                  :transactions="selectedMonthTransactions"
+                  :all-transactions="allTransactionsFlat"
+                  :current-month="`${selectedYear}-${selectedMonthNum.toString().padStart(2, '0')}`"
                   :expense-categories="expenseCategories"
+                  :selected-month-num="selectedMonthNum"
+                  :selected-year="selectedYear"
+                  :base-year="nowDate.getFullYear()"
                   @save-budgets="(newBudgets) => { saveConfig({ incomeCategories, expenseCategories, accounts, budgets: newBudgets }) }"
+                  @change-month="(m: number, y: number) => { selectedMonthNum = m; selectedYear = y; }"
               />
           </div>
       </div>

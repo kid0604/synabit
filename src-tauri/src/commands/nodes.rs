@@ -197,7 +197,7 @@ pub fn scan_specific_nodes(
                     if is_json_file {
                         // JSON files: use snapshot replacement (last-write-wins)
                         // Character-level CRDT merge is unsuitable for structured JSON data
-                        crdt_snapshot_replace(&db, &rel_path, &file_content);
+                        sync_crdt_snapshot_replace(&db, &rel_path, &file_content);
                     } else {
                         // Markdown files: use character-level CRDT merge with panic recovery
                         crdt_apply_safe(&db, &rel_path, &file_content);
@@ -650,7 +650,7 @@ pub fn write_node_file(
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if ext == "json" || ext == "canvas" {
             // JSON files: snapshot replacement (last-write-wins)
-            crdt_snapshot_replace(&db, &rel_path, &file_content);
+            sync_crdt_snapshot_replace(&db, &rel_path, &file_content);
         } else {
             // Markdown files: character-level CRDT merge with panic recovery
             crdt_apply_safe(&db, &rel_path, &file_content);
@@ -1306,7 +1306,8 @@ pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
 /// JSON structured data is unsuitable for character-level CRDT merge — merging
 /// individual characters of `{"amount":123}` between two devices produces garbage.
 /// Instead, we replace the entire CRDT document with a fresh snapshot each time.
-fn crdt_snapshot_replace(db: &crate::db::DbBridge, doc_id: &str, content: &str) {
+/// Public so sync module can use it as a fallback when CRDT merge panics.
+pub fn sync_crdt_snapshot_replace(db: &crate::db::DbBridge, doc_id: &str, content: &str) {
     // Delete any existing corrupt CRDT data and start fresh
     let _ = db.delete_crdt_doc(doc_id);
     
@@ -1344,17 +1345,17 @@ fn crdt_apply_safe(db: &crate::db::DbBridge, doc_id: &str, content: &str) {
                 }
                 Ok(Err(e)) => {
                     log::warn!("CRDT update error for {}: {}, falling back to snapshot replacement", doc_id, e);
-                    crdt_snapshot_replace(db, doc_id, content);
+                    sync_crdt_snapshot_replace(db, doc_id, content);
                 }
                 Err(_panic) => {
                     log::error!("CRDT panic caught for {}, resetting CRDT document to clean state", doc_id);
-                    crdt_snapshot_replace(db, doc_id, content);
+                    sync_crdt_snapshot_replace(db, doc_id, content);
                 }
             }
         }
         Err(e) => {
             log::warn!("Failed to load CRDT doc for {}: {}, creating fresh", doc_id, e);
-            crdt_snapshot_replace(db, doc_id, content);
+            sync_crdt_snapshot_replace(db, doc_id, content);
         }
     }
 }
