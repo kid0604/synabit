@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -53,6 +53,7 @@ const ALL_APPS = [
   { id: 'whiteboard', name: 'Whiteboard', icon: Palette },
   { id: 'people', name: 'People', icon: Users },
   { id: 'finance', name: 'Finance', icon: Wallet },
+  { id: 'feeds', name: 'Feeds', icon: Rss },
 ];
 
 const getAppName = (appId: string): string => {
@@ -152,6 +153,7 @@ const calendarAppRef = ref<any>(null);
 const whiteboardAppRef = ref<any>(null);
 const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
+const feedsAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
 
 const setAppRef = (el: any, name: string) => {
@@ -164,6 +166,7 @@ const setAppRef = (el: any, name: string) => {
     else if (name === 'whiteboard') whiteboardAppRef.value = el;
     else if (name === 'people') peopleAppRef.value = el;
     else if (name === 'finance') financeAppRef.value = el;
+    else if (name === 'feeds') feedsAppRef.value = el;
     else if (name === 'file') filesAppRef.value = el;
 };
 
@@ -297,6 +300,7 @@ const navigateToItem = (app: string, itemId: string, scrollTop?: number, skipNav
     else if (app === 'whiteboard') { callWhenReady(() => whiteboardAppRef.value, 'openBoardById', itemId, skipNavPush); restoreScroll(); }
     else if (app === 'people') { callWhenReady(() => peopleAppRef.value, 'openPersonById', itemId); }
     else if (app === 'finance') { callWhenReady(() => financeAppRef.value, 'openMonthById', itemId); }
+    else if (app === 'feeds') { callWhenReady(() => feedsAppRef.value, 'openFeedById', itemId); }
     else if (app === 'file') { callWhenReady(() => filesAppRef.value, 'openFileById', itemId, skipNavPush); }
 };
 
@@ -331,6 +335,10 @@ const handleEditFromNexus = async (id: string, type: string) => {
         activeTool.value = 'finance';
         callWhenReady(() => financeAppRef.value, 'openMonthById', id);
     }
+    else if (type === 'feed_source') {
+        activeTool.value = 'feeds';
+        callWhenReady(() => feedsAppRef.value, 'openFeedById', id);
+    }
     else if (type === 'project') {
         activeTool.value = 'task';
         callWhenReady(() => taskAppRef.value, 'openProjectById', id);
@@ -345,6 +353,7 @@ import { logger } from './utils/logger';
 
 // ─── Notifications & Initial Scan ─────────────────────────
 const unreadNotificationCount = ref(0);
+const feedsUnreadCount = ref(0);
 
 const checkUnreadNotifications = async () => {
     if (!vaultPath.value) return;
@@ -353,6 +362,15 @@ const checkUnreadNotifications = async () => {
         unreadNotificationCount.value = msgs.filter(m => m.read_receipt === false).length;
     } catch(e) {
         logger.error('Failed to check unread messages', e);
+    }
+};
+
+const updateFeedsUnreadCount = async () => {
+    if (!vaultPath.value) return;
+    try {
+        feedsUnreadCount.value = await invoke<number>('feed_get_total_unread', { vaultPath: vaultPath.value });
+    } catch(e) {
+        logger.error('Failed to check feeds unread count', e);
     }
 };
 
@@ -417,12 +435,15 @@ onMounted(async () => {
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
      invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
          await checkUnreadNotifications();
+         await updateFeedsUnreadCount();
      }).catch(logger.error);
      
      // Trigger GC for FTS5 on startup
      invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
      invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
      
+     // Feeds unread count polling (every 60s)
+     const feedsUnreadInterval = setInterval(() => updateFeedsUnreadCount(), 60 * 1000);
      
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
@@ -478,6 +499,12 @@ onMounted(async () => {
       }
   });
 
+  // ─── Feeds Unread Badge via Event Bus ──────────────────
+  bus.on('feed:refreshed', () => updateFeedsUnreadCount());
+  bus.on('node:updated', ({ nodeType }: any) => {
+      if (nodeType === 'feed_article') updateFeedsUnreadCount();
+  });
+
   // ─── Cross-App Navigation via Event Bus ──────────────────
   bus.on('navigate:to-item', ({ app, itemId }) => {
       activeTool.value = app;
@@ -519,6 +546,7 @@ onUnmounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   window.removeEventListener('keydown', handleKeyboardNav);
   destroyEventBus();
+  // Note: feedsUnreadInterval is scoped inside onMounted, cleaned up via component lifecycle
 });
 </script>
 
@@ -614,6 +642,12 @@ onUnmounted(() => {
                 <button v-if="!hiddenSidebarApps.includes('finance')" @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Wallet class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Finance</span>
+                </button>
+
+                <button v-if="!hiddenSidebarApps.includes('feeds')" @click="activeTool = 'feeds'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'feeds' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Rss class="w-5 h-5" />
+                   <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Feeds</span>
                 </button>
                 
                 <div v-if="hiddenSidebarApps.length > 0" class="relative flex justify-center w-full">

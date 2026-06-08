@@ -153,7 +153,7 @@ const save = () => {
                 <div class="flex flex-col gap-4">
                     <!-- Person -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Person</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.person') }}</label>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                                 <Users class="w-5 h-5" />
@@ -162,7 +162,7 @@ const save = () => {
                                 v-model="person" 
                                 type="text" 
                                 list="debt-people-list"
-                                placeholder="Enter person's name..."
+                                :placeholder="$t('finance.person_ph')"
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600"
                             />
                             <datalist id="debt-people-list" v-if="people">
@@ -173,7 +173,7 @@ const save = () => {
 
                     <!-- Amount -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Amount</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.amount') }}</label>
                         <div class="relative">
                             <input 
                                 :value="new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0) === '0' ? '' : new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0)"
@@ -196,7 +196,7 @@ const save = () => {
                                 v-model="accountId" 
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium appearance-none cursor-pointer"
                             >
-                                <option value="" disabled>Select account...</option>
+                                <option value="" disabled>{{ $t('finance.select_account') }}</option>
                                 <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                             </select>
                         </div>
@@ -205,7 +205,7 @@ const save = () => {
                     <!-- Dates -->
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Date</label>
+                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.date') }}</label>
                             <div class="relative">
                                 <input 
                                     v-model="startDate" 
@@ -215,7 +215,7 @@ const save = () => {
                             </div>
                         </div>
                         <div>
-                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Due Date (Optional)</label>
+                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.due_date_opt') }}</label>
                             <div class="relative">
                                 <input 
                                     v-model="dueDate" 
@@ -228,14 +228,14 @@ const save = () => {
 
                     <!-- Note -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Note (Optional)</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.note_opt') }}</label>
                         <div class="relative">
                             <div class="absolute top-3.5 left-3.5 pointer-events-none text-gray-400">
                                 <FileText class="w-5 h-5" />
                             </div>
                             <textarea 
                                 v-model="note" 
-                                placeholder="Reason for debt..."
+                                :placeholder="$t('finance.reason_ph')"
                                 rows="2"
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600 resize-none"
                             ></textarea>

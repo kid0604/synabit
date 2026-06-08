@@ -1263,11 +1263,11 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
             v-if="sidebarTab === 'boards'"
             @click="store.createBoard()"
             class="wb-icon-btn"
-            title="New Board"
+            :title="$t('whiteboard.new_board')"
           >
             <Plus class="w-4 h-4" />
           </button>
-          <button @click="sidebarOpen = false" class="wb-icon-btn" title="Close Sidebar">
+          <button @click="sidebarOpen = false" class="wb-icon-btn" :title="$t('whiteboard.close_sidebar')">
             <PanelLeftClose class="w-4 h-4" />
           </button>
         </div>
@@ -1316,7 +1316,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
             <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted dark:text-muted-dark" />
             <input
               v-model="noteSearch"
-              placeholder="Search notes…"
+              :placeholder="$t('whiteboard.search_notes')"
               class="w-full pl-8 pr-3 py-1.5 text-xs bg-surface-hover/50 dark:bg-surface-hover-dark/50 border border-border dark:border-border-dark rounded-md outline-none focus:ring-1 focus:ring-accent/40 text-text dark:text-text-dark placeholder:text-muted dark:placeholder:text-muted-dark transition-all"
             />
           </div>
@@ -1380,7 +1380,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
       v-if="!sidebarOpen"
       @click="sidebarOpen = true"
       class="absolute top-3 left-1 z-50 wb-icon-btn bg-surface dark:bg-surface-dark border border-border dark:border-border-dark shadow-md"
-      title="Open Sidebar"
+      :title="$t('whiteboard.open_sidebar')"
     >
       <PanelLeft class="w-4 h-4" />
     </button>
@@ -1413,7 +1413,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
             </h1>
           </div>
           <div class="flex items-center gap-1">
-            <span v-if="store.isSaving.value" class="text-[10px] text-muted dark:text-muted-dark font-medium px-2">Saving…</span>
+            <span v-if="store.isSaving.value" class="text-[10px] text-muted dark:text-muted-dark font-medium px-2">{{ $t('whiteboard.saving') }}</span>
           </div>
         </div>
 
@@ -1438,11 +1438,11 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
               @keydown.escape="isAddingTag = false; newTagInput = ''"
               @blur="addBoardTag"
               type="text"
-              placeholder="tag…"
+              :placeholder="$t('whiteboard.tag_ph')"
               class="wb-tag-input"
               autofocus
             />
-            <button v-else @click="isAddingTag = true" class="wb-tag-add" title="Add Tag">
+            <button v-else @click="isAddingTag = true" class="wb-tag-add" :title="$t('whiteboard.add_tag')">
               <Plus class="w-3 h-3" />
             </button>
           </div>
@@ -1646,7 +1646,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
       <div v-else class="flex-1 flex items-center justify-center h-full">
         <div class="text-center text-muted dark:text-muted-dark">
           <PenTool class="w-12 h-12 mx-auto mb-3 opacity-20" />
-          <p class="text-sm mb-3">Select or create a whiteboard to start</p>
+          <p class="text-sm mb-3">{{ $t('whiteboard.select_to_start') }}</p>
           <button
             @click="store.createBoard()"
             class="px-4 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer"

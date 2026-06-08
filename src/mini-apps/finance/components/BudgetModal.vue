@@ -140,13 +140,13 @@ const save = () => {
         <template v-else>
             <!-- Name -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Item Name</label>
-                <input type="text" v-model="name" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. Food & Dining" />
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.item_name') }}</label>
+                <input type="text" v-model="name" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.food_dining_ph')" />
             </div>
 
             <!-- Categories -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Categories</label>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.categories') }}</label>
                 <div class="max-h-40 overflow-y-auto hidden-scrollbar bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl p-3 flex flex-wrap gap-2">
                     <label v-for="cat in expenseCategories" :key="cat" class="flex items-center px-3 py-1.5 rounded-lg border transition-all cursor-pointer select-none text-sm"
                         :class="[
@@ -164,7 +164,7 @@ const save = () => {
 
             <!-- Amount -->
             <div class="space-y-1.5">
-                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Budget Limit</label>
+                <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.budget_limit') }}</label>
                 <div class="relative">
                     <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-12" placeholder="0" />
                     <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium pointer-events-none">{{ currencySymbol }}</span>

@@ -27,6 +27,7 @@ export interface TauriEventMap {
   'chat:new-message': void;
   'note:updated-external': { id: string; content: string };
   'e2ee:setup-required': void;
+  'feed:refresh-completed': { sourceId?: string };
 }
 
 /** Frontend-only cross-app events */
@@ -45,6 +46,10 @@ export interface AppEventMap {
 
   // Finance
   'transaction:created': { id: string; type: string; amount: number; category: string };
+
+  // Feeds
+  'feed:refreshed': { sourceId?: string };
+  'feed:article-read': { articleId: string };
 
   // Navigation request (cross-app)
   'navigate:to-item': { app: string; itemId: string };
@@ -102,6 +107,7 @@ const TAURI_BRIDGE_MAP: Record<string, EventName> = {
   'new-chat-message': 'chat:new-message',
   'note-updated': 'note:updated-external',
   'e2ee-setup-required': 'e2ee:setup-required',
+  'feed-refresh-completed': 'feed:refresh-completed',
 };
 
 // ─── Public API ──────────────────────────────────────────────

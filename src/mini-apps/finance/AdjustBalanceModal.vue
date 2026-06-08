@@ -75,18 +75,18 @@ const save = () => {
           </div>
 
           <div>
-              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Actual Wallet Balance</label>
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.actual_wallet_balance') }}</label>
               <div class="relative">
                   <input type="text" inputmode="numeric" :value="actualBalanceStr" @input="handleInput" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
               </div>
           </div>
 
           <div v-if="difference !== 0" class="p-3 rounded-xl text-sm" :class="difference > 0 ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'">
-              System balance is off. 
-              <span class="font-bold">{{ difference > 0 ? '+' : '-' }}{{ formatCurrency(Math.abs(difference)) }}</span> will be recorded for this month.
+              {{ $t('finance.system_balance_off') }} 
+              <span class="font-bold">{{ difference > 0 ? '+' : '-' }}{{ formatCurrency(Math.abs(difference)) }}</span> {{ $t('finance.recorded_for_month') }}
           </div>
           <div v-else class="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 text-gray-500 text-sm text-center">
-              Balance perfectly matched!
+              {{ $t('finance.balance_perfect') }}
           </div>
       </div>
 

@@ -592,13 +592,13 @@ defineExpose({ openPersonById });
                 <div class="flex items-center gap-2 font-semibold">
                     <NavButtons />
                     <Users class="w-4 h-4 text-text-secondary dark:text-text-secondary-dark" />
-                    <span>People</span>
+                    <span>{{ $t('people.people') }}</span>
                 </div>
                 <div class="flex items-center gap-1">
                     <button @click="openNewModal" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-blue-500" title="Add contact">
                         <Plus class="w-5 h-5" />
                     </button>
-                    <button @click="syncBirthdaysToCalendar" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-pink-500" title="Sync birthdays to Calendar">
+                    <button @click="syncBirthdaysToCalendar" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-pink-500" title="{{ $t('people.sync_birthdays') }}">
                         <CalendarPlus class="w-4 h-4" />
                     </button>
                 </div>
@@ -619,7 +619,7 @@ defineExpose({ openPersonById });
                             <AlertCircle class="w-3 h-3 text-orange-500" />
                             <span class="text-orange-500 font-medium">{{ needsAttentionCount }}</span>
                         </div>
-                        <button @click="selectedPerson = null" class="text-[10px] text-blue-500 hover:text-blue-600 font-medium px-1.5 py-1">Show all</button>
+                        <button @click="selectedPerson = null" class="text-[10px] text-blue-500 hover:text-blue-600 font-medium px-1.5 py-1">{{ $t('people.show_all') }}</button>
                     </div>
                 </div>
             </div>
@@ -632,7 +632,7 @@ defineExpose({ openPersonById });
                 <div v-if="loading" class="flex justify-center p-4">
                     <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                 </div>
-                <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500">No contacts found.</div>
+                <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500">{{ $t('people.no_contacts') }}</div>
                 <div v-else class="space-y-1">
                     <button
                         v-for="person in sidebarPeople" :key="person.id"

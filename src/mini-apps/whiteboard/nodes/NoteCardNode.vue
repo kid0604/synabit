@@ -134,7 +134,7 @@ const handleOpenNote = (e: MouseEvent) => {
         <FileText class="w-3.5 h-3.5 text-violet-500 mr-2 flex-shrink-0" />
         <span class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 truncate flex-1">{{ title }}</span>
         
-        <button @click="handleOpenNote" class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-400 flex-shrink-0 transition-colors" title="Open Note">
+        <button @click="handleOpenNote" class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-400 flex-shrink-0 transition-colors" :title="$t('whiteboard.open_note')">
           <ExternalLink class="w-3 h-3" />
         </button>
       </div>

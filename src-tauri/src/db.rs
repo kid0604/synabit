@@ -268,7 +268,83 @@ impl DbBridge {
             }
         }
 
+        // ─── Feed Articles Cache ───────────────────────────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS feed_articles (
+                id TEXT PRIMARY KEY,
+                feed_source_id TEXT NOT NULL,
+                guid TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                url TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL DEFAULT '',
+                fetched_at TEXT NOT NULL DEFAULT '',
+                thumbnail_url TEXT NOT NULL DEFAULT '',
+                word_count INTEGER NOT NULL DEFAULT 0,
+                read_time_minutes INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'text/html',
+                is_read INTEGER NOT NULL DEFAULT 0,
+                is_starred INTEGER NOT NULL DEFAULT 0,
+                is_read_later INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(feed_source_id, guid)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (feed_articles): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_fa_source ON feed_articles(feed_source_id);
+             CREATE INDEX IF NOT EXISTS idx_fa_unread ON feed_articles(is_read);
+             CREATE INDEX IF NOT EXISTS idx_fa_starred ON feed_articles(is_starred);
+             CREATE INDEX IF NOT EXISTS idx_fa_read_later ON feed_articles(is_read_later);
+             CREATE INDEX IF NOT EXISTS idx_fa_published ON feed_articles(published_at);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (feed_articles): {}", e)))?;
+
+        // ─── Feed Articles FTS5 ───────────────────────────────
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS feed_articles_fts USING fts5(
+                title,
+                author,
+                content,
+                summary,
+                content='feed_articles',
+                content_rowid='rowid',
+                tokenize = 'unicode61 remove_diacritics 0'
+            );",
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (feed_articles_fts): {}", e)))?;
+
+        // ─── Feed Fetch Log ───────────────────────────────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS feed_fetch_log (
+                id TEXT PRIMARY KEY,
+                feed_source_id TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                articles_found INTEGER NOT NULL DEFAULT 0,
+                articles_new INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (feed_fetch_log): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_ffl_source ON feed_fetch_log(feed_source_id);
+             CREATE INDEX IF NOT EXISTS idx_ffl_fetched ON feed_fetch_log(fetched_at);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (feed_fetch_log): {}", e)))?;
+
         Ok(Self { conn })
+    }
+
+    /// Provide crate-internal access to the underlying SQLite connection.
+    /// Used by feed_engine and feed commands for direct SQL operations.
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
     }
 
     // ═══════════════════════════════════════════════════════════

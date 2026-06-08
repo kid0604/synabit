@@ -122,8 +122,8 @@ const toggleStatus = (debt: Debt) => {
                         <ArrowUpRight class="w-6 h-6" />
                     </div>
                     <div>
-                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Total Lent</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">Money others owe you</p>
+                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">{{ $t('finance.total_lent') }}</h3>
+                        <p class="text-xs text-gray-400 mt-0.5">{{ $t('finance.money_owed') }}</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalLend) }}</p>
@@ -139,8 +139,8 @@ const toggleStatus = (debt: Debt) => {
                         <ArrowDownLeft class="w-6 h-6" />
                     </div>
                     <div>
-                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">Total Borrowed</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">Money you owe others</p>
+                        <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">{{ $t('finance.total_borrowed') }}</h3>
+                        <p class="text-xs text-gray-400 mt-0.5">{{ $t('finance.money_owe') }}</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalBorrow) }}</p>

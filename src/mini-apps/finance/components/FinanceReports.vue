@@ -260,12 +260,12 @@ const pieChartTotal = computed(() => {
             <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-blue-500 group pl-3 relative">
                 <Calendar class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors shrink-0" />
                 <select v-model="timeRange" class="bg-transparent border-none py-1.5 pl-2 pr-8 text-sm font-medium focus:ring-0 cursor-pointer outline-none text-text dark:text-text-dark">
-                    <option value="this_month">This month</option>
-                    <option value="last_3">Last 3 months</option>
-                    <option value="last_6">Last 6 months</option>
-                    <option value="this_year">This year</option>
-                    <option value="all">All time</option>
-                    <option value="custom">Custom...</option>
+                    <option value="this_month">{{ $t('finance.this_month') }}</option>
+                    <option value="last_3">{{ $t('finance.last_3_months') }}</option>
+                    <option value="last_6">{{ $t('finance.last_6_months') }}</option>
+                    <option value="this_year">{{ $t('finance.this_year') }}</option>
+                    <option value="all">{{ $t('finance.all_time') }}</option>
+                    <option value="custom">{{ $t('finance.custom') }}</option>
                 </select>
             </div>
             
@@ -279,7 +279,7 @@ const pieChartTotal = computed(() => {
             <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-blue-500 group pl-3 relative">
                 <Wallet class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors shrink-0" />
                 <select v-model="selectedAccount" class="bg-transparent border-none py-1.5 pl-2 pr-8 text-sm font-medium focus:ring-0 cursor-pointer outline-none text-text dark:text-text-dark max-w-[200px] truncate">
-                    <option value="all">All accounts</option>
+                    <option value="all">{{ $t('finance.all_accounts') }}</option>
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                 </select>
             </div>
@@ -287,7 +287,7 @@ const pieChartTotal = computed(() => {
             <!-- Exclude Debts Toggle -->
             <label class="flex items-center gap-2 cursor-pointer group ml-2">
                 <input type="checkbox" v-model="excludeDebts" class="w-4 h-4 text-blue-500 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600 cursor-pointer" />
-                <span class="text-sm font-medium text-gray-600 dark:text-gray-300 group-hover:text-text dark:group-hover:text-text-dark transition-colors">Exclude Debts</span>
+                <span class="text-sm font-medium text-gray-600 dark:text-gray-300 group-hover:text-text dark:group-hover:text-text-dark transition-colors">{{ $t('finance.exclude_debts') }}</span>
             </label>
         </div>
         
@@ -295,8 +295,8 @@ const pieChartTotal = computed(() => {
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden relative shrink-0">
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center">
                 <div>
-                    <h3 class="font-bold text-lg text-text dark:text-text-dark">Cash Flow</h3>
-                    <p class="text-sm text-gray-500 mt-1">Compare Income and Expense over time</p>
+                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.cash_flow') }}</h3>
+                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.cash_flow_desc') }}</p>
                 </div>
                 <!-- Legend -->
                 <div class="flex gap-4">
@@ -360,8 +360,8 @@ const pieChartTotal = computed(() => {
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden relative shrink-0">
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/10">
                 <div>
-                    <h3 class="font-bold text-lg text-text dark:text-text-dark">Net Worth Trend</h3>
-                    <p class="text-sm text-gray-500 mt-1">Cumulative net worth trend</p>
+                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.net_worth_trend') }}</h3>
+                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.net_worth_desc') }}</p>
                 </div>
                 <div class="text-right">
                     <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(globalNetWorth) }}</p>
@@ -445,18 +445,18 @@ const pieChartTotal = computed(() => {
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
                 <div>
                     <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ pieChartType === 'expense' ? 'Expense' : 'Income' }} Breakdown</h3>
-                    <p class="text-sm text-gray-500 mt-1">Category distribution for selected period</p>
+                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.cat_dist_desc') }}</p>
                 </div>
                 
                 <!-- Pie Chart Toggle -->
                 <div class="flex bg-gray-200 dark:bg-gray-700 rounded-lg p-1">
-                    <button @click="pieChartType = 'expense'" :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-colors', pieChartType === 'expense' ? 'bg-white dark:bg-gray-600 text-text dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">Expense</button>
-                    <button @click="pieChartType = 'income'" :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-colors', pieChartType === 'income' ? 'bg-white dark:bg-gray-600 text-text dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">Income</button>
+                    <button @click="pieChartType = 'expense'" :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-colors', pieChartType === 'expense' ? 'bg-white dark:bg-gray-600 text-text dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">{{ $t('finance.expense') }}</button>
+                    <button @click="pieChartType = 'income'" :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-colors', pieChartType === 'income' ? 'bg-white dark:bg-gray-600 text-text dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">{{ $t('finance.income') }}</button>
                 </div>
             </div>
             <div class="p-6 flex items-center justify-center">
                 <div v-if="pieChartTotal > 0" class="w-full h-[300px]">
-                    <FinanceChart :data="pieChartData" :total="pieChartTotal" :title="pieChartType === 'expense' ? 'Total Expense' : 'Total Income'" />
+                    <FinanceChart :data="pieChartData" :total="pieChartTotal" :title="pieChartType === 'expense' ? $t('finance.total_expense') : $t('finance.total_income')" />
                 </div>
                 <div v-else class="h-[300px] flex items-center justify-center text-gray-400">No data in this period</div>
             </div>

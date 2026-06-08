@@ -75,13 +75,13 @@ const formatDate = (d: string) => {
             </div>
             <div class="flex items-center gap-3">
             <div class="flex items-center gap-1 bg-gray-100 dark:bg-[#333] rounded-lg p-0.5">
-                <button @click="viewMode = 'table'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'table' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" title="Table">
+                <button @click="viewMode = 'table'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'table' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" :title="$t('people.table_view')">
                     <Table class="w-3.5 h-3.5" />
                 </button>
-                <button @click="viewMode = 'list'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'list' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" title="List">
+                <button @click="viewMode = 'list'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'list' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" :title="$t('people.list_view')">
                     <List class="w-3.5 h-3.5" />
                 </button>
-                <button @click="viewMode = 'card'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'card' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" title="Cards">
+                <button @click="viewMode = 'card'" :class="['p-1.5 rounded-md transition-colors', viewMode === 'card' ? 'bg-white dark:bg-[#555] shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600']" :title="$t('people.cards_view')">
                     <LayoutGrid class="w-3.5 h-3.5" />
                 </button>
             </div>
@@ -93,7 +93,7 @@ const formatDate = (d: string) => {
             <!-- Search -->
             <div class="relative w-full mb-8">
                 <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b]" />
-                <input v-model="searchQuery" type="text" placeholder="Search people..." class="w-full pl-12 pr-12 py-3 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl text-base text-text dark:text-text-dark shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
+                <input v-model="searchQuery" type="text" :placeholder="$t('people.search_people')" class="w-full pl-12 pr-12 py-3 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl text-base text-text dark:text-text-dark shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
                 <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors">
                     <X class="w-4 h-4" />
                 </button>
@@ -106,11 +106,11 @@ const formatDate = (d: string) => {
                         <thead>
                             <tr class="bg-gray-50 dark:bg-[#1a1a1a] border-b border-[#e6e6e6] dark:border-[#333]">
                                 <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-8"></th>
-                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">Name</th>
-                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">Info</th>
-                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">Tags</th>
-                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase text-right whitespace-nowrap">Added</th>
-                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-16 text-center">Action</th>
+                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('people.name') }}</th>
+                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('people.info') }}</th>
+                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('people.tags') }}</th>
+                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase text-right whitespace-nowrap">{{ $t('people.added') }}</th>
+                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-16 text-center">{{ $t('people.action') }}</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
@@ -133,7 +133,7 @@ const formatDate = (d: string) => {
                                         <span v-for="tag in person.properties.tags.slice(0, 3)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ tag }}</span>
                                         <span v-if="person.properties.tags.length > 3" class="text-[10px] px-1.5 py-0.5 text-gray-400">+{{ person.properties.tags.length - 3 }}</span>
                                     </div>
-                                    <span v-else class="text-xs text-gray-400 italic">No tags</span>
+                                    <span v-else class="text-xs text-gray-400 italic">{{ $t('people.no_tags') }}</span>
                                 </td>
                                 <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ formatDate(person.created_at) }}</td>
                                 <td class="py-3 px-4 w-16 text-center" @click.stop>
@@ -188,7 +188,7 @@ const formatDate = (d: string) => {
                         </button>
                     </div>
                 </div>
-                <div v-if="filtered.length === 0" class="py-12 text-center text-gray-500">No people found.</div>
+                <div v-if="filtered.length === 0" class="py-12 text-center text-gray-500">{{ $t('people.no_people') }}</div>
             </div>
 
             <!-- CARD VIEW -->
@@ -226,16 +226,16 @@ const formatDate = (d: string) => {
                         <span v-if="person.properties.tags.length > 3" class="text-[9px] px-1.5 py-0.5 text-gray-400">+{{ person.properties.tags.length - 3 }}</span>
                     </div>
                 </button>
-                <div v-if="filtered.length === 0" class="col-span-full py-12 text-center text-gray-500">No people found.</div>
+                <div v-if="filtered.length === 0" class="col-span-full py-12 text-center text-gray-500">{{ $t('people.no_people') }}</div>
             </div>
 
             <!-- Pagination -->
             <div v-if="totalPages > 1" class="mt-6 flex items-center justify-between text-[13px] text-gray-500">
                 <div>Showing {{ (currentPage - 1) * itemsPerPage + 1 }} to {{ Math.min(currentPage * itemsPerPage, filtered.length) }} of {{ filtered.length }}</div>
                 <div class="flex items-center gap-2">
-                    <button @click="currentPage--" :disabled="currentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">Previous</button>
+                    <button @click="currentPage--" :disabled="currentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">{{ $t('people.previous') }}</button>
                     <span class="font-medium px-2">Page {{ currentPage }} of {{ totalPages }}</span>
-                    <button @click="currentPage++" :disabled="currentPage === totalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">Next</button>
+                    <button @click="currentPage++" :disabled="currentPage === totalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">{{ $t('people.next') }}</button>
                 </div>
             </div>
         </div>

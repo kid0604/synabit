@@ -4,6 +4,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { useAppLockStore } from '../stores/useAppLockStore';
 import { useEventBus } from './useEventBus';
 import { invoke } from '@tauri-apps/api/core';
+import { i18n } from '../i18n';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
@@ -15,7 +16,7 @@ let isInitialized = false;
 export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
-  const { themeMode, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
+  const { themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
 
   const isValidDailyFormat = computed(() => {
     const val = dailyNoteFormat.value.toUpperCase();
@@ -49,9 +50,17 @@ export function useSettings() {
     
     isInitialized = true;
 
+    // Sync initial language
+    i18n.global.locale.value = appLanguage.value as any;
+
     // Watch for theme changes to apply class
     watch(themeMode, () => {
       applyTheme();
+    });
+
+    // Watch for language changes to update i18n
+    watch(appLanguage, (newLang) => {
+      i18n.global.locale.value = newLang as any;
     });
   }
 
@@ -77,6 +86,7 @@ export function useSettings() {
     showSettingsModal,
     settingsTab,
     themeMode,
+    appLanguage,
     applyTheme,
     taskArchiveDays,
     enableDailyNotes,

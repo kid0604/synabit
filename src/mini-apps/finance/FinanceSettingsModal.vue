@@ -164,7 +164,7 @@ const save = () => {
         <div>
             <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Income Categories</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Income Category..." />
+                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_income_cat')" />
                 <button @click="addIncomeCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
                     <Plus class="w-5 h-5" />
                 </button>
@@ -189,7 +189,7 @@ const save = () => {
         <div>
             <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">Expense Categories</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Expense Category..." />
+                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_expense_cat')" />
                 <button @click="addExpenseCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
                     <Plus class="w-5 h-5" />
                 </button>
@@ -215,10 +215,10 @@ const save = () => {
             <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">Accounts & Balances</h4>
             
             <div class="flex flex-col gap-2 mb-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
-                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="New Account Name" />
+                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_acc_name')" />
                 <div class="flex gap-2">
                     <div class="relative flex-1">
-                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" placeholder="Initial Balance" />
+                        <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.initial_balance')" />
                     </div>
                     <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50">
                         Add

@@ -123,7 +123,7 @@ onMounted(() => {
             <div class="px-5 pt-4 pb-2 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
                 <div class="relative">
                     <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input v-model="searchQuery" type="text" placeholder="Search contacts..."
+                    <input v-model="searchQuery" type="text" :placeholder="$t('people.search_contacts_ph')"
                         class="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                 </div>
             </div>
@@ -162,7 +162,7 @@ onMounted(() => {
 
             <!-- Relation Type Selector (Bottom) -->
             <div class="px-5 pt-3 pb-4 border-t border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50/30 dark:bg-gray-800/20">
-                <label class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 block">Relationship</label>
+                <label class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 block">{{ $t('people.relationship') }}</label>
                 <div class="flex flex-wrap gap-1.5">
                     <button v-for="rel in RELATION_TYPES" :key="rel.value"
                         @click="selectedRelation = rel.value"
@@ -181,7 +181,7 @@ onMounted(() => {
                 </div>
                 
                 <div v-if="selectedRelation === 'custom'" class="mt-3">
-                    <input v-model="customRelation" type="text" placeholder="E.g. Boss, Doctor, Ex-colleague..."
+                    <input v-model="customRelation" type="text" :placeholder="$t('people.custom_rel_ph')"
                         class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:ring-2 focus:ring-gray-500 outline-none transition-all" />
                 </div>
             </div>

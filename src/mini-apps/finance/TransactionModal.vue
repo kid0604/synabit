@@ -296,7 +296,7 @@ const closePersonDropdown = () => {
 
         <!-- Amount -->
         <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">*Must be > 0</span></label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.must_be_gt_0') }}</span></label>
             <div class="flex gap-2">
                 <div :class="['relative rounded-xl transition-all flex-1', showErrors && calculatedBaseAmount <= 0 ? 'ring-2 ring-red-500' : '']">
                     <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-4" placeholder="0" />
@@ -313,7 +313,7 @@ const closePersonDropdown = () => {
                     <span v-if="isFetchingRate" class="text-xs text-blue-500 animate-pulse flex items-center gap-1"><RefreshCw class="w-3 h-3 animate-spin" /> Fetching...</span>
                 </div>
                 <div class="flex gap-2 items-center">
-                    <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Custom rate..." :disabled="isFetchingRate" />
+                    <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.custom_rate')" :disabled="isFetchingRate" />
                     <span class="text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
                         ≈ {{ new Intl.NumberFormat(currentCurrency === 'VND' ? 'vi-VN' : 'en-US', { style: 'currency', currency: currentCurrency }).format(calculatedBaseAmount) }}
                     </span>
@@ -324,7 +324,7 @@ const closePersonDropdown = () => {
         <div class="grid grid-cols-2 gap-4">
             <!-- Category (Hidden for Transfer) -->
             <div v-if="type !== 'transfer'">
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Category</label>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.category') }}</label>
                 <div class="flex items-center gap-2">
                     <template v-if="!isAddingCategory">
                         <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
@@ -335,7 +335,7 @@ const closePersonDropdown = () => {
                         </button>
                     </template>
                     <template v-else>
-                        <input type="text" v-model="newCategoryName" @keyup.enter="saveNewCategory" class="w-full bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type new category..." autofocus />
+                        <input type="text" v-model="newCategoryName" @keyup.enter="saveNewCategory" class="w-full bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.type_new_category')" autofocus />
                         <button @click="saveNewCategory" class="p-2.5 text-white bg-blue-500 hover:bg-blue-600 rounded-xl transition-colors shrink-0" title="Save category">
                             <Check class="w-4 h-4" />
                         </button>
@@ -348,7 +348,7 @@ const closePersonDropdown = () => {
             
             <!-- From Account -->
             <div>
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ type === 'transfer' ? 'From Account' : 'Account' }} <span v-if="showErrors && !accountId" class="text-red-500 normal-case font-normal ml-1">*Required</span></label>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ type === 'transfer' ? 'From Account' : 'Account' }} <span v-if="showErrors && !accountId" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.required') }}</span></label>
                 <select v-model="accountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none', showErrors && !accountId ? 'border-red-500' : 'border-border dark:border-border-dark']">
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                 </select>
@@ -356,7 +356,7 @@ const closePersonDropdown = () => {
             
             <!-- To Account (Only for Transfer) -->
             <div v-if="type === 'transfer'">
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">To Account <span v-if="showErrors && (!toAccountId || accountId === toAccountId)" class="text-red-500 normal-case font-normal ml-1">*Invalid</span></label>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">To Account <span v-if="showErrors && (!toAccountId || accountId === toAccountId)" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.invalid') }}</span></label>
                 <select v-model="toAccountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none', showErrors && (!toAccountId || accountId === toAccountId) ? 'border-red-500' : 'border-border dark:border-border-dark']">
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                 </select>
@@ -365,28 +365,28 @@ const closePersonDropdown = () => {
 
         <!-- Date -->
         <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Date</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.date') }}</label>
             <input type="datetime-local" v-model="date" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
 
         <!-- Note -->
         <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Note</label>
-            <input type="text" v-model="note" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Transaction details..." />
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.note') }}</label>
+            <input type="text" v-model="note" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.tx_details_ph')" />
         </div>
         
         <!-- Project Link (Only for Expense) -->
         <div v-if="type === 'expense' && projects && projects.length > 0">
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Link to Project</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.link_project') }}</label>
             <select v-model="projectId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                <option value="">No project</option>
+                <option value="">{{ $t('finance.no_project') }}</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.title }}</option>
             </select>
         </div>
 
         <!-- Person Link (Only for Debt categories) -->
         <div v-if="people && people.length > 0 && isDebtCategory">
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Link to Person</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.link_person') }}</label>
             <div class="relative">
                 <input 
                     type="text" 

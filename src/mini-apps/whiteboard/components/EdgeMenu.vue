@@ -131,7 +131,7 @@ function handleDelete() { emit('delete', props.edgeId); }
         <button @click="handleDelete" class="ep-icon-btn ep-delete-btn" title="Delete">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="ep-icon-btn" title="Close">
+        <button @click="$emit('close')" class="ep-icon-btn" :title="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -253,7 +253,7 @@ function handleDelete() { emit('delete', props.edgeId); }
           @input="updateLabel"
           @keydown.enter="($event.target as HTMLInputElement).blur()"
           class="ep-input"
-          placeholder="Type here…"
+          :placeholder="$t('whiteboard.type_here')"
         />
       </div>
     </div>

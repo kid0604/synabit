@@ -303,7 +303,7 @@ const handleLinkedClick = (item: any) => {
             </div>
             <div class="text-right flex-shrink-0">
                 <p class="text-lg font-bold" :class="health.color">{{ health.interactionCount }}</p>
-                <p class="text-[10px] text-gray-400 uppercase">interactions</p>
+                <p class="text-[10px] text-gray-400 uppercase">{{ $t('people.interactions_lower') }}</p>
             </div>
         </div>
 
@@ -326,7 +326,7 @@ const handleLinkedClick = (item: any) => {
                 </button>
             </div>
             <input v-model="newInteraction.date" type="date" class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-            <textarea v-model="newInteraction.note" placeholder="What happened?" rows="2"
+            <textarea v-model="newInteraction.note" :placeholder="$t('people.what_happened_ph')" rows="2"
                 class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                 @keydown.meta.enter="saveInteraction"></textarea>
             <div class="flex items-center gap-2">
@@ -337,8 +337,8 @@ const handleLinkedClick = (item: any) => {
                 </button>
             </div>
             <div class="flex justify-end gap-2">
-                <button @click="resetForm" class="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">Cancel</button>
-                <button @click="saveInteraction" :disabled="!newInteraction.note.trim()" class="px-4 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 font-medium">Save</button>
+                <button @click="resetForm" class="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
+                <button @click="saveInteraction" :disabled="!newInteraction.note.trim()" class="px-4 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 font-medium">{{ $t('people.save') }}</button>
             </div>
         </div>
 

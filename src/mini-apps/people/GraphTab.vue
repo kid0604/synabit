@@ -484,7 +484,7 @@ onUnmounted(() => {
                 <div class="w-16 h-16 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/20 dark:to-blue-900/20 flex items-center justify-center mb-4">
                     <Share2 class="w-7 h-7 text-purple-400 dark:text-purple-500" />
                 </div>
-                <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">No connections yet</h3>
+                <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ $t('people.no_connections') }}</h3>
                 <p class="text-xs text-gray-400 dark:text-gray-500 text-center max-w-[200px]">
                     Use the <strong>Link Person</strong> button above to connect contacts and build your relationship map.
                 </p>

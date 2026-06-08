@@ -144,7 +144,7 @@ const hasOverviewContent = computed(() => {
                     </svg>
                     <div class="absolute inset-0 flex flex-col items-center justify-center">
                         <span class="text-lg font-bold" :class="health.color">{{ health.percent }}</span>
-                        <span class="text-[8px] text-gray-400 uppercase tracking-wider">score</span>
+                        <span class="text-[8px] text-gray-400 uppercase tracking-wider">{{ $t('people.score') }}</span>
                     </div>
                 </div>
 
@@ -152,17 +152,17 @@ const hasOverviewContent = computed(() => {
                     <h3 class="text-lg font-bold mb-1" :class="health.color">{{ health.label }}</h3>
                     <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
                         <div v-if="health.daysSinceContact !== null">
-                            <span class="text-gray-400">Last contact:</span>
+                            <span class="text-gray-400">{{ $t('people.last_contact') }}</span>
                             <span class="ml-1 font-medium" :class="health.color">{{ health.daysSinceContact }}d ago</span>
                         </div>
                         <div v-if="health.nextContactDue !== null">
-                            <span class="text-gray-400">Next due:</span>
+                            <span class="text-gray-400">{{ $t('people.next_due') }}</span>
                             <span class="ml-1 font-medium" :class="health.nextContactDue <= 0 ? 'text-red-500' : ''">
                                 {{ health.nextContactDue > 0 ? `in ${health.nextContactDue}d` : `${Math.abs(health.nextContactDue)}d overdue` }}
                             </span>
                         </div>
                         <div v-if="health.interactionCount > 0">
-                            <span class="text-gray-400">Interactions:</span>
+                            <span class="text-gray-400">{{ $t('people.interactions_label') }}</span>
                             <span class="ml-1 font-medium">{{ health.interactionCount }}</span>
                         </div>
 
@@ -183,7 +183,7 @@ const hasOverviewContent = computed(() => {
         <div v-if="!hasOverviewContent" class="text-center py-10 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
             <Sparkles class="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
             <p class="text-gray-500 dark:text-gray-400 font-medium">No relationship details yet.</p>
-            <p class="text-xs text-gray-400 mt-1">Edit this contact to add how you met, social links, and more.</p>
+            <p class="text-xs text-gray-400 mt-1">{{ $t('people.edit_to_add') }}</p>
         </div>
 
         <!-- How We Met -->

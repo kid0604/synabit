@@ -837,24 +837,24 @@ const deleteCap = async (id: string) => {
            @input="handleInput"
            @keydown.enter.ctrl="submitCap"
            @keydown.enter.meta="submitCap"
-           placeholder="Take a quick note... (Cmd+Enter to save)"
+           :placeholder="$t('quickcap.placeholder')"
            class="w-full bg-transparent p-5 min-h-[60px] max-h-[400px] resize-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] pb-14 overflow-y-auto"
         ></textarea>
         <!-- Actions bottom bar -->
         <div class="absolute bottom-0 left-0 w-full flex items-center justify-between p-2 px-3 bg-white dark:bg-[#1e1e1e]">
            <div class="flex items-center gap-1 opacity-70">
-              <button title="Lists coming soon" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button :title="$t('quickcap.lists_coming_soon')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <CheckSquare class="w-4 h-4"/>
               </button>
-              <button @click="pickImageForNewCap" title="Pick an image to upload" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="pickImageForNewCap" :title="$t('quickcap.pick_image')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <ImageIcon class="w-4 h-4"/>
               </button>
-              <button @click="appendTagToInput" title="Add Tag" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="appendTagToInput" :title="$t('quickcap.add_tag')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <Tag class="w-4 h-4"/>
               </button>
            </div>
            <button @click="submitCap" :disabled="isSubmitting || !newCapText.trim()" class="px-5 py-1.5 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
-               Save
+               {{ $t('quickcap.save') }}
            </button>
         </div>
     </div>
@@ -871,7 +871,7 @@ const deleteCap = async (id: string) => {
                 v-model="searchQuery" 
                 type="text" 
                 class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
-                placeholder="Search text or #tag..." 
+                :placeholder="$t('quickcap.search_placeholder')" 
             />
             <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer">
                 <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
@@ -883,7 +883,7 @@ const deleteCap = async (id: string) => {
                 @click="mobileViewMode = 'list'" 
                 class="p-1.5 rounded-md transition-colors" 
                 :class="mobileViewMode === 'list' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
-                title="List View"
+                :title="$t('quickcap.list_view')"
             >
                 <List class="w-4 h-4" />
             </button>
@@ -891,7 +891,7 @@ const deleteCap = async (id: string) => {
                 @click="mobileViewMode = 'grid'" 
                 class="p-1.5 rounded-md transition-colors" 
                 :class="mobileViewMode === 'grid' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
-                title="Grid View"
+                :title="$t('quickcap.grid_view')"
             >
                 <LayoutGrid class="w-4 h-4" />
             </button>
@@ -936,15 +936,15 @@ const deleteCap = async (id: string) => {
                               placeholder="tag..."
                               autofocus
                           />
-                          <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
+                          <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">{{ $t('quickcap.save') }}</button>
                       </div>
                       <template v-else>
-                          <button @click.stop="deleteCap(cap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
+                          <button @click.stop="deleteCap(cap.id)" :title="$t('quickcap.delete_note')" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
                               <Trash2 class="w-3.5 h-3.5"/>
                           </button>
                           <div class="flex items-center gap-0.5 relative">
                               <div class="relative">
-                                  <button @click.stop="toggleColorPicker(cap.id)" title="Change Color" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <button @click.stop="toggleColorPicker(cap.id)" :title="$t('quickcap.change_color')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                       <Palette class="w-3.5 h-3.5"/>
                                   </button>
                                   
@@ -958,16 +958,16 @@ const deleteCap = async (id: string) => {
                                       ></button>
                                   </div>
                               </div>
-                              <button @click.stop="openConvertNoteModal(cap)" title="Convert to Note" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click.stop="openConvertNoteModal(cap)" :title="$t('quickcap.convert_to_note')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <FileText class="w-3.5 h-3.5" />
                               </button>
-                              <button @click.stop="openConvertTaskModal(cap)" title="Capture to Task" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click.stop="openConvertTaskModal(cap)" :title="$t('quickcap.capture_to_task')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <CheckSquare class="w-3.5 h-3.5"/>
                               </button>
-                              <button @click.stop="pickImageForExistingCap(cap)" title="Add Image" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click.stop="pickImageForExistingCap(cap)" :title="$t('quickcap.add_image')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <ImageIcon class="w-3.5 h-3.5"/>
                               </button>
-                              <button @click="openTagInput(cap)" title="Add Tag" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click="openTagInput(cap)" :title="$t('quickcap.add_tag')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <Tag class="w-3.5 h-3.5"/>
                               </button>
                           </div>
@@ -981,7 +981,7 @@ const deleteCap = async (id: string) => {
     <!-- Empty State -->
     <div v-if="quickCaps.length === 0" class="flex flex-col items-center justify-center opacity-30 mt-12 w-full">
         <CheckSquare class="w-16 h-16 mb-4"/>
-        <p class="text-lg">No quick caps yet. Jot down your thoughts!</p>
+        <p class="text-lg">{{ $t('quickcap.empty_state') }}</p>
     </div>
 
     <!-- Mobile FAB -->
@@ -994,10 +994,10 @@ const deleteCap = async (id: string) => {
         <!-- Header -->
         <div class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
             <button @click="isMobileModalOpen = false" class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
-                Cancel
+                {{ $t('quickcap.cancel') }}
             </button>
             <button @click="submitCapMobile" :disabled="isSubmitting || !newCapText.trim()" class="font-semibold text-blue-500 disabled:opacity-50">
-                Save
+                {{ $t('quickcap.save') }}
             </button>
         </div>
         
@@ -1005,13 +1005,13 @@ const deleteCap = async (id: string) => {
         <textarea
            ref="mobileInputRef"
            v-model="newCapText"
-           placeholder="Take a quick note..."
+           :placeholder="$t('quickcap.placeholder_mobile')"
            class="flex-1 w-full bg-transparent p-5 resize-none outline-none text-[1.1rem] text-[#1c1c1e] dark:text-[#f4f4f5]"
         ></textarea>
         
         <!-- Bottom Actions (above keyboard) -->
         <div class="p-3 border-t border-gray-100 dark:border-[#2c2c2c] flex items-center gap-2 bg-gray-50 dark:bg-[#191919]" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
-            <button title="Lists coming soon" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+            <button :title="$t('quickcap.lists_coming_soon')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                 <CheckSquare class="w-5 h-5"/>
             </button>
             <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
@@ -1051,15 +1051,15 @@ const deleteCap = async (id: string) => {
                             placeholder="tag..."
                             autofocus
                         />
-                        <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">Save</button>
+                        <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">{{ $t('quickcap.save') }}</button>
                     </div>
                     <template v-else>
-                        <button @click.stop="deleteCap(selectedCap.id)" title="Delete note" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
+                        <button @click.stop="deleteCap(selectedCap.id)" :title="$t('quickcap.delete_note')" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
                             <Trash2 class="w-4 h-4"/>
                         </button>
                         <div class="flex items-center gap-1 sm:gap-2 relative ml-auto sm:ml-4">
                             <div class="relative">
-                                <button @click.stop="toggleColorPicker(selectedCap.id)" title="Change Color" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <button @click.stop="toggleColorPicker(selectedCap.id)" :title="$t('quickcap.change_color')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                     <Palette class="w-4 h-4"/>
                                 </button>
                                 <!-- Color Picker Popup -->
@@ -1072,16 +1072,16 @@ const deleteCap = async (id: string) => {
                                     ></button>
                                 </div>
                             </div>
-                            <button @click.stop="openConvertNoteModal(selectedCap)" title="Convert to Note" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click.stop="openConvertNoteModal(selectedCap)" :title="$t('quickcap.convert_to_note')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <FileText class="w-4 h-4" />
                             </button>
-                            <button @click.stop="openConvertTaskModal(selectedCap)" title="Capture to Task" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click.stop="openConvertTaskModal(selectedCap)" :title="$t('quickcap.capture_to_task')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <CheckSquare class="w-4 h-4"/>
                             </button>
-                            <button @click.stop="pickImageForExistingCap(selectedCap)" title="Add Image" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click.stop="pickImageForExistingCap(selectedCap)" :title="$t('quickcap.add_image')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <ImageIcon class="w-4 h-4"/>
                             </button>
-                            <button @click="openTagInput(selectedCap)" title="Add Tag" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click="openTagInput(selectedCap)" :title="$t('quickcap.add_tag')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <Tag class="w-4 h-4"/>
                             </button>
                         </div>
@@ -1091,7 +1091,7 @@ const deleteCap = async (id: string) => {
                 <div class="flex items-center justify-between w-full sm:w-auto order-1 sm:order-2">
                     <span class="text-xs text-gray-500 font-mono tracking-tight sm:hidden">{{ selectedCap.created_at }}</span>
                     <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer ml-auto">
-                        Close
+                        {{ $t('quickcap.close') }}
                     </button>
                 </div>
             </div>

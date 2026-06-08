@@ -57,7 +57,7 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
         <button @click="doDelete" class="sp-icon-btn sp-delete-btn" title="Delete All">
           <Trash2 :size="14" />
         </button>
-        <button @click="doClose" class="sp-icon-btn" title="Close">
+        <button @click="doClose" class="sp-icon-btn" :title="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>

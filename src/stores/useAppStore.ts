@@ -22,6 +22,7 @@ export const useAppStore = defineStore('app', () => {
   
   // Theme
   const themeMode = ref<'light' | 'dark' | 'system'>('system');
+  const appLanguage = ref<'en' | 'vi'>('en');
   
   // GDrive
   const gdriveAutoSyncEnabled = ref<boolean>(true);
@@ -45,6 +46,9 @@ export const useAppStore = defineStore('app', () => {
     vaultType.value = (await storeInstance.get('vaultType') as 'local' | 'gdrive') || 'local';
     
     themeMode.value = (await storeInstance.get('themeMode') as 'light' | 'dark' | 'system') || 'system';
+    
+    const lang = await storeInstance.get('appLanguage');
+    if (lang) appLanguage.value = lang as 'en' | 'vi';
     
     const arcDays = await storeInstance.get('taskArchiveDays');
     if (arcDays) taskArchiveDays.value = Number(arcDays);
@@ -104,6 +108,9 @@ export const useAppStore = defineStore('app', () => {
     watch(themeMode, async (v) => {
       if (storeInstance) await storeInstance.set('themeMode', v);
     });
+    watch(appLanguage, async (v) => {
+      if (storeInstance) await storeInstance.set('appLanguage', v);
+    });
     watch(gdriveAutoSyncEnabled, async (v) => {
       if (storeInstance) await storeInstance.set('gdriveAutoSyncEnabled', v);
     });
@@ -147,6 +154,7 @@ export const useAppStore = defineStore('app', () => {
     defaultApp,
     hiddenSidebarApps,
     themeMode,
+    appLanguage,
     gdriveAutoSyncEnabled,
     gdriveAutoSyncInterval,
     gdriveLastSyncTime,

@@ -1492,29 +1492,29 @@ watch(() => props.vaultPath, () => {
       <div class="w-64 border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-gray-50/50 dark:bg-[#1a1a1a]/50 flex flex-col pt-10 shrink-0 hidden md:flex">
           <div class="flex flex-col px-3 space-y-1">
               <button @click="activeCategory = 'all'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'all' ? 'bg-white dark:bg-[#2c2c2c] text-black dark:text-white shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Inbox class="w-4 h-4 mr-3" />All Tasks</div>
+                  <div class="flex items-center"><Inbox class="w-4 h-4 mr-3" />{{ $t('task.all_tasks') }}</div>
                   <span class="text-xs bg-gray-200 dark:bg-[#333] px-1.5 py-0.5 rounded-full text-gray-600 dark:text-gray-400" v-if="categoryCounts.all">{{ categoryCounts.all }}</span>
               </button>
               <button @click="activeCategory = 'today'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'today' ? 'bg-white dark:bg-[#2c2c2c] text-blue-600 dark:text-blue-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Sun class="w-4 h-4 mr-3" />Today</div>
+                  <div class="flex items-center"><Sun class="w-4 h-4 mr-3" />{{ $t('task.today') }}</div>
                   <span class="text-xs bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-full text-blue-600 dark:text-blue-400" v-if="categoryCounts.today">{{ categoryCounts.today }}</span>
               </button>
               <button @click="activeCategory = 'upcoming'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'upcoming' ? 'bg-white dark:bg-[#2c2c2c] text-red-600 dark:text-red-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Calendar class="w-4 h-4 mr-3" />Upcoming</div>
+                  <div class="flex items-center"><Calendar class="w-4 h-4 mr-3" />{{ $t('task.upcoming') }}</div>
                   <span class="text-xs bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded-full text-red-600 dark:text-red-400" v-if="categoryCounts.upcoming">{{ categoryCounts.upcoming }}</span>
               </button>
               <button @click="activeCategory = 'someday'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'someday' ? 'bg-white dark:bg-[#2c2c2c] text-yellow-600 dark:text-yellow-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Coffee class="w-4 h-4 mr-3" />Someday</div>
+                  <div class="flex items-center"><Coffee class="w-4 h-4 mr-3" />{{ $t('task.someday') }}</div>
                   <span class="text-xs bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded-full text-yellow-600 dark:text-yellow-400" v-if="categoryCounts.someday">{{ categoryCounts.someday }}</span>
               </button>
               <button @click="activeCategory = 'transferred'" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'transferred' ? 'bg-white dark:bg-[#2c2c2c] text-slate-600 dark:text-slate-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Send class="w-4 h-4 mr-3" />Transferred</div>
+                  <div class="flex items-center"><Send class="w-4 h-4 mr-3" />{{ $t('task.transferred') }}</div>
                   <span class="text-xs bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded-full text-slate-600 dark:text-slate-400" v-if="categoryCounts.transferred">{{ categoryCounts.transferred }}</span>
               </button>
               
               <div class="pt-4 pb-1 px-3 flex items-center justify-between group">
-                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Projects</span>
-                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" title="New Project">
+                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('task.projects') }}</span>
+                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" :title="$t('task.new_project')">
                       <Plus class="w-3.5 h-3.5"/>
                   </button>
               </div>
@@ -1538,7 +1538,7 @@ watch(() => props.vaultPath, () => {
                           <MenuIcon class="w-6 h-6" />
                       </button>
                       <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize truncate max-w-[200px] sm:max-w-md lg:max-w-xl">
-                          {{ activeProject ? activeProject.title : (activeCategory === 'all' ? 'All Tasks' : activeCategory) }}
+                          {{ activeProject ? activeProject.title : (activeCategory === 'all' ? $t('task.all_tasks') : activeCategory === 'today' ? $t('task.today') : activeCategory === 'upcoming' ? $t('task.upcoming') : activeCategory === 'someday' ? $t('task.someday') : activeCategory === 'transferred' ? $t('task.transferred') : activeCategory) }}
                       </h1>
                   </div>
                   <div class="flex items-center gap-3">
@@ -1548,17 +1548,17 @@ watch(() => props.vaultPath, () => {
                           class="hidden md:flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-[0_2px_10px_rgba(59,130,246,0.3)] hover:shadow-[0_4px_14px_rgba(59,130,246,0.4)] transition-all cursor-pointer text-sm font-medium"
                       >
                           <Plus class="w-4 h-4 mr-1.5"/>
-                          New
+                          {{ $t('task.new_btn') }}
                       </button>
 
                       <div class="flex bg-gray-100 dark:bg-[#1a1a1a] p-1 rounded-xl">
-                          <button @click="viewMode = 'list'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'list' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" title="List View">
+                          <button @click="viewMode = 'list'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'list' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.list_view')">
                               <List class="w-4 h-4"/>
                           </button>
-                          <button @click="viewMode = 'board'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'board' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" title="Board View">
+                          <button @click="viewMode = 'board'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'board' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.board_view')">
                               <Trello class="w-4 h-4"/>
                           </button>
-                          <button @click="viewMode = 'table'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'table' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" title="Table View">
+                          <button @click="viewMode = 'table'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'table' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.table_view')">
                               <Table2 class="w-4 h-4"/>
                           </button>
                       </div>
@@ -1575,7 +1575,7 @@ watch(() => props.vaultPath, () => {
                           v-model="searchQuery" 
                           type="text" 
                           class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
-                          placeholder="Search tasks or properties..." 
+                          :placeholder="$t('task.search_placeholder')" 
                       />
                       <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10">
                           <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
@@ -1584,13 +1584,13 @@ watch(() => props.vaultPath, () => {
                       <!-- Advanced Search Tooltip/Hints -->
                       <div class="absolute top-full left-0 mt-2 p-3 bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-[#2c2c2c] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-20 w-72 opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible transition-all">
                           <div class="flex items-center text-[10px] font-semibold text-gray-400 dark:text-gray-500 mb-2.5 uppercase tracking-wider">
-                              <Search class="w-3.5 h-3.5 mr-1" /> Quick Syntax
+                              <Search class="w-3.5 h-3.5 mr-1" /> {{ $t('task.quick_syntax') }}
                           </div>
                           <div class="space-y-2 text-[11px] text-gray-600 dark:text-gray-400">
                               <div class="flex items-center gap-2"><span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:transferred</span>, <span class="font-mono bg-blue-50/80 dark:bg-blue-900/30 px-1 border border-blue-100 dark:border-blue-900/50 rounded text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap">is:tracked</span></div>
-                              <div class="flex items-center gap-2"><span class="font-mono bg-purple-50/80 dark:bg-purple-900/30 px-1 border border-purple-100 dark:border-purple-900/50 rounded text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">p:3</span> hay <span class="font-mono bg-indigo-50/80 dark:bg-indigo-900/30 px-1 border border-indigo-100 dark:border-indigo-900/50 rounded text-indigo-600 dark:text-indigo-400 font-medium whitespace-nowrap">status:todo</span></div>
-                              <div class="flex items-center gap-2"><span class="font-mono bg-emerald-50/80 dark:bg-emerald-900/30 px-1 border border-emerald-100 dark:border-emerald-900/50 rounded text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap">@name</span> <span class="text-gray-400">(Trạng thái Assign)</span></div>
-                              <div class="flex items-center gap-2"><span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">#tag</span> hoặc <span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">tag:urgent</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-purple-50/80 dark:bg-purple-900/30 px-1 border border-purple-100 dark:border-purple-900/50 rounded text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">p:3</span> {{ $t('task.syntax_or') }} <span class="font-mono bg-indigo-50/80 dark:bg-indigo-900/30 px-1 border border-indigo-100 dark:border-indigo-900/50 rounded text-indigo-600 dark:text-indigo-400 font-medium whitespace-nowrap">status:todo</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-emerald-50/80 dark:bg-emerald-900/30 px-1 border border-emerald-100 dark:border-emerald-900/50 rounded text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap">@name</span> <span class="text-gray-400">{{ $t('task.syntax_assign') }}</span></div>
+                              <div class="flex items-center gap-2"><span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">#tag</span> {{ $t('task.syntax_or') }} <span class="font-mono bg-amber-50/80 dark:bg-amber-900/30 px-1 border border-amber-100 dark:border-amber-900/50 rounded text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">tag:urgent</span></div>
                               <div class="flex items-center gap-2"><span class="font-mono bg-slate-100 dark:bg-slate-800/50 px-1 border border-slate-200 dark:border-[#333] rounded text-slate-600 dark:text-slate-300 font-medium whitespace-nowrap">prop:cost=100</span> <span class="text-gray-400 px-1">(Custom Prop)</span></div>
                           </div>
                       </div>
@@ -1607,19 +1607,19 @@ watch(() => props.vaultPath, () => {
               <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-2">
                   <div class="flex items-center gap-6">
                       <button @click="activeProjectTab = 'overview'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'overview' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
-                          Overview
+                          {{ $t('task.overview') }}
                           <div v-if="activeProjectTab === 'overview'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
                       </button>
                       <button @click="activeProjectTab = 'tasks'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'tasks' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
-                          Tasks
+                          {{ $t('task.tasks') }}
                           <div v-if="activeProjectTab === 'tasks'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
                       </button>
                       <button @click="activeProjectTab = 'resources'" class="pb-3 text-sm font-medium transition-colors relative cursor-pointer" :class="activeProjectTab === 'resources' ? 'text-black dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'">
-                          Resources
+                          {{ $t('task.resources') }}
                           <div v-if="activeProjectTab === 'resources'" class="absolute bottom-0 left-0 w-full h-0.5 bg-black dark:bg-white rounded-t-full"></div>
                       </button>
                   </div>
-                  <button @click="showProjectEditModal = true" class="pb-3 text-gray-400 hover:text-indigo-500 transition-colors cursor-pointer" title="Project Settings">
+                  <button @click="showProjectEditModal = true" class="pb-3 text-gray-400 hover:text-indigo-500 transition-colors cursor-pointer" :title="$t('task.project_settings')">
                       <Settings class="w-4 h-4" />
                   </button>
               </div>
@@ -1629,15 +1629,15 @@ watch(() => props.vaultPath, () => {
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <!-- Project Description Card -->
                       <div class="md:col-span-1 bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm flex flex-col">
-                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Project Description</h3>
+                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">{{ $t('task.project_description') }}</h3>
                           <div v-if="activeProject.content" class="text-sm text-gray-600 dark:text-gray-400 prose prose-sm dark:prose-invert max-w-none mb-4 line-clamp-3">
                               <div v-html="activeProject.content"></div>
                           </div>
-                          <div v-else class="text-sm text-gray-400 italic mb-4">No description provided. Click to add.</div>
+                          <div v-else class="text-sm text-gray-400 italic mb-4">{{ $t('task.no_description') }}</div>
                           
                           <div class="mt-auto space-y-3 pt-3 border-t border-gray-50 dark:border-[#2c2c2c]">
                               <div class="flex items-center justify-between">
-                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Status</div>
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.status') }}</div>
                                   <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium capitalize" 
                                       :class="{
                                           'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400': activeProject.status === 'active',
@@ -1648,7 +1648,7 @@ watch(() => props.vaultPath, () => {
                                   </span>
                               </div>
                               <div v-if="activeProject.tags?.length > 0" class="flex items-center justify-between">
-                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Tags</div>
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.tags') }}</div>
                                   <div class="flex flex-wrap items-center gap-1 justify-end">
                                       <span v-for="tag in activeProject.tags.slice(0,3)" :key="tag" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-[#2c2c2c] text-gray-600 dark:text-gray-400">
                                           #{{ tag }}
@@ -1657,11 +1657,11 @@ watch(() => props.vaultPath, () => {
                                   </div>
                               </div>
                               <div class="flex items-center justify-between">
-                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Created</div>
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.created') }}</div>
                                   <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.created_at ? activeProject.created_at.substring(0, 10) : '--' }}</div>
                               </div>
                               <div class="flex items-center justify-between">
-                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Updated</div>
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.updated') }}</div>
                                   <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.updated_at ? activeProject.updated_at.substring(0, 10) : '--' }}</div>
                               </div>
                           </div>
@@ -1669,19 +1669,19 @@ watch(() => props.vaultPath, () => {
 
                       <!-- Time & Budget Card -->
                       <div class="bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm hover:shadow-md transition-shadow">
-                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Time & Budget</h3>
+                          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">{{ $t('task.time_and_budget') }}</h3>
                           
                           <div class="space-y-5">
                               <div class="grid grid-cols-2 gap-4">
                                   <div>
-                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">Start Date</div>
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">{{ $t('task.start_date') }}</div>
                                       <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center">
                                           <CalendarDays class="w-3.5 h-3.5 mr-1.5 text-gray-400" />
                                           {{ activeProject.start_date || '--/--/----' }}
                                       </div>
                                   </div>
                                   <div>
-                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">End Date</div>
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">{{ $t('task.end_date') }}</div>
                                       <div class="text-sm font-semibold text-red-500 flex items-center">
                                           <CalendarDays class="w-3.5 h-3.5 mr-1.5" />
                                           {{ activeProject.due_date || '--/--/----' }}
@@ -1690,17 +1690,17 @@ watch(() => props.vaultPath, () => {
                               </div>
                               
                               <div class="pt-4 border-t border-gray-50 dark:border-[#2c2c2c]">
-                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">Budget</div>
+                                  <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider mb-1">{{ $t('task.budget') }}</div>
                                   <div class="text-xl font-bold text-gray-900 dark:text-gray-100">
-                                      {{ projectBudget || 'Not set' }}
+                                      {{ projectBudget || $t('task.not_set') }}
                                   </div>
                               </div>
                               
                               <div v-if="projectSpent">
                                   <div class="flex items-center justify-between mb-1">
-                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Spent</div>
-                                      <button @click="showTxModal = true" class="text-[10px] flex items-center bg-gray-100 hover:bg-gray-200 dark:bg-[#333] dark:hover:bg-[#444] text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded transition-colors" title="Log Expense">
-                                          <Plus class="w-3 h-3 mr-0.5" /> Add
+                                      <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.spent') }}</div>
+                                      <button @click="showTxModal = true" class="text-[10px] flex items-center bg-gray-100 hover:bg-gray-200 dark:bg-[#333] dark:hover:bg-[#444] text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded transition-colors" :title="$t('task.log_expense')">
+                                          <Plus class="w-3 h-3 mr-0.5" /> {{ $t('task.add_btn') }}
                                       </button>
                                   </div>
                                   <div class="text-lg font-semibold text-orange-500">
@@ -1721,7 +1721,7 @@ watch(() => props.vaultPath, () => {
                       <div class="bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm hover:shadow-md transition-shadow flex flex-col">
                            <div class="mb-6">
                               <div class="flex items-center justify-between mb-2">
-                                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Project Progress</h3>
+                                  <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ $t('task.project_progress') }}</h3>
                                   <span class="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">{{ projectProgress }}%</span>
                               </div>
                               <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
@@ -1730,37 +1730,37 @@ watch(() => props.vaultPath, () => {
                           </div>
                           
                           <div class="flex-1 border-t border-gray-50 dark:border-[#2c2c2c] pt-4">
-                              <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Task Summary</h3>
+                              <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">{{ $t('task.task_summary') }}</h3>
                               <div class="grid grid-cols-3 gap-3">
                                   <!-- Total -->
                                   <div class="bg-gray-50 dark:bg-[#252525] rounded-xl p-3">
                                       <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ activeCategoryTasks.length }}</div>
-                                      <div class="text-[9px] font-medium text-gray-500 uppercase tracking-wider mt-1">Total</div>
+                                      <div class="text-[9px] font-medium text-gray-500 uppercase tracking-wider mt-1">{{ $t('task.total') }}</div>
                                   </div>
                                   <!-- In Progress -->
                                   <div class="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
                                       <div class="text-xl font-bold text-blue-600 dark:text-blue-400">{{ activeCategoryTasks.filter(t => t.status === 'in_progress').length }}</div>
-                                      <div class="text-[9px] font-medium text-blue-600/70 dark:text-blue-400/70 uppercase tracking-wider mt-1">Doing</div>
+                                      <div class="text-[9px] font-medium text-blue-600/70 dark:text-blue-400/70 uppercase tracking-wider mt-1">{{ $t('task.doing') }}</div>
                                   </div>
                                   <!-- To Do -->
                                   <div class="bg-orange-50 dark:bg-orange-900/20 rounded-xl p-3">
                                       <div class="text-xl font-bold text-orange-600 dark:text-orange-400">{{ activeCategoryTasks.filter(t => t.status === 'todo').length }}</div>
-                                      <div class="text-[9px] font-medium text-orange-600/70 dark:text-orange-400/70 uppercase tracking-wider mt-1">To Do</div>
+                                      <div class="text-[9px] font-medium text-orange-600/70 dark:text-orange-400/70 uppercase tracking-wider mt-1">{{ $t('task.to_do') }}</div>
                                   </div>
                                   <!-- Backlog -->
                                   <div class="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-3">
                                       <div class="text-xl font-bold text-purple-600 dark:text-purple-400">{{ activeCategoryTasks.filter(t => t.status === 'backlog').length }}</div>
-                                      <div class="text-[9px] font-medium text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mt-1">Backlog</div>
+                                      <div class="text-[9px] font-medium text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mt-1">{{ $t('task.backlog') }}</div>
                                   </div>
                                   <!-- Completed -->
                                   <div class="bg-green-50 dark:bg-green-900/20 rounded-xl p-3">
                                       <div class="text-xl font-bold text-green-600 dark:text-green-400">{{ activeCategoryTasks.filter(t => t.status === 'done').length }}</div>
-                                      <div class="text-[9px] font-medium text-green-600/70 dark:text-green-400/70 uppercase tracking-wider mt-1">Done</div>
+                                      <div class="text-[9px] font-medium text-green-600/70 dark:text-green-400/70 uppercase tracking-wider mt-1">{{ $t('task.done') }}</div>
                                   </div>
                                   <!-- Overdue -->
                                   <div class="bg-red-50 dark:bg-red-900/20 rounded-xl p-3">
                                       <div class="text-xl font-bold text-red-600 dark:text-red-400">{{ activeCategoryTasks.filter(t => isOverdue(t)).length }}</div>
-                                      <div class="text-[9px] font-medium text-red-600/70 dark:text-red-400/70 uppercase tracking-wider mt-1">Overdue</div>
+                                      <div class="text-[9px] font-medium text-red-600/70 dark:text-red-400/70 uppercase tracking-wider mt-1">{{ $t('task.overdue') }}</div>
                                   </div>
                               </div>
                           </div>
@@ -1773,7 +1773,7 @@ watch(() => props.vaultPath, () => {
                   <div class="flex justify-end gap-2 mb-4 relative">
                       <button @click="showAddResourceMenu = !showAddResourceMenu" :disabled="isLinkingResource" class="px-4 py-2 flex items-center gap-2 rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors text-sm font-medium cursor-pointer">
                           <Plus class="w-4 h-4" />
-                          Add Resource
+                          {{ $t('task.add_resource') }}
                           <ChevronDown class="w-4 h-4 ml-1" />
                       </button>
                       
@@ -1782,16 +1782,16 @@ watch(() => props.vaultPath, () => {
                           <div class="p-1">
                               <button @click="createNewResourceNote(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                   <FileText class="w-4 h-4 text-blue-500" />
-                                  New Note
+                                  {{ $t('task.new_note') }}
                               </button>
                               <button @click="createNewResourceWhiteboard(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                   <Palette class="w-4 h-4 text-purple-500" />
-                                  New Whiteboard
+                                  {{ $t('task.new_whiteboard') }}
                               </button>
                               <div class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1"></div>
                               <button @click="openLinkResourcePicker(); showAddResourceMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                   <Link class="w-4 h-4 text-gray-400" />
-                                  Link Existing Resource
+                                  {{ $t('task.link_existing') }}
                               </button>
                           </div>
                       </div>
@@ -1814,9 +1814,9 @@ watch(() => props.vaultPath, () => {
                                       <Palette v-if="node.node_type === 'whiteboard'" class="w-4 h-4 mr-2 text-purple-400 shrink-0" />
                                       <File v-else-if="node.node_type === 'file'" class="w-4 h-4 mr-2 text-emerald-400 shrink-0" />
                                       <FileText v-else class="w-4 h-4 mr-2 text-blue-400 shrink-0" />
-                                      <span class="truncate">{{ node.title || (node.node_type === 'whiteboard' ? 'Untitled Whiteboard' : node.node_type === 'file' ? 'Unnamed File' : 'Untitled Note') }}</span>
+                                      <span class="truncate">{{ node.title || (node.node_type === 'whiteboard' ? $t('task.untitled_whiteboard') : node.node_type === 'file' ? $t('task.unnamed_file') : $t('task.untitled_note')) }}</span>
                                   </div>
-                                  <button @click.stop="unlinkResource(node)" title="Unlink from Project" class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-red-500 transition-all shrink-0">
+                                  <button @click.stop="unlinkResource(node)" :title="$t('task.unlink')" class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-red-500 transition-all shrink-0">
                                       <Unlink class="w-3.5 h-3.5" />
                                   </button>
                                </div>
@@ -1824,7 +1824,7 @@ watch(() => props.vaultPath, () => {
                                   {{ node.id }}
                               </div>
                               <div v-else class="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 80) + '...' : 'Empty ' + (node.node_type === 'whiteboard' ? 'whiteboard' : 'note') }}
+                                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 80) + '...' : $t('task.empty') + ' ' + (node.node_type === 'whiteboard' ? $t('task.whiteboard_lower') : $t('task.note_lower')) }}
                               </div>
                           </div>
                       </div>
@@ -1834,10 +1834,10 @@ watch(() => props.vaultPath, () => {
                           <FileText class="w-10 h-10 text-gray-300" />
                           <Palette class="w-10 h-10 text-gray-300" />
                       </div>
-                      <p class="text-sm font-medium text-gray-500 mb-4">No resources attached yet.</p>
+                      <p class="text-sm font-medium text-gray-500 mb-4">{{ $t('task.no_resources') }}</p>
                       <div class="flex gap-3 relative">
                           <button @click="showEmptyAddMenu = !showEmptyAddMenu" class="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600 transition-colors flex items-center gap-2 cursor-pointer">
-                              Add Resource
+                              {{ $t('task.add_resource') }}
                               <ChevronDown class="w-4 h-4" />
                           </button>
                           
@@ -1846,16 +1846,16 @@ watch(() => props.vaultPath, () => {
                               <div class="p-1">
                                   <button @click="createNewResourceNote(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                       <FileText class="w-4 h-4 text-blue-500" />
-                                      New Note
+                                      {{ $t('task.new_note') }}
                                   </button>
                                   <button @click="createNewResourceWhiteboard(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                       <Palette class="w-4 h-4 text-purple-500" />
-                                      New Whiteboard
+                                      {{ $t('task.new_whiteboard') }}
                                   </button>
                                   <div class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1"></div>
                                   <button @click="openLinkResourcePicker(); showEmptyAddMenu = false" class="w-full px-3 py-2 text-left flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                       <Link class="w-4 h-4 text-gray-400" />
-                                      Link Existing Resource
+                                      {{ $t('task.link_existing') }}
                                   </button>
                               </div>
                           </div>
@@ -1870,7 +1870,7 @@ watch(() => props.vaultPath, () => {
           <div v-show="!activeProject || activeProjectTab === 'tasks'" class="h-full flex-1 flex flex-col">
               <div v-if="activeCategoryTasks.length === 0" class="flex flex-col items-center justify-center h-48 opacity-40">
               <CheckCircle2 class="w-16 h-16 mb-4"/>
-              <p>You're all caught up!</p>
+              <p>{{ $t('task.all_caught_up') }}</p>
           </div>
           
           <div v-else class="h-full flex flex-col min-h-0">
@@ -1902,10 +1902,10 @@ watch(() => props.vaultPath, () => {
                                   {{ task.priority }}
                               </span>
                               
-                              <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-1 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                              <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-1 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="$t('task.transferred_to') + getTransferredName(task.transferred_to)">
                                   <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
                                   <span class="text-[10px] font-semibold truncate max-w-[120px]">{{ getTransferredName(task.transferred_to) }}</span>
-                                  <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" title="Tracking Progress" />
+                                  <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" :title="$t('task.tracking_progress')" />
                               </div>
                               
                               <span v-if="task.due_date" class="text-xs flex items-center font-medium"
@@ -1967,10 +1967,10 @@ watch(() => props.vaultPath, () => {
                                      <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">
                                          {{ task.priority }}
                                      </span>
-                                     <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-0.5 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                                     <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 ml-0.5 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="$t('task.transferred_to') + getTransferredName(task.transferred_to)">
                                          <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
                                          <span class="text-[10px] font-semibold truncate max-w-[100px]">{{ getTransferredName(task.transferred_to) }}</span>
-                                         <Eye v-if="task.track_progress" class="w-3 h-3 ml-1 text-blue-500" title="Tracking Progress" />
+                                         <Eye v-if="task.track_progress" class="w-3 h-3 ml-1 text-blue-500" :title="$t('task.tracking_progress')" />
                                      </div>
                                      <span v-if="task.start_date || task.due_date" class="text-[10px] px-1.5 py-0.5 rounded flex items-center"
                                          :class="isOverdue(task) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'text-gray-500 bg-gray-100 dark:bg-[#2a2a2a]'">
@@ -1996,7 +1996,7 @@ watch(() => props.vaultPath, () => {
                                      @keyup.enter="handleQuickAdd(col.id)"
                                      @keyup.esc="quickAddColumn = null"
                                      @blur="!quickAddTitle.trim() ? quickAddColumn = null : null"
-                                     placeholder="Task title... (Enter to save)" 
+                                     :placeholder="$t('task.task_title_placeholder')" 
                                      class="w-full bg-transparent text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] outline-none placeholder:font-normal placeholder:text-gray-400"
                               />
                           </div>
@@ -2010,9 +2010,9 @@ watch(() => props.vaultPath, () => {
                      <thead class="bg-gray-50 dark:bg-[#1a1a1a] text-gray-500 dark:text-gray-400 text-xs uppercase font-semibold">
                          <tr>
                              <th class="px-6 py-3 w-8">Status</th>
-                             <th class="px-6 py-3">Title</th>
+                             <th class="px-6 py-3">{{ $t('task.title_col') }}</th>
                              <th class="px-6 py-3 w-32">Start Date</th>
-                             <th class="px-6 py-3 w-32">Due Date</th>
+                             <th class="px-6 py-3 w-32">{{ $t('task.due_date_col') }}</th>
                              <th class="px-6 py-3 w-48">Tags</th>
                              <th class="px-6 py-3 w-16"></th>
                          </tr>
@@ -2027,10 +2027,10 @@ watch(() => props.vaultPath, () => {
                              </td>
                              <td class="px-6 py-3 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2" :class="task.status === 'done' ? 'line-through text-gray-400' : ''">
                                  <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
-                                 <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="'Transferred to: ' + getTransferredName(task.transferred_to)">
+                                 <div v-if="task.is_transferred && task.transferred_to" @click.stop="isLinkedPerson(task.transferred_to) ? openPerson(task.transferred_to) : null" class="flex items-center shrink-0 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'" :title="$t('task.transferred_to') + getTransferredName(task.transferred_to)">
                                      <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
                                      <span class="text-[10px] font-semibold truncate max-w-[120px]">{{ getTransferredName(task.transferred_to) }}</span>
-                                     <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" title="Tracking Progress" />
+                                     <Eye v-if="task.track_progress" class="w-3.5 h-3.5 ml-1.5 text-blue-500" :title="$t('task.tracking_progress')" />
                                  </div>
                                  {{ task.title }}
                              </td>
@@ -2099,7 +2099,7 @@ watch(() => props.vaultPath, () => {
       <div class="relative w-[75%] max-w-sm h-full bg-[#fdfdfc] dark:bg-[#1e1e1e] shadow-2xl flex flex-col transform transition-transform duration-300" style="padding-top: max(env(safe-area-inset-top), 20px);">
           <!-- Header with Close Button -->
           <div class="flex items-center justify-between px-5 pb-4 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
-              <h2 class="text-xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Views</h2>
+              <h2 class="text-xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('task.views') }}</h2>
               <button @click="isMobileSidebarOpen = false" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                   <X class="w-5 h-5" />
               </button>
@@ -2108,29 +2108,29 @@ watch(() => props.vaultPath, () => {
           <!-- Menu Items -->
           <div class="flex-1 overflow-y-auto px-3 py-6 flex flex-col space-y-1.5">
               <button @click="activeCategory = 'all'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'all' ? 'bg-black/5 dark:bg-white/10 text-black dark:text-white font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Inbox class="w-5 h-5 mr-3" />All Tasks</div>
+                  <div class="flex items-center"><Inbox class="w-5 h-5 mr-3" />{{ $t('task.all_tasks') }}</div>
                   <span class="text-xs bg-gray-200 dark:bg-[#333] px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-400" v-if="categoryCounts.all">{{ categoryCounts.all }}</span>
               </button>
               <button @click="activeCategory = 'today'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'today' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Sun class="w-5 h-5 mr-3" />Today</div>
+                  <div class="flex items-center"><Sun class="w-5 h-5 mr-3" />{{ $t('task.today') }}</div>
                   <span class="text-xs bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 rounded-full text-blue-600 dark:text-blue-400" v-if="categoryCounts.today">{{ categoryCounts.today }}</span>
               </button>
               <button @click="activeCategory = 'upcoming'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'upcoming' ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Calendar class="w-5 h-5 mr-3" />Upcoming</div>
+                  <div class="flex items-center"><Calendar class="w-5 h-5 mr-3" />{{ $t('task.upcoming') }}</div>
                   <span class="text-xs bg-red-100 dark:bg-red-900/30 px-2 py-0.5 rounded-full text-red-600 dark:text-red-400" v-if="categoryCounts.upcoming">{{ categoryCounts.upcoming }}</span>
               </button>
               <button @click="activeCategory = 'someday'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'someday' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Coffee class="w-5 h-5 mr-3" />Someday</div>
+                  <div class="flex items-center"><Coffee class="w-5 h-5 mr-3" />{{ $t('task.someday') }}</div>
                   <span class="text-xs bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded-full text-yellow-600 dark:text-yellow-400" v-if="categoryCounts.someday">{{ categoryCounts.someday }}</span>
               </button>
               <button @click="activeCategory = 'transferred'; isMobileSidebarOpen = false" class="flex items-center justify-between px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'transferred' ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
-                  <div class="flex items-center"><Send class="w-5 h-5 mr-3" />Transferred</div>
+                  <div class="flex items-center"><Send class="w-5 h-5 mr-3" />{{ $t('task.transferred') }}</div>
                   <span class="text-xs bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-400" v-if="categoryCounts.transferred">{{ categoryCounts.transferred }}</span>
               </button>
               
               <div class="pt-4 pb-1 px-3 flex items-center justify-between">
-                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Projects</span>
-                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500" title="New Project">
+                  <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('task.projects') }}</span>
+                  <button @click="handleCreateProjectClick" class="text-gray-400 hover:text-indigo-500" :title="$t('task.new_project')">
                       <Plus class="w-4 h-4"/>
                   </button>
               </div>

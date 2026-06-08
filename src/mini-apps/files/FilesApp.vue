@@ -325,7 +325,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 cursor-pointer"><Menu class="w-5 h-5" /></button>
           <div class="flex-1 max-w-xl relative group">
             <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500" />
-            <input v-model="store.searchQuery.value" placeholder="Search files, tags..." class="w-full pl-9 pr-10 py-2 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
+            <input v-model="store.searchQuery.value" :placeholder="$t('file.search_placeholder')" class="w-full pl-9 pr-10 py-2 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
             <button v-if="store.searchQuery.value" @click="store.searchQuery.value = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer transition-colors">
               <X class="w-3.5 h-3.5" />
             </button>
@@ -345,7 +345,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <div class="flex-1 overflow-y-auto p-4 md:p-6">
           <div v-if="store.isLoading.value" class="flex justify-center py-20"><div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>
           <div v-else-if="store.filteredFiles.value.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400">
-            <FileArchive class="w-16 h-16 mb-4 opacity-20" /><p class="text-lg font-medium text-gray-500">No files found</p>
+            <FileArchive class="w-16 h-16 mb-4 opacity-20" /><p class="text-lg font-medium text-gray-500">{{ $t('file.no_files') }}</p>
           </div>
 
           <!-- Grid View -->
@@ -370,7 +370,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           <!-- List View -->
           <div v-else class="bg-white/60 dark:bg-white/[0.03] border border-gray-200/50 dark:border-white/5 rounded-2xl overflow-hidden shadow-sm flex flex-col h-full">
             <div class="hidden md:grid grid-cols-[2fr_1fr_1fr_2fr] gap-4 px-6 py-3 bg-gray-50/50 dark:bg-black/20 file-meta font-medium border-b border-gray-200/50 dark:border-white/5 text-sm">
-              <div>Name</div><div>Size</div><div>Modified</div><div>Tags</div>
+              <div>Name</div><div>Size</div><div>Modified</div><div>{{ $t('file.tags') }}</div>
             </div>
             <div v-bind="containerProps" class="flex-1 overflow-y-auto">
               <div v-bind="wrapperProps">
@@ -400,7 +400,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
       <!-- Detail Panel (Browse) -->
       <div v-if="selectedFile" class="w-80 xl:w-96 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col z-20">
         <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
-          <h2 class="font-bold text-sm text-gray-900 dark:text-white">Details</h2>
+          <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.details') }}</h2>
           <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
         <div class="flex-1 overflow-y-auto p-5 space-y-5">
@@ -413,7 +413,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           </div>
           <!-- Name -->
           <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
-          <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ selectedFile.filename }}</h3>
+          <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? $t('file.cannot_rename') : $t('file.click_to_rename')">{{ selectedFile.filename }}</h3>
           <!-- Metadata -->
           <div class="p-4 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-sm">
             <div class="flex justify-between"><span class="text-gray-500">Type</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ selectedFile.extension }}</span></div>
@@ -422,7 +422,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           </div>
           <!-- Tags -->
           <div>
-            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Tags</h4>
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.tags') }}</h4>
             <div class="flex flex-wrap items-center gap-1.5">
               <span v-for="tag in selectedFile.tags" :key="tag" class="group relative px-2.5 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-medium border border-indigo-100 dark:border-indigo-500/20 flex items-center gap-1">
                 #{{ tag }}
@@ -431,7 +431,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 </button>
               </span>
               <input v-if="isAddingTag" ref="tagInputRef" v-model="newTagInput" @keydown.enter="handleAddTag" @keydown.esc="isAddingTag = false; newTagInput = ''" @blur="handleAddTag"
-                type="text" placeholder="tag..."
+                type="text" :placeholder="$t('file.tag_placeholder')"
                 class="px-2 py-1 bg-white dark:bg-black/40 border border-indigo-300 dark:border-indigo-500/50 rounded-lg text-xs font-medium focus:outline-none w-20" />
               <button v-else @click="startAddingTag" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-indigo-500 hover:border-indigo-300 cursor-pointer transition-colors">
                 + Add
@@ -440,7 +440,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           </div>
           <!-- Linked People -->
           <div>
-            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">People</h4>
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.people') }}</h4>
             <div class="flex flex-wrap items-center gap-1.5 mb-2">
               <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
                 @{{ getPersonName(link) }}
@@ -455,7 +455,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 ref="peopleInputRef"
                 v-model="searchPeopleQuery"
                 type="text" 
-                placeholder="Search person..."
+                :placeholder="$t('file.search_person_placeholder')"
                 class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
                 @blur="setTimeout(() => showPeopleDropdown = false, 150)"
               />
@@ -478,11 +478,11 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           </div>
           <!-- Used by -->
           <div>
-            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Used by</h4>
-            <div v-if="isLoadingRefs" class="text-xs text-gray-400">Checking references...</div>
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.used_by') }}</h4>
+            <div v-if="isLoadingRefs" class="text-xs text-gray-400">{{ $t('file.checking_refs') }}</div>
             <div v-else-if="fileRefs.length === 0" class="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20">
               <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-              <span class="text-xs font-medium text-green-600 dark:text-green-400">Not used by any node</span>
+              <span class="text-xs font-medium text-green-600 dark:text-green-400">{{ $t('file.not_used') }}</span>
             </div>
             <div v-else class="space-y-1.5">
               <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 mb-2">
@@ -519,12 +519,12 @@ onUnmounted(() => { if (unlisten) unlisten(); });
       <div class="flex-1 flex flex-col min-w-0">
         <!-- Back + Tabs + Info toggle -->
         <div class="flex items-center bg-[#f5f5f7] dark:bg-[#0f0f0f] border-b border-gray-200/50 dark:border-white/5">
-          <button @click="goBack" class="p-2.5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer flex-shrink-0 mx-1" title="Back to Browse">
+          <button @click="goBack" class="p-2.5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer flex-shrink-0 mx-1" :title="$t('file.back_to_browse')">
             <ArrowLeft class="w-4 h-4" />
           </button>
           <FilesTabs :tabs="openTabs" :activeTabId="activeTabId" @select="activeTabId = $event" @close="closeTab" class="flex-1 min-w-0" />
           <button @click="showInfoPanel = !showInfoPanel" class="p-2.5 hover:bg-gray-200 dark:hover:bg-white/10 cursor-pointer flex-shrink-0 mx-1 rounded-lg transition-colors"
-            :class="showInfoPanel ? 'text-indigo-500' : 'text-gray-400'" title="Toggle Info Panel">
+            :class="showInfoPanel ? 'text-indigo-500' : 'text-gray-400'" :title="$t('file.toggle_info_panel')">
             <Info class="w-4 h-4" />
           </button>
         </div>
@@ -547,7 +547,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
           />
         </div>
         <div v-else class="flex-1 flex items-center justify-center text-gray-400">
-          <p class="text-sm">No file open</p>
+          <p class="text-sm">{{ $t('file.no_file_open') }}</p>
         </div>
       </div>
     </template>
@@ -558,7 +558,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <!-- Header -->
         <div class="h-14 px-4 md:px-8 flex items-center gap-3 border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
           <Copy class="w-5 h-5 text-amber-500" />
-          <h2 class="font-bold text-sm text-gray-900 dark:text-white">Duplicate Finder</h2>
+          <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.duplicate_finder') }}</h2>
           <button @click="store.scanDuplicates()" :disabled="store.isScanningDuplicates.value"
             class="ml-auto px-3 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors cursor-pointer disabled:opacity-50">
             <FolderSync v-if="store.isScanningDuplicates.value" class="w-3.5 h-3.5 animate-spin inline mr-1" />
@@ -570,7 +570,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <div v-if="store.isScanningDuplicates.value" class="flex-1 flex items-center justify-center">
           <div class="text-center">
             <div class="w-10 h-10 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p class="text-sm text-gray-500">Scanning for duplicates...</p>
+            <p class="text-sm text-gray-500">{{ $t('file.scanning_duplicates') }}</p>
           </div>
         </div>
 
@@ -578,8 +578,8 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <div v-else-if="!store.duplicateReport.value || store.duplicateReport.value.total_groups === 0" class="flex-1 flex items-center justify-center">
           <div class="text-center">
             <Copy class="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-            <p class="text-lg font-bold text-gray-500 mb-1">No Duplicates Found</p>
-            <p class="text-sm text-gray-400">All files are unique</p>
+            <p class="text-lg font-bold text-gray-500 mb-1">{{ $t('file.no_duplicates') }}</p>
+            <p class="text-sm text-gray-400">{{ $t('file.all_unique') }}</p>
           </div>
         </div>
 
@@ -590,15 +590,15 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <div class="grid grid-cols-3 gap-4 max-w-lg">
               <div class="text-center">
                 <p class="text-2xl font-extrabold text-amber-600 dark:text-amber-400">{{ store.duplicateReport.value.total_groups }}</p>
-                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Groups</p>
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('file.groups') }}</p>
               </div>
               <div class="text-center">
                 <p class="text-2xl font-extrabold text-amber-600 dark:text-amber-400">{{ store.duplicateReport.value.total_duplicate_files }}</p>
-                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Extra Files</p>
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('file.extra_files') }}</p>
               </div>
               <div class="text-center">
                 <p class="text-2xl font-extrabold text-amber-600 dark:text-amber-400">{{ store.formatSize(store.duplicateReport.value.total_wasted_bytes) }}</p>
-                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Wasted</p>
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('file.wasted') }}</p>
               </div>
             </div>
           </div>
@@ -635,7 +635,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <!-- Detail Panel (Duplicates) -->
             <div v-if="selectedFile" class="w-80 xl:w-96 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col">
               <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
-                <h2 class="font-bold text-sm text-gray-900 dark:text-white">Preview</h2>
+                <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.preview') }}</h2>
                 <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>
               <div class="flex-1 overflow-y-auto p-5 space-y-5">
@@ -647,7 +647,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                   <component v-else :is="getFileIcon(selectedFile.extension)" class="w-20 h-20 text-indigo-500/50" />
                 </div>
                 <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
-                <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ selectedFile.filename }}</h3>
+                <h3 v-else @click="startRename" class="font-extrabold text-lg break-words leading-tight text-gray-900 dark:text-white" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? $t('file.cannot_rename') : $t('file.click_to_rename')">{{ selectedFile.filename }}</h3>
                 <!-- Metadata -->
                 <div class="p-4 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-sm">
                   <div class="flex justify-between"><span class="text-gray-500">Type</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ selectedFile.extension }}</span></div>
@@ -656,12 +656,12 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 </div>
                 <!-- Path -->
                 <div>
-                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Location</h4>
+                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{{ $t('file.location') }}</h4>
                   <p class="text-[10px] font-mono text-gray-500 break-all p-2 bg-white dark:bg-black/40 rounded-lg border border-gray-200/50 dark:border-white/5">{{ selectedFile.path }}</p>
                 </div>
                 <!-- Linked People -->
                 <div>
-                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">People</h4>
+                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.people') }}</h4>
                   <div class="flex flex-wrap items-center gap-1.5 mb-2">
                     <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
                       @{{ getPersonName(link) }}
@@ -676,7 +676,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                       ref="peopleInputRef"
                       v-model="searchPeopleQuery"
                       type="text" 
-                      placeholder="Search person..."
+                      :placeholder="$t('file.search_person_placeholder')"
                       class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
                       @blur="setTimeout(() => showPeopleDropdown = false, 150)"
                     />
@@ -699,11 +699,11 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 </div>
                 <!-- Used by -->
                 <div>
-                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Used by</h4>
-                  <div v-if="isLoadingRefs" class="text-xs text-gray-400">Checking references...</div>
+                  <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.used_by') }}</h4>
+                  <div v-if="isLoadingRefs" class="text-xs text-gray-400">{{ $t('file.checking_refs') }}</div>
                   <div v-else-if="fileRefs.length === 0" class="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20">
                     <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                    <span class="text-xs font-medium text-green-600 dark:text-green-400">Not used by any node — safe to delete</span>
+                    <span class="text-xs font-medium text-green-600 dark:text-green-400">{{ $t('file.safe_to_delete') }}</span>
                   </div>
                   <div v-else class="space-y-1.5">
                     <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 mb-2">

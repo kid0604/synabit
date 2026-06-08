@@ -108,7 +108,7 @@ function addChild(direction: 'right' | 'left') {
       @keydown="handleKeydown"
       class="wb-mindmap-input"
       :style="{ color: 'inherit' }"
-      placeholder="Type here..."
+      :placeholder="$t('whiteboard.type_here2')"
     />
     <span v-else class="wb-mindmap-label" :style="{ fontSize: data.level === 0 ? '15px' : '13px' }">
       {{ data.label || 'Idea' }}
@@ -120,7 +120,7 @@ function addChild(direction: 'right' | 'left') {
       class="wb-mindmap-add wb-mindmap-add--left"
       @click.stop="addChild('left')"
       :style="{ backgroundColor: data.color }"
-      title="Add child left"
+      :title="$t('whiteboard.add_child_left')"
     >+</button>
 
     <!-- Right + button: root or right-direction nodes -->
@@ -129,7 +129,7 @@ function addChild(direction: 'right' | 'left') {
       class="wb-mindmap-add wb-mindmap-add--right"
       @click.stop="addChild('right')"
       :style="{ backgroundColor: data.color }"
-      title="Add child right (Tab)"
+      :title="$t('whiteboard.add_child_right')"
     >+</button>
 
     <!-- Handles with IDs for directional edges -->

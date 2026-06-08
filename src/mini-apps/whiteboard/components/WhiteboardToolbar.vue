@@ -113,14 +113,14 @@ function selectDrawSub(sub: DrawSubTool) {
     <button
       @click="selectTool('select')"
       :class="['wb-toolbar-btn', activeTool === 'select' && 'wb-toolbar-btn--active']"
-      title="Select (V)"
+      :title="$t('whiteboard.select_tool')"
     >
       <MousePointer2 class="w-4 h-4" />
     </button>
     <button
       @click="selectTool('pan')"
       :class="['wb-toolbar-btn', activeTool === 'pan' && 'wb-toolbar-btn--active']"
-      title="Pan / Move Canvas (H)"
+      :title="$t('whiteboard.pan_tool')"
     >
       <Hand class="w-4 h-4" />
     </button>
@@ -130,7 +130,7 @@ function selectDrawSub(sub: DrawSubTool) {
       <button
         @click="selectTool('draw')"
         :class="['wb-toolbar-btn', activeTool === 'draw' && 'wb-toolbar-btn--active']"
-        title="Draw (D)"
+        :title="$t('whiteboard.draw_tool')"
       >
         <Pencil v-if="drawSubIcon === 'pen'" class="w-4 h-4" />
         <Highlighter v-else-if="drawSubIcon === 'highlighter'" class="w-4 h-4" />
@@ -138,7 +138,7 @@ function selectDrawSub(sub: DrawSubTool) {
       </button>
       <!-- Draw options popup -->
       <div v-if="showDrawMenu" class="wb-draw-picker" @pointerdown.stop>
-        <div class="wb-draw-cat-label">Tool</div>
+        <div class="wb-draw-cat-label">{{ $t('whiteboard.tool') }}</div>
         <div class="wb-draw-sub-tools">
           <button
             @click.stop="selectDrawSub('pen')"
@@ -151,7 +151,7 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('highlighter')"
             :class="['wb-draw-sub-btn', drawSubTool === 'highlighter' && 'wb-draw-sub-btn--active']"
-            title="Highlighter"
+            :title="$t('whiteboard.highlighter')"
           >
             <Highlighter class="w-4 h-4" />
             <span class="text-[10px] mt-0.5">Highlight</span>
@@ -159,7 +159,7 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('eraser')"
             :class="['wb-draw-sub-btn', drawSubTool === 'eraser' && 'wb-draw-sub-btn--active']"
-            title="Eraser"
+            :title="$t('whiteboard.eraser_tool')"
           >
             <Eraser class="w-4 h-4" />
             <span class="text-[10px] mt-0.5">Eraser</span>
@@ -182,7 +182,7 @@ function selectDrawSub(sub: DrawSubTool) {
 
         <!-- Color palette (not for eraser) -->
         <template v-if="drawSubTool !== 'eraser'">
-          <div class="wb-draw-cat-label mt-2">Color</div>
+          <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.color') }}</div>
           <div class="wb-draw-colors">
             <button
               v-for="c in drawColors"
@@ -201,7 +201,7 @@ function selectDrawSub(sub: DrawSubTool) {
       <button
         @click="selectTool('shape')"
         :class="['wb-toolbar-btn', activeTool === 'shape' && 'wb-toolbar-btn--active']"
-        title="Shapes (S)"
+        :title="$t('whiteboard.shapes_tool')"
       >
         <Shapes class="w-4 h-4" />
       </button>
@@ -248,14 +248,14 @@ function selectDrawSub(sub: DrawSubTool) {
     <button
       @click="selectTool('mindmap')"
       :class="['wb-toolbar-btn', activeTool === 'mindmap' && 'wb-toolbar-btn--active']"
-      title="Mindmap (M)"
+      :title="$t('whiteboard.mindmap_tool')"
     >
       <Network class="w-4 h-4" />
     </button>
     <button
       @click="selectTool('text')"
       :class="['wb-toolbar-btn', activeTool === 'text' && 'wb-toolbar-btn--active']"
-      title="Text (T)"
+      :title="$t('whiteboard.text_tool')"
     >
       <Type class="w-4 h-4" />
     </button>
@@ -267,7 +267,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('undo')"
       :disabled="!canUndo"
       class="wb-toolbar-btn"
-      title="Undo (Ctrl+Z)"
+      :title="$t('whiteboard.undo')"
     >
       <Undo2 class="w-4 h-4" />
     </button>
@@ -275,7 +275,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('redo')"
       :disabled="!canRedo"
       class="wb-toolbar-btn"
-      title="Redo (Ctrl+Shift+Z)"
+      :title="$t('whiteboard.redo')"
     >
       <Redo2 class="w-4 h-4" />
     </button>
@@ -286,7 +286,7 @@ function selectDrawSub(sub: DrawSubTool) {
       <button
         @click="showBgMenu = !showBgMenu"
         :class="['wb-toolbar-btn', showBgMenu && 'wb-toolbar-btn--active']"
-        title="Background Style"
+        :title="$t('whiteboard.background_style')"
       >
         <Grip v-if="backgroundPattern === 'dots'" class="w-4 h-4" />
         <Grid3X3 v-else-if="backgroundPattern === 'lines'" class="w-4 h-4" />
@@ -295,7 +295,7 @@ function selectDrawSub(sub: DrawSubTool) {
 
       <!-- Background options popup -->
       <div v-if="showBgMenu" class="wb-draw-picker" @pointerdown.stop>
-        <div class="wb-draw-cat-label">Pattern</div>
+        <div class="wb-draw-cat-label">{{ $t('whiteboard.pattern') }}</div>
         <div class="wb-draw-sub-tools">
           <button
             @click.stop="$emit('update:backgroundPattern', 'none')"
@@ -323,7 +323,7 @@ function selectDrawSub(sub: DrawSubTool) {
           </button>
         </div>
 
-        <div class="wb-draw-cat-label mt-2">Background Color</div>
+        <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.background_color') }}</div>
         <div class="wb-draw-colors">
           <button
             v-for="color in ['transparent', ...drawColors]"
@@ -345,7 +345,7 @@ function selectDrawSub(sub: DrawSubTool) {
     <button
       @click="$emit('export')"
       class="wb-toolbar-btn"
-      title="Export as PNG"
+      :title="$t('whiteboard.export_png')"
     >
       <Download class="w-4 h-4" />
     </button>

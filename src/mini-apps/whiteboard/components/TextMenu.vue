@@ -111,7 +111,7 @@ function setAlign(a: string) {
         <button @click="$emit('delete', nodeId)" class="sp-icon-btn sp-delete-btn" title="Delete">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="sp-icon-btn" title="Close">
+        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -138,14 +138,14 @@ function setAlign(a: string) {
           <button
             @click="toggleBold"
             :class="['sp-style-btn', fontWeight === 'bold' && 'active']"
-            title="Bold"
+            :title="$t('whiteboard.bold')"
           >
             <Bold :size="14" />
           </button>
           <button
             @click="toggleItalic"
             :class="['sp-style-btn', fontStyle === 'italic' && 'active']"
-            title="Italic"
+            :title="$t('whiteboard.italic')"
           >
             <Italic :size="14" />
           </button>
@@ -153,21 +153,21 @@ function setAlign(a: string) {
           <button
             @click="setAlign('left')"
             :class="['sp-style-btn', textAlign === 'left' && 'active']"
-            title="Align Left"
+            :title="$t('whiteboard.align_left')"
           >
             <AlignLeft :size="14" />
           </button>
           <button
             @click="setAlign('center')"
             :class="['sp-style-btn', textAlign === 'center' && 'active']"
-            title="Align Center"
+            :title="$t('whiteboard.align_center')"
           >
             <AlignCenter :size="14" />
           </button>
           <button
             @click="setAlign('right')"
             :class="['sp-style-btn', textAlign === 'right' && 'active']"
-            title="Align Right"
+            :title="$t('whiteboard.align_right')"
           >
             <AlignRight :size="14" />
           </button>

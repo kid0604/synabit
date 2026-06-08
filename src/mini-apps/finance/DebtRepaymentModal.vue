@@ -124,7 +124,7 @@ const save = () => {
                 <div class="flex flex-col gap-4">
                     <!-- Amount -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Transaction Amount</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.transaction_amount') }}</label>
                         <div class="relative">
                             <input 
                                 :value="new Intl.NumberFormat('en-US').format(Number(amountStr) || 0) === '0' ? '' : new Intl.NumberFormat('en-US').format(Number(amountStr) || 0)"
@@ -150,7 +150,7 @@ const save = () => {
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 outline-none transition-all text-text dark:text-text-dark font-medium appearance-none cursor-pointer"
                                 :class="debt.type === 'lend' ? 'focus:ring-green-500' : 'focus:ring-blue-500'"
                             >
-                                <option value="" disabled>Select account...</option>
+                                <option value="" disabled>{{ $t('finance.select_account') }}</option>
                                 <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                             </select>
                         </div>
@@ -158,7 +158,7 @@ const save = () => {
 
                     <!-- Date -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Date</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.date') }}</label>
                         <div class="relative">
                             <input 
                                 v-model="date" 
@@ -171,14 +171,14 @@ const save = () => {
 
                     <!-- Note -->
                     <div>
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">Note (Optional)</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.note_opt') }}</label>
                         <div class="relative">
                             <div class="absolute top-3.5 left-3.5 pointer-events-none text-gray-400">
                                 <FileText class="w-5 h-5" />
                             </div>
                             <textarea 
                                 v-model="note" 
-                                placeholder="Additional note..."
+                                :placeholder="$t('finance.add_note_ph')"
                                 rows="2"
                                 class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600 resize-none"
                                 :class="debt.type === 'lend' ? 'focus:ring-green-500' : 'focus:ring-blue-500'"
@@ -193,7 +193,7 @@ const save = () => {
                             <div class="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-md peer-checked:bg-blue-500 peer-checked:border-blue-500 transition-colors"></div>
                             <CheckCircle2 class="absolute text-white w-4 h-4 opacity-0 peer-checked:opacity-100 transition-opacity" />
                         </div>
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Mark this debt as completed</span>
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ $t('finance.mark_completed') }}</span>
                     </label>
 
                 </div>

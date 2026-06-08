@@ -1056,8 +1056,8 @@ const handleDeleteFromForm = () => {
                      </div>
                      <button @click="openAddEventModal()" class="flex items-center gap-1.5 px-3 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors shadow-sm ml-0.5 md:ml-1">
                          <Plus class="w-3.5 h-3.5" />
-                         <span class="hidden md:inline">New Event</span>
-                         <span class="md:hidden">New</span>
+                         <span class="hidden md:inline">{{ $t('calendar.new_event') }}</span>
+                         <span class="md:hidden">{{ $t('calendar.new_btn') }}</span>
                      </button>
                  </div>
              </div>
@@ -1125,7 +1125,7 @@ const handleDeleteFromForm = () => {
                 <!-- All day tasks header -->
                 <div class="flex border-b border-[#ececeb] dark:border-[#333] bg-gray-50/50 dark:bg-[#222]">
                     <div class="w-16 border-r border-[#ececeb] dark:border-[#333] flex items-center justify-center p-2">
-                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center writing-vertical-lr">All Day</span>
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center writing-vertical-lr">{{ $t('calendar.all_day') }}</span>
                     </div>
                     <div class="flex-1 p-2 flex flex-wrap gap-2 items-start min-h-[40px]" @dblclick="openAddEventModal(currentDate)">
                         <div v-for="tk in getTasksForDate(formatDateString(currentDate))" :key="'tsk-'+tk.id" class="max-w-[200px] truncate px-2 py-1 rounded text-[11px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer bg-white dark:bg-[#2c2c2c] shadow-sm hover:brightness-95" @click.stop="$emit('open-node', tk.id, 'task')">
@@ -1163,7 +1163,7 @@ const handleDeleteFromForm = () => {
                 <!-- Week Days Header & All-day row -->
                 <div class="flex border-b border-[#ececeb] dark:border-[#333] shadow-sm z-10 sticky top-0 bg-white dark:bg-[#1a1a1a]">
                     <div class="w-12 border-r border-[#ececeb] dark:border-[#333] flex items-center justify-center bg-gray-50/50 dark:bg-[#222]">
-                        <span class="text-[9px] font-bold text-gray-400 uppercase tracking-widest writing-vertical-lr mb-2">All Day</span>
+                        <span class="text-[9px] font-bold text-gray-400 uppercase tracking-widest writing-vertical-lr mb-2">{{ $t('calendar.all_day') }}</span>
                     </div>
                     <!-- 7 Columns headers -->
                     <div v-for="dayObj in currentWeekDays" :key="dayObj.dateStr" class="flex-1 flex flex-col border-r last:border-0 border-[#ececeb] dark:border-[#333]" @click="clickDay(dayObj.date)">
@@ -1257,7 +1257,7 @@ const handleDeleteFromForm = () => {
          <div class="flex-1 overflow-y-auto p-4 space-y-6">
              <!-- Add Event Button -->
              <button @click="openAddEventModal()" class="w-full py-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-xl flex items-center justify-center gap-2 text-gray-500 hover:bg-gray-50 dark:hover:bg-[#2c2c2c] hover:text-black dark:hover:text-white transition-all cursor-pointer">
-                 <Plus class="w-4 h-4" /> <span class="text-sm font-semibold">New Event</span>
+                 <Plus class="w-4 h-4" /> <span class="text-sm font-semibold">{{ $t('calendar.new_event') }}</span>
              </button>
              
              <!-- Events Section -->
@@ -1265,7 +1265,7 @@ const handleDeleteFromForm = () => {
                  <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2 flex items-center gap-2">
                      <CalendarIcon class="w-3.5 h-3.5" /> Events
                  </h3>
-                 <div v-if="selectedEvents.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">No events scheduled.</div>
+                 <div v-if="selectedEvents.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">{{ $t('calendar.no_events') }}</div>
                  <div class="space-y-2">
                      <div v-for="ev in selectedEvents" :key="ev.id" @click="openEditEventModal(ev, selectedDateFormattedStr)" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm group cursor-pointer hover:border-purple-300 dark:hover:border-purple-500/50 transition-colors">
                          <div class="flex justify-between items-start mb-1">
@@ -1293,7 +1293,7 @@ const handleDeleteFromForm = () => {
                  <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2 flex items-center gap-2">
                      <CheckSquare class="w-3.5 h-3.5" /> Due Tasks
                  </h3>
-                 <div v-if="selectedTasks.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">No tasks due today.</div>
+                 <div v-if="selectedTasks.length === 0" class="text-sm text-center text-gray-500 py-4 italic bg-gray-50 rounded-xl dark:bg-[#1e1e1e]">{{ $t('calendar.no_tasks') }}</div>
                  <div class="space-y-2">
                      <div v-for="tk in selectedTasks" :key="tk.id" class="p-3 bg-white dark:bg-[#232323] border border-[#f0f0f0] dark:border-[#333] rounded-xl shadow-sm flex gap-3 cursor-pointer hover:border-purple-300 transition-colors" @click.stop="$emit('open-node', tk.id, 'task')">
                          <div class="pt-1 select-none pointer-events-auto">
@@ -1321,20 +1321,20 @@ const handleDeleteFromForm = () => {
             <div class="p-6 space-y-3">
                 <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'this'}">
                     <input type="radio" v-model="scopeSelection" value="this" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
-                    <span class="text-sm font-medium text-black dark:text-white">This event</span>
+                    <span class="text-sm font-medium text-black dark:text-white">{{ $t('calendar.this_event') }}</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'following'}">
                     <input type="radio" v-model="scopeSelection" value="following" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
-                    <span class="text-sm font-medium text-black dark:text-white">This and following events</span>
+                    <span class="text-sm font-medium text-black dark:text-white">{{ $t('calendar.this_and_following') }}</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 border border-gray-200 dark:border-[#444] rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors" :class="{'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20': scopeSelection === 'all'}">
                     <input type="radio" v-model="scopeSelection" value="all" class="w-4 h-4 text-purple-600 focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
-                    <span class="text-sm font-medium text-black dark:text-white">All events in series</span>
+                    <span class="text-sm font-medium text-black dark:text-white">{{ $t('calendar.all_events_in_series') }}</span>
                 </label>
             </div>
             <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex justify-end gap-3 text-sm font-semibold select-none">
-                <button @click="showScopeModal = false" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>
-                <button @click="confirmScopeAction" class="px-4 py-2 rounded-lg text-white transition-colors" :class="scopeAction === 'delete' ? 'bg-red-500 hover:bg-red-600' : 'bg-black dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400'">OK</button>
+                <button @click="showScopeModal = false" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">{{ $t('calendar.cancel') }}</button>
+                <button @click="confirmScopeAction" class="px-4 py-2 rounded-lg text-white transition-colors" :class="scopeAction === 'delete' ? 'bg-red-500 hover:bg-red-600' : 'bg-black dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400'">{{ $t('calendar.ok') }}</button>
             </div>
         </div>
      </div>
@@ -1348,18 +1348,18 @@ const handleDeleteFromForm = () => {
             </div>
             <div class="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
                 <div>
-                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Event Title *</label>
-                   <input v-model="eventForm.title" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="E.g., Team Meeting, John's Birthday">
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.event_title_req') }}</label>
+                   <input v-model="eventForm.title" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.event_title_ph')">
                 </div>
                     <div class="flex items-center gap-4 mb-4">
                         <label class="flex items-center gap-1.5 cursor-pointer">
                             <input type="checkbox" v-model="eventForm.isAllDay" class="w-3.5 h-3.5 text-purple-600 rounded focus:ring-purple-500 bg-gray-100 border-gray-300 dark:bg-[#333] dark:border-[#444]">
-                            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">All Day Event</span>
+                            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">{{ $t('calendar.all_day_event') }}</span>
                         </label>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Start</label>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.start') }}</label>
                             <input v-if="eventForm.isAllDay" v-model="eventForm.start_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                             <div v-else class="flex flex-col gap-2">
                                 <input v-model="startAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
@@ -1375,7 +1375,7 @@ const handleDeleteFromForm = () => {
                             </div>
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">End <span class="lowercase text-[9px] font-normal">(optional)</span></label>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.end') }} <span class="lowercase text-[9px] font-normal">{{ $t('calendar.optional') }}</span></label>
                             <input v-if="eventForm.isAllDay" v-model="eventForm.end_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                             <div v-else class="flex flex-col gap-2">
                                 <input v-model="endAtDate" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
@@ -1393,22 +1393,22 @@ const handleDeleteFromForm = () => {
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Repeat</label>
+                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.repeat') }}</label>
                              <select v-model="eventForm.recurrence" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white appearance-none cursor-pointer">
-                                 <option value="none">Does not repeat</option>
-                                 <option value="daily">Daily</option>
-                                 <option value="weekly">Weekly</option>
-                                 <option value="monthly">Monthly</option>
-                                 <option value="yearly">Yearly</option>
+                                 <option value="none">{{ $t('calendar.does_not_repeat') }}</option>
+                                 <option value="daily">{{ $t('calendar.daily') }}</option>
+                                 <option value="weekly">{{ $t('calendar.weekly') }}</option>
+                                 <option value="monthly">{{ $t('calendar.monthly') }}</option>
+                                 <option value="yearly">{{ $t('calendar.yearly') }}</option>
                              </select>
                         </div>
                         <div v-if="eventForm.recurrence !== 'none'">
-                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Ends On <span class="lowercase text-[9px] font-normal">(optional)</span></label>
+                             <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.ends_on') }} <span class="lowercase text-[9px] font-normal">{{ $t('calendar.optional') }}</span></label>
                              <input v-model="eventForm.recurrence_end_at" type="date" class="w-full h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" style="color-scheme: dark;">
                         </div>
                     </div>
                  <div>
-                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Reminders</label>
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.reminders') }}</label>
                    <div class="flex flex-col gap-2">
                        <div class="flex items-center gap-2 flex-wrap">
                            <div v-for="(rem, idx) in eventForm.reminders" :key="idx" class="flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-1 rounded-md text-xs font-medium">
@@ -1421,13 +1421,13 @@ const handleDeleteFromForm = () => {
                        </div>
                        <div class="flex items-center gap-2">
                            <select v-model="reminderPreset" @change="addReminder" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white appearance-none cursor-pointer">
-                               <option value="">Add Reminder...</option>
-                               <option value="5m">5 minutes before</option>
-                               <option value="15m">15 minutes before</option>
-                               <option value="30m">30 minutes before</option>
-                               <option value="1h">1 hour before</option>
-                               <option value="1d">1 day before</option>
-                               <option value="custom">Custom...</option>
+                               <option value="">{{ $t('calendar.add_reminder') }}</option>
+                               <option value="5m">{{ $t('calendar.m_5_before') }}</option>
+                               <option value="15m">{{ $t('calendar.m_15_before') }}</option>
+                               <option value="30m">{{ $t('calendar.m_30_before') }}</option>
+                               <option value="1h">{{ $t('calendar.h_1_before') }}</option>
+                               <option value="1d">{{ $t('calendar.d_1_before') }}</option>
+                               <option value="custom">{{ $t('calendar.custom') }}</option>
                            </select>
                            <div v-if="reminderPreset === 'custom'" class="flex items-center gap-2 flex-1">
                                <input v-model="customReminder" @keyup.enter="addReminder" type="text" placeholder="e.g. 45m, 2h" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white">
@@ -1439,16 +1439,16 @@ const handleDeleteFromForm = () => {
                    </div>
                 </div>
                 <div>
-                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Location</label>
-                   <input v-model="eventForm.location" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Zoom link, Office, etc.">
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.location') }}</label>
+                   <input v-model="eventForm.location" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.location_ph')">
                 </div>
                 <div>
-                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Description</label>
-                   <textarea v-model="eventForm.description" rows="3" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Event details..."></textarea>
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.description') }}</label>
+                   <textarea v-model="eventForm.description" rows="3" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.description_ph')"></textarea>
                 </div>
                 <div>
-                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Tags</label>
-                   <input v-model="eventForm.tagsStr" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="meeting, urgent (comma separated)">
+                   <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">{{ $t('calendar.tags') }}</label>
+                   <input v-model="eventForm.tagsStr" type="text" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.tags_ph')">
                 </div>
 
                 <!-- Relations Section -->
@@ -1461,7 +1461,7 @@ const handleDeleteFromForm = () => {
                    </div>
                    
                    <div v-if="isCreatingNote" class="mb-3 flex items-center gap-2">
-                       <input v-model="newNoteTitle" type="text" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:border-purple-500 text-black dark:text-white" placeholder="Note Title...">
+                       <input v-model="newNoteTitle" type="text" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.note_title_ph')">
                        <button @click="createMeetingNote" class="p-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
                            <Check class="w-3.5 h-3.5" />
                        </button>
@@ -1470,7 +1470,7 @@ const handleDeleteFromForm = () => {
                        </button>
                    </div>
                    
-                   <div v-if="eventRelations.length === 0 && !isCreatingNote" class="text-[12px] text-gray-400 italic">No linked items yet.</div>
+                   <div v-if="eventRelations.length === 0 && !isCreatingNote" class="text-[12px] text-gray-400 italic">{{ $t('calendar.no_linked_items') }}</div>
                    <div v-else class="space-y-1.5">
                        <div v-for="bl in eventRelations" :key="bl.id" @click="openLinkedNote(bl.id, bl.node_type)" class="flex items-center gap-2 px-2.5 py-2 bg-gray-50 dark:bg-[#252525] rounded-md border border-gray-100 dark:border-[#333] cursor-pointer hover:bg-gray-100 dark:hover:bg-[#2f2f2f] transition-colors group">
                            <FileText v-if="bl.node_type === 'note'" class="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -1480,7 +1480,7 @@ const handleDeleteFromForm = () => {
                            <span class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate flex-1">{{ bl.title }}</span>
                            
                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                               <button @click.stop="deleteRelationNode(bl)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500" title="Delete Item"><Trash2 class="w-3 h-3" /></button>
+                               <button @click.stop="deleteRelationNode(bl)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500" :title="$t('calendar.delete_item')"><Trash2 class="w-3 h-3" /></button>
                            </div>
                        </div>
                    </div>
@@ -1488,10 +1488,10 @@ const handleDeleteFromForm = () => {
 
             </div>
             <div class="px-6 py-4 bg-gray-50 dark:bg-[#1a1a1a] border-t border-[#e6e6e6] dark:border-[#333] flex items-center gap-3 text-sm font-semibold select-none" :class="eventForm.isEdit ? 'justify-between' : 'justify-end'">
-                <button v-if="eventForm.isEdit" @click="handleDeleteFromForm" class="px-4 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+                <button v-if="eventForm.isEdit" @click="handleDeleteFromForm" class="px-4 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">{{ $t('calendar.delete') }}</button>
                 <div class="flex items-center gap-3">
-                    <button @click="closeEventForm" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Cancel</button>
-                    <button @click="submitEvent" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400 transition-colors" :disabled="!eventForm.title">Save Event</button>
+                    <button @click="closeEventForm" class="px-4 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">{{ $t('calendar.cancel') }}</button>
+                    <button @click="submitEvent" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black hover:bg-purple-600 dark:hover:bg-purple-400 transition-colors" :disabled="!eventForm.title">{{ $t('calendar.save_event') }}</button>
                 </div>
             </div>
         </div>

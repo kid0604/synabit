@@ -779,7 +779,7 @@ defineExpose({ openMonthById });
                   <Wallet class="w-6 h-6 text-blue-500" />
                   Finance
               </h1>
-              <p class="text-sm text-gray-500 dark:text-gray-400">Manage income, expenses and personal budget</p>
+              <p class="text-sm text-gray-500 dark:text-gray-400">{{ $t('finance.subtitle') }}</p>
           </div>
           
           <div class="flex items-center gap-3">
@@ -788,7 +788,7 @@ defineExpose({ openMonthById });
               </button>
               <button @click="openAddTx" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">
                   <Plus class="w-5 h-5" />
-                  <span>Add Transaction</span>
+                  <span>{{ $t('finance.add_transaction') }}</span>
               </button>
           </div>
       </div>
@@ -836,13 +836,13 @@ defineExpose({ openMonthById });
                   <div class="absolute right-0 top-0 opacity-10 pointer-events-none">
                       <Wallet class="w-32 h-32 -mt-4 -mr-4" />
                   </div>
-                  <p class="text-blue-100 text-sm font-medium mb-1">Total Net Worth</p>
+                  <p class="text-blue-100 text-sm font-medium mb-1">{{ $t('finance.total_net_worth') }}</p>
                   <h2 class="text-3xl font-bold tracking-tight">{{ formatCurrency(globalNetWorth) }}</h2>
               </div>
               
               <!-- Account Balances -->
               <div class="flex flex-col gap-2">
-                  <h3 class="font-bold text-sm text-gray-500 dark:text-gray-400 uppercase tracking-wider pl-2">My Accounts</h3>
+                  <h3 class="font-bold text-sm text-gray-500 dark:text-gray-400 uppercase tracking-wider pl-2">{{ $t('finance.my_accounts') }}</h3>
                   <div class="flex flex-col gap-1.5">
                       <div v-for="acc in accountBalances" :key="acc.id" class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group relative">
                           <div class="p-2.5 rounded-xl bg-white dark:bg-gray-900 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-800 shrink-0">
@@ -918,13 +918,13 @@ defineExpose({ openMonthById });
               <div class="flex-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden">
               <div class="p-4 border-b border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/50 shrink-0 flex flex-col gap-3">
                       <div class="flex items-center justify-between">
-                      <h3 class="font-bold text-lg text-text dark:text-text-dark">Transaction History</h3>
+                      <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.transaction_history') }}</h3>
                   </div>
                   <!-- Search and Filters -->
                   <div class="flex items-center gap-2">
                       <div class="relative flex-1">
                           <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input v-model="searchQuery" type="text" placeholder="Search..." class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" />
+                          <input v-model="searchQuery" type="text" :placeholder="$t('finance.search')" class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" />
                       </div>
                       <div class="relative">
                           <select v-model="filterType" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
@@ -938,7 +938,7 @@ defineExpose({ openMonthById });
                       
                       <div class="relative">
                           <select v-model="filterAccount" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[150px] truncate cursor-pointer transition-colors">
-                              <option value="all">All accounts</option>
+                              <option value="all">{{ $t('finance.all_accounts') }}</option>
                               <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                           </select>
                           <ChevronDown class="w-4 h-4 text-gray-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -955,7 +955,7 @@ defineExpose({ openMonthById });
                       <p v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'">No transactions found matching the filters.</p>
                       <template v-else>
                           <p>No transactions this month.</p>
-                          <button @click="openAddTx" class="mt-4 text-blue-500 hover:underline text-sm">Add transaction now</button>
+                          <button @click="openAddTx" class="mt-4 text-blue-500 hover:underline text-sm">{{ $t('finance.add_tx_now') }}</button>
                       </template>
                   </div>
                   
@@ -1002,7 +1002,7 @@ defineExpose({ openMonthById });
                                   
                                   <!-- Action Buttons overlay -->
                                   <div class="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button @click.stop="deleteTransaction(tx.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" title="Delete transaction">
+                                      <button @click.stop="deleteTransaction(tx.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" :title="$t('finance.delete_tx')">
                                           <Trash2 class="w-4 h-4" />
                                       </button>
                                   </div>

@@ -42,7 +42,7 @@ const scrollToBottom = () => {
 };
 
 const handleAction = (msg: any) => {
-    logger.info(`Message View Details clicked for msg: ${msg.id}`);
+    logger.info(`Message {{ $t('chat.view_details') }} clicked for msg: ${msg.id}`);
     const type = msg.subtype;
     logger.info(`Type evaluated as: ${type}`);
     let targetType = '';
@@ -78,7 +78,7 @@ defineExpose({ fetchMessages });
             <div class="flex items-center gap-3 font-semibold">
                 <NavButtons />
                 <MessageSquare class="w-5 h-5 text-blue-500" />
-                <span class="text-lg tracking-tight">Chat</span>
+                <span class="text-lg tracking-tight">{{ $t('chat.title') }}</span>
             </div>
         </div>
 
@@ -98,8 +98,8 @@ defineExpose({ fetchMessages });
                 
                 <div v-else-if="messages.length === 0" class="flex flex-col items-center justify-center flex-1 text-gray-400 dark:text-gray-500 opacity-50 py-20">
                     <Bot class="w-16 h-16 mb-4" />
-                    <h3 class="text-lg font-medium">All caught up!</h3>
-                    <p class="text-sm">No new system messages.</p>
+                    <h3 class="text-lg font-medium">{{ $t('chat.all_caught_up') }}</h3>
+                    <p class="text-sm">{{ $t('chat.no_new_messages') }}</p>
                 </div>
 
                 <template v-else>
@@ -117,7 +117,7 @@ defineExpose({ fetchMessages });
                     <!-- Message Bubble -->
                     <div class="flex flex-col gap-1 min-w-0 flex-1">
                         <div class="flex items-baseline gap-2 ml-1">
-                            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ msg.sender?.name || 'Synabit System' }}</span>
+                            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ msg.sender?.name || $t('chat.system_name') }}</span>
                             <span class="text-xs text-gray-400">{{ formatTime(msg.timestamp) }}</span>
                         </div>
                         

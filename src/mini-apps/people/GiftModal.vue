@@ -53,7 +53,7 @@ onMounted(() => {
             <div class="p-5 space-y-4">
                 <!-- Direction Toggle -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Direction</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ $t('people.direction') }}</label>
                     <div class="flex gap-2">
                         <button
                             @click="form.direction = 'given'"
@@ -80,21 +80,21 @@ onMounted(() => {
 
                 <!-- Description -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">What was the gift? *</label>
-                    <input v-model="form.description" type="text" placeholder="e.g. Book, Wine, Birthday card" autofocus
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.gift_name') }}</label>
+                    <input v-model="form.description" type="text" :placeholder="$t('people.gift_ph')" autofocus
                         class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
                 </div>
 
                 <!-- Date + Occasion -->
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.date') }}</label>
                         <input v-model="form.date" type="date"
                             class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Occasion</label>
-                        <input v-model="form.occasion" type="text" placeholder="Birthday, Thank you..."
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.occasion') }}</label>
+                        <input v-model="form.occasion" type="text" :placeholder="$t('people.occasion_ph')"
                             class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
                     </div>
                 </div>
@@ -102,7 +102,7 @@ onMounted(() => {
 
             <!-- Footer -->
             <div class="px-5 py-4 border-t border-border dark:border-border-dark flex justify-end gap-3 bg-gray-50/50 dark:bg-gray-800/50">
-                <button @click="emit('close')" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
+                <button @click="emit('close')" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
                 <button @click="save" :disabled="!form.description.trim()" class="px-4 py-2 text-sm bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition-colors disabled:opacity-50 font-medium flex items-center gap-1.5">
                     <Gift class="w-3.5 h-3.5" /> Log Gift
                 </button>

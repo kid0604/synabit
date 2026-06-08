@@ -12,8 +12,9 @@ pub mod watcher;
 pub mod crdt_bridge;
 pub mod sync;
 pub mod secrets;
+pub mod feed_engine;
 
-use commands::{chat, files, nexus, nodes, whiteboards};
+use commands::{chat, feeds, files, nexus, nodes, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -183,6 +184,28 @@ pub fn run() {
             commands::app_lock::change_app_lock,
             commands::app_lock::get_app_lock_config,
             commands::app_lock::update_app_lock_config,
+            // Feeds
+            feeds::feed_get_sources,
+            feeds::feed_add_source,
+            feeds::feed_remove_source,
+            feeds::feed_update_source,
+            feeds::feed_get_categories,
+            feeds::feed_save_categories,
+            feeds::feed_get_config,
+            feeds::feed_save_config,
+            feeds::feed_get_articles,
+            feeds::feed_search_articles,
+            feeds::feed_get_unread_counts,
+            feeds::feed_get_total_unread,
+            feeds::feed_mark_read,
+            feeds::feed_mark_all_read,
+            feeds::feed_toggle_star,
+            feeds::feed_toggle_read_later,
+            feeds::feed_refresh,
+            feeds::feed_discover,
+            feeds::feed_run_cleanup,
+            feeds::feed_import_opml,
+            feeds::feed_export_opml,
             // System
             open_app_log_folder,
         ])

@@ -133,7 +133,7 @@ const renderPreview = (content: string) => {
             </div>
 
             <div v-else-if="linkedNodes.length === 0" class="text-center py-8 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
-                <p class="text-gray-500 dark:text-gray-400">No linked activity yet.</p>
+                <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_linked_activity') }}</p>
                 <p class="text-xs text-gray-400 mt-1">Mention <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{person.title}}]]</code> in any Note or Task to see it here.</p>
             </div>
 
@@ -142,7 +142,7 @@ const renderPreview = (content: string) => {
                 <div class="flex flex-col sm:flex-row gap-3">
                     <div class="relative flex-1">
                         <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input v-model="searchQuery" type="text" placeholder="Search linked nodes..." class="w-full pl-9 pr-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                        <input v-model="searchQuery" type="text" :placeholder="$t('people.search_linked_ph')" class="w-full pl-9 pr-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                     </div>
                     <div class="flex items-center gap-2">
                         <select v-model="filterType" class="px-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 dark:text-gray-300 appearance-none min-w-[100px]">
@@ -156,7 +156,7 @@ const renderPreview = (content: string) => {
                 </div>
 
                 <div v-if="filteredNodes.length === 0" class="text-center py-8 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
-                    <p class="text-gray-500 dark:text-gray-400">No nodes match your filters.</p>
+                    <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_nodes_match') }}</p>
                 </div>
 
                 <div v-else class="space-y-8">

@@ -102,7 +102,7 @@ function handleDelete() {
         <button @click="handleDelete" class="sp-icon-btn sp-delete-btn" title="Delete">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="sp-icon-btn" title="Close">
+        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -202,7 +202,7 @@ function handleDelete() {
           @input="updateLabel"
           @keydown.enter="($event.target as HTMLInputElement).blur()"
           class="sp-input"
-          placeholder="Type here…"
+          :placeholder="$t('whiteboard.type_here')"
         />
       </div>
     </div>

@@ -107,6 +107,24 @@ const formatDate = (dateStr: string) => {
 const notes = ref<NoteItem[]>([]);
 const currentNoteId = ref<string | null>(null);
 
+const recentNoteIds = ref<string[]>([]);
+try {
+    const stored = localStorage.getItem('synabit_recent_notes');
+    if (stored) recentNoteIds.value = JSON.parse(stored);
+} catch (e) {}
+
+const updateRecentNote = (id: string) => {
+    let arr = recentNoteIds.value.filter(x => x !== id);
+    arr.unshift(id);
+    if (arr.length > 50) arr = arr.slice(0, 50);
+    recentNoteIds.value = arr;
+    localStorage.setItem('synabit_recent_notes', JSON.stringify(arr));
+};
+
+watch(currentNoteId, (newId) => {
+    if (newId) updateRecentNote(newId);
+});
+
 // ─── Tab / Content Management ──────────────────────────────
 const activeTabs = ref<string[]>([]);
 const tabContents = ref<Record<string, string>>({});
@@ -161,7 +179,7 @@ const loadNoteFile = async (id: string) => {
                         id: fetchedNode.id,
                         title: fetchedNode.title,
                         content: fetchedNode.content,
-                        date: fetchedNode.created_at,
+                        date: fetchedNode.updated_at || fetchedNode.created_at,
                         path: fetchedNode.id,
                         tags: Array.isArray(fetchedNode.properties?.tags) ? fetchedNode.properties.tags : [],
                         pinned: !!fetchedNode.properties?.pinned,
@@ -488,6 +506,10 @@ const deleteNote = async (id: string) => {
         if (currentNoteId.value === id) {
            currentNoteId.value = null;
         }
+        if (recentNoteIds.value.includes(id)) {
+            recentNoteIds.value = recentNoteIds.value.filter(x => x !== id);
+            localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
+        }
         scanVault();
     } catch(e) { logger.error('Delete fail:', e); }
 };
@@ -541,6 +563,10 @@ const confirmRename = async () => {
             if (tabAccessTime.has(oldId)) {
                 tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
                 tabAccessTime.delete(oldId);
+            }
+            if (recentNoteIds.value.includes(oldId)) {
+                recentNoteIds.value = recentNoteIds.value.map(id => id === oldId ? newPath : id);
+                localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
             }
         }
 
@@ -617,6 +643,10 @@ const renameTopTitle = async (e: Event) => {
             if (tabAccessTime.has(oldId)) {
                 tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
                 tabAccessTime.delete(oldId);
+            }
+            if (recentNoteIds.value.includes(oldId)) {
+                recentNoteIds.value = recentNoteIds.value.map(id => id === oldId ? newPath : id);
+                localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
             }
         }
 
@@ -733,7 +763,7 @@ async function scanVault() {
                id: n.id,
                title: n.title,
                content: n.content,
-               date: n.created_at,
+               date: n.updated_at || n.created_at,
                path: n.id,
                tags: tags,
                pinned: !!n.properties?.pinned,
@@ -1040,14 +1070,17 @@ const managerPrevPage = () => {
 
 const filteredNotes = computed(() => {
   let result = notes.value;
+  let isSearch = false;
   // Use backend FTS5 search results when available
   if (searchQuery.value.trim() && backendSearchIds.value !== null) {
+      isSearch = true;
       const idSet = new Set(backendSearchIds.value);
       result = result.filter(n => idSet.has(n.id));
       // Preserve the order from backend (BM25 ranked)
       const orderMap = new Map(backendSearchIds.value.map((id, i) => [id, i]));
       result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
   } else if (searchQuery.value.trim()) {
+      isSearch = true;
       // Fallback: local search while backend is loading
       const q = searchQuery.value.trim();
       const isTagSearch = q.startsWith('#');
@@ -1065,9 +1098,23 @@ const filteredNotes = computed(() => {
   if (selectedTags.value.size > 0) {
       result = result.filter(n => n.tags.some(t => selectedTags.value.has(t)));
   }
+  
+  if (isSearch) {
+      return result.sort((a,b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return 0;
+      });
+  }
+
   return result.sort((a,b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
+      const aIndex = recentNoteIds.value.indexOf(a.id);
+      const bIndex = recentNoteIds.value.indexOf(b.id);
+      const aScore = aIndex === -1 ? 999999 : aIndex;
+      const bScore = bIndex === -1 ? 999999 : bIndex;
+      if (aScore !== bScore) return aScore - bScore;
       return b.date.localeCompare(a.date);
   });
 });
@@ -1220,18 +1267,18 @@ onMounted(async () => {
 
       <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
          <!-- Close button for mobile -->
-         <button @click="showNoteSidebar = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" title="Close Sidebar">
+         <button @click="showNoteSidebar = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" :title="$t('note.close_sidebar')">
             <X class="w-4 h-4" />
          </button>
 
          <div class="flex gap-1 ml-auto" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" title="Today's Daily Note">
+           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" :title="$t('note.todays_daily_note')">
              <Sun class="w-3.5 h-3.5" />
-             <span class="text-xs font-medium">Today</span>
+             <span class="text-xs font-medium">{{ $t('note.today') }}</span>
            </button>
-           <button @click="handleCreateNewNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" title="New Note">
+           <button @click="handleCreateNewNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" :title="$t('note.new_note')">
              <Plus class="w-3.5 h-3.5" />
-             <span class="text-xs font-medium">New</span>
+             <span class="text-xs font-medium">{{ $t('note.new_note') }}</span>
            </button>
          </div>
       </div>
@@ -1239,11 +1286,11 @@ onMounted(async () => {
       <div class="px-3 pt-3 pb-2 sticky top-0 bg-[#fbfbfc] dark:bg-[#191919] z-10" @mousedown.stop>
           <div class="relative w-full">
             <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b8b] dark:text-[#71717a]" />
-            <input v-model="searchQuery" type="text" placeholder="Search notes..." class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500">
+            <input v-model="searchQuery" type="text" :placeholder="$t('note.search_placeholder')" class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500">
             <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
               <X class="w-3.5 h-3.5" />
             </button>
-            <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" title="Match Case">
+            <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" :title="$t('note.match_case')">
               <CaseSensitive class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -1253,8 +1300,8 @@ onMounted(async () => {
          <!-- Pinned Section -->
          <div class="mb-4" v-if="allPinnedNotes.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Pinned Notes</span>
-                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
+                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.pinned_notes') }}</span>
+                 <button @click="openNoteManager('pinned')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in topPinnedNotes" :key="note.id"
@@ -1266,17 +1313,17 @@ onMounted(async () => {
                           <MoreVertical class="w-3.5 h-3.5 text-gray-500"/>
                        </button>
                        <div v-if="activeContextMenu === note.id" class="absolute right-0 top-6 w-32 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden">
-                          <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? 'Unpin' : 'Pin' }}</button>
-                          <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> Open in New Window</button>
-                          <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> Rename</button>
-                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? 'Unlock Note' : 'Lock Note' }}</button>
-                          <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> Delete</button>
+                          <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? $t('note.unpin') : $t('note.pin') }}</button>
+                          <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> {{ $t('note.open_new_window') }}</button>
+                          <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> {{ $t('note.rename') }}</button>
+                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? $t('note.unlock_note') : $t('note.lock_note') }}</button>
+                          <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> {{ $t('note.delete') }}</button>
                        </div>
                     </div>
                     <div class="flex items-center gap-2 mb-1.5 pr-6">
                         <Pin class="w-3 h-3 text-orange-500 shrink-0 fill-orange-500/20" />
                         <Lock v-if="appLockStore.isNoteProtected(note.id)" class="w-3 h-3 text-amber-500 shrink-0" />
-                        <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || 'Untitled Note' }}</span>
+                        <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || $t('note.untitled_note') }}</span>
                     </div>
                     <div class="flex flex-wrap gap-1" v-if="note.tags.length">
                         <span v-for="tag in note.tags" :key="tag" class="text-[9px] px-1.5 py-0.5 rounded bg-gray-200/60 dark:bg-[#333] text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
@@ -1284,7 +1331,7 @@ onMounted(async () => {
                  </div>
                  
                  <button v-if="allPinnedNotes.length > 5" @click="openNoteManager('pinned')" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
-                     Show {{ allPinnedNotes.length - 5 }} more...
+                     {{ $t('note.show_more', { count: allPinnedNotes.length - 5 }) }}
                  </button>
              </div>
          </div>
@@ -1292,8 +1339,8 @@ onMounted(async () => {
          <!-- Tags Section -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Top Tags</span>
-                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
+                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.top_tags') }}</span>
+                 <button @click="openNoteManager('tags')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5" v-if="topTags.length > 0">
                  <div v-for="tag in topTags" :key="tag.name"
@@ -1307,14 +1354,14 @@ onMounted(async () => {
                       <span class="text-[10px] opacity-50 bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{{ tag.count }}</span>
                  </div>
              </div>
-             <div v-else class="text-center p-4 text-xs text-gray-400">No tags found</div>
+             <div v-else class="text-center p-4 text-xs text-gray-400">{{ $t('note.no_tags_found') }}</div>
          </div>
 
          <!-- Recent Notes -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Recent Notes</span>
-                 <button @click="openNoteManager('notes')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">Show all</button>
+                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.recent_notes') }}</span>
+                 <button @click="openNoteManager('notes')" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <div v-for="note in recentNotes" :key="note.id"
@@ -1326,17 +1373,17 @@ onMounted(async () => {
                           <MoreVertical class="w-3.5 h-3.5 text-gray-500"/>
                        </button>
                        <div v-if="activeContextMenu === note.id" class="absolute right-0 top-6 w-32 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden">
-                          <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? 'Unpin' : 'Pin' }}</button>
-                          <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> Open in New Window</button>
-                          <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> Rename</button>
-                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? 'Unlock Note' : 'Lock Note' }}</button>
-                          <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> Delete</button>
+                          <button @click.stop="togglePin(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? $t('note.unpin') : $t('note.pin') }}</button>
+                          <button @click.stop="openInNewWindow(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><ExternalLink class="w-3 h-3" /> {{ $t('note.open_new_window') }}</button>
+                          <button @click.stop="handleRenamePrompt(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Edit2 class="w-3 h-3" /> {{ $t('note.rename') }}</button>
+                           <button v-if="appLockStore.isEnabled" @click.stop="toggleNoteLock(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><component :is="appLockStore.isNoteProtected(note.id) ? Unlock : Lock" class="w-3 h-3" /> {{ appLockStore.isNoteProtected(note.id) ? $t('note.unlock_note') : $t('note.lock_note') }}</button>
+                          <button @click.stop="deleteNote(note.id)" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> {{ $t('note.delete') }}</button>
                        </div>
                     </div>
                     <div class="flex items-center gap-2 mb-1.5 pr-6">
                         <FileText class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80" />
                         <Lock v-if="appLockStore.isNoteProtected(note.id)" class="w-3 h-3 text-amber-500 shrink-0" />
-                        <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || 'Untitled Note' }}</span>
+                        <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || $t('note.untitled_note') }}</span>
                     </div>
                     <div class="flex flex-wrap gap-1" v-if="note.tags.length">
                         <span v-for="tag in note.tags" :key="tag" class="text-[9px] px-1.5 py-0.5 rounded bg-gray-200/60 dark:bg-[#333] text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
@@ -1344,7 +1391,7 @@ onMounted(async () => {
                  </div>
              </div>
              <div v-if="recentNotes.length === 0" class="p-8 text-center text-sm text-[#52525b] dark:text-[#a1a1aa]">
-               No notes match.
+               {{ $t('note.no_notes_match') }}
              </div>
          </div>
       </div>
@@ -1356,7 +1403,7 @@ onMounted(async () => {
           <div v-if="!isFloatingView" class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
             <div class="flex gap-2">
               <NavButtons />
-              <button @click="showNoteSidebar = !showNoteSidebar" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Sidebar">
+              <button @click="showNoteSidebar = !showNoteSidebar" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_sidebar')">
                 <PanelLeftClose v-if="showNoteSidebar" class="w-4 h-4" />
                 <PanelLeft v-else class="w-4 h-4" />
               </button>
@@ -1377,13 +1424,13 @@ onMounted(async () => {
                   <ArrowRight class="w-3 h-3" />
                 </div>
               </button>
-              <button v-if="currentNoteId && viewMode === 'editor'" @click="exportModalVisible = true" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" title="Export Note">
+              <button v-if="currentNoteId && viewMode === 'editor'" @click="exportModalVisible = true" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="$t('note.export_note')">
                 <Download class="w-4 h-4" />
               </button>
               <div class="relative flex items-center h-full">
 
               </div>
-              <button v-if="currentNoteId && viewMode === 'editor'" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" title="Toggle Right Sidebar">
+              <button v-if="currentNoteId && viewMode === 'editor'" @click="showRightSidebar = !showRightSidebar" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_right_sidebar')">
                 <PanelRightClose v-if="showRightSidebar" class="w-4 h-4" />
                 <PanelRight v-else class="w-4 h-4" />
               </button>
@@ -1391,7 +1438,7 @@ onMounted(async () => {
           </div>
           
           <div v-if="zenMode" class="absolute top-4 right-4 z-50">
-             <button @click="zenMode = false" class="p-2 bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 rounded-full text-gray-500 hover:text-black dark:hover:text-white transition-all shadow-sm backdrop-blur-md opacity-0 hover:opacity-100 group-hover:opacity-100" title="Exit Zen Mode">
+             <button @click="zenMode = false" class="p-2 bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 rounded-full text-gray-500 hover:text-black dark:hover:text-white transition-all shadow-sm backdrop-blur-md opacity-0 hover:opacity-100 group-hover:opacity-100" :title="$t('note.exit_zen_mode')">
                 <Monitor class="w-4 h-4" />
              </button>
           </div>
@@ -1414,7 +1461,7 @@ onMounted(async () => {
                        </span>
                        <div class="relative flex items-center">
                           <Plus class="w-3 h-3 absolute left-1.5 text-gray-400" />
-                          <input v-model="newTagInput" @keydown="addTag" placeholder="Add tag..." class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                          <input v-model="newTagInput" @keydown="addTag" :placeholder="$t('note.add_tag')" class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]" />
                        </div>
                    </div>
                    <div class="w-full grid grow-wrap" :data-replicated-value="(focusedTitles[tabId] !== undefined ? focusedTitles[tabId] : notes.find(n => n.id === tabId)?.title) || ''">
@@ -1425,7 +1472,7 @@ onMounted(async () => {
                        @input="focusedTitles[tabId] = ($event.target as HTMLTextAreaElement).value"
                        @blur="renameTopTitle" 
                        @keydown.enter.prevent="renameTopTitle" 
-                       placeholder="Note Title"></textarea>
+                       :placeholder="$t('note.note_title')"></textarea>
                    </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">
@@ -1438,7 +1485,7 @@ onMounted(async () => {
           <div v-else class="flex-1 flex items-center justify-center text-[#52525b] dark:text-[#a1a1aa]">
             <div class="text-center">
               <FileText class="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Select a note to start editing</p>
+              <p>{{ $t('note.select_to_start') }}</p>
             </div>
           </div>
       </template>
@@ -1450,7 +1497,7 @@ onMounted(async () => {
                       <ArrowLeft class="w-5 h-5" />
                    </button>
                    <h1 class="text-xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
-                      {{ managerFilter === 'tags' && !managerSearchQuery ? 'All Tags' : managerSearchQuery ? 'Search Results' : managerFilter === 'notes' || !managerFilter ? 'All Notes' : managerFilter === 'pinned' ? 'Pinned Notes' : 'Tag: ' + managerFilter.split('/').pop() }}
+                      {{ managerFilter === 'tags' && !managerSearchQuery ? $t('note.all_tags') : managerSearchQuery ? $t('note.search_results') : managerFilter === 'notes' || !managerFilter ? $t('note.all_notes') : managerFilter === 'pinned' ? $t('note.pinned_notes') : $t('note.tag_prefix') + managerFilter.split('/').pop() }}
                       <span class="text-[12px] font-medium px-2 py-0.5 mt-0.5 rounded-full bg-gray-100 dark:bg-[#333] text-gray-500">
                         {{ managerFilter === 'tags' && !managerSearchQuery ? allTags.length : managerFilteredNotes.length }}
                       </span>
@@ -1461,11 +1508,11 @@ onMounted(async () => {
              <div class="flex-1 flex flex-col p-8 md:p-12 lg:p-16 w-full max-w-6xl mx-auto">
                  <div class="relative w-full mb-8">
                    <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b] dark:text-[#71717a]" />
-                   <input v-model="managerSearchQuery" type="text" placeholder="Search notes or tags..." class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input">
+                   <input v-model="managerSearchQuery" type="text" :placeholder="$t('note.search_manager_placeholder')" class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input">
                    <button v-if="managerSearchQuery" @click="managerSearchQuery = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
                      <X class="w-4 h-4" />
                    </button>
-                   <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" title="Match Case">
+                   <button @click="isCaseSensitiveSearch = !isCaseSensitiveSearch" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', isCaseSensitiveSearch ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" :title="$t('note.match_case')">
                      <CaseSensitive class="w-4 h-4" />
                    </button>
                  </div>
@@ -1488,10 +1535,10 @@ onMounted(async () => {
                          <thead>
                             <tr class="bg-gray-50 dark:bg-[#1a1a1a] border-b border-[#e6e6e6] dark:border-[#333]">
                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-8"></th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-5/12">Title</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">Tags</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase whitespace-nowrap text-right">Modified</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-12 text-center">Action</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-5/12">{{ $t('note.title_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('note.tags_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase whitespace-nowrap text-right">{{ $t('note.modified_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-12 text-center">{{ $t('note.action_col') }}</th>
                             </tr>
                          </thead>
                          <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
@@ -1500,13 +1547,13 @@ onMounted(async () => {
                                   <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20" />
                                   <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50" />
                                </td>
-                               <td class="py-3 px-4 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] max-w-[250px] truncate">{{ note.title || 'Untitled Note' }}</td>
+                               <td class="py-3 px-4 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}</td>
                                <td class="py-3 px-4">
                                   <div class="flex flex-wrap gap-1" v-if="note.tags.length">
                                      <span v-for="tag in note.tags.slice(0, 3)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
                                      <span v-if="note.tags.length > 3" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">+{{ note.tags.length - 3 }}</span>
                                   </div>
-                                  <span v-else class="text-xs text-gray-400 italic">No tags</span>
+                                  <span v-else class="text-xs text-gray-400 italic">{{ $t('note.no_tags') }}</span>
                                </td>
                                <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ formatDate(note.date) }}</td>
                                <td class="py-3 px-4 w-12 text-center" @click.stop>
@@ -1515,14 +1562,14 @@ onMounted(async () => {
                                         <MoreVertical class="w-4 h-4 text-gray-500" />
                                      </button>
                                      <div v-if="activeContextMenu === 'manager_'+note.id" class="absolute right-6 top-0 w-32 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden">
-                                        <button @click.stop="togglePin(note.id); activeContextMenu = null;" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? 'Unpin' : 'Pin' }}</button>
-                                        <button @click.stop="deleteNote(note.id); activeContextMenu = null;" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> Delete</button>
+                                        <button @click.stop="togglePin(note.id); activeContextMenu = null;" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2"><Pin class="w-3 h-3" /> {{ note.pinned ? $t('note.unpin') : $t('note.pin') }}</button>
+                                        <button @click.stop="deleteNote(note.id); activeContextMenu = null;" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2"><Trash2 class="w-3 h-3" /> {{ $t('note.delete') }}</button>
                                      </div>
                                   </div>
                                </td>
                             </tr>
                             <tr v-if="managerFilteredNotes.length === 0">
-                               <td colspan="5" class="py-12 text-center text-gray-500">No notes found matching current filters.</td>
+                               <td colspan="5" class="py-12 text-center text-gray-500">{{ $t('note.no_notes_found') }}</td>
                             </tr>
                          </tbody>
                       </table>
@@ -1530,11 +1577,11 @@ onMounted(async () => {
                    
                    <!-- Pagination Controls -->
                    <div v-if="managerTotalPages > 1" class="mt-4 flex items-center justify-between text-[13px] text-gray-500">
-                      <div>Showing {{ (managerCurrentPage - 1) * managerItemsPerPage + 1 }} to {{ Math.min(managerCurrentPage * managerItemsPerPage, managerFilteredNotes.length) }} of {{ managerFilteredNotes.length }} notes</div>
+                      <div>{{ $t('note.showing') }} {{ (managerCurrentPage - 1) * managerItemsPerPage + 1 }} {{ $t('note.to') }} {{ Math.min(managerCurrentPage * managerItemsPerPage, managerFilteredNotes.length) }} {{ $t('note.of') }} {{ managerFilteredNotes.length }} {{ $t('note.notes_lowercase') }}</div>
                       <div class="flex items-center gap-2">
-                         <button @click="managerPrevPage" :disabled="managerCurrentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">Previous</button>
-                         <span class="font-medium px-2 text-[#1c1c1e] dark:text-[#f4f4f5]">Page {{ managerCurrentPage }} of {{ managerTotalPages }}</span>
-                         <button @click="managerNextPage" :disabled="managerCurrentPage === managerTotalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">Next</button>
+                         <button @click="managerPrevPage" :disabled="managerCurrentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.previous') }}</button>
+                         <span class="font-medium px-2 text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.page') }} {{ managerCurrentPage }} {{ $t('note.of') }} {{ managerTotalPages }}</span>
+                         <button @click="managerNextPage" :disabled="managerCurrentPage === managerTotalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.next') }}</button>
                       </div>
                    </div>
                  </div>
@@ -1548,7 +1595,7 @@ onMounted(async () => {
       <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragRightSidebar"></div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
           <Globe class="w-4 h-4 text-gray-500 mr-2" />
-          <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">Graph View</span>
+          <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">{{ $t('note.graph_view') }}</span>
           <button @click="showRightSidebar = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors">
              <X class="w-3.5 h-3.5" />
           </button>
@@ -1557,10 +1604,10 @@ onMounted(async () => {
           <NoteGraph v-if="activeNote" :current-note-id="currentNoteId || ''" :current-note-title="activeNote.title || 'Untitled Node'" :tags="activeNote.tags || []" :outgoing-links="currentOutgoingLinks" :backlinks="currentBacklinks" :all-notes="notes" @open-note="handleOpenInternalNote" />
       </div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
-          <span class="font-bold text-[11px] tracking-wider text-[#8b8b8b] dark:text-[#71717a] uppercase mt-0.5">Linked Mentions ({{ currentBacklinks.length }})</span>
+          <span class="font-bold text-[11px] tracking-wider text-[#8b8b8b] dark:text-[#71717a] uppercase mt-0.5">{{ $t('note.linked_mentions') }} ({{ currentBacklinks.length }})</span>
       </div>
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
-          <div v-if="currentBacklinks.length === 0" class="text-[13px] text-gray-400 text-center py-4">No linked mentions.</div>
+          <div v-if="currentBacklinks.length === 0" class="text-[13px] text-gray-400 text-center py-4">{{ $t('note.no_linked_mentions') }}</div>
           <div v-for="bl in currentBacklinks" :key="bl.id" @click="handleOpenInternalNote({ id: bl.id, type: bl.node_type })" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group">
             <h5 class="flex items-center gap-2 pr-2">
                 <Calendar v-if="bl.node_type === 'event'" class="w-3.5 h-3.5 text-rose-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
@@ -1568,7 +1615,7 @@ onMounted(async () => {
                 <FileText v-else class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/>
                 <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ bl.title }}</span>
                 <span v-if="bl.node_type === 'event' && bl.properties && bl.properties.start_at" class="ml-auto text-[9px] text-gray-400 font-medium tracking-wider whitespace-nowrap">{{ (bl.properties.start_at as string).split('T')[0] }}</span>
-                <button v-if="bl._is_outgoing_project" @click.stop="unlinkProject(bl.id, bl.title)" class="ml-auto p-1.5 -mr-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 transition-all" title="Unlink Project">
+                <button v-if="bl._is_outgoing_project" @click.stop="unlinkProject(bl.id, bl.title)" class="ml-auto p-1.5 -mr-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 transition-all" :title="$t('note.unlink_project')">
                    <X class="w-3.5 h-3.5" />
                 </button>
             </h5>
@@ -1580,7 +1627,7 @@ onMounted(async () => {
     <Teleport to="body">
       <div v-if="renameModal.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="renameModal.show = false">
         <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-80 border border-[#e6e6e6] dark:border-[#3a3a3a]">
-          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">Rename Note</h3>
+          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">{{ $t('note.rename_note') }}</h3>
           <input
             v-model="renameModal.value"
             type="text"
@@ -1589,8 +1636,8 @@ onMounted(async () => {
             autofocus
           />
           <div class="flex justify-end gap-2 mt-4">
-            <button @click="renameModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">Cancel</button>
-            <button @click="confirmRename" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">Rename</button>
+            <button @click="renameModal.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">{{ $t('note.cancel') }}</button>
+            <button @click="confirmRename" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">{{ $t('note.rename') }}</button>
           </div>
         </div>
       </div>
