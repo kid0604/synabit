@@ -703,6 +703,8 @@
     "discovering": "Discovering feeds...",
     "discovered_feeds": "Discovered Feeds",
     "no_feeds_found": "No feeds found at this URL",
+    "add_as_scrape": "Add as Web Scrape",
+    "scrape_description": "Articles will be extracted directly from the page. Content loads when you read.",
     "select_category": "Select Category",
     "create_category": "Create New Category",
     "new_category_name": "Category name...",
@@ -732,6 +734,7 @@
     "exporting": "Exporting...",
     "pause_feed": "Pause Feed",
     "resume_feed": "Resume Feed",
-    "mark_feed_read": "Mark All as Read"
+    "mark_feed_read": "Mark All as Read",
+    "loading_content": "Loading article content..."
   }
 }

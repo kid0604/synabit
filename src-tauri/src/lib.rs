@@ -203,6 +203,7 @@ pub fn run() {
             feeds::feed_toggle_read_later,
             feeds::feed_refresh,
             feeds::feed_discover,
+            feeds::feed_fetch_article_content,
             feeds::feed_run_cleanup,
             feeds::feed_import_opml,
             feeds::feed_export_opml,

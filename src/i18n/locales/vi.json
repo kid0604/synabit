@@ -703,6 +703,8 @@
     "discovering": "Đang tìm nguồn tin...",
     "discovered_feeds": "Nguồn tin tìm thấy",
     "no_feeds_found": "Không tìm thấy nguồn tin tại URL này",
+    "add_as_scrape": "Thêm bằng Web Scrape",
+    "scrape_description": "Bài viết sẽ được trích xuất trực tiếp từ trang web. Nội dung đầy đủ được tải khi bạn đọc.",
     "select_category": "Chọn danh mục",
     "create_category": "Tạo danh mục mới",
     "new_category_name": "Tên danh mục...",
@@ -732,6 +734,7 @@
     "exporting": "Đang xuất...",
     "pause_feed": "Tạm dừng",
     "resume_feed": "Tiếp tục",
-    "mark_feed_read": "Đánh dấu tất cả đã đọc"
+    "mark_feed_read": "Đánh dấu tất cả đã đọc",
+    "loading_content": "Đang tải nội dung bài viết..."
   }
 }

@@ -105,6 +105,10 @@ export function useArticleService() {
     await invoke('feed_run_cleanup', { maxAgeDays, maxPerFeed });
   }
 
+  async function fetchArticleContent(articleId: string): Promise<CachedArticle> {
+    return await invoke<CachedArticle>('feed_fetch_article_content', { articleId });
+  }
+
   // OPML
   async function importOpml(opmlContent: string): Promise<any[]> {
     const feeds = await invoke<any[]>('feed_import_opml', { vaultPath: vaultPath.value, opmlContent });
@@ -123,6 +127,7 @@ export function useArticleService() {
     getArticles, searchArticles, getUnreadCounts, getTotalUnread,
     markRead, markAllRead, toggleStar, toggleReadLater,
     refreshFeeds, discoverFeeds, runCleanup,
+    fetchArticleContent,
     importOpml, exportOpml,
   };
 }

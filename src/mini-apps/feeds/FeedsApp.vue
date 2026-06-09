@@ -210,6 +210,15 @@ const handleMobileBack = () => {
   selectedArticle.value = null;
 };
 
+const handleArticleUpdated = (updated: CachedArticle) => {
+  selectedArticle.value = updated;
+  // Also update in the articles list
+  const idx = articles.value.findIndex(a => a.id === updated.id);
+  if (idx >= 0) {
+    articles.value[idx] = updated;
+  }
+};
+
 // Debounce
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const debouncedLoad = (fn: () => void, ms = 300) => {
@@ -344,11 +353,11 @@ defineExpose({ openFeedById, openArticleById });
       <template v-if="!useMobileLayout">
         <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :total-unread="totalUnread" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" class="w-[260px] shrink-0 border-r border-border dark:border-border-dark" />
         <ArticleList :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="viewMode = $event" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" class="w-[380px] shrink-0 border-r border-border dark:border-border-dark" />
-        <ArticleReader :article="selectedArticle" :config="config" :sources="sources" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" class="flex-1 min-w-0" />
+        <ArticleReader :article="selectedArticle" :config="config" :sources="sources" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" class="flex-1 min-w-0" />
       </template>
       <template v-else>
         <ArticleList v-if="mobilePanel === 'list'" :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="viewMode = $event" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" class="flex-1" />
-        <ArticleReader v-else :article="selectedArticle" :config="config" :sources="sources" :show-back-button="true" @back="handleMobileBack" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" class="flex-1" />
+        <ArticleReader v-else :article="selectedArticle" :config="config" :sources="sources" :show-back-button="true" @back="handleMobileBack" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" class="flex-1" />
       </template>
     </div>
 

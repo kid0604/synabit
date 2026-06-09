@@ -3,6 +3,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ArrowLeft, Rss } from 'lucide-vue-next';
 import ReaderToolbar from './ReaderToolbar.vue';
+import { useArticleService } from '../composables/useArticleService';
 import type { CachedArticle, FeedConfig, FeedSource } from '../types/feed.types';
 
 const props = defineProps<{
@@ -19,11 +20,14 @@ const emit = defineEmits<{
   'quick-capture': [article: CachedArticle];
   'create-task': [article: CachedArticle];
   'back': [];
+  'article-updated': [article: CachedArticle];
 }>();
 
 const { t } = useI18n();
+const feedService = useArticleService();
 const contentRef = ref<HTMLElement | null>(null);
 const readingProgress = ref(0);
+const loadingContent = ref(false);
 
 const sourceName = computed(() => {
   if (!props.article) return '';
@@ -50,11 +54,25 @@ const openOriginal = () => {
   }
 };
 
-watch(() => props.article?.id, () => {
+watch(() => props.article?.id, async (newId) => {
   readingProgress.value = 0;
   nextTick(() => {
     if (contentRef.value) contentRef.value.scrollTop = 0;
   });
+
+  // Lazy-load content for scrape-type articles
+  if (props.article && !props.article.content && props.article.contentType === 'scrape') {
+    loadingContent.value = true;
+    try {
+      const updated = await feedService.fetchArticleContent(props.article.id);
+      // Update the article data reactively
+      emit('article-updated', updated);
+    } catch (e) {
+      console.error('Failed to fetch article content:', e);
+    } finally {
+      loadingContent.value = false;
+    }
+  }
 });
 </script>
 
@@ -114,8 +132,13 @@ watch(() => props.article?.id, () => {
             {{ t('feeds.view_original') }} →
           </a>
 
+          <!-- Loading content for scrape articles -->
+          <div v-if="loadingContent" class="flex flex-col items-center justify-center py-16">
+            <div class="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p class="text-sm text-gray-400">{{ t('feeds.loading_content') }}</p>
+          </div>
           <!-- Article body -->
-          <div class="article-prose" :style="{ fontSize: config.readingFontSize + 'px' }" v-html="article.content || article.summary || ''"></div>
+          <div v-else class="article-prose" :style="{ fontSize: config.readingFontSize + 'px' }" v-html="article.content || article.summary || ''"></div>
         </article>
       </div>
     </template>

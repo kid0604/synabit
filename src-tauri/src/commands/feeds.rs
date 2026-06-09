@@ -10,7 +10,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbState;
-use crate::feed_engine::{cleanup, discovery, fetcher, opml as feed_opml, parser};
+use crate::feed_engine::{cleanup, discovery, fetcher, opml as feed_opml, parser, scrape, readability};
 
 // ═══════════════════════════════════════════════════════════════
 //  DATA TYPES
@@ -187,63 +187,123 @@ pub async fn feed_add_source(
     url: String,
     category_id: Option<String>,
 ) -> Result<FeedSource, String> {
-    // Discover the feed to get metadata
+    // Step 1: Try RSS/Atom discovery
     let discovered = discovery::discover_feeds(&url).await?;
-    let feed_url = discovered.first().map(|f| f.url.clone()).unwrap_or(url.clone());
-    let feed_type = discovered
-        .first()
-        .map(|f| f.feed_type.clone())
-        .unwrap_or_else(|| "rss".to_string());
 
-    // Fetch the feed to get title/description
-    let fetch_result = fetcher::fetch_feed(&feed_url, None, None).await;
-    let (title, description, site_url) = match &fetch_result {
-        fetcher::FetchResult::Updated { body, .. } => {
-            match feed_rs::parser::parse(body.as_slice()) {
-                Ok(feed) => {
-                    let t = feed.title.map(|t| t.content).unwrap_or_default();
-                    let d = feed.description.map(|d| d.content).unwrap_or_default();
-                    let s = feed.links.first().map(|l| l.href.clone()).unwrap_or_default();
-                    (t, d, s)
+    if !discovered.is_empty() {
+        // RSS/Atom found — existing flow
+        let feed_url = discovered[0].url.clone();
+        let feed_type = discovered[0].feed_type.clone();
+
+        let fetch_result = fetcher::fetch_feed(&feed_url, None, None).await;
+        let (title, description, site_url) = match &fetch_result {
+            fetcher::FetchResult::Updated { body, .. } => {
+                match feed_rs::parser::parse(body.as_slice()) {
+                    Ok(feed) => {
+                        let t = feed.title.map(|t| t.content).unwrap_or_default();
+                        let d = feed.description.map(|d| d.content).unwrap_or_default();
+                        let s = feed.links.first().map(|l| l.href.clone()).unwrap_or_default();
+                        (t, d, s)
+                    }
+                    Err(_) => (String::new(), String::new(), String::new()),
                 }
-                Err(_) => (String::new(), String::new(), String::new()),
             }
+            _ => (String::new(), String::new(), String::new()),
+        };
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let source = FeedSource {
+            id: uuid::Uuid::new_v4().to_string(),
+            url: feed_url,
+            site_url,
+            feed_type,
+            title,
+            description,
+            icon_url: String::new(),
+            category_id: category_id.unwrap_or_default(),
+            update_interval: 30,
+            is_paused: false,
+            added_at: now,
+            last_fetched_at: String::new(),
+            last_error: None,
+            etag: None,
+            last_modified_header: None,
+        };
+
+        let feeds_dir = ensure_feeds_dir(&vault_path)?;
+        let path = feeds_dir.join("sources.json");
+        let mut sources: Vec<FeedSource> = read_json_file(&path)?;
+        if sources.iter().any(|s| s.url == source.url) {
+            return Err("A feed with this URL already exists".to_string());
         }
-        _ => (String::new(), String::new(), String::new()),
+        sources.push(source.clone());
+        write_json_file(&path, &sources)?;
+        return Ok(source);
+    }
+
+    // Step 2: No RSS found — try scrape mode
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Synabit/1.0 Feed Reader")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client.get(&url).send().await
+        .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
+    let html = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let scraped = scrape::scrape_articles(&html, &url);
+    if scraped.is_empty() {
+        return Err("No RSS feed or articles found at this URL".to_string());
+    }
+
+    // Extract site title from HTML
+    let doc = scraper::Html::parse_document(&html);
+    let title = if let Ok(sel) = scraper::Selector::parse("title") {
+        doc.select(&sel).next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_else(|| url.clone())
+    } else {
+        url.clone()
+    };
+    let description = if let Ok(sel) = scraper::Selector::parse("meta[name=\"description\"]") {
+        doc.select(&sel).next()
+            .and_then(|el| el.value().attr("content"))
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
     };
 
     let now = chrono::Utc::now().to_rfc3339();
     let source = FeedSource {
         id: uuid::Uuid::new_v4().to_string(),
-        url: feed_url,
-        site_url,
-        feed_type,
+        url: url.clone(),
+        site_url: url,
+        feed_type: "scrape".to_string(),
         title,
         description,
         icon_url: String::new(),
         category_id: category_id.unwrap_or_default(),
-        update_interval: 30,
+        update_interval: 60, // Less frequent for scrape
         is_paused: false,
-        added_at: now.clone(),
+        added_at: now,
         last_fetched_at: String::new(),
         last_error: None,
         etag: None,
         last_modified_header: None,
     };
 
-    // Read existing sources, add new one, write back
     let feeds_dir = ensure_feeds_dir(&vault_path)?;
     let path = feeds_dir.join("sources.json");
     let mut sources: Vec<FeedSource> = read_json_file(&path)?;
-
-    // Check for duplicate URL
     if sources.iter().any(|s| s.url == source.url) {
         return Err("A feed with this URL already exists".to_string());
     }
-
     sources.push(source.clone());
     write_json_file(&path, &sources)?;
-
     Ok(source)
 }
 
@@ -608,7 +668,7 @@ pub async fn feed_refresh(
     let mut all_sources: Vec<FeedSource> = read_json_file(&sources_path)?;
 
     // Filter to specific source if requested — collect owned data to avoid borrow conflicts
-    let source_ids_to_refresh: Vec<(String, String, Option<String>, Option<String>, bool)> =
+    let source_ids_to_refresh: Vec<(String, String, Option<String>, Option<String>, bool, String)> =
         all_sources
             .iter()
             .filter(|s| {
@@ -625,6 +685,7 @@ pub async fn feed_refresh(
                     s.etag.clone(),
                     s.last_modified_header.clone(),
                     s.is_paused,
+                    s.feed_type.clone(),
                 )
             })
             .collect();
@@ -635,7 +696,30 @@ pub async fn feed_refresh(
         errors: Vec::new(),
     };
 
-    for (sid, url, etag, last_mod, _) in &source_ids_to_refresh {
+    for (sid, url, etag, last_mod, _, feed_type) in &source_ids_to_refresh {
+        if feed_type == "scrape" {
+            // Scrape mode: fetch homepage and extract article cards
+            match scrape_refresh(&db, sid, url).await {
+                Ok((fetched, new_count)) => {
+                    result.total_fetched += fetched;
+                    result.total_new += new_count;
+                    if let Some(s) = all_sources.iter_mut().find(|s2| s2.id == *sid) {
+                        s.last_fetched_at = chrono::Utc::now().to_rfc3339();
+                        s.last_error = None;
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Scrape error for {}: {}", url, e);
+                    result.errors.push(msg);
+                    if let Some(s) = all_sources.iter_mut().find(|s2| s2.id == *sid) {
+                        s.last_error = Some(e);
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Existing RSS/Atom refresh code below...
         let fetch = fetcher::fetch_feed(
             url,
             etag.as_deref(),
@@ -720,6 +804,78 @@ pub async fn feed_refresh(
     write_json_file(&sources_path, &all_sources)?;
 
     Ok(result)
+}
+
+/// Refresh a scrape-type feed source by fetching the homepage and extracting article cards.
+async fn scrape_refresh(
+    db: &tauri::State<'_, DbState>,
+    source_id: &str,
+    url: &str,
+) -> Result<(usize, usize), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Synabit/1.0 Feed Reader")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client.get(url).send().await
+        .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
+    let html = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let scraped = scrape::scrape_articles(&html, url);
+    let fetched = scraped.len();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut new_count = 0;
+
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let conn = db.conn();
+
+    let mut insert_stmt = conn
+        .prepare(
+            "INSERT OR IGNORE INTO feed_articles
+             (id, feed_source_id, guid, title, url, author, content, summary,
+              published_at, fetched_at, thumbnail_url, word_count, read_time_minutes,
+              content_type, is_read, is_starred, is_read_later)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, ?12, 0, 0, 0)",
+        )
+        .map_err(|e| format!("Prepare error: {}", e))?;
+
+    let mut fts_stmt = conn
+        .prepare(
+            "INSERT OR IGNORE INTO feed_articles_fts (rowid, title, author, content, summary)
+             SELECT rowid, title, author, content, summary FROM feed_articles WHERE id = ?1",
+        )
+        .map_err(|e| format!("FTS prepare error: {}", e))?;
+
+    for article in &scraped {
+        let article_id = uuid::Uuid::new_v4().to_string();
+        // Use URL as guid for deduplication
+        let inserted = insert_stmt
+            .execute(params![
+                article_id,
+                source_id,
+                article.url,        // guid = url for scrape articles
+                article.title,
+                article.url,
+                "",                  // author (extracted later on read)
+                "",                  // content (lazy-loaded on read)
+                article.summary,
+                if article.published_at.is_empty() { &now } else { &article.published_at },
+                now,
+                article.thumbnail_url,
+                "scrape",            // content_type
+            ])
+            .map_err(|e| format!("Insert error: {}", e))?;
+
+        if inserted > 0 {
+            new_count += 1;
+            let _ = fts_stmt.execute(params![article_id]);
+        }
+    }
+
+    Ok((fetched, new_count))
 }
 
 /// Insert parsed articles into the database, returning the count of newly inserted articles.
@@ -808,6 +964,101 @@ fn log_fetch(
 #[tauri::command]
 pub async fn feed_discover(url: String) -> Result<Vec<discovery::DiscoveredFeed>, String> {
     discovery::discover_feeds(&url).await
+}
+
+/// Lazy-load full article content for scrape-type articles.
+/// Called when user clicks to read an article that has no content yet.
+#[tauri::command]
+pub async fn feed_fetch_article_content(
+    db: tauri::State<'_, DbState>,
+    article_id: String,
+) -> Result<CachedArticle, String> {
+    // 1. Get article from DB
+    let (url, current_content) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let conn = db.conn();
+        conn.query_row(
+            "SELECT url, content FROM feed_articles WHERE id = ?1",
+            params![article_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(|e| format!("Article not found: {}", e))?
+    };
+
+    // 2. If already has content, just return the article
+    if !current_content.is_empty() {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let conn = db.conn();
+        let article = conn.query_row(
+            "SELECT id, feed_source_id, guid, title, url, author, content, summary,
+                    published_at, fetched_at, thumbnail_url, word_count, read_time_minutes,
+                    content_type, is_read, is_starred, is_read_later
+             FROM feed_articles WHERE id = ?1",
+            params![article_id],
+            row_to_article,
+        ).map_err(|e| format!("Query error: {}", e))?;
+        return Ok(article);
+    }
+
+    // 3. Fetch the article page
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent("Synabit/1.0 Feed Reader")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client.get(&url).send().await
+        .map_err(|e| format!("Failed to fetch article: {}", e))?;
+    let html = response.text().await
+        .map_err(|e| format!("Failed to read article: {}", e))?;
+
+    // 4. Extract content using readability
+    let extracted = readability::extract_content(&html, &url);
+
+    // 5. Update article in DB
+    {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let conn = db.conn();
+        conn.execute(
+            "UPDATE feed_articles SET content = ?1, author = CASE WHEN author = '' THEN ?2 ELSE author END,
+             word_count = ?3, read_time_minutes = ?4,
+             thumbnail_url = CASE WHEN thumbnail_url = '' THEN ?5 ELSE thumbnail_url END
+             WHERE id = ?6",
+            params![
+                extracted.content,
+                extracted.author,
+                extracted.word_count,
+                extracted.read_time_minutes,
+                extracted.thumbnail_url,
+                article_id,
+            ],
+        )
+        .map_err(|e| format!("Update error: {}", e))?;
+
+        // Update FTS
+        let _ = conn.execute(
+            "DELETE FROM feed_articles_fts WHERE rowid = (SELECT rowid FROM feed_articles WHERE id = ?1)",
+            params![article_id],
+        );
+        let _ = conn.execute(
+            "INSERT INTO feed_articles_fts (rowid, title, author, content, summary)
+             SELECT rowid, title, author, content, summary FROM feed_articles WHERE id = ?1",
+            params![article_id],
+        );
+    }
+
+    // 6. Return updated article
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let conn = db.conn();
+    conn.query_row(
+        "SELECT id, feed_source_id, guid, title, url, author, content, summary,
+                published_at, fetched_at, thumbnail_url, word_count, read_time_minutes,
+                content_type, is_read, is_starred, is_read_later
+         FROM feed_articles WHERE id = ?1",
+        params![article_id],
+        row_to_article,
+    ).map_err(|e| format!("Query error: {}", e))
 }
 
 // ═══════════════════════════════════════════════════════════════

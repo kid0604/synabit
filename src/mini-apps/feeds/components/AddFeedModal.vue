@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { X, Search, Rss, Plus, Loader2, Check, FolderPlus } from 'lucide-vue-next';
+import { X, Search, Rss, Plus, Loader2, Check, FolderPlus, Globe } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
 import type { FeedCategory, DiscoveredFeed } from '../types/feed.types';
 
@@ -32,7 +32,13 @@ const discoveryDone = ref(false);
 
 const COLORS = ['#f97316', '#ef4444', '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#6366f1'];
 
-const canAdd = computed(() => selectedFeeds.value.size > 0 && (selectedCategoryId.value || creatingCategory.value));
+const useScrapeMode = ref(false);
+
+const canAdd = computed(() => {
+  const hasCategory = selectedCategoryId.value || creatingCategory.value;
+  if (useScrapeMode.value) return hasCategory;
+  return selectedFeeds.value.size > 0 && hasCategory;
+});
 
 const handleDiscover = async () => {
   if (!url.value.trim()) return;
@@ -57,9 +63,17 @@ const handleDiscover = async () => {
 };
 
 const toggleFeed = (feedUrl: string) => {
+  useScrapeMode.value = false; // deselect scrape when picking RSS
   const s = new Set(selectedFeeds.value);
   if (s.has(feedUrl)) s.delete(feedUrl); else s.add(feedUrl);
   selectedFeeds.value = s;
+};
+
+const toggleScrape = () => {
+  useScrapeMode.value = !useScrapeMode.value;
+  if (useScrapeMode.value) {
+    selectedFeeds.value = new Set(); // deselect RSS when picking scrape
+  }
 };
 
 const handleAdd = async () => {
@@ -80,8 +94,12 @@ const handleAdd = async () => {
       catId = newCat.id;
     }
 
-    for (const feedUrl of selectedFeeds.value) {
-      await feedService.addSource(feedUrl, catId);
+    if (useScrapeMode.value) {
+      await feedService.addSource(url.value.trim(), catId);
+    } else {
+      for (const feedUrl of selectedFeeds.value) {
+        await feedService.addSource(feedUrl, catId);
+      }
     }
     emit('added');
   } catch (e: any) {
@@ -148,10 +166,11 @@ const handleKeydown = (e: KeyboardEvent) => {
           {{ error }}
         </div>
 
-        <!-- Discovered Feeds -->
-        <div v-if="discoveredFeeds.length > 0" class="space-y-2">
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('feeds.discovered_feeds') }}</label>
+        <!-- Discovered options (RSS feeds + Web Scrape) -->
+        <div v-if="discoveryDone && !error" class="space-y-2">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ discoveredFeeds.length > 0 ? t('feeds.discovered_feeds') : t('feeds.no_feeds_found') }}</label>
           <div class="space-y-1.5">
+            <!-- RSS feeds -->
             <button
               v-for="feed in discoveredFeeds"
               :key="feed.url"
@@ -166,21 +185,37 @@ const handleKeydown = (e: KeyboardEvent) => {
               <div :class="['w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors', selectedFeeds.has(feed.url) ? 'border-orange-500 bg-orange-500' : 'border-gray-300 dark:border-gray-600']">
                 <Check v-if="selectedFeeds.has(feed.url)" class="w-3 h-3 text-white" />
               </div>
+              <Rss class="w-4 h-4 text-orange-400 shrink-0" />
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-medium truncate">{{ feed.title || feed.url }}</p>
                 <p class="text-xs text-gray-400 truncate">{{ feed.feedType.toUpperCase() }} • {{ feed.url }}</p>
               </div>
             </button>
+
+            <!-- Web Scrape option (always shown) -->
+            <button
+              @click="toggleScrape"
+              :class="[
+                'w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all duration-200',
+                useScrapeMode
+                  ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
+                  : 'border-gray-200 dark:border-[#333] hover:border-gray-300 dark:hover:border-[#444]'
+              ]"
+            >
+              <div :class="['w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors', useScrapeMode ? 'border-orange-500 bg-orange-500' : 'border-gray-300 dark:border-gray-600']">
+                <Check v-if="useScrapeMode" class="w-3 h-3 text-white" />
+              </div>
+              <Globe class="w-4 h-4 text-blue-400 shrink-0" />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium">{{ t('feeds.add_as_scrape') }}</p>
+                <p class="text-xs text-gray-400">{{ t('feeds.scrape_description') }}</p>
+              </div>
+            </button>
           </div>
         </div>
 
-        <!-- No feeds found -->
-        <div v-if="discoveryDone && discoveredFeeds.length === 0 && !error" class="text-center py-4">
-          <p class="text-sm text-gray-500">{{ t('feeds.no_feeds_found') }}</p>
-        </div>
-
-        <!-- Category selector (only show after discovery) -->
-        <div v-if="discoveredFeeds.length > 0" class="space-y-3">
+        <!-- Category selector (show after discovery) -->
+        <div v-if="discoveryDone && !error" class="space-y-3">
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('feeds.select_category') }}</label>
           
           <div class="flex flex-wrap gap-2">
