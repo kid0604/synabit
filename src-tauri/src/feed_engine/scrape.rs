@@ -27,6 +27,10 @@ const CONTAINER_SELECTORS: &[&str] = &[
     "[class*=\"story\"]",
     "[class*=\"news-item\"]",
     "[class*=\"blog-item\"]",
+    "[class*=\"item-news\"]",
+    "[class*=\"item-list\"]",
+    "[class*=\"news\"]",
+    "[class*=\"headline\"]",
 ];
 
 /// URL path segments that indicate non-article pages
@@ -105,11 +109,22 @@ fn extract_article_card(container: &ElementRef, domain: &str, base_url: &str) ->
         return None;
     }
     
-    // Filter: path must have at least 2 segments (e.g., /category/article-slug)
+    // Filter: path must look like an article URL
     let path = extract_path(&full_url);
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 2 {
+    // Reject root-only URLs (/)
+    if segments.is_empty() {
         return None;
+    }
+    // If only 1 segment, must look like an article slug (contains digits or ends with .html/.htm)
+    if segments.len() < 2 {
+        let last = segments.last().unwrap_or(&"");
+        let looks_like_article = last.contains(|c: char| c.is_ascii_digit())
+            || last.ends_with(".html")
+            || last.ends_with(".htm");
+        if !looks_like_article {
+            return None;
+        }
     }
     
     // Filter: blacklisted paths

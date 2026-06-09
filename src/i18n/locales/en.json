@@ -672,6 +672,7 @@
     "add_your_first": "Add your first feed to get started!",
     "source_settings": "Feed Settings",
     "remove_source": "Remove Feed",
+    "rename_source": "Rename Feed",
     "pause_source": "Pause Feed",
     "resume_source": "Resume Feed",
     "update_interval_label": "Update Interval",

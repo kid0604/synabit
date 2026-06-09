@@ -49,6 +49,40 @@ const viewMode = ref<'magazine' | 'cards' | 'titles'>(config.value.defaultView |
 // Mobile state
 const mobilePanel = ref<'list' | 'reader'>('list');
 
+// Resize state
+const sidebarWidth = ref(260);
+const articleListWidth = ref(380);
+const isResizing = ref<'sidebar' | 'articleList' | null>(null);
+
+const startResize = (panel: 'sidebar' | 'articleList', e: MouseEvent) => {
+  e.preventDefault();
+  isResizing.value = panel;
+  const startX = e.clientX;
+  const startWidth = panel === 'sidebar' ? sidebarWidth.value : articleListWidth.value;
+
+  const onMouseMove = (e: MouseEvent) => {
+    const delta = e.clientX - startX;
+    if (panel === 'sidebar') {
+      sidebarWidth.value = Math.max(180, Math.min(400, startWidth + delta));
+    } else {
+      articleListWidth.value = Math.max(280, Math.min(600, startWidth + delta));
+    }
+  };
+
+  const onMouseUp = () => {
+    isResizing.value = null;
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+};
+
 // Computed filter
 const currentFilter = computed<ArticleFilter>(() => ({
   sourceId: selectedSourceId.value || undefined,
@@ -103,6 +137,34 @@ const handleRefresh = async () => {
     await loadData();
   } catch (e) {
     logger.error('Failed to refresh feeds', e);
+  } finally {
+    refreshing.value = false;
+  }
+};
+
+// Auto-refresh: check each source's updateInterval and refresh if overdue
+const autoRefresh = async () => {
+  if (refreshing.value || sources.value.length === 0) return;
+  const now = Date.now();
+  const overdueSources = sources.value.filter(s => {
+    if (s.isPaused) return false;
+    if (!s.lastFetchedAt) return true; // never fetched
+    const lastFetched = new Date(s.lastFetchedAt).getTime();
+    const intervalMs = (s.updateInterval || 30) * 60 * 1000;
+    return (now - lastFetched) >= intervalMs;
+  });
+
+  if (overdueSources.length === 0) return;
+
+  logger.info(`Auto-refreshing ${overdueSources.length} overdue feed(s)`);
+  refreshing.value = true;
+  try {
+    for (const source of overdueSources) {
+      await feedService.refreshFeeds(source.id);
+    }
+    await loadData();
+  } catch (e) {
+    logger.error('Auto-refresh failed', e);
   } finally {
     refreshing.value = false;
   }
@@ -184,6 +246,15 @@ const handleRemoveSource = async (sourceId: string) => {
   await feedService.removeSource(sourceId);
   if (selectedSourceId.value === sourceId) selectedSourceId.value = null;
   await loadData();
+};
+
+const handleRenameSource = async (sourceId: string, newTitle: string) => {
+  const source = sources.value.find(s => s.id === sourceId);
+  if (source) {
+    source.title = newTitle;
+    await feedService.updateSource(source);
+    await loadData();
+  }
 };
 
 const handlePauseSource = async (sourceId: string) => {
@@ -296,12 +367,19 @@ onMounted(async () => {
 
   // Auto-cleanup on mount
   feedService.runCleanup().catch(() => {});
+
+  // Auto-refresh on mount (check overdue sources)
+  autoRefresh();
+
+  // Poll every 5 minutes to check for overdue sources
+  const refreshInterval = setInterval(autoRefresh, 5 * 60 * 1000);
   // Cleanup every 6 hours
   const cleanupInterval = setInterval(() => {
     feedService.runCleanup().catch(() => {});
   }, 6 * 60 * 60 * 1000);
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyboard);
+    clearInterval(refreshInterval);
     clearInterval(cleanupInterval);
   });
 });
@@ -351,8 +429,10 @@ defineExpose({ openFeedById, openArticleById });
     <!-- Main Content -->
     <div class="flex-1 flex gap-0 overflow-hidden">
       <template v-if="!useMobileLayout">
-        <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :total-unread="totalUnread" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" class="w-[260px] shrink-0 border-r border-border dark:border-border-dark" />
-        <ArticleList :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="viewMode = $event" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" class="w-[380px] shrink-0 border-r border-border dark:border-border-dark" />
+        <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :total-unread="totalUnread" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @rename-source="handleRenameSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: sidebarWidth + 'px' }" />
+        <div class="resize-handle" @mousedown="startResize('sidebar', $event)"><div class="resize-line"></div></div>
+        <ArticleList :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="viewMode = $event" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: articleListWidth + 'px' }" />
+        <div class="resize-handle" @mousedown="startResize('articleList', $event)"><div class="resize-line"></div></div>
         <ArticleReader :article="selectedArticle" :config="config" :sources="sources" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" class="flex-1 min-w-0" />
       </template>
       <template v-else>
@@ -365,3 +445,30 @@ defineExpose({ openFeedById, openArticleById });
     <ImportExportModal v-if="showImportExportModal" @close="showImportExportModal = false" @imported="handleImported" />
   </div>
 </template>
+
+<style scoped>
+.resize-handle {
+  width: 4px;
+  position: relative;
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.resize-handle:hover .resize-line,
+.resize-handle:active .resize-line {
+  opacity: 1;
+}
+
+.resize-line {
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background-color: var(--color-orange-500, #f97316);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+</style>

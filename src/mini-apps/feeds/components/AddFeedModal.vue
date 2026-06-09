@@ -55,7 +55,7 @@ const handleDiscover = async () => {
     }
     discoveryDone.value = true;
   } catch (e: any) {
-    error.value = e?.message || t('feeds.no_feeds_found');
+    error.value = typeof e === 'string' ? e : (e?.message || t('feeds.no_feeds_found'));
     discoveryDone.value = true;
   } finally {
     discovering.value = false;
@@ -103,7 +103,7 @@ const handleAdd = async () => {
     }
     emit('added');
   } catch (e: any) {
-    error.value = e?.message || 'Failed to add feed';
+    error.value = typeof e === 'string' ? e : (e?.message || 'Failed to add feed');
   } finally {
     adding.value = false;
   }

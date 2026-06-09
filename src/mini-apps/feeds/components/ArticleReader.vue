@@ -50,9 +50,33 @@ const handleScroll = () => {
 
 const openOriginal = () => {
   if (props.article?.url) {
-    window.open(props.article.url, '_blank');
+    openExternal(props.article.url);
   }
 };
+
+// Open external URLs in default browser
+const openExternal = async (url: string) => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_url', { url });
+  } catch {
+    window.open(url, '_blank');
+  }
+};
+
+// Intercept link clicks in article content
+const handleContentClick = (e: MouseEvent) => {
+  const target = (e.target as HTMLElement)?.closest('a');
+  if (!target) return;
+  const href = target.getAttribute('href');
+  if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+    e.preventDefault();
+    e.stopPropagation();
+    openExternal(href);
+  }
+};
+
+
 
 watch(() => props.article?.id, async (newId) => {
   readingProgress.value = 0;
@@ -113,7 +137,7 @@ watch(() => props.article?.id, async (newId) => {
       </div>
 
       <!-- Content -->
-      <div ref="contentRef" @scroll="handleScroll" class="flex-1 overflow-y-auto hidden-scrollbar">
+      <div ref="contentRef" @scroll="handleScroll" @click="handleContentClick" class="flex-1 overflow-y-auto hidden-scrollbar select-text">
         <article class="mx-auto py-8 px-6" :style="{ maxWidth: config.readingMaxWidth + 'px' }">
           <!-- Header -->
           <h1 class="text-2xl font-bold leading-tight text-text dark:text-text-dark mb-3" :style="{ fontSize: (config.readingFontSize + 8) + 'px' }">
@@ -128,7 +152,7 @@ watch(() => props.article?.id, async (newId) => {
             <span>{{ article.readTimeMinutes }} {{ t('feeds.read_time_min') }}</span>
             <span v-if="article.wordCount">· {{ article.wordCount.toLocaleString() }} {{ t('feeds.words') }}</span>
           </div>
-          <a v-if="article.url" :href="article.url" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-sm text-orange-500 hover:text-orange-600 font-medium mb-6 pb-6 border-b border-border dark:border-border-dark transition-colors">
+          <a v-if="article.url" @click.prevent="openOriginal" class="inline-flex items-center gap-1.5 text-sm text-orange-500 hover:text-orange-600 font-medium mb-6 pb-6 border-b border-border dark:border-border-dark transition-colors cursor-pointer">
             {{ t('feeds.view_original') }} →
           </a>
 

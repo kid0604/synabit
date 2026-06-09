@@ -29,7 +29,12 @@ const COMMON_FEED_PATHS: &[&str] = &[
 pub async fn discover_feeds(url: &str) -> Result<Vec<DiscoveredFeed>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("Synabit/1.0 Feed Reader")
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+            h
+        })
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;

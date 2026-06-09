@@ -20,6 +20,7 @@ const emit = defineEmits<{
   'select-category': [id: string | null];
   'select-view': [view: 'today' | 'all' | 'starred' | 'read-later' | 'unread'];
   'remove-source': [id: string];
+  'rename-source': [id: string, newTitle: string];
   'open-opml': [];
   'pause-source': [id: string];
   'mark-source-read': [id: string];
@@ -107,6 +108,7 @@ const smartViews = computed(() => [
             :is-selected="selectedSourceId === source.id"
             @select="emit('select-source', source.id)"
             @remove="emit('remove-source', source.id)"
+            @rename-source="(newTitle: string) => emit('rename-source', source.id, newTitle)"
             @pause-source="emit('pause-source', source.id)"
             @mark-source-read="emit('mark-source-read', source.id)"
           />
@@ -124,6 +126,7 @@ const smartViews = computed(() => [
           :is-selected="selectedSourceId === source.id"
           @select="emit('select-source', source.id)"
           @remove="emit('remove-source', source.id)"
+          @rename-source="(newTitle: string) => emit('rename-source', source.id, newTitle)"
           @pause-source="emit('pause-source', source.id)"
           @mark-source-read="emit('mark-source-read', source.id)"
         />

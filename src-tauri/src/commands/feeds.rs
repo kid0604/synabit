@@ -244,7 +244,12 @@ pub async fn feed_add_source(
     // Step 2: No RSS found — try scrape mode
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent("Synabit/1.0 Feed Reader")
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+            h
+        })
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
@@ -814,7 +819,12 @@ async fn scrape_refresh(
 ) -> Result<(usize, usize), String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent("Synabit/1.0 Feed Reader")
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+            h
+        })
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
@@ -1003,7 +1013,12 @@ pub async fn feed_fetch_article_content(
     // 3. Fetch the article page
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .user_agent("Synabit/1.0 Feed Reader")
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+            h
+        })
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
@@ -1115,4 +1130,13 @@ pub fn feed_export_opml(vault_path: String) -> Result<String, String> {
         .collect();
 
     Ok(feed_opml::export_opml(&export_sources))
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OPEN URL (system default browser)
+// ═══════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    opener::open(&url).map_err(|e| format!("Failed to open URL: {}", e))
 }

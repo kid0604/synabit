@@ -672,6 +672,7 @@
     "add_your_first": "Thêm nguồn tin đầu tiên để bắt đầu!",
     "source_settings": "Cài đặt nguồn",
     "remove_source": "Xóa nguồn",
+    "rename_source": "Đổi tên nguồn",
     "pause_source": "Tạm dừng nguồn",
     "resume_source": "Tiếp tục nguồn",
     "update_interval_label": "Chu kỳ cập nhật",

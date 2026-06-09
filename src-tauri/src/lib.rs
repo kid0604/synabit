@@ -207,6 +207,7 @@ pub fn run() {
             feeds::feed_run_cleanup,
             feeds::feed_import_opml,
             feeds::feed_export_opml,
+            feeds::open_url,
             // System
             open_app_log_folder,
         ])

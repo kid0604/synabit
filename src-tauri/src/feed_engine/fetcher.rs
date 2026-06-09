@@ -28,7 +28,12 @@ pub async fn fetch_feed(
 ) -> FetchResult {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .user_agent("Synabit/1.0 Feed Reader")
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+            h
+        })
         .build()
     {
         Ok(c) => c,
