@@ -28,6 +28,8 @@ export interface TauriEventMap {
   'note:updated-external': { id: string; content: string };
   'e2ee:setup-required': void;
   'feed:refresh-completed': { sourceId?: string };
+  'syn:stream-token': { conversation_id: string; message_id: string; token: string; done: boolean };
+  'syn:pull-progress': { model: string; status: string; completed?: number; total?: number };
 }
 
 /** Frontend-only cross-app events */
@@ -108,6 +110,8 @@ const TAURI_BRIDGE_MAP: Record<string, EventName> = {
   'note-updated': 'note:updated-external',
   'e2ee-setup-required': 'e2ee:setup-required',
   'feed-refresh-completed': 'feed:refresh-completed',
+  'syn-stream-token': 'syn:stream-token',
+  'syn-pull-progress': 'syn:pull-progress',
 };
 
 // ─── Public API ──────────────────────────────────────────────

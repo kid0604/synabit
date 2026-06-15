@@ -8,3 +8,5 @@ pub mod whiteboards;
 pub mod tags;
 pub mod app_lock;
 pub mod feeds;
+pub mod syn;
+

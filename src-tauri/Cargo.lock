@@ -5847,7 +5847,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.7.1"
+version = "0.7.5"
 dependencies = [
  "ammonia",
  "argon2",
@@ -5896,6 +5896,7 @@ dependencies = [
  "text-diff",
  "thiserror 2.0.18",
  "tokio",
+ "url",
  "urlencoding",
  "uuid",
  "walkdir",

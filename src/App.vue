@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss, Brain } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -45,6 +45,7 @@ const {
 const ALL_APPS = [
   { id: 'nexus', name: 'Nexus', icon: Globe },
   { id: 'chat', name: 'Chat', icon: MessageSquare },
+  { id: 'syn', name: 'Syn', icon: Brain },
   { id: 'quickcap', name: 'QuickCap', icon: Zap },
   { id: 'note', name: 'Notes', icon: FileText },
   { id: 'task', name: 'Tasks', icon: CheckSquare },
@@ -144,6 +145,7 @@ watch(activeTool, async (newTool, oldTool) => {
   }
 });
 
+
 // ─── Mini App Refs for cross-app navigation ─────────────────
 const chatAppRef = ref<any>(null);
 const noteAppRef = ref<any>(null);
@@ -155,6 +157,7 @@ const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
 const feedsAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
+const synAppRef = ref<any>(null);
 
 const setAppRef = (el: any, name: string) => {
     if (!el) return;
@@ -168,6 +171,7 @@ const setAppRef = (el: any, name: string) => {
     else if (name === 'finance') financeAppRef.value = el;
     else if (name === 'feeds') feedsAppRef.value = el;
     else if (name === 'file') filesAppRef.value = el;
+    else if (name === 'syn') synAppRef.value = el;
 };
 
 // ─── Floating Note (opened in new window) ─────────────────
@@ -610,6 +614,11 @@ onUnmounted(() => {
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Chat</span>
                 </button>
 
+                <button v-if="!hiddenSidebarApps.includes('syn')" @click="activeTool = 'syn'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'syn' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Brain class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
+                </button>
+
                 <button v-if="!hiddenSidebarApps.includes('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Zap class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
@@ -649,6 +658,7 @@ onUnmounted(() => {
                    <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Feeds</span>
                 </button>
+
                 
                 <div v-if="hiddenSidebarApps.length > 0" class="relative flex justify-center w-full">
                   <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showHiddenAppsMenu ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">

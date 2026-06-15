@@ -13,8 +13,9 @@ pub mod crdt_bridge;
 pub mod sync;
 pub mod secrets;
 pub mod feed_engine;
+pub mod syn;
 
-use commands::{chat, feeds, files, nexus, nodes, whiteboards};
+use commands::{chat, feeds, files, nexus, nodes, syn as syn_commands, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -208,6 +209,23 @@ pub fn run() {
             feeds::feed_import_opml,
             feeds::feed_export_opml,
             feeds::open_url,
+            // Syn (Local AI Chat)
+            syn_commands::syn_check_status,
+            syn_commands::syn_list_models,
+            syn_commands::syn_pull_model,
+            syn_commands::syn_delete_model,
+            syn_commands::syn_send_message,
+            syn_commands::syn_stop_generation,
+            syn_commands::syn_cancel_pull,
+            syn_commands::syn_list_conversations,
+            syn_commands::syn_get_conversation,
+            syn_commands::syn_create_conversation,
+            syn_commands::syn_delete_conversation,
+            syn_commands::syn_rename_conversation,
+            syn_commands::syn_get_settings,
+            syn_commands::syn_save_settings,
+            syn_commands::syn_pin_conversation,
+            syn_commands::syn_export_conversation,
             // System
             open_app_log_folder,
         ])

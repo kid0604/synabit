@@ -12,6 +12,7 @@ const PeopleApp = () => import('../mini-apps/people/PeopleApp.vue');
 const FinanceApp = () => import('../mini-apps/finance/FinanceApp.vue');
 const ChatApp = () => import('../mini-apps/chat/ChatApp.vue');
 const FeedsApp = () => import('../mini-apps/feeds/FeedsApp.vue');
+const SynApp = () => import('../mini-apps/syn/SynApp.vue');
 
 const routes: Array<RouteRecordRaw> = [
   { path: '/', redirect: '/nexus' },
@@ -26,6 +27,7 @@ const routes: Array<RouteRecordRaw> = [
   { path: '/people', name: 'people', component: PeopleApp },
   { path: '/finance', name: 'finance', component: FinanceApp },
   { path: '/feeds', name: 'feeds', component: FeedsApp },
+  { path: '/syn', name: 'syn', component: SynApp },
 ];
 
 const router = createRouter({
