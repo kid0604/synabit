@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Sparkles, Download, ExternalLink, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
+import { Sparkles, Download, ExternalLink, RefreshCw, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import type { OllamaStatus, ModelInfo } from '../types';
 
 defineProps<{
@@ -11,12 +12,14 @@ defineProps<{
   models: ModelInfo[];
   pullingModel: boolean;
   pullProgress: number;
+  isPolling: boolean;
 }>();
 
 const emit = defineEmits<{
   'new-chat': [];
   'quick-action': [prompt: string];
   'pull-model': [name: string];
+  'retry': [];
 }>();
 
 const { t } = useI18n();
@@ -41,8 +44,13 @@ const cancelPull = async () => {
   await invoke('syn_cancel_pull');
 };
 
-const openOllamaWebsite = () => {
-  window.open('https://ollama.com', '_blank');
+const openOllamaWebsite = async () => {
+  try {
+    await openUrl('https://ollama.com');
+  } catch (e) {
+    // Fallback for dev mode
+    window.open('https://ollama.com', '_blank');
+  }
 };
 </script>
 
@@ -68,8 +76,9 @@ const openOllamaWebsite = () => {
           {{ $t('syn.setup_description') }}
         </p>
 
-        <!-- Steps -->
+        <!-- Steps (simplified: 2 steps instead of 3) -->
         <div class="w-full space-y-3 mb-6">
+          <!-- Step 1: Install Ollama -->
           <div class="flex items-start gap-3 bg-white dark:bg-[#1e1f25] border border-gray-100 dark:border-gray-800/60 rounded-xl p-4 text-left">
             <div class="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
               <span class="text-sm font-bold text-violet-600 dark:text-violet-400">1</span>
@@ -80,35 +89,40 @@ const openOllamaWebsite = () => {
             </div>
           </div>
 
+          <!-- Step 2: Open Ollama app -->
           <div class="flex items-start gap-3 bg-white dark:bg-[#1e1f25] border border-gray-100 dark:border-gray-800/60 rounded-xl p-4 text-left">
             <div class="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
               <span class="text-sm font-bold text-violet-600 dark:text-violet-400">2</span>
             </div>
             <div>
               <p class="text-sm font-medium text-text dark:text-text-dark">{{ $t('syn.setup_step2_title') }}</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                <code class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs">ollama serve</code>
-              </p>
-            </div>
-          </div>
-
-          <div class="flex items-start gap-3 bg-white dark:bg-[#1e1f25] border border-gray-100 dark:border-gray-800/60 rounded-xl p-4 text-left">
-            <div class="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span class="text-sm font-bold text-violet-600 dark:text-violet-400">3</span>
-            </div>
-            <div>
-              <p class="text-sm font-medium text-text dark:text-text-dark">{{ $t('syn.setup_step3_title') }}</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ $t('syn.setup_step3_desc') }}</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ $t('syn.setup_step2_desc') }}</p>
             </div>
           </div>
         </div>
 
+        <!-- Primary CTA: Download Ollama -->
         <button
           @click="openOllamaWebsite"
           class="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium text-sm shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all cursor-pointer"
         >
           <ExternalLink class="w-4 h-4" />
           {{ $t('syn.download_ollama') }}
+        </button>
+
+        <!-- Polling indicator -->
+        <div class="flex items-center gap-2 mt-5 text-sm text-gray-400 dark:text-gray-500">
+          <div class="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+          <span>{{ $t('syn.checking_connection') }}</span>
+        </div>
+
+        <!-- Manual retry button -->
+        <button
+          @click="emit('retry')"
+          class="mt-2 text-sm text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1.5 cursor-pointer"
+        >
+          <RefreshCw class="w-3.5 h-3.5" />
+          {{ $t('syn.retry_connection') }}
         </button>
       </template>
 

@@ -218,7 +218,16 @@ impl SynEngine {
     pub async fn check_status(&self) -> AppResult<OllamaStatus> {
         let url = format!("{}/api/version", self.base_url);
 
-        match self.client.get(&url).send().await {
+        // Use a lightweight client with short timeouts for status checks.
+        // The main self.client has a 300s timeout (needed for streaming chat),
+        // which would cause polling to hang when Ollama isn't running.
+        let status_client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+
+        match status_client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let body: OllamaVersionResponse = resp.json().await.map_err(|e| {
                     AppError::General(format!("Failed to parse Ollama version response: {}", e))

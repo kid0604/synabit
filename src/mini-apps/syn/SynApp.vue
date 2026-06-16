@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { useI18n } from 'vue-i18n';
 import { PanelLeftClose, PanelLeft, Loader2, Settings, Download } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
@@ -49,6 +48,7 @@ const {
   streamingContent,
   isStreaming,
   toolCalls,
+  error: chatError,
   sendMessage,
   stopGeneration,
   clearStreaming,
@@ -60,10 +60,16 @@ const {
   selectedModel,
   pullingModel,
   pullProgress,
+  isPolling,
   checkStatus,
   fetchModels,
   pullModel,
   formatModelSize,
+  startPolling,
+  stopPolling,
+  startHealthCheck,
+  stopHealthCheck,
+  cleanup: cleanupModels,
 } = useSynModels();
 
 // State
@@ -255,16 +261,26 @@ const handleQuickAction = async (prompt: string) => {
 
 // Handle model pull from welcome screen
 const handlePullModel = async (name: string) => {
-  await pullModel(name);
+  await pullModel(name, props.vaultPath);
 };
 
 // Refresh method exposed to parent
 const refresh = async () => {
   await checkStatus(props.vaultPath);
   if (status.value.connected) {
-    await fetchModels();
+    await fetchModels(props.vaultPath);
   }
   await loadConversations();
+};
+
+// Handle manual retry from WelcomeScreen
+const handleRetry = async () => {
+  await checkStatus(props.vaultPath);
+  if (status.value.connected) {
+    await fetchModels(props.vaultPath);
+  } else if (!isPolling.value) {
+    startPolling(props.vaultPath);
+  }
 };
 
 // Handle regenerate
@@ -312,7 +328,10 @@ const handleSettingsSaved = async () => {
   // Reload status in case Ollama URL changed
   await checkStatus(props.vaultPath);
   if (status.value.connected) {
-    await fetchModels();
+    await fetchModels(props.vaultPath);
+    startHealthCheck(props.vaultPath);
+  } else {
+    startPolling(props.vaultPath);
   }
 };
 
@@ -328,13 +347,29 @@ watch(selectedModel, (newModel) => {
   }
 });
 
+// Watch connection state changes
+watch(() => status.value.connected, (connected, wasConnected) => {
+  if (connected && !wasConnected) {
+    // Just connected — stop polling, start health check
+    stopPolling();
+    startHealthCheck(props.vaultPath);
+  } else if (!connected && wasConnected) {
+    // Just disconnected — stop health check, start polling
+    stopHealthCheck();
+    startPolling(props.vaultPath);
+  }
+});
+
 // Lifecycle
 onMounted(async () => {
   loading.value = true;
   try {
     await checkStatus(props.vaultPath);
     if (status.value.connected) {
-      await fetchModels();
+      await fetchModels(props.vaultPath);
+      startHealthCheck(props.vaultPath);
+    } else {
+      startPolling(props.vaultPath);
     }
     await loadConversations();
   } catch (e) {
@@ -358,7 +393,10 @@ onMounted(async () => {
     }
   };
   window.addEventListener('keydown', handleKeydown);
-  onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
+  onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeydown);
+    cleanupModels();
+  });
 });
 
 defineExpose({ refresh });
@@ -468,6 +506,8 @@ defineExpose({ refresh });
           :is-streaming="isStreaming"
           :tool-calls="toolCalls"
           :vault-path="vaultPath"
+          :connection-lost="!status.connected"
+          :chat-error="chatError"
           @send="handleSendMessage"
           @stop="stopGeneration"
           @open-source="handleOpenSource"
@@ -479,9 +519,11 @@ defineExpose({ refresh });
           :models="models"
           :pulling-model="pullingModel"
           :pull-progress="pullProgress"
+          :is-polling="isPolling"
           @new-chat="createConversation"
           @quick-action="handleQuickAction"
           @pull-model="handlePullModel"
+          @retry="handleRetry"
         />
       </div>
     </div>

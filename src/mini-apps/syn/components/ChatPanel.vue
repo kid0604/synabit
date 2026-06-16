@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useThrottleFn } from '@vueuse/core';
 import { useI18n } from 'vue-i18n';
-import { Send, Square, Sparkles, ImagePlus } from 'lucide-vue-next';
+import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { SynMessage, SynToolCallEvent, SourceRef } from '../types';
@@ -17,6 +17,8 @@ const props = defineProps<{
   isStreaming: boolean;
   toolCalls?: SynToolCallEvent[];
   vaultPath?: string;
+  connectionLost?: boolean;
+  chatError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -262,6 +264,24 @@ const handleStop = () => {
         </div>
       </div>
     </Transition>
+    <!-- Connection lost banner -->
+    <Transition
+      enter-active-class="transition-all duration-300 ease-out"
+      enter-from-class="-translate-y-full opacity-0"
+      enter-to-class="translate-y-0 opacity-100"
+      leave-active-class="transition-all duration-200 ease-in"
+      leave-from-class="translate-y-0 opacity-100"
+      leave-to-class="-translate-y-full opacity-0"
+    >
+      <div
+        v-if="connectionLost"
+        class="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-sm flex-shrink-0"
+      >
+        <WifiOff class="w-4 h-4 flex-shrink-0" />
+        <span>{{ $t('syn.connection_lost') }}</span>
+      </div>
+    </Transition>
+
     <!-- Messages area -->
     <div
       ref="messagesContainer"
@@ -308,6 +328,19 @@ const handleStop = () => {
             <Sparkles class="w-4 h-4 text-white animate-pulse" />
           </div>
           <StreamingIndicator :tool-calls="toolCalls" />
+        </div>
+
+        <!-- Error message (shown when send fails) -->
+        <div
+          v-if="chatError && !isStreaming"
+          class="flex items-start gap-3 px-4 py-3 bg-red-500/5 border border-red-500/20 rounded-xl text-sm"
+          style="animation: messageIn 0.2s ease-out forwards;"
+        >
+          <AlertCircle class="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p class="text-red-400 font-medium">{{ $t('syn.send_error_title') }}</p>
+            <p class="text-red-400/70 text-xs mt-0.5">{{ $t('syn.send_error_desc') }}</p>
+          </div>
         </div>
       </div>
     </div>

@@ -767,7 +767,8 @@
     "setup_description": "Syn sử dụng Ollama để chạy AI trực tiếp trên máy. Không cần internet, hoàn toàn riêng tư.",
     "setup_step1_title": "Cài đặt Ollama",
     "setup_step1_desc": "Tải và cài đặt từ ollama.com",
-    "setup_step2_title": "Khởi động Ollama",
+    "setup_step2_title": "Mở ứng dụng Ollama",
+    "setup_step2_desc": "Ollama chạy nền — Syn sẽ tự phát hiện",
     "setup_step3_title": "Tải model",
     "setup_step3_desc": "Chạy: ollama pull gemma3:4b",
     "download_ollama": "Tải Ollama",
@@ -854,6 +855,11 @@
     "high_context_warning": "Cửa sổ ngữ cảnh lớn yêu cầu nhiều RAM hơn đáng kể. Có thể gây chậm trên máy có bộ nhớ hạn chế.",
     "drop_images": "Thả ảnh vào đây",
     "cancel_pull": "Huỷ tải",
-    "recommended": "Đề xuất"
+    "recommended": "Đề xuất",
+    "checking_connection": "Đang tìm Ollama...",
+    "retry_connection": "Kiểm tra lại",
+    "connection_lost": "Ollama đã ngắt kết nối. Kiểm tra Ollama đang chạy và thử lại.",
+    "send_error_title": "Không thể gửi tin nhắn",
+    "send_error_desc": "Ollama có thể không khả dụng. Kiểm tra kết nối và thử lại."
   }
 }

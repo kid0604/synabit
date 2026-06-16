@@ -20,8 +20,9 @@ pub async fn syn_check_status(vault_path: String) -> Result<OllamaStatus, AppErr
 
 /// List all locally available Ollama models.
 #[tauri::command]
-pub async fn syn_list_models() -> Result<Vec<ModelInfo>, AppError> {
-    let engine = SynEngine::new();
+pub async fn syn_list_models(vault_path: String) -> Result<Vec<ModelInfo>, AppError> {
+    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+    let engine = SynEngine::with_url(&settings.ollama_url);
     engine.list_models().await
 }
 
@@ -30,16 +31,19 @@ pub async fn syn_list_models() -> Result<Vec<ModelInfo>, AppError> {
 #[tauri::command]
 pub async fn syn_pull_model(
     app: tauri::AppHandle,
+    vault_path: String,
     model_name: String,
 ) -> Result<(), AppError> {
-    let engine = SynEngine::new();
+    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+    let engine = SynEngine::with_url(&settings.ollama_url);
     engine.pull_model(&app, &model_name).await
 }
 
 /// Delete a locally stored model from Ollama.
 #[tauri::command]
-pub async fn syn_delete_model(model_name: String) -> Result<(), AppError> {
-    let engine = SynEngine::new();
+pub async fn syn_delete_model(vault_path: String, model_name: String) -> Result<(), AppError> {
+    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+    let engine = SynEngine::with_url(&settings.ollama_url);
     engine.delete_model(&model_name).await
 }
 
