@@ -37,6 +37,14 @@ pub struct ModelDetails {
 // ═══════════════════════════════════════════════════════════════
 
 /// A single message in a Syn conversation.
+/// A source reference from RAG retrieval, used for navigation in the frontend.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SourceRef {
+    pub id: String,
+    pub title: String,
+    pub node_type: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SynMessage {
     pub id: String,
@@ -47,9 +55,9 @@ pub struct SynMessage {
     pub timestamp: String,
     pub tokens: Option<u64>,
     pub duration_ms: Option<u64>,
-    /// Source titles from RAG retrieval (only present on assistant messages)
+    /// Source references from RAG retrieval (only present on assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sources: Option<Vec<String>>,
+    pub sources: Option<Vec<SourceRef>>,
     /// Tool calls made during this message (for display in frontend)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls_log: Option<Vec<SynToolCallEvent>>,
@@ -131,7 +139,7 @@ pub struct ContextChunk {
 pub struct RetrievalResult {
     pub context_chunks: Vec<ContextChunk>,
     pub total_tokens_estimate: usize,
-    pub sources: Vec<String>,
+    pub sources: Vec<SourceRef>,
 }
 
 /// RAG configuration.

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss, Brain } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -24,6 +24,7 @@ import { useGDrive } from './composables/useGDrive';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 
+import SynIcon from './shared/icons/SynIcon.vue';
 
 import DesktopLayout from './layouts/DesktopLayout.vue';
 import MobileLayout from './layouts/MobileLayout.vue';
@@ -45,7 +46,7 @@ const {
 const ALL_APPS = [
   { id: 'nexus', name: 'Nexus', icon: Globe },
   { id: 'chat', name: 'Chat', icon: MessageSquare },
-  { id: 'syn', name: 'Syn', icon: Brain },
+  { id: 'syn', name: 'Syn', icon: SynIcon },
   { id: 'quickcap', name: 'QuickCap', icon: Zap },
   { id: 'note', name: 'Notes', icon: FileText },
   { id: 'task', name: 'Tasks', icon: CheckSquare },
@@ -615,7 +616,7 @@ onUnmounted(() => {
                 </button>
 
                 <button v-if="!hiddenSidebarApps.includes('syn')" @click="activeTool = 'syn'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'syn' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <Brain class="w-5 h-5" />
+                   <SynIcon class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
                 </button>
 

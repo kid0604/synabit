@@ -47,6 +47,8 @@ pub fn get_nexus_items(
                     || r.path.contains("/Messages/")
                     || r.path.starts_with("Messages\\")
                     || r.path.contains("\\Messages\\")
+                    || r.path.starts_with("Syn/")
+                    || r.path.starts_with("Syn\\")
                 {
                     continue;
                 }
@@ -236,6 +238,8 @@ pub fn get_nexus_graph_data(
             || r.path.contains("/Messages/")
             || r.path.starts_with("Messages\\")
             || r.path.contains("\\Messages\\")
+            || r.path.starts_with("Syn/")
+            || r.path.starts_with("Syn\\")
         {
             continue;
         }

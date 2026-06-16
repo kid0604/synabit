@@ -3,9 +3,10 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useI18n } from 'vue-i18n';
-import { Brain, PanelLeftClose, PanelLeft, Loader2, Settings, Download } from 'lucide-vue-next';
+import { PanelLeftClose, PanelLeft, Loader2, Settings, Download } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import NavButtons from '../../shared/components/NavButtons.vue';
+import synAvatar from '../../assets/syn-avatar.jpg';
 
 import ConversationList from './components/ConversationList.vue';
 import ChatPanel from './components/ChatPanel.vue';
@@ -24,8 +25,21 @@ const props = defineProps<{
 
 const emit = defineEmits(['open-node']);
 
-const handleOpenSource = (title: string) => {
-  emit('open-node', title, 'note');
+const handleOpenSource = (source: { id: string; title: string; node_type: string }) => {
+  // Map source_type to the type expected by handleEditFromNexus
+  const typeMap: Record<string, string> = {
+    note: 'note',
+    task: 'task',
+    event: 'calendar',
+    quickcap: 'quickcap',
+    person: 'person',
+    finance_month: 'finance_month',
+    whiteboard: 'whiteboard',
+    feed_source: 'feed_source',
+    project: 'project',
+  };
+  const mappedType = typeMap[source.node_type] || 'note';
+  emit('open-node', source.id, mappedType);
 };
 
 const { t } = useI18n();
@@ -372,8 +386,8 @@ defineExpose({ refresh });
         </button>
 
         <div class="flex items-center gap-2">
-          <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-sm">
-            <Brain class="w-4 h-4 text-white" />
+          <div class="w-7 h-7 rounded-lg overflow-hidden shadow-sm ring-1 ring-violet-500/30">
+            <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
           </div>
           <span class="text-lg font-semibold tracking-tight">Syn</span>
         </div>

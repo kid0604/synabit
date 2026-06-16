@@ -34,9 +34,15 @@ export interface SynMessage {
   timestamp: string;
   tokens?: number;
   duration_ms?: number;
-  sources?: string[];  // Node titles cited by RAG
+  sources?: SourceRef[];  // Source references from RAG
   tool_calls_log?: SynToolCallEvent[];
   images?: string[];  // base64 encoded
+}
+
+export interface SourceRef {
+  id: string;
+  title: string;
+  node_type: string;
 }
 
 export interface SynConversation {

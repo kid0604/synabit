@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { Send, Square, Sparkles, ImagePlus } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { SynMessage, SynToolCallEvent } from '../types';
+import type { SynMessage, SynToolCallEvent, SourceRef } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
 
@@ -22,7 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [message: string, images?: string[]];
   stop: [];
-  'open-source': [source: string];
+  'open-source': [source: SourceRef];
   'regenerate': [messageId: string];
 }>();
 

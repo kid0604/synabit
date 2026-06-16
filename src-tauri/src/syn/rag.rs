@@ -200,6 +200,13 @@ pub fn retrieve_context(
                     );
                     continue;
                 }
+                // Filter out internal app data that shouldn't be surfaced as context
+                if result.id.starts_with("Syn/")
+                    || result.id.starts_with("Messages/")
+                    || result.id.contains("/Messages/")
+                {
+                    continue;
+                }
                 if seen_ids.contains(&result.id) {
                     continue;
                 }
@@ -393,10 +400,14 @@ pub fn retrieve_context(
         final_chunks.push(chunk);
     }
 
-    // Collect source titles for citation
-    let sources: Vec<String> = final_chunks
+    // Collect source references for citation + navigation
+    let sources: Vec<crate::models::syn::SourceRef> = final_chunks
         .iter()
-        .map(|c| c.title.clone())
+        .map(|c| crate::models::syn::SourceRef {
+            id: c.source_id.clone(),
+            title: c.title.clone(),
+            node_type: c.source_type.clone(),
+        })
         .collect();
 
     // Estimate tokens (~4 chars per token)
@@ -680,6 +691,11 @@ pub fn build_system_prompt(context: &str, personality: &str) -> String {
          or search_vault to find linked content.\n\
          - When the user asks to create, write, or save something: use create_note, create_task, or create_event.\n\
          - When the user asks to mark a task as done/complete: use search_vault to find the task first, then update_task_status.\n\
+         - FINANCE: When the user mentions spending, buying, paying, earning, or any money-related activity:\n\
+           1. Call get_finance_summary FIRST to know available accounts and categories.\n\
+           2. Then call create_transaction with the correct amount, category, and account.\n\
+           3. Example: \"nay đi chợ hết 150k\" → create_transaction(amount=150000, category=\"Food & Dining\", note=\"Đi chợ\").\n\
+           4. To review spending history, use get_transactions with the month parameter.\n\
          - ALWAYS confirm what you created/updated with the result details.\n\
          - Do NOT just reply with text when a tool can provide concrete results.\n\
          - Call tools FIRST, then summarize the results for the user.";
@@ -690,11 +706,33 @@ pub fn build_system_prompt(context: &str, personality: &str) -> String {
          contacts, files, RSS feeds, and financial records.\n\n\
          {}\n\n\
          Key rules:\n\
-         - When referencing vault data, cite sources with [[Title]] notation.\n\
+         - When referencing vault data, ALWAYS use [[Title]] notation with the HUMAN-READABLE TITLE (not the file path or ID). \
+         Example: 'I found [[Ghi chú họp team]] which mentions...' \
+         WRONG: [[Notes/22440d7a-84c5-433b-982c-04b906591253.md]] — NEVER use file paths in links. \
+         RIGHT: [[Ghi chú họp team]] — always use the note/task/event title.\n\
          - If information is not in the provided context, say so honestly — do not fabricate.\n\
          - Keep responses concise and actionable.\n\
          - You can see the user's notes, tasks, events, contacts, feeds, and finances.\n\
          - For tasks and events, pay attention to dates, priorities, and statuses.\n\
+         - CHARTS: You can render charts using Mermaid syntax in code blocks. \
+         When the user asks for charts, graphs, or data visualization, output a fenced code block \
+         with language 'mermaid'. Supported types: pie, xychart-beta (bar charts), flowchart, \
+         sequence, gantt, timeline. Example for spending breakdown:\n\
+         ```mermaid\n\
+         pie title Monthly Spending\n\
+             \"Food\" : 45\n\
+             \"Transport\" : 20\n\
+             \"Bills\" : 35\n\
+         ```\n\
+         For bar charts use xychart-beta:\n\
+         ```mermaid\n\
+         xychart-beta\n\
+             title \"Income vs Expense\"\n\
+             x-axis [\"Jan\", \"Feb\", \"Mar\"]\n\
+             y-axis \"Amount\" 0 --> 5000000\n\
+             bar [1000000, 2000000, 1500000]\n\
+             bar [800000, 1500000, 1200000]\n\
+         ```\n\
          - Today's date: {} ({})\n\n\
          {}\n\
          {}",
@@ -799,7 +837,10 @@ mod tests {
                 },
             ],
             total_tokens_estimate: 100,
-            sources: vec!["Meeting Notes".to_string(), "Review PR".to_string()],
+            sources: vec![
+                crate::models::syn::SourceRef { id: "Notes/Meeting Notes.md".to_string(), title: "Meeting Notes".to_string(), node_type: "note".to_string() },
+                crate::models::syn::SourceRef { id: "Tasks/Review PR.md".to_string(), title: "Review PR".to_string(), node_type: "task".to_string() },
+            ],
         };
         let formatted = format_context(&result);
         assert!(formatted.contains("=== NOTES ==="));

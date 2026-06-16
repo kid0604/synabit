@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Sparkles, Brain, Download, ExternalLink, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
+import { Sparkles, Download, ExternalLink, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
+import synAvatar from '../../../assets/syn-avatar.jpg';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import type { OllamaStatus, ModelInfo } from '../types';
@@ -50,8 +51,8 @@ const openOllamaWebsite = () => {
     <div class="max-w-lg w-full flex flex-col items-center text-center">
       <!-- Logo -->
       <div class="relative mb-6">
-        <div class="w-20 h-20 rounded-3xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-2xl shadow-violet-500/30">
-          <Brain class="w-10 h-10 text-white" />
+        <div class="w-20 h-20 rounded-3xl overflow-hidden shadow-2xl shadow-violet-500/30 ring-2 ring-violet-500/20">
+          <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
         </div>
         <div class="absolute -right-1 -top-1 w-6 h-6 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
           <Sparkles class="w-3.5 h-3.5 text-white" />

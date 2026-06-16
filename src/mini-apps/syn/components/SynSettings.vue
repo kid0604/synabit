@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue';
+import { onMounted, onUnmounted, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { X, RotateCcw, Save, Loader2 } from 'lucide-vue-next';
 import { useSynSettings } from '../composables/useSynSettings';
@@ -41,6 +41,53 @@ const handleKeydown = (e: KeyboardEvent) => {
     emit('close');
   }
 };
+
+const personalityOptions = computed(() => [
+  {
+    value: 'auto',
+    emoji: '🔄',
+    label: t('syn.personality_auto'),
+    desc: t('syn.personality_auto_desc'),
+    example: t('syn.personality_auto_example'),
+  },
+  {
+    value: 'casual',
+    emoji: '😎',
+    label: t('syn.personality_casual'),
+    desc: t('syn.personality_casual_desc'),
+    example: t('syn.personality_casual_example'),
+  },
+  {
+    value: 'professional',
+    emoji: '👔',
+    label: t('syn.personality_professional'),
+    desc: t('syn.personality_professional_desc'),
+    example: t('syn.personality_professional_example'),
+  },
+]);
+
+const presetTemplates = computed(() => [
+  {
+    emoji: '🧠',
+    label: t('syn.tmpl_mentor'),
+    prompt: t('syn.tmpl_mentor_prompt'),
+  },
+  {
+    emoji: '✍️',
+    label: t('syn.tmpl_writer'),
+    prompt: t('syn.tmpl_writer_prompt'),
+  },
+  {
+    emoji: '📋',
+    label: t('syn.tmpl_planner'),
+    prompt: t('syn.tmpl_planner_prompt'),
+  },
+  {
+    emoji: '🤖',
+    label: t('syn.tmpl_minimal'),
+    prompt: t('syn.tmpl_minimal_prompt'),
+  },
+]);
 
 onMounted(async () => {
   await loadSettings();
@@ -331,100 +378,88 @@ watch(() => props.vaultPath, () => {
             <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
               {{ t('syn.settings_personality') }}
             </h3>
-            <div class="space-y-3">
-              <!-- Radio buttons -->
-              <div class="space-y-2">
-                <label
-                  class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all
-                         hover:bg-gray-50 dark:hover:bg-white/5"
-                  :class="settings.personality === 'auto' ? 'bg-violet-50 dark:bg-violet-500/10 ring-1 ring-violet-300 dark:ring-violet-500/30' : ''"
+            <div class="space-y-4">
+              <!-- Personality cards -->
+              <div class="grid grid-cols-3 gap-2">
+                <button
+                  v-for="p in personalityOptions"
+                  :key="p.value"
+                  @click="settings.personality = p.value"
+                  class="flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-all cursor-pointer"
+                  :class="settings.personality === p.value
+                    ? 'bg-violet-50 dark:bg-violet-500/10 border-violet-300 dark:border-violet-500/40 ring-1 ring-violet-300 dark:ring-violet-500/30'
+                    : 'border-gray-200 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-white/5 hover:border-gray-300 dark:hover:border-gray-600'"
                 >
-                  <input
-                    v-model="settings.personality"
-                    type="radio"
-                    value="auto"
-                    class="sr-only"
-                  />
-                  <div
-                    class="w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors"
-                    :class="settings.personality === 'auto'
-                      ? 'border-violet-500'
-                      : 'border-gray-300 dark:border-gray-600'"
-                  >
-                    <div
-                      v-if="settings.personality === 'auto'"
-                      class="w-2 h-2 rounded-full bg-violet-500"
-                    />
-                  </div>
-                  <span class="text-sm text-text dark:text-text-dark">{{ t('syn.personality_auto') }}</span>
-                </label>
+                  <span class="text-xl">{{ p.emoji }}</span>
+                  <span class="text-xs font-semibold text-text dark:text-text-dark">{{ p.label }}</span>
+                  <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">{{ p.desc }}</span>
+                </button>
+              </div>
 
-                <label
-                  class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all
-                         hover:bg-gray-50 dark:hover:bg-white/5"
-                  :class="settings.personality === 'casual' ? 'bg-violet-50 dark:bg-violet-500/10 ring-1 ring-violet-300 dark:ring-violet-500/30' : ''"
-                >
-                  <input
-                    v-model="settings.personality"
-                    type="radio"
-                    value="casual"
-                    class="sr-only"
-                  />
-                  <div
-                    class="w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors"
-                    :class="settings.personality === 'casual'
-                      ? 'border-violet-500'
-                      : 'border-gray-300 dark:border-gray-600'"
-                  >
-                    <div
-                      v-if="settings.personality === 'casual'"
-                      class="w-2 h-2 rounded-full bg-violet-500"
-                    />
-                  </div>
-                  <span class="text-sm text-text dark:text-text-dark">{{ t('syn.personality_casual') }}</span>
-                </label>
+              <!-- Preview of selected personality -->
+              <div class="px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-gray-800/40">
+                <p class="text-[11px] text-gray-400 dark:text-gray-500 mb-1">{{ t('syn.personality_preview') }}</p>
+                <p class="text-xs text-text dark:text-text-dark italic leading-relaxed">
+                  "{{ personalityOptions.find(p => p.value === settings.personality)?.example }}"
+                </p>
+              </div>
 
-                <label
-                  class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all
-                         hover:bg-gray-50 dark:hover:bg-white/5"
-                  :class="settings.personality === 'professional' ? 'bg-violet-50 dark:bg-violet-500/10 ring-1 ring-violet-300 dark:ring-violet-500/30' : ''"
-                >
-                  <input
-                    v-model="settings.personality"
-                    type="radio"
-                    value="professional"
-                    class="sr-only"
-                  />
-                  <div
-                    class="w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors"
-                    :class="settings.personality === 'professional'
-                      ? 'border-violet-500'
-                      : 'border-gray-300 dark:border-gray-600'"
-                  >
-                    <div
-                      v-if="settings.personality === 'professional'"
-                      class="w-2 h-2 rounded-full bg-violet-500"
-                    />
-                  </div>
-                  <span class="text-sm text-text dark:text-text-dark">{{ t('syn.personality_professional') }}</span>
+              <!-- Separator -->
+              <div class="flex items-center gap-3">
+                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700/50"></div>
+                <span class="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold">{{ t('syn.advanced_customization') }}</span>
+                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700/50"></div>
+              </div>
+
+              <!-- Preset templates -->
+              <div>
+                <label class="block text-sm font-medium text-text dark:text-text-dark mb-2">
+                  {{ t('syn.preset_templates') }}
                 </label>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="tmpl in presetTemplates"
+                    :key="tmpl.label"
+                    @click="settings.custom_system_prompt = tmpl.prompt"
+                    class="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border transition-all cursor-pointer
+                           border-gray-200 dark:border-gray-700/50
+                           hover:bg-violet-50 dark:hover:bg-violet-500/10
+                           hover:border-violet-300 dark:hover:border-violet-500/30
+                           text-gray-600 dark:text-gray-300
+                           hover:text-violet-600 dark:hover:text-violet-400"
+                  >
+                    {{ tmpl.emoji }} {{ tmpl.label }}
+                  </button>
+                </div>
               </div>
 
               <!-- Custom system prompt -->
               <div>
-                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
-                  {{ t('syn.custom_system_prompt') }}
-                </label>
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="text-sm font-medium text-text dark:text-text-dark">
+                    {{ t('syn.custom_system_prompt') }}
+                  </label>
+                  <button
+                    v-if="settings.custom_system_prompt"
+                    @click="settings.custom_system_prompt = ''"
+                    class="text-[10px] text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
+                  >
+                    {{ t('syn.clear') }}
+                  </button>
+                </div>
                 <textarea
                   v-model="settings.custom_system_prompt"
-                  :placeholder="t('syn.custom_system_prompt_placeholder')"
-                  rows="3"
+                  :placeholder="t('syn.custom_system_prompt_placeholder_v2')"
+                  rows="6"
                   class="w-full px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                         text-sm text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
-                         outline-none resize-none
+                         text-xs text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
+                         outline-none resize-y min-h-[80px] max-h-[240px]
                          focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
-                         transition-all"
+                         transition-all leading-relaxed font-mono"
                 />
+                <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+                  {{ t('syn.custom_prompt_hint') }}
+                </p>
               </div>
             </div>
           </section>

@@ -94,7 +94,7 @@ pub fn scan_all_nodes(
         // Skip hidden folders like .git, .Trash, and the assets folder
         if path.components().any(|c| {
             let name = c.as_os_str().to_string_lossy();
-            name.starts_with('.') && name != "." || name == "assets" || name == "Files"
+            name.starts_with('.') && name != "." || name == "assets" || name == "Files" || name == "Syn"
         }) {
             continue;
         }
@@ -153,7 +153,9 @@ pub fn scan_all_nodes(
     // managed types whose IDs are UUIDs, not disk paths.
     let disk_backed_types = ["note", "task", "event", "quickcap", "json"];
     for n in &existing_nodes {
-        if disk_backed_types.contains(&n.node_type.as_str()) && !current_disk_files.contains(&n.id)
+        // Always remove Syn/ entries — they should never have been indexed
+        let is_syn = n.id.starts_with("Syn/") || n.id.starts_with("Syn\\");
+        if is_syn || (disk_backed_types.contains(&n.node_type.as_str()) && !current_disk_files.contains(&n.id))
         {
             let _ = db.delete_node(&n.id);
             delete_node_edges_for(&db, &n.id);

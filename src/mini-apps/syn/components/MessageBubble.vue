@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, nextTick, onMounted } from 'vue';
 import { useDebounceFn } from '@vueuse/core';
-import { marked } from 'marked';
+import { marked, Renderer, type Tokens } from 'marked';
+import mermaid from 'mermaid';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -16,10 +17,11 @@ import sql from 'highlight.js/lib/languages/sql';
 import markdown from 'highlight.js/lib/languages/markdown';
 import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
-import { Check, Bot, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard } from 'lucide-vue-next';
+import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard } from 'lucide-vue-next';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
-import type { SynMessage } from '../types';
+import type { SynMessage, SourceRef } from '../types';
+import synAvatar from '../../../assets/syn-avatar.jpg';
 
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('js', javascript);
@@ -37,9 +39,54 @@ hljs.registerLanguage('sql', sql);
 hljs.registerLanguage('markdown', markdown);
 hljs.registerLanguage('md', markdown);
 
+// Initialize mermaid with dark theme
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  themeVariables: {
+    darkMode: true,
+    background: '#1e1f25',
+    primaryColor: '#7c3aed',
+    primaryTextColor: '#e2e8f0',
+    primaryBorderColor: '#6d28d9',
+    secondaryColor: '#4c1d95',
+    tertiaryColor: '#2d1b69',
+    lineColor: '#6d28d9',
+    textColor: '#e2e8f0',
+    fontSize: '14px',
+    pie1: '#7c3aed',
+    pie2: '#a78bfa',
+    pie3: '#c084fc',
+    pie4: '#e879f9',
+    pie5: '#f472b6',
+    pie6: '#fb923c',
+    pie7: '#fbbf24',
+    pie8: '#34d399',
+    pie9: '#22d3ee',
+    pie10: '#60a5fa',
+    pie11: '#818cf8',
+    pie12: '#f87171',
+  },
+});
+
+// Custom renderer to intercept mermaid code blocks
+const renderer = new Renderer();
+const originalCodeRenderer = renderer.code;
+let mermaidIdCounter = 0;
+
+renderer.code = function (token: Tokens.Code) {
+  if (token.lang === 'mermaid') {
+    const id = `mermaid-${Date.now()}-${mermaidIdCounter++}`;
+    return `<div class="mermaid-container"><pre class="mermaid" id="${id}">${token.text}</pre></div>`;
+  }
+  // Fall back to original renderer for non-mermaid code
+  return originalCodeRenderer.call(this, token);
+};
+
 marked.use(markedHighlight({
   langPrefix: 'hljs language-',
   highlight(code, lang) {
+    if (lang === 'mermaid') return code; // Don't highlight mermaid — it's handled by the renderer
     if (lang && hljs.getLanguage(lang)) {
       return hljs.highlight(code, { language: lang }).value;
     }
@@ -47,14 +94,16 @@ marked.use(markedHighlight({
   },
 }));
 
+marked.use({ renderer });
+
 const props = defineProps<{
   message: SynMessage;
   isStreaming?: boolean;
   vaultPath?: string;
 }>();
 
-defineEmits<{
-  'open-source': [source: string];
+const emit = defineEmits<{
+  'open-source': [source: SourceRef];
   'regenerate': [];
 }>();
 
@@ -114,13 +163,129 @@ const renderedContent = computed(() => {
   }
 
   const rawHtml = marked.parse(debouncedContent.value) as string;
-  return DOMPurify.sanitize(rawHtml, {
-    ADD_TAGS: ['pre', 'code'],
-    ADD_ATTR: ['class'],
+  let sanitized = DOMPurify.sanitize(rawHtml, {
+    ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject', 'style'],
+    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'style', 'dx', 'dy', 'alignment-baseline', 'data-wikilink'],
   });
+
+  // Convert [[Title]] wiki-links to clickable links
+  sanitized = sanitized.replace(
+    /\[\[([^\]]+)\]\]/g,
+    (_match, title) => `<a class="wikilink" data-wikilink="${title.replace(/"/g, '&quot;')}" href="#">${title}</a>`
+  );
+
+  return sanitized;
+});
+
+// Trigger mermaid rendering after content updates
+const messageEl = ref<HTMLElement | null>(null);
+
+const renderMermaid = async () => {
+  await nextTick();
+  if (!messageEl.value) return;
+  
+  const mermaidEls = messageEl.value.querySelectorAll('pre.mermaid:not([data-processed])');
+  if (mermaidEls.length === 0) return;
+
+  for (const el of mermaidEls) {
+    const id = el.id || `mermaid-auto-${Date.now()}`;
+    const code = el.textContent || '';
+    if (!code.trim()) continue;
+
+    try {
+      const { svg } = await mermaid.render(id + '-svg', code);
+      const container = el.parentElement;
+      if (container && container.classList.contains('mermaid-container')) {
+        container.innerHTML = `<div class="mermaid-rendered">${svg}</div>`;
+      } else {
+        el.outerHTML = `<div class="mermaid-rendered">${svg}</div>`;
+      }
+    } catch (e) {
+      console.warn('[Mermaid] Render failed:', e);
+      el.setAttribute('data-processed', 'error');
+    }
+  }
+};
+
+watch(renderedContent, () => {
+  if (props.message.role === 'assistant' && !props.isStreaming) {
+    renderMermaid();
+  }
+});
+
+// Also render when streaming finishes
+watch(() => props.isStreaming, (streaming, wasStreaming) => {
+  if (wasStreaming && !streaming) {
+    renderMermaid();
+  }
+});
+
+onMounted(() => {
+  if (props.message.role === 'assistant' && !props.isStreaming) {
+    renderMermaid();
+  }
 });
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+
+/** Handle clicks on wiki-links [[Title]] in rendered content */
+const handleContentClick = async (e: MouseEvent) => {
+  const target = e.target as HTMLElement;
+  const link = target.closest('a.wikilink') as HTMLElement | null;
+  if (!link) return;
+  
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const linkText = link.dataset.wikilink;
+  if (!linkText) return;
+
+  try {
+    // Check if the link text looks like a file path (e.g., "Notes/UUID.md")
+    const isPath = linkText.includes('/') || linkText.endsWith('.md') || linkText.endsWith('.json');
+    
+    if (isPath) {
+      // Try to open directly by ID (path)
+      try {
+        const node = await invoke<{ id: string; item_type: string; title: string }>(
+          'get_nexus_item',
+          { vaultPath: props.vaultPath || '', id: linkText }
+        );
+        emit('open-source', {
+          id: node.id,
+          title: node.title,
+          node_type: node.item_type,
+        });
+        return;
+      } catch {
+        // If direct lookup fails, fall through to search
+      }
+    }
+    
+    // Search for the node by title
+    const result = await invoke<{ results: Array<{ id: string; item_type: string; title: string }> }>(
+      'search_nexus', 
+      { vaultPath: props.vaultPath || '', query: `in:title "${linkText}"` }
+    );
+    
+    if (result.results && result.results.length > 0) {
+      // Find exact title match first, fall back to first result
+      const exactMatch = result.results.find(
+        r => r.title.toLowerCase() === linkText.toLowerCase()
+      ) || result.results[0];
+      
+      emit('open-source', {
+        id: exactMatch.id,
+        title: exactMatch.title,
+        node_type: exactMatch.item_type,
+      });
+    } else {
+      console.warn(`[WikiLink] No node found for: ${linkText}`);
+    }
+  } catch (err) {
+    console.error('[WikiLink] Failed:', err);
+  }
+};
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'webm', 'avi', 'mkv'];
 const MEDIA_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS];
 
@@ -226,9 +391,9 @@ const copyContent = async () => {
     <!-- Avatar (assistant only) -->
     <div
       v-if="message.role === 'assistant'"
-      class="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-violet-500/20 mt-0.5"
+      class="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 mt-0.5 ring-1 ring-violet-500/30 shadow-lg shadow-violet-500/20"
     >
-      <Bot class="w-4 h-4 text-white" />
+      <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
     </div>
 
     <!-- Content -->
@@ -238,7 +403,7 @@ const copyContent = async () => {
     >
       <!-- Bubble -->
       <div
-        class="px-4 py-3 rounded-2xl text-sm leading-relaxed relative overflow-hidden"
+        class="px-4 py-3 rounded-2xl text-sm leading-relaxed relative overflow-hidden select-text"
         :class="message.role === 'user'
           ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-br-md shadow-lg shadow-violet-500/20'
           : 'bg-white dark:bg-[#1e1f25] border border-gray-100 dark:border-gray-800/60 rounded-tl-md shadow-sm'"
@@ -266,6 +431,7 @@ const copyContent = async () => {
         <!-- Assistant message: rendered markdown -->
         <div
           v-else
+          ref="messageEl"
           class="prose prose-sm dark:prose-invert max-w-none
             prose-p:my-1.5 prose-p:leading-relaxed
             prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:my-3
@@ -276,6 +442,7 @@ const copyContent = async () => {
             prose-blockquote:border-violet-300 dark:prose-blockquote:border-violet-600
             prose-strong:text-gray-900 dark:prose-strong:text-white"
           v-html="renderedContent"
+          @click="handleContentClick"
         />
 
         <!-- Streaming cursor -->
@@ -375,14 +542,14 @@ const copyContent = async () => {
              class="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50">
           <button
             v-for="source in message.sources"
-            :key="source"
+            :key="source.id"
             @click="$emit('open-source', source)"
             class="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md 
                    bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 
                    hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors cursor-pointer"
           >
             <FileText class="w-3 h-3" />
-            {{ source }}
+            {{ source.title }}
           </button>
         </div>
       </div>
@@ -514,5 +681,60 @@ const copyContent = async () => {
 
 .dark :deep(th), .dark :deep(td) {
   border-color: var(--color-border-dark);
+}
+
+/* Mermaid chart containers */
+:deep(.mermaid-container) {
+  margin: 0.75rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+:deep(.mermaid-rendered) {
+  display: flex;
+  justify-content: center;
+  background: rgba(30, 31, 37, 0.5);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  border: 1px solid rgba(124, 58, 237, 0.15);
+  overflow-x: auto;
+}
+
+:deep(.mermaid-rendered svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+:deep(pre.mermaid) {
+  background: rgba(30, 31, 37, 0.5);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  border: 1px solid rgba(124, 58, 237, 0.15);
+  color: #a78bfa;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+/* Wiki-link [[Title]] styling */
+:deep(a.wikilink) {
+  color: #a78bfa;
+  background: rgba(124, 58, 237, 0.1);
+  padding: 0.1em 0.4em;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+
+:deep(a.wikilink:hover) {
+  background: rgba(124, 58, 237, 0.25);
+  color: #c4b5fd;
+  text-decoration: none;
+}
+
+:deep(a.wikilink::before) {
+  content: '📄 ';
+  font-size: 0.75em;
 }
 </style>

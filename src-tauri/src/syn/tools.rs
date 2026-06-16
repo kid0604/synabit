@@ -385,6 +385,84 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 }),
             },
         },
+        // ── FINANCE TOOLS ──────────────────────────────────────────
+        // 16. get_finance_summary — Get finance accounts, balances, categories
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "get_finance_summary".to_string(),
+                description: "Get a summary of the user's financial state: accounts with balances, available categories, currency, and this month's income/expense totals. Call this first when the user mentions money, spending, or finances.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+        },
+        // 17. create_transaction — Create a financial transaction
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "create_transaction".to_string(),
+                description: "Create a new financial transaction (income or expense). Call get_finance_summary first to know the available accounts and categories. The transaction is saved to the Finance app.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["amount", "category"],
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["income", "expense"],
+                            "description": "Transaction type. Defaults to 'expense'."
+                        },
+                        "amount": {
+                            "type": "number",
+                            "description": "Transaction amount as a positive number (e.g., 150000 for 150k VND)"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Category name. Must match one from get_finance_summary (e.g., 'Food & Dining', 'Transportation', 'Salary')"
+                        },
+                        "account_id": {
+                            "type": "string",
+                            "description": "Account ID (e.g., 'acc-1'). Defaults to the first account if omitted."
+                        },
+                        "note": {
+                            "type": "string",
+                            "description": "Optional note describing the transaction (e.g., 'Đi chợ', 'Lunch with team')"
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Transaction date in YYYY-MM-DD format. Defaults to today."
+                        }
+                    }
+                }),
+            },
+        },
+        // 18. get_transactions — List transactions for a month
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "get_transactions".to_string(),
+                description: "List financial transactions for a specific month. Shows type, amount, category, account, date, and note for each transaction.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "month": {
+                            "type": "string",
+                            "description": "Month in YYYY-MM format (e.g., '2026-06'). Defaults to current month."
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["income", "expense", "transfer"],
+                            "description": "Optional filter by transaction type"
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of transactions to return. Defaults to 20."
+                        }
+                    }
+                }),
+            },
+        },
     ]
 }
 
@@ -416,6 +494,9 @@ pub fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> AppResult<St
         "create_task" => tool_create_task(ctx, args),
         "update_task_status" => tool_update_task_status(ctx, args),
         "create_event" => tool_create_event(ctx, args),
+        "get_finance_summary" => tool_get_finance_summary(ctx.db),
+        "create_transaction" => tool_create_transaction(ctx, args),
+        "get_transactions" => tool_get_transactions(ctx.db, args),
         _ => return Err(AppError::General(format!("Unknown tool: {}", name))),
     };
 
@@ -1189,6 +1270,481 @@ fn truncate_result(s: &str) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  FINANCE TOOL IMPLEMENTATIONS
+// ═══════════════════════════════════════════════════════════════
+
+/// 16. get_finance_summary — Overview of user's financial state
+fn tool_get_finance_summary(db: &DbBridge) -> AppResult<String> {
+    // Read the Finance Config node
+    let config_node = db.get_node("Finance/Config.json")?;
+
+    let (accounts, income_categories, expense_categories, currency) = match &config_node {
+        Some(node) => {
+            let meta = &node.properties;
+            let accounts = meta.get("accounts")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            let income_cats = meta.get("incomeCategories")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let expense_cats = meta.get("expenseCategories")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let currency = meta.get("currency")
+                .and_then(|v| v.as_str())
+                .unwrap_or("VND")
+                .to_string();
+            (accounts, income_cats, expense_cats, currency)
+        }
+        None => {
+            return Ok(serde_json::json!({
+                "error": "Finance not set up. The user has not configured Finance yet.",
+                "hint": "Ask the user to open the Finance app and set up their accounts first."
+            }).to_string());
+        }
+    };
+
+    // Read current month's transactions for summary
+    let now = chrono::Local::now();
+    let month_key = now.format("%Y-%m").to_string();
+    let month_node_id = format!("Finance/{}.json", month_key);
+    let month_node = db.get_node(&month_node_id)?;
+
+    let (total_income, total_expense, tx_count) = match &month_node {
+        Some(node) => {
+            let txs = node.properties.get("transactions")
+                .and_then(|v| v.as_array());
+            match txs {
+                Some(arr) => {
+                    let mut income = 0.0_f64;
+                    let mut expense = 0.0_f64;
+                    for tx in arr {
+                        let amount = tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        match tx.get("type").and_then(|v| v.as_str()) {
+                            Some("income") => income += amount,
+                            Some("expense") => expense += amount,
+                            _ => {}
+                        }
+                    }
+                    (income, expense, arr.len())
+                }
+                None => (0.0, 0.0, 0)
+            }
+        }
+        None => (0.0, 0.0, 0)
+    };
+
+    // Calculate current balances per account
+    // Balance = initialBalance + all income to account - all expense from account + transfers in - transfers out
+    let account_balances = compute_account_balances(db, &accounts);
+
+    let output = serde_json::json!({
+        "currency": currency,
+        "accounts": account_balances,
+        "income_categories": income_categories,
+        "expense_categories": expense_categories,
+        "this_month": {
+            "month": month_key,
+            "total_income": total_income,
+            "total_expense": total_expense,
+            "net": total_income - total_expense,
+            "transaction_count": tx_count
+        }
+    });
+
+    Ok(output.to_string())
+}
+
+/// Helper: compute current balance for each account across all months
+fn compute_account_balances(db: &DbBridge, accounts_val: &Value) -> Value {
+    let accounts_arr = match accounts_val.as_array() {
+        Some(a) => a,
+        None => return serde_json::json!([]),
+    };
+
+    // Get all finance_month nodes
+    let month_nodes = db.get_nodes_by_type("finance_month").unwrap_or_default();
+
+    // Build a map of account_id -> running balance delta
+    let mut deltas: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+
+    for node in &month_nodes {
+        if let Some(txs) = node.properties.get("transactions").and_then(|v| v.as_array()) {
+            for tx in txs {
+                let amount = tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let acc_id = tx.get("accountId").and_then(|v| v.as_str()).unwrap_or("");
+                let tx_type = tx.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                match tx_type {
+                    "income" => {
+                        *deltas.entry(acc_id.to_string()).or_insert(0.0) += amount;
+                    }
+                    "expense" => {
+                        *deltas.entry(acc_id.to_string()).or_insert(0.0) -= amount;
+                    }
+                    "transfer" => {
+                        *deltas.entry(acc_id.to_string()).or_insert(0.0) -= amount;
+                        if let Some(to_acc) = tx.get("toAccountId").and_then(|v| v.as_str()) {
+                            *deltas.entry(to_acc.to_string()).or_insert(0.0) += amount;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Build result with initial + delta
+    let results: Vec<Value> = accounts_arr.iter().map(|acc| {
+        let id = acc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let name = acc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let initial = acc.get("initialBalance").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let delta = deltas.get(id).copied().unwrap_or(0.0);
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "balance": initial + delta
+        })
+    }).collect();
+
+    serde_json::json!(results)
+}
+
+/// 17. create_transaction — Create a financial transaction
+fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String> {
+    let amount = args.get("amount").and_then(|v| v.as_f64())
+        .ok_or_else(|| AppError::General("Missing required parameter: amount".into()))?;
+    let category = args.get("category").and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: category".into()))?;
+
+    if amount <= 0.0 {
+        return Ok(serde_json::json!({"error": "Amount must be a positive number"}).to_string());
+    }
+
+    let tx_type = args.get("type").and_then(|v| v.as_str()).unwrap_or("expense");
+    if tx_type != "income" && tx_type != "expense" {
+        return Ok(serde_json::json!({"error": format!("Invalid type '{}'. Must be 'income' or 'expense'.", tx_type)}).to_string());
+    }
+
+    let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("");
+    let now = chrono::Local::now();
+    let date_str = args.get("date").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+
+    // Read config to validate account and get defaults
+    let config_node = ctx.db.get_node("Finance/Config.json")?;
+    let config_meta = match &config_node {
+        Some(node) => &node.properties,
+        None => {
+            return Ok(serde_json::json!({
+                "error": "Finance not set up. Ask user to open Finance app first."
+            }).to_string());
+        }
+    };
+
+    // Determine account_id
+    let account_id = args.get("account_id").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            // Default to first account
+            config_meta.get("accounts")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|acc| acc.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("acc-1")
+                .to_string()
+        });
+
+    // Get account name for confirmation message
+    let account_name = config_meta.get("accounts")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.iter().find(|a| a.get("id").and_then(|v| v.as_str()) == Some(&account_id)))
+        .and_then(|a| a.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    // Generate transaction ID
+    let tx_id = format!("tx-{}-{}", chrono::Utc::now().timestamp_millis(), rand_u16());
+
+    // Build the transaction object (matches frontend Transaction interface exactly)
+    let transaction = serde_json::json!({
+        "id": tx_id,
+        "type": tx_type,
+        "amount": amount,
+        "category": category,
+        "accountId": account_id,
+        "date": format!("{}T00:00:00", date_str),
+        "note": note
+    });
+
+    // Determine month key from date
+    let month_key = if date_str.len() >= 7 { &date_str[..7] } else { &date_str };
+    let month_node_id = format!("Finance/{}.json", month_key);
+
+    // Read or create the month node
+    let existing_month = ctx.db.get_node(&month_node_id)?;
+    let mut transactions: Vec<Value> = match &existing_month {
+        Some(node) => {
+            node.properties.get("transactions")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+        }
+        None => Vec::new()
+    };
+
+    // Add the new transaction
+    transactions.push(transaction);
+
+    // Build the month properties
+    let month_props = serde_json::json!({
+        "transactions": transactions
+    });
+
+    // Construct the month title
+    let month_parts: Vec<&str> = month_key.split('-').collect();
+    let month_title = if month_parts.len() == 2 {
+        format!("Month {}/{}", month_parts[1], month_parts[0])
+    } else {
+        format!("Month {}", month_key)
+    };
+
+    // Write JSON file to disk (matches write_node_file JSON format)
+    write_json_node(ctx, &month_node_id, "finance_month", &month_title, &month_props)?;
+
+    // Get currency for display
+    let currency = config_meta.get("currency")
+        .and_then(|v| v.as_str())
+        .unwrap_or("VND");
+
+    let output = serde_json::json!({
+        "success": true,
+        "id": tx_id,
+        "type": tx_type,
+        "amount": amount,
+        "category": category,
+        "account": account_name,
+        "date": date_str,
+        "note": note,
+        "currency": currency,
+        "message": format!("{} {} {} — {} ({})", 
+            if tx_type == "expense" { "💸" } else { "💰" },
+            format_amount(amount, currency),
+            category, note, account_name
+        )
+    });
+
+    Ok(output.to_string())
+}
+
+/// 18. get_transactions — List transactions for a specific month
+fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let now = chrono::Local::now();
+    let month = args.get("month").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| now.format("%Y-%m").to_string());
+    let type_filter = args.get("type").and_then(|v| v.as_str());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+    let month_node_id = format!("Finance/{}.json", month);
+    let month_node = db.get_node(&month_node_id)?;
+
+    let transactions = match &month_node {
+        Some(node) => {
+            node.properties.get("transactions")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+        }
+        None => Vec::new()
+    };
+
+    // Filter by type if specified
+    let filtered: Vec<&Value> = transactions.iter()
+        .filter(|tx| {
+            if let Some(filter) = type_filter {
+                tx.get("type").and_then(|v| v.as_str()) == Some(filter)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Sort by date descending (most recent first)
+    let mut sorted: Vec<&Value> = filtered;
+    sorted.sort_by(|a, b| {
+        let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let db_date = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        db_date.cmp(da)
+    });
+
+    // Apply limit
+    let limited: Vec<Value> = sorted.into_iter().take(limit).map(|v| {
+        // Slim down for LLM — only essential fields
+        serde_json::json!({
+            "id": v.get("id"),
+            "type": v.get("type"),
+            "amount": v.get("amount"),
+            "category": v.get("category"),
+            "accountId": v.get("accountId"),
+            "date": v.get("date"),
+            "note": v.get("note")
+        })
+    }).collect();
+
+    // Read config for currency
+    let config_node = db.get_node("Finance/Config.json")?;
+    let currency = config_node.as_ref()
+        .and_then(|n| n.properties.get("currency"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("VND");
+
+    // Calculate totals
+    let total_income: f64 = transactions.iter()
+        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("income"))
+        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
+        .sum();
+    let total_expense: f64 = transactions.iter()
+        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("expense"))
+        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
+        .sum();
+
+    let output = serde_json::json!({
+        "month": month,
+        "currency": currency,
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "net": total_income - total_expense,
+        "total_transactions": transactions.len(),
+        "results": limited,
+        "_returned": limited.len()
+    });
+
+    Ok(output.to_string())
+}
+
+/// Helper: Write a JSON node file to disk + upsert DB + emit event.
+/// This matches the write_node_file format for .json files.
+fn write_json_node(
+    ctx: &ToolContext,
+    rel_path: &str,
+    node_type: &str,
+    title: &str,
+    properties: &Value,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Build properties with timestamps
+    let mut props = properties.clone();
+    if let Some(map) = props.as_object_mut() {
+        if !map.contains_key("created_at") {
+            // Check if node already exists to preserve created_at
+            if let Ok(Some(existing)) = ctx.db.get_node(rel_path) {
+                let existing_created = existing.properties.get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&now);
+                map.insert("created_at".to_string(), Value::String(existing_created.to_string()));
+            } else {
+                map.insert("created_at".to_string(), Value::String(now.clone()));
+            }
+        }
+        map.insert("updated_at".to_string(), Value::String(now.clone()));
+    }
+
+    // Build JSON file content (matches nodes.rs write_node_file for .json)
+    let json_obj = serde_json::json!({
+        "title": title,
+        "type": node_type,
+        "metadata": props,
+        "content": ""
+    });
+    let file_content = serde_json::to_string_pretty(&json_obj).unwrap_or_default();
+
+    // Write to disk
+    let full_path = std::path::Path::new(ctx.vault_path).join(rel_path);
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&full_path, &file_content)?;
+
+    // Upsert into DB
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let created_at = props.get("created_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&now)
+        .to_string();
+
+    let node = crate::models::node::NodeMetadata {
+        id: rel_path.to_string(),
+        node_type: node_type.to_string(),
+        title: title.to_string(),
+        content: String::new(),
+        properties: props.clone(),
+        created_at,
+        updated_at: now.clone(),
+        timestamp,
+        blocks: None,
+    };
+    ctx.db.upsert_node(&node)?;
+
+    // Update search index
+    let props_str = serde_json::to_string(&props).unwrap_or_default();
+    ctx.db.upsert_search_entry(
+        rel_path, node_type, title, "", "",
+        &props_str, None, &now, rel_path,
+    );
+
+    // Emit event for UI sync
+    let _ = ctx.app.emit("node:changed", serde_json::json!({
+        "id": rel_path,
+        "node_type": node_type,
+        "title": title,
+    }));
+
+    Ok(())
+}
+
+/// Helper: Simple random u16 for ID generation (matches frontend pattern)
+fn rand_u16() -> u16 {
+    use std::time::SystemTime;
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    (nanos % 1000) as u16
+}
+
+/// Helper: Format amount with currency
+fn format_amount(amount: f64, currency: &str) -> String {
+    if currency == "VND" {
+        // VND: no decimals, use comma separator
+        let int_amount = amount as i64;
+        let formatted = format_number_with_separator(int_amount);
+        format!("{}đ", formatted)
+    } else {
+        format!("{:.2} {}", amount, currency)
+    }
+}
+
+fn format_number_with_separator(n: i64) -> String {
+    let s = n.to_string();
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = String::new();
+    let len = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*c);
+    }
+    result
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  TESTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -1199,7 +1755,7 @@ mod tests {
     #[test]
     fn test_tool_definitions_count() {
         let defs = get_tool_definitions();
-        assert_eq!(defs.len(), 15);
+        assert_eq!(defs.len(), 18);
     }
 
     #[test]
@@ -1222,6 +1778,9 @@ mod tests {
         assert!(names.contains(&"create_task"));
         assert!(names.contains(&"update_task_status"));
         assert!(names.contains(&"create_event"));
+        assert!(names.contains(&"get_finance_summary"));
+        assert!(names.contains(&"create_transaction"));
+        assert!(names.contains(&"get_transactions"));
 
         // Ensure all names are unique
         let mut unique_names = names.clone();

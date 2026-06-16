@@ -250,15 +250,12 @@ pub fn delete_conversation(vault_path: &str, id: &str) -> AppResult<()> {
     let syn_dir = ensure_syn_dir(vault_path)?;
     let path = conversation_path(&syn_dir, id);
 
-    if !path.exists() {
-        return Err(AppError::General(format!(
-            "Conversation not found: {}",
-            id
-        )));
+    // Try to delete the file — if it's already gone (e.g., accidentally deleted), that's OK
+    if path.exists() {
+        std::fs::remove_file(&path)?;
     }
 
-    std::fs::remove_file(&path)?;
-
+    // Always clean up the conversation index entry
     let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
     index.conversations.remove(id);
     if let Err(e) = write_index(&syn_dir, &index) {
