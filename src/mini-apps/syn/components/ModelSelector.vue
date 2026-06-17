@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { ChevronDown, Check, Cpu } from 'lucide-vue-next';
+import { ChevronDown, Check, Cpu, Download } from 'lucide-vue-next';
 import type { ModelInfo } from '../types';
 
 const props = defineProps<{
   models: ModelInfo[];
   modelValue: string;
   formatSize: (bytes: number) => string;
+  pullingModel?: boolean;
+  pullProgress?: number;
 }>();
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'pull-model': [name: string];
 }>();
 
 const isOpen = ref(false);
@@ -33,6 +36,26 @@ const selectModel = (name: string) => {
 
 const handleClickOutside = () => {
   isOpen.value = false;
+};
+
+const customModelName = ref('');
+const pendingPullName = ref<string | null>(null);
+
+const handlePullCustom = () => {
+  const name = customModelName.value.trim();
+  if (!name) return;
+  pendingPullName.value = name;
+};
+
+const confirmPull = () => {
+  if (!pendingPullName.value) return;
+  emit('pull-model', pendingPullName.value);
+  customModelName.value = '';
+  pendingPullName.value = null;
+};
+
+const cancelConfirm = () => {
+  pendingPullName.value = null;
 };
 </script>
 
@@ -99,6 +122,65 @@ const handleClickOutside = () => {
             </div>
             <Check v-if="model.name === modelValue" class="w-4 h-4 text-violet-500 flex-shrink-0" />
           </button>
+        </div>
+
+        <!-- Pull progress (shown when pulling) -->
+        <div v-if="pullingModel" class="px-3 py-2 border-t border-border dark:border-border-dark">
+          <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+            <div
+              class="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all duration-300"
+              :style="{ width: (pullProgress || 0) + '%' }"
+            />
+          </div>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1 text-center">
+            {{ $t('syn.pulling_model') }} {{ Math.round(pullProgress || 0) }}%
+          </p>
+        </div>
+
+        <!-- Pull new model -->
+        <div class="p-2 border-t border-border dark:border-border-dark">
+          <!-- Confirm step -->
+          <div v-if="pendingPullName" class="space-y-2">
+            <p class="text-xs text-text dark:text-text-dark px-1">
+              {{ $t('syn.confirm_pull') }}
+              <span class="font-semibold text-violet-600 dark:text-violet-400">{{ pendingPullName }}</span>
+            </p>
+            <div class="flex items-center gap-1.5">
+              <button
+                @click.stop="confirmPull"
+                class="flex-1 px-2.5 py-1.5 text-xs rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-medium transition-colors cursor-pointer"
+              >
+                {{ $t('syn.confirm_pull_btn') }}
+              </button>
+              <button
+                @click.stop="cancelConfirm"
+                class="px-2.5 py-1.5 text-xs rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                {{ $t('syn.cancel') }}
+              </button>
+            </div>
+          </div>
+          <!-- Input step -->
+          <div v-else class="flex items-center gap-1.5">
+            <input
+              v-model="customModelName"
+              :disabled="pullingModel"
+              @keydown.enter="handlePullCustom"
+              :placeholder="$t('syn.custom_model_placeholder')"
+              class="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/60 rounded-lg text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors disabled:opacity-50"
+              @click.stop
+            />
+            <button
+              @click.stop="handlePullCustom"
+              :disabled="!customModelName.trim() || pullingModel"
+              class="p-1.5 rounded-lg transition-all cursor-pointer flex-shrink-0"
+              :class="customModelName.trim() && !pullingModel
+                ? 'bg-violet-500 hover:bg-violet-600 text-white'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
+            >
+              <Download class="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </Transition>

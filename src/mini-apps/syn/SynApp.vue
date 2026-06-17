@@ -60,6 +60,7 @@ const {
   selectedModel,
   pullingModel,
   pullProgress,
+  pullError,
   isPolling,
   checkStatus,
   fetchModels,
@@ -457,6 +458,9 @@ defineExpose({ refresh });
           v-model="selectedModel"
           :models="models"
           :format-size="formatModelSize"
+          :pulling-model="pullingModel"
+          :pull-progress="pullProgress"
+          @pull-model="handlePullModel"
         />
       </div>
     </div>
@@ -519,6 +523,7 @@ defineExpose({ refresh });
           :models="models"
           :pulling-model="pullingModel"
           :pull-progress="pullProgress"
+          :pull-error="pullError"
           :is-polling="isPolling"
           @new-chat="createConversation"
           @quick-action="handleQuickAction"

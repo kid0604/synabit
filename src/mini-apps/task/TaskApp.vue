@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink, User } from 'lucide-vue-next';
+import { CheckCircle2, Circle, Plus, Trash2, Tag, CalendarDays, List, Trello, Table2, Grid2x2, Search, X, Inbox, Sun, Calendar, Coffee, Send, Eye, EyeOff, Menu as MenuIcon, FileText, Edit3, Settings, Palette, ChevronDown, Link, File, Unlink, User } from 'lucide-vue-next';
 import TaskEditModal from './TaskEditModal.vue';
 import ProjectEditModal from './ProjectEditModal.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -379,7 +379,7 @@ const recalculateProjectSpent = async (proj: any) => {
     }
 };
 
-const viewMode = ref<'list' | 'board' | 'table' | 'gtd'>('list');
+const viewMode = ref<'list' | 'board' | 'table' | 'matrix'>('list');
 
 watch(activeCategory, (newCat, oldCat) => {
     const isNewProject = newCat.startsWith('project:');
@@ -440,6 +440,42 @@ const tasksByStatus = computed(() => {
         sorted[key].sort((a, b) => getOrderValueForDrop(a) - getOrderValueForDrop(b));
     }
     return sorted;
+});
+
+// Eisenhower Matrix logic
+const URGENCY_THRESHOLD_DAYS = 3;
+
+const getTaskQuadrant = (task: TaskMetadata): string => {
+    // Priority 1: Explicit override from drag-drop
+    if (task.custom_fields?.eisenhower_quadrant) {
+        return task.custom_fields.eisenhower_quadrant;
+    }
+    // Priority 2: Delegate = transferred tasks
+    if (task.is_transferred) return 'delegate';
+    // Priority 3: Derive importance from priority
+    const isImportant = task.priority === 'P1' || task.priority === 'P2';
+    if (!isImportant) return 'eliminate';
+    // Priority 4: Derive urgency from due_date for important tasks
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = task.due_date ? new Date(task.due_date) : null;
+    if (dueDate) dueDate.setHours(0, 0, 0, 0);
+    const daysUntilDue = dueDate ? Math.ceil((dueDate.getTime() - today.getTime()) / 86400000) : null;
+    const isUrgent = daysUntilDue !== null && daysUntilDue <= URGENCY_THRESHOLD_DAYS;
+    if (isUrgent) return 'do_first';
+    return 'schedule';
+};
+
+const tasksByQuadrant = computed(() => {
+    const grouped: Record<string, TaskMetadata[]> = {
+        do_first: [], schedule: [], delegate: [], eliminate: []
+    };
+    activeCategoryTasks.value.forEach(t => {
+        if (t.status === 'done') return;
+        const q = getTaskQuadrant(t);
+        if (grouped[q]) grouped[q].push(t);
+    });
+    return grouped;
 });
 
 const showQuickAdd = (colId: string) => {
@@ -608,6 +644,41 @@ const onDrop = async (e: DragEvent, newStatus: string) => {
         });
     } catch (err) {
         logger.error("Drag update failed", err);
+    }
+};
+
+const onMatrixDrop = async (e: DragEvent, quadrantId: string) => {
+    const taskId = e.dataTransfer?.getData('taskId');
+    if (!taskId) return;
+    const task = tasks.value.find(t => t.id === taskId);
+    if (!task) return;
+    if (getTaskQuadrant(task) === quadrantId) return;
+    if (!task.custom_fields) task.custom_fields = {};
+    task.custom_fields['eisenhower_quadrant'] = quadrantId;
+    try {
+        await ns.writeNode({
+            relPath: task.path,
+            nodeType: 'task',
+            title: task.title,
+            properties: {
+                ...task.custom_fields,
+                status: task.status,
+                is_transferred: task.is_transferred,
+                transferred_to: task.transferred_to,
+                track_progress: task.track_progress,
+                priority: task.priority,
+                start_date: task.start_date,
+                due_date: task.due_date,
+                comment: task.comment,
+                source_link: task.source_link,
+                tags: task.tags,
+                completed_at: task.completed_at
+            },
+            content: task.content,
+            existingPath: task.path
+        });
+    } catch (err) {
+        logger.error("Matrix drag update failed", err);
     }
 };
 
@@ -1561,6 +1632,9 @@ watch(() => props.vaultPath, () => {
                           <button @click="viewMode = 'table'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'table' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.table_view')">
                               <Table2 class="w-4 h-4"/>
                           </button>
+                          <button @click="viewMode = 'matrix'" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'matrix' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.matrix_view')">
+                              <Grid2x2 class="w-4 h-4"/>
+                          </button>
                       </div>
                   </div>
               </div>
@@ -2056,6 +2130,218 @@ watch(() => props.vaultPath, () => {
                      </tbody>
                  </table>
               </div>
+
+              <!-- MATRIX VIEW (Eisenhower) -->
+              <div v-else-if="viewMode === 'matrix'" class="mt-6 flex-1 min-h-0 flex flex-col pb-8">
+                  <!-- Axis Labels -->
+                  <div class="flex items-center gap-3 mb-4">
+                      <div class="flex items-center gap-1.5">
+                          <div class="w-5 h-5 rounded-md bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center">
+                              <span class="text-[8px] font-black text-red-500">!</span>
+                          </div>
+                          <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_urgent') }}</span>
+                      </div>
+                      <div class="flex-1 h-px bg-gradient-to-r from-red-200 via-gray-200 to-blue-200 dark:from-red-900/30 dark:via-gray-700 dark:to-blue-900/30"></div>
+                      <div class="flex items-center gap-1.5">
+                          <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_not_urgent') }}</span>
+                          <div class="w-5 h-5 rounded-md bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center">
+                              <Calendar class="w-3 h-3 text-blue-500"/>
+                          </div>
+                      </div>
+                  </div>
+                  
+                  <!-- 2×2 Grid -->
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1 min-h-0">
+                      
+                      <!-- Q1: Do First (Top-Left) — Urgent + Important -->
+                      <div class="flex flex-col rounded-2xl border border-red-200/60 dark:border-red-900/30 bg-gradient-to-br from-red-50/50 to-white dark:from-red-950/10 dark:to-[#1a1a1a] p-3.5 min-h-[180px] overflow-hidden"
+                           @dragover.prevent @drop="onMatrixDrop($event, 'do_first')">
+                          <div class="flex items-center justify-between mb-2.5 shrink-0">
+                              <div class="flex items-center gap-2">
+                                  <div class="w-6 h-6 rounded-lg bg-red-500 flex items-center justify-center shadow-sm shadow-red-500/20">
+                                      <span class="text-[10px] font-black text-white">1</span>
+                                  </div>
+                                  <h3 class="text-[11px] font-bold text-red-700 dark:text-red-400 uppercase tracking-wider">{{ $t('task.matrix_do_first') }}</h3>
+                              </div>
+                              <span class="text-[10px] min-w-[22px] text-center py-0.5 rounded-md bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 font-bold">{{ tasksByQuadrant.do_first.length }}</span>
+                          </div>
+                          <div class="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar">
+                              <div v-for="task in tasksByQuadrant.do_first" :key="task.id"
+                                   draggable="true" @dragstart="onDragStart($event, task)" @click="openEditModal(task)"
+                                   class="relative flex items-start gap-2.5 p-2.5 pl-4 rounded-xl bg-white/80 dark:bg-white/[0.04] border border-transparent hover:border-red-200 dark:hover:border-red-800/40 hover:bg-white dark:hover:bg-white/[0.07] hover:shadow-[0_2px_12px_rgba(239,68,68,0.08)] dark:hover:shadow-[0_2px_12px_rgba(239,68,68,0.05)] transition-all duration-200 cursor-grab active:cursor-grabbing active:scale-[0.98] group">
+                                  <div class="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-red-400 dark:bg-red-500"></div>
+                                  <button @click.stop="toggleTaskStatus(task)" class="shrink-0 mt-0.5 cursor-pointer">
+                                      <div class="w-[18px] h-[18px] rounded-full border-2 border-red-300 dark:border-red-700 hover:border-red-500 dark:hover:border-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"></div>
+                                  </button>
+                                  <div class="flex-1 min-w-0">
+                                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f0f0f2] leading-snug truncate">{{ task.title }}</p>
+                                      <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                          <span v-if="task.priority" class="text-[9px] px-1.5 py-[1px] rounded-md font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                                          <span v-if="task.due_date" class="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[1px] rounded-md font-semibold" :class="isOverdue(task) ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'">
+                                              <CalendarDays class="w-2.5 h-2.5"/>{{ task.due_date.substring(5) }}
+                                          </span>
+                                          <span v-for="tag in (task.tags || []).slice(0, 1)" :key="tag" class="text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 truncate max-w-[60px]">#{{ tag }}</span>
+                                      </div>
+                                  </div>
+                                  <button @click.stop="deleteTask(task)" class="text-gray-300 dark:text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer shrink-0 mt-0.5 p-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                                      <Trash2 class="w-3 h-3"/>
+                                  </button>
+                              </div>
+                              <div v-if="tasksByQuadrant.do_first.length === 0" class="flex flex-col items-center justify-center h-full py-8">
+                                  <div class="w-10 h-10 rounded-xl bg-red-100/50 dark:bg-red-900/10 flex items-center justify-center mb-2">
+                                      <CheckCircle2 class="w-5 h-5 text-red-300 dark:text-red-700"/>
+                                  </div>
+                                  <p class="text-[11px] text-red-300 dark:text-red-700 font-medium">{{ $t('task.matrix_do_first_empty') }}</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <!-- Q2: Schedule (Top-Right) — Important but Not Urgent -->
+                      <div class="flex flex-col rounded-2xl border border-blue-200/60 dark:border-blue-900/30 bg-gradient-to-br from-blue-50/50 to-white dark:from-blue-950/10 dark:to-[#1a1a1a] p-3.5 min-h-[180px] overflow-hidden"
+                           @dragover.prevent @drop="onMatrixDrop($event, 'schedule')">
+                          <div class="flex items-center justify-between mb-2.5 shrink-0">
+                              <div class="flex items-center gap-2">
+                                  <div class="w-6 h-6 rounded-lg bg-blue-500 flex items-center justify-center shadow-sm shadow-blue-500/20">
+                                      <span class="text-[10px] font-black text-white">2</span>
+                                  </div>
+                                  <h3 class="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">{{ $t('task.matrix_schedule') }}</h3>
+                              </div>
+                              <span class="text-[10px] min-w-[22px] text-center py-0.5 rounded-md bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-bold">{{ tasksByQuadrant.schedule.length }}</span>
+                          </div>
+                          <div class="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar">
+                              <div v-for="task in tasksByQuadrant.schedule" :key="task.id"
+                                   draggable="true" @dragstart="onDragStart($event, task)" @click="openEditModal(task)"
+                                   class="relative flex items-start gap-2.5 p-2.5 pl-4 rounded-xl bg-white/80 dark:bg-white/[0.04] border border-transparent hover:border-blue-200 dark:hover:border-blue-800/40 hover:bg-white dark:hover:bg-white/[0.07] hover:shadow-[0_2px_12px_rgba(59,130,246,0.08)] dark:hover:shadow-[0_2px_12px_rgba(59,130,246,0.05)] transition-all duration-200 cursor-grab active:cursor-grabbing active:scale-[0.98] group">
+                                  <div class="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-blue-400 dark:bg-blue-500"></div>
+                                  <button @click.stop="toggleTaskStatus(task)" class="shrink-0 mt-0.5 cursor-pointer">
+                                      <div class="w-[18px] h-[18px] rounded-full border-2 border-blue-300 dark:border-blue-700 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"></div>
+                                  </button>
+                                  <div class="flex-1 min-w-0">
+                                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f0f0f2] leading-snug truncate">{{ task.title }}</p>
+                                      <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                          <span v-if="task.priority" class="text-[9px] px-1.5 py-[1px] rounded-md font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                                          <span v-if="task.due_date" class="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-semibold">
+                                              <CalendarDays class="w-2.5 h-2.5"/>{{ task.due_date.substring(5) }}
+                                          </span>
+                                          <span v-for="tag in (task.tags || []).slice(0, 1)" :key="tag" class="text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 truncate max-w-[60px]">#{{ tag }}</span>
+                                      </div>
+                                  </div>
+                                  <button @click.stop="deleteTask(task)" class="text-gray-300 dark:text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer shrink-0 mt-0.5 p-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                                      <Trash2 class="w-3 h-3"/>
+                                  </button>
+                              </div>
+                              <div v-if="tasksByQuadrant.schedule.length === 0" class="flex flex-col items-center justify-center h-full py-8">
+                                  <div class="w-10 h-10 rounded-xl bg-blue-100/50 dark:bg-blue-900/10 flex items-center justify-center mb-2">
+                                      <Calendar class="w-5 h-5 text-blue-300 dark:text-blue-700"/>
+                                  </div>
+                                  <p class="text-[11px] text-blue-300 dark:text-blue-700 font-medium">{{ $t('task.matrix_schedule_empty') }}</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <!-- Q3: Delegate (Bottom-Left) — Transferred tasks -->
+                      <div class="flex flex-col rounded-2xl border border-amber-200/60 dark:border-amber-900/30 bg-gradient-to-br from-amber-50/50 to-white dark:from-amber-950/10 dark:to-[#1a1a1a] p-3.5 min-h-[180px] overflow-hidden"
+                           @dragover.prevent @drop="onMatrixDrop($event, 'delegate')">
+                          <div class="flex items-center justify-between mb-2.5 shrink-0">
+                              <div class="flex items-center gap-2">
+                                  <div class="w-6 h-6 rounded-lg bg-amber-500 flex items-center justify-center shadow-sm shadow-amber-500/20">
+                                      <span class="text-[10px] font-black text-white">3</span>
+                                  </div>
+                                  <h3 class="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">{{ $t('task.matrix_delegate') }}</h3>
+                              </div>
+                              <span class="text-[10px] min-w-[22px] text-center py-0.5 rounded-md bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold">{{ tasksByQuadrant.delegate.length }}</span>
+                          </div>
+                          <div class="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar">
+                              <div v-for="task in tasksByQuadrant.delegate" :key="task.id"
+                                   draggable="true" @dragstart="onDragStart($event, task)" @click="openEditModal(task)"
+                                   class="relative flex items-start gap-2.5 p-2.5 pl-4 rounded-xl bg-white/80 dark:bg-white/[0.04] border border-transparent hover:border-amber-200 dark:hover:border-amber-800/40 hover:bg-white dark:hover:bg-white/[0.07] hover:shadow-[0_2px_12px_rgba(245,158,11,0.08)] dark:hover:shadow-[0_2px_12px_rgba(245,158,11,0.05)] transition-all duration-200 cursor-grab active:cursor-grabbing active:scale-[0.98] group">
+                                  <div class="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-amber-400 dark:bg-amber-500"></div>
+                                  <button @click.stop="toggleTaskStatus(task)" class="shrink-0 mt-0.5 cursor-pointer">
+                                      <div class="w-[18px] h-[18px] rounded-full border-2 border-amber-300 dark:border-amber-700 hover:border-amber-500 dark:hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors"></div>
+                                  </button>
+                                  <div class="flex-1 min-w-0">
+                                      <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f0f0f2] leading-snug truncate">{{ task.title }}</p>
+                                      <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                          <span v-if="task.priority" class="text-[9px] px-1.5 py-[1px] rounded-md font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                                          <span v-if="task.due_date" class="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-semibold">
+                                              <CalendarDays class="w-2.5 h-2.5"/>{{ task.due_date.substring(5) }}
+                                          </span>
+                                          <div v-if="task.is_transferred && task.transferred_to" class="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[1px] rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-semibold">
+                                              <User class="w-2.5 h-2.5"/>{{ getTransferredName(task.transferred_to) }}
+                                          </div>
+                                      </div>
+                                  </div>
+                                  <button @click.stop="deleteTask(task)" class="text-gray-300 dark:text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer shrink-0 mt-0.5 p-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                                      <Trash2 class="w-3 h-3"/>
+                                  </button>
+                              </div>
+                              <div v-if="tasksByQuadrant.delegate.length === 0" class="flex flex-col items-center justify-center h-full py-8">
+                                  <div class="w-10 h-10 rounded-xl bg-amber-100/50 dark:bg-amber-900/10 flex items-center justify-center mb-2">
+                                      <Send class="w-5 h-5 text-amber-300 dark:text-amber-700"/>
+                                  </div>
+                                  <p class="text-[11px] text-amber-300 dark:text-amber-700 font-medium">{{ $t('task.matrix_delegate_empty') }}</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <!-- Q4: Eliminate (Bottom-Right) — Everything else -->
+                      <div class="flex flex-col rounded-2xl border border-gray-200/60 dark:border-gray-800 bg-gradient-to-br from-gray-50/50 to-white dark:from-gray-900/20 dark:to-[#1a1a1a] p-3.5 min-h-[180px] overflow-hidden"
+                           @dragover.prevent @drop="onMatrixDrop($event, 'eliminate')">
+                          <div class="flex items-center justify-between mb-2.5 shrink-0">
+                              <div class="flex items-center gap-2">
+                                  <div class="w-6 h-6 rounded-lg bg-gray-400 dark:bg-gray-600 flex items-center justify-center shadow-sm">
+                                      <span class="text-[10px] font-black text-white">4</span>
+                                  </div>
+                                  <h3 class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_eliminate') }}</h3>
+                              </div>
+                              <span class="text-[10px] min-w-[22px] text-center py-0.5 rounded-md bg-gray-200/60 dark:bg-gray-700/50 text-gray-500 dark:text-gray-400 font-bold">{{ tasksByQuadrant.eliminate.length }}</span>
+                          </div>
+                          <div class="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar">
+                              <div v-for="task in tasksByQuadrant.eliminate" :key="task.id"
+                                   draggable="true" @dragstart="onDragStart($event, task)" @click="openEditModal(task)"
+                                   class="relative flex items-start gap-2.5 p-2.5 pl-4 rounded-xl bg-white/60 dark:bg-white/[0.03] border border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:bg-white/90 dark:hover:bg-white/[0.06] hover:shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:hover:shadow-[0_2px_8px_rgba(0,0,0,0.1)] transition-all duration-200 cursor-grab active:cursor-grabbing active:scale-[0.98] group">
+                                  <div class="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-gray-300 dark:bg-gray-600"></div>
+                                  <button @click.stop="toggleTaskStatus(task)" class="shrink-0 mt-0.5 cursor-pointer">
+                                      <div class="w-[18px] h-[18px] rounded-full border-2 border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"></div>
+                                  </button>
+                                  <div class="flex-1 min-w-0">
+                                      <p class="text-[13px] font-semibold text-gray-500 dark:text-gray-400 leading-snug truncate">{{ task.title }}</p>
+                                      <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                          <span v-if="task.priority" class="text-[9px] px-1.5 py-[1px] rounded-md font-bold" :class="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                                          <span v-if="task.due_date" class="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-semibold">
+                                              <CalendarDays class="w-2.5 h-2.5"/>{{ task.due_date.substring(5) }}
+                                          </span>
+                                          <span v-for="tag in (task.tags || []).slice(0, 1)" :key="tag" class="text-[9px] px-1.5 py-[1px] rounded-md bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 truncate max-w-[60px]">#{{ tag }}</span>
+                                      </div>
+                                  </div>
+                                  <button @click.stop="deleteTask(task)" class="text-gray-300 dark:text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer shrink-0 mt-0.5 p-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                                      <Trash2 class="w-3 h-3"/>
+                                  </button>
+                              </div>
+                              <div v-if="tasksByQuadrant.eliminate.length === 0" class="flex flex-col items-center justify-center h-full py-8">
+                                  <div class="w-10 h-10 rounded-xl bg-gray-100/50 dark:bg-gray-800/30 flex items-center justify-center mb-2">
+                                      <Trash2 class="w-5 h-5 text-gray-300 dark:text-gray-700"/>
+                                  </div>
+                                  <p class="text-[11px] text-gray-300 dark:text-gray-700 font-medium">{{ $t('task.matrix_eliminate_empty') }}</p>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+                  
+                  <!-- Bottom Axis Label -->
+                  <div class="flex items-center justify-center mt-3 gap-4">
+                      <div class="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500">
+                          <div class="w-3 h-3 rounded bg-gradient-to-br from-red-400 to-blue-400 opacity-40"></div>
+                          ↑ {{ $t('task.matrix_important') }}
+                      </div>
+                      <span class="text-gray-300 dark:text-gray-700">·</span>
+                      <div class="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500">
+                          <div class="w-3 h-3 rounded bg-gradient-to-br from-amber-400 to-gray-400 opacity-40"></div>
+                          ↓ {{ $t('task.matrix_not_important') }}
+                      </div>
+                  </div>
+              </div>
+
           </div>
           </div>
       </div>

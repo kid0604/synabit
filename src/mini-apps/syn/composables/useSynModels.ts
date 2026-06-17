@@ -16,6 +16,7 @@ export function useSynModels() {
   const pullingModel = ref(false);
   const pullProgress = ref(0);
   const pullStatus = ref('');
+  const pullError = ref<string | null>(null);
 
   // Polling: auto-detect Ollama when disconnected
   const isPolling = ref(false);
@@ -63,17 +64,20 @@ export function useSynModels() {
     pullingModel.value = true;
     pullProgress.value = 0;
     pullStatus.value = '';
+    pullError.value = null;
 
     let unlisten: UnlistenFn | null = null;
 
     try {
       // Listen for progress events
-      unlisten = await listen<{ model: string; status: string; progress: number }>(
+      unlisten = await listen<{ model: string; status: string; completed?: number; total?: number }>(
         'syn-pull-progress',
         (event) => {
           const data = event.payload;
           if (data.model === name) {
-            pullProgress.value = data.progress;
+            pullProgress.value = (data.completed && data.total)
+              ? (data.completed / data.total) * 100
+              : 0;
             pullStatus.value = data.status;
           }
         }
@@ -95,6 +99,7 @@ export function useSynModels() {
       return true;
     } catch (e) {
       logger.error('[Syn] Failed to pull model', e);
+      pullError.value = String(e);
       return false;
     } finally {
       pullingModel.value = false;
@@ -186,6 +191,7 @@ export function useSynModels() {
     pullingModel,
     pullProgress,
     pullStatus,
+    pullError,
     isPolling,
     checkStatus,
     fetchModels,

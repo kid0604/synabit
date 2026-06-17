@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Sparkles, Download, ExternalLink, RefreshCw, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
+import { ref, computed } from 'vue';
+import { Sparkles, Download, ExternalLink, RefreshCw, AlertCircle, CalendarDays, ListTodo, PenLine, HelpCircle } from 'lucide-vue-next';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
@@ -12,6 +12,7 @@ defineProps<{
   models: ModelInfo[];
   pullingModel: boolean;
   pullProgress: number;
+  pullError: string | null;
   isPolling: boolean;
 }>();
 
@@ -23,6 +24,26 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const customModelName = ref('');
+const pendingPullName = ref<string | null>(null);
+
+const handlePullCustom = () => {
+  const name = customModelName.value.trim();
+  if (!name) return;
+  pendingPullName.value = name;
+};
+
+const confirmPull = () => {
+  if (!pendingPullName.value) return;
+  emit('pull-model', pendingPullName.value);
+  customModelName.value = '';
+  pendingPullName.value = null;
+};
+
+const cancelConfirm = () => {
+  pendingPullName.value = null;
+};
 
 const quickActions = computed(() => [
   { icon: CalendarDays, label: t('syn.quick_weekly_summary'), prompt: t('syn.quick_weekly_summary'), color: 'text-violet-500' },
@@ -153,6 +174,52 @@ const openOllamaWebsite = async () => {
             </div>
           </button>
         </div>
+        <!-- Custom model input -->
+        <div v-if="!pendingPullName" class="w-full flex items-center gap-2 mb-6">
+          <div class="relative flex-1">
+            <input
+              v-model="customModelName"
+              :disabled="pullingModel"
+              @keydown.enter="handlePullCustom"
+              :placeholder="$t('syn.custom_model_placeholder')"
+              class="w-full px-4 py-2.5 text-sm bg-white dark:bg-[#1e1f25] border border-gray-200 dark:border-gray-700/60 rounded-xl text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors disabled:opacity-50"
+            />
+          </div>
+          <button
+            @click="handlePullCustom"
+            :disabled="!customModelName.trim() || pullingModel"
+            class="px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer flex-shrink-0"
+            :class="customModelName.trim() && !pullingModel
+              ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30'
+              : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
+          >
+            <Download class="w-4 h-4" />
+          </button>
+        </div>
+
+        <!-- Confirm pull -->
+        <div v-else class="w-full bg-white dark:bg-[#1e1f25] border border-violet-300 dark:border-violet-500/30 rounded-xl p-4 mb-6">
+          <p class="text-sm text-text dark:text-text-dark mb-1">
+            {{ $t('syn.confirm_pull') }}
+          </p>
+          <p class="text-base font-semibold text-violet-600 dark:text-violet-400 mb-3">
+            {{ pendingPullName }}
+          </p>
+          <div class="flex items-center gap-2">
+            <button
+              @click="confirmPull"
+              class="flex-1 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-medium shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all cursor-pointer"
+            >
+              {{ $t('syn.confirm_pull_btn') }}
+            </button>
+            <button
+              @click="cancelConfirm"
+              class="px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              {{ $t('syn.cancel') }}
+            </button>
+          </div>
+        </div>
 
         <!-- Pull progress -->
         <div v-if="pullingModel" class="w-full">
@@ -171,6 +238,18 @@ const openOllamaWebsite = async () => {
           >
             {{ t('syn.cancel_pull') }}
           </button>
+        </div>
+
+        <!-- Pull error -->
+        <div
+          v-if="pullError && !pullingModel"
+          class="w-full flex items-start gap-3 px-4 py-3 bg-red-500/5 border border-red-500/20 rounded-xl text-sm mt-4"
+        >
+          <AlertCircle class="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p class="text-red-400 font-medium">{{ $t('syn.pull_error_title') }}</p>
+            <p class="text-red-400/70 text-xs mt-0.5">{{ $t('syn.pull_error_desc') }}</p>
+          </div>
         </div>
       </template>
 
