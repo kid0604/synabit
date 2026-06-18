@@ -1,0 +1,69 @@
+/* === Code Block (Syntax Highlighting) === */
+.tiptap pre {
+  background: #f8f9fa !important;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 20px;
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+  position: relative;
+  color: #24292e !important;
+}
+.tiptap pre code { background: none !important; padding: 0; font-size: inherit; color: inherit !important; }
+
+/* Light theme syntax colors */
+.tiptap pre .hljs-comment,
+.tiptap pre .hljs-quote { color: #6a737d; font-style: italic; }
+.tiptap pre .hljs-keyword,
+.tiptap pre .hljs-selector-tag,
+.tiptap pre .hljs-addition { color: #d73a49; }
+.tiptap pre .hljs-number,
+.tiptap pre .hljs-literal,
+.tiptap pre .hljs-symbol,
+.tiptap pre .hljs-bullet { color: #005cc5; }
+.tiptap pre .hljs-string,
+.tiptap pre .hljs-doctag,
+.tiptap pre .hljs-regexp { color: #032f62; }
+.tiptap pre .hljs-title,
+.tiptap pre .hljs-section,
+.tiptap pre .hljs-built_in { color: #6f42c1; }
+.tiptap pre .hljs-attr,
+.tiptap pre .hljs-attribute { color: #005cc5; }
+.tiptap pre .hljs-variable,
+.tiptap pre .hljs-template-variable { color: #e36209; }
+.tiptap pre .hljs-type,
+.tiptap pre .hljs-name { color: #22863a; }
+.tiptap pre .hljs-tag { color: #22863a; }
+.tiptap pre .hljs-meta { color: #6a737d; }
+
+.dark .tiptap pre {
+  background: #1e1e1e !important;
+  border-color: #2c2c2e;
+  color: #e4e4e7 !important;
+}
+.dark .tiptap pre code { color: #e4e4e7; }
+.dark .tiptap pre .hljs-comment,
+.dark .tiptap pre .hljs-quote { color: #636366; }
+.dark .tiptap pre .hljs-keyword,
+.dark .tiptap pre .hljs-selector-tag,
+.dark .tiptap pre .hljs-addition { color: #ff7b72; }
+.dark .tiptap pre .hljs-number,
+.dark .tiptap pre .hljs-literal,
+.dark .tiptap pre .hljs-symbol,
+.dark .tiptap pre .hljs-bullet { color: #79c0ff; }
+.dark .tiptap pre .hljs-string,
+.dark .tiptap pre .hljs-doctag,
+.dark .tiptap pre .hljs-regexp { color: #a5d6ff; }
+.dark .tiptap pre .hljs-title,
+.dark .tiptap pre .hljs-section,
+.dark .tiptap pre .hljs-built_in { color: #d2a8ff; }
+.dark .tiptap pre .hljs-attr,
+.dark .tiptap pre .hljs-attribute { color: #79c0ff; }
+.dark .tiptap pre .hljs-variable,
+.dark .tiptap pre .hljs-template-variable { color: #ffa657; }
+.dark .tiptap pre .hljs-type,
+.dark .tiptap pre .hljs-name { color: #7ee787; }
+.dark .tiptap pre .hljs-tag { color: #7ee787; }
+.dark .tiptap pre .hljs-meta { color: #636366; }
