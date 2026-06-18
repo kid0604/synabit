@@ -1,6 +1,6 @@
 [package]
 name = "synabit"
-version = "0.7.9"
+version = "0.8.0"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"

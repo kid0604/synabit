@@ -6,7 +6,7 @@ import type { WhiteboardMetadata } from '../../../types/ipc';
 
 export interface WBNode {
   id: string;
-  type: 'shape' | 'stroke' | 'mindmap' | 'text';
+  type: 'shape' | 'stroke' | 'mindmap' | 'text' | 'note';
   position: { x: number; y: number };
   data: Record<string, any>;
 }
