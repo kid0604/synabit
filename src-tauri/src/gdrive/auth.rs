@@ -1,4 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::CLIENT_SECRET;
 use super::{
     generate_pkce_pair, GDriveTokens, TokenResponse, AUTH_URI, CLIENT_ID,
@@ -182,17 +181,29 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
     .map_err(|_| "Authentication timed out (120s). Please try again.".to_string())??;
 
     // Exchange code for tokens — Desktop: client_secret + PKCE code_verifier
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let form_data = vec![
+        ("code", auth_code.as_str()),
+        ("client_id", CLIENT_ID),
+        ("client_secret", CLIENT_SECRET),
+        ("code_verifier", code_verifier.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("grant_type", "authorization_code"),
+    ];
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let form_data = vec![
+        ("code", auth_code.as_str()),
+        ("client_id", CLIENT_ID),
+        ("code_verifier", code_verifier.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("grant_type", "authorization_code"),
+    ];
+
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URI)
-        .form(&[
-            ("code", auth_code.as_str()),
-            ("client_id", CLIENT_ID),
-            ("client_secret", CLIENT_SECRET),
-            ("code_verifier", code_verifier.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("grant_type", "authorization_code"),
-        ])
+        .form(&form_data)
         .send()
         .await
         .map_err(|e| format!("Token exchange request failed: {}", e))?;
@@ -268,16 +279,29 @@ pub async fn gdrive_auth_complete(
 
     let redirect_uri = "com.synabit.app:/oauth2callback";
 
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let form_data = vec![
+        ("code", auth_code.as_str()),
+        ("client_id", CLIENT_ID),
+        ("client_secret", CLIENT_SECRET),
+        ("code_verifier", code_verifier.as_str()),
+        ("redirect_uri", redirect_uri),
+        ("grant_type", "authorization_code"),
+    ];
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let form_data = vec![
+        ("code", auth_code.as_str()),
+        ("client_id", CLIENT_ID),
+        ("code_verifier", code_verifier.as_str()),
+        ("redirect_uri", redirect_uri),
+        ("grant_type", "authorization_code"),
+    ];
+
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URI)
-        .form(&[
-            ("code", auth_code.as_str()),
-            ("client_id", CLIENT_ID),
-            ("code_verifier", code_verifier.as_str()),
-            ("redirect_uri", redirect_uri),
-            ("grant_type", "authorization_code"),
-        ])
+        .form(&form_data)
         .send()
         .await
         .map_err(|e| format!("Token exchange request failed: {}", e))?;

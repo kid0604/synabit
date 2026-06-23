@@ -62,6 +62,30 @@ const getAppName = (appId: string): string => {
   return ALL_APPS.find(a => a.id === appId)?.name || appId;
 };
 
+const mobileVisibleApps = computed(() => {
+    return ALL_APPS
+        .filter(a => !(a.id === 'syn' && useMobileLayout.value))
+        .filter(a => !hiddenSidebarApps.value.includes(a.id))
+        .slice(0, 4)
+        .map(a => a.id);
+});
+
+const isAppVisible = (appId: string) => {
+    if (appId === 'syn' && useMobileLayout.value) return false;
+    if (hiddenSidebarApps.value.includes(appId)) return false;
+    if (useMobileLayout.value && !mobileVisibleApps.value.includes(appId)) return false;
+    return true;
+};
+
+const moreMenuApps = computed(() => {
+    return ALL_APPS.filter(a => {
+        if (a.id === 'syn' && useMobileLayout.value) return false;
+        const isUserHidden = hiddenSidebarApps.value.includes(a.id);
+        const isMobileHidden = useMobileLayout.value && !mobileVisibleApps.value.includes(a.id);
+        return isUserHidden || isMobileHidden;
+    });
+});
+
 // ─── App Lock ─────────────────────────────────────────────
 const appLockStore = useAppLockStore();
 const currentAppIdRef = computed(() => (route.name as string) || null);
@@ -604,64 +628,64 @@ onUnmounted(() => {
         <template v-if="!isFloatingView" #[useMobileLayout?'bottombar':'sidebar']>
           <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-20 h-full'" data-tauri-drag-region>
               <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
-                <button v-if="!hiddenSidebarApps.includes('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Globe class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
 
-                <button v-if="!hiddenSidebarApps.includes('chat')" @click="activeTool = 'chat'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'chat' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('chat')" @click="activeTool = 'chat'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'chat' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <MessageSquare class="w-5 h-5" />
                    <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Chat</span>
                 </button>
 
-                <button v-if="!hiddenSidebarApps.includes('syn')" @click="activeTool = 'syn'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'syn' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('syn')" @click="activeTool = 'syn'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'syn' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <SynIcon class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
                 </button>
 
-                <button v-if="!hiddenSidebarApps.includes('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Zap class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
                 </button>
-                <button v-if="!hiddenSidebarApps.includes('note')" @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('note')" @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <FileText class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Notes</span>
                 </button>
-                <button v-if="!hiddenSidebarApps.includes('task')" @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('task')" @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <CheckSquare class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Tasks</span>
                 </button>
-                <button v-if="!hiddenSidebarApps.includes('calendar')" @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('calendar')" @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Calendar class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Calendar</span>
                 </button>
-                <button v-if="!useMobileLayout && !hiddenSidebarApps.includes('file')" @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('file')" @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <FolderOpen class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
                 </button>
-                <button v-if="!hiddenSidebarApps.includes('whiteboard')" @click="activeTool = 'whiteboard'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'whiteboard' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('whiteboard')" @click="activeTool = 'whiteboard'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'whiteboard' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Palette class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Whiteboard</span>
                 </button>
-                <button v-if="!hiddenSidebarApps.includes('people')" @click="activeTool = 'people'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'people' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('people')" @click="activeTool = 'people'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'people' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Users class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">People</span>
                 </button>
 
-                <button v-if="!hiddenSidebarApps.includes('finance')" @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('finance')" @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Wallet class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Finance</span>
                 </button>
 
-                <button v-if="!hiddenSidebarApps.includes('feeds')" @click="activeTool = 'feeds'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'feeds' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('feeds')" @click="activeTool = 'feeds'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'feeds' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Rss class="w-5 h-5" />
                    <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Feeds</span>
                 </button>
 
                 
-                <div v-if="hiddenSidebarApps.length > 0" class="relative flex justify-center w-full">
+                <div v-if="moreMenuApps.length > 0" class="relative flex justify-center">
                   <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showHiddenAppsMenu ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                     <MoreHorizontal class="w-5 h-5" />
                     <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">More Apps</span>
@@ -670,10 +694,10 @@ onUnmounted(() => {
                   <!-- Overlay for clicking outside -->
                   <div v-if="showHiddenAppsMenu" class="fixed inset-0 z-40" @click="showHiddenAppsMenu = false"></div>
                   
-                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-2 left-0 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50">
-                    <button v-for="app in ALL_APPS.filter(a => hiddenSidebarApps.includes(a.id) && (useMobileLayout ? true : a.id !== 'file'))" :key="app.id" @click="activeTool = app.id; showHiddenAppsMenu = false" class="w-full flex items-center gap-3 px-4 py-2 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
-                      <component :is="app.icon" class="w-4 h-4 text-gray-500" />
-                      {{ app.name }}
+                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50 max-h-[60vh] overflow-y-auto">
+                    <button v-for="app in moreMenuApps" :key="app.id" @click="activeTool = app.id; showHiddenAppsMenu = false" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
+                      <component :is="app.icon" class="w-5 h-5 text-gray-500" />
+                      <span class="font-medium">{{ app.name }}</span>
                     </button>
                   </div>
                 </div>

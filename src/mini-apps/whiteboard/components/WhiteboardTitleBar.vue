@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Plus, Tag, X } from 'lucide-vue-next';
+import { Plus, Tag, X, PanelLeft } from 'lucide-vue-next';
 import NavButtons from '../../../shared/components/NavButtons.vue';
 
 const props = defineProps<{
@@ -12,6 +12,7 @@ const emit = defineEmits<{
   (e: 'update-title', title: string): void;
   (e: 'add-tag', tag: string): void;
   (e: 'remove-tag', tag: string): void;
+  (e: 'open-sidebar'): void;
 }>();
 
 // ─── Title Editing ────────────────────────────────────────
@@ -58,6 +59,9 @@ function removeBoardTag(tag: string) {
   <!-- Title bar -->
   <div class="wb-title-bar">
     <div class="flex items-center gap-2 min-w-0 flex-1">
+      <button @click="$emit('open-sidebar')" class="md:hidden p-1.5 -ml-2 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark transition-colors">
+        <PanelLeft class="w-4.5 h-4.5" />
+      </button>
       <NavButtons />
       <input
         v-if="editingTitle"
@@ -122,11 +126,16 @@ function removeBoardTag(tag: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 72px 8px 72px;
+  padding: 8px 12px;
   background: var(--color-surface, #fff);
   border-bottom: 1px solid var(--color-border, #e6e6e6);
   backdrop-filter: blur(8px);
   background: rgba(255,255,255,0.85);
+}
+@media (min-width: 768px) {
+  .wb-title-bar {
+    padding: 8px 72px;
+  }
 }
 :global(.dark) .wb-title-bar {
   background: rgba(30,30,30,0.85);
@@ -141,10 +150,15 @@ function removeBoardTag(tag: string) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 72px;
+  padding: 4px 12px;
   background: rgba(255,255,255,0.85);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--color-border, #e6e6e6);
+}
+@media (min-width: 768px) {
+  .wb-tags-bar {
+    padding: 4px 72px;
+  }
 }
 :global(.dark) .wb-tags-bar {
   background: rgba(30,30,30,0.85);

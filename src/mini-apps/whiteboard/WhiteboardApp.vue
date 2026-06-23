@@ -58,6 +58,8 @@ const store = useWhiteboardStore(vaultPathRef);
 const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
 let skipNavPush = false;
 
+const isMobile = ref(window.innerWidth < 768);
+
 const switchBoard = (boardId: string) => {
   if (boardId !== store.currentBoardId.value && store.currentBoardId.value && !skipNavPush) {
     pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
@@ -71,7 +73,7 @@ onActivated(() => { isAppActive.value = true; });
 onDeactivated(() => { isAppActive.value = false; });
 
 // ── VueFlow Core ────────────────────────────────────────────
-const { viewport, screenToFlowCoordinate, addSelectedNodes } = useVueFlow({ id: 'whiteboard-flow' });
+const { viewport, screenToFlowCoordinate, addSelectedNodes, fitView } = useVueFlow({ id: 'whiteboard-flow' });
 
 const vfNodes = ref<any[]>([]);
 const vfEdges = ref<any[]>([]);
@@ -147,7 +149,14 @@ function syncToVueFlow() {
   );
 }
 
-watch(() => store.currentBoardId.value, () => syncToVueFlow());
+watch(() => store.currentBoardId.value, () => {
+  syncToVueFlow();
+  if (isMobile.value) {
+    setTimeout(() => {
+      fitView({ padding: 0.1, duration: 500 });
+    }, 150);
+  }
+});
 
 // ── VueFlow Change Handlers ─────────────────────────────────
 function handleNodesChange(changes: any[]) {
@@ -435,6 +444,8 @@ onMounted(async () => {
     logger.error('Failed to load notes for whiteboard sidebar', err);
   }
 
+  const handleResize = () => { isMobile.value = window.innerWidth < 768; };
+  window.addEventListener('resize', handleResize);
   window.addEventListener('keydown', handleKeydown);
 
   bus.on('vault:file-modified', () => { store.loadBoards(); });
@@ -492,6 +503,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           @update-title="handleUpdateTitle"
           @add-tag="handleAddTag"
           @remove-tag="handleRemoveTag"
+          @open-sidebar="sidebarRef && (sidebarRef.sidebarOpen = true)"
         />
 
         <!-- Vue Flow Canvas -->
@@ -512,10 +524,11 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           :snap-grid="[10, 10]"
           :connection-mode="ConnectionMode.Loose"
           :delete-key-code="'Delete'"
-          :pan-on-drag="store.activeTool.value === 'pan' ? [0, 1, 2] : (store.activeTool.value === 'select' ? [1, 2] : false)"
-          :selection-on-drag="store.activeTool.value === 'select'"
+          :pan-on-drag="store.activeTool.value === 'pan' || (isMobile && store.activeTool.value === 'select') ? [0, 1, 2] : (store.activeTool.value === 'select' ? [1, 2] : false)"
+          :selection-on-drag="!isMobile && store.activeTool.value === 'select'"
           :pan-on-scroll="true"
           :zoom-on-scroll="true"
+          :zoom-on-pinch="true"
           :nodes-draggable="store.activeTool.value === 'select'"
           :nodes-connectable="store.activeTool.value === 'select'"
           :elevate-edges-on-select="true"
@@ -795,6 +808,12 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 }
 .dark :deep(.vue-flow__controls-button:hover) {
   background: var(--color-surface-hover-dark, #2a2a2a);
+}
+@media (max-width: 767px) {
+  :deep(.vue-flow__controls) {
+    bottom: auto !important;
+    top: 70px !important;
+  }
 }
 :deep(.vue-flow__background) {
   background: transparent !important;

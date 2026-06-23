@@ -398,7 +398,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
       </div>
 
       <!-- Detail Panel (Browse) -->
-      <div v-if="selectedFile" class="w-80 xl:w-96 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col z-20">
+      <div v-if="selectedFile" class="absolute md:relative inset-0 md:inset-auto z-40 md:z-20 w-full md:w-80 xl:w-96 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-2xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col">
         <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
           <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.details') }}</h2>
           <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
@@ -633,7 +633,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             </div>
 
             <!-- Detail Panel (Duplicates) -->
-            <div v-if="selectedFile" class="w-80 xl:w-96 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl border-l border-gray-200/50 dark:border-white/5 flex flex-col">
+            <div v-if="selectedFile" class="absolute md:relative inset-0 md:inset-auto z-40 w-full md:w-80 xl:w-96 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-2xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col">
               <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
                 <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.preview') }}</h2>
                 <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>

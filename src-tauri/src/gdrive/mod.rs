@@ -37,7 +37,6 @@ pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_ANDROID_CLIENT_ID"
 // Desktop OAuth clients: Google still requires client_secret for token exchange/refresh.
 // It's considered "not truly secret" for desktop apps, but mandatory for the endpoint.
 // PKCE is added as an additional security layer on top.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const CLIENT_SECRET: &str = env!(
     "SYNABIT_GOOGLE_CLIENT_SECRET",
     "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time"

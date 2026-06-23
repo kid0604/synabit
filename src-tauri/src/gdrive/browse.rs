@@ -80,15 +80,25 @@ async fn get_valid_access_token(
             get_credential(app_handle, "synabit_gdrive_refresh_token", vault_path)
         {
             let client = Client::new();
-            // Desktop: Google requires client_secret for refresh
+            // Google requires client_secret for refresh on desktop apps
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            let form_data = vec![
+                ("client_id", CLIENT_ID),
+                ("client_secret", CLIENT_SECRET),
+                ("refresh_token", refresh_token.as_str()),
+                ("grant_type", "refresh_token"),
+            ];
+
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            let form_data = vec![
+                ("client_id", CLIENT_ID),
+                ("refresh_token", refresh_token.as_str()),
+                ("grant_type", "refresh_token"),
+            ];
+
             let resp = client
                 .post(TOKEN_URI)
-                .form(&[
-                    ("client_id", CLIENT_ID),
-                    ("client_secret", CLIENT_SECRET),
-                    ("refresh_token", refresh_token.as_str()),
-                    ("grant_type", "refresh_token"),
-                ])
+                .form(&form_data)
                 .send()
                 .await
                 .map_err(|e| AppError::General(format!("Token refresh request failed: {}", e)))?;

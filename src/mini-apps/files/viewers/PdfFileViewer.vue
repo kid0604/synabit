@@ -42,6 +42,11 @@ watch(() => props.filePath, async (path) => {
     await renderer.loadPdf(src);
     await annotations.loadAnnotations(props.fileId, path);
     await annotations.loadDrawings(props.fileId, path);
+    if (window.innerWidth < 768) {
+      setTimeout(() => {
+        renderer.fitWidth(window.innerWidth - 32);
+      }, 150);
+    }
   }
 }, { immediate: true });
 
@@ -384,24 +389,24 @@ const handleResetPdf = async () => {
     <!-- Main viewer area -->
     <div class="flex-1 flex flex-col overflow-hidden">
       <!-- Toolbar -->
-      <div class="flex items-center justify-center gap-1.5 px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
+      <div class="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2 md:px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
         <!-- Navigation -->
         <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronLeft class="w-4 h-4" /></button>
-        <span class="text-xs font-mono text-gray-500 min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
+        <span class="text-xs font-mono text-gray-500 min-w-[50px] md:min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
         <button @click="nextPage" :disabled="renderer.currentPage.value >= renderer.totalPages.value" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronRight class="w-4 h-4" /></button>
-        <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+        <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Zoom -->
         <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomOut class="w-4 h-4" /></button>
         <span class="text-xs font-mono text-gray-500 w-10 text-center">{{ zoomPercent() }}%</span>
         <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomIn class="w-4 h-4" /></button>
-        <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+        <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Dark mode -->
         <button @click="darkMode = !darkMode" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer">
           <Moon v-if="!darkMode" class="w-4 h-4" /><Sun v-else class="w-4 h-4" />
         </button>
-        <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+        <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Annotation Tools -->
         <button @click="toggleHighlight" :class="highlightMode ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" title="Highlight mode">
@@ -413,7 +418,7 @@ const handleResetPdf = async () => {
 
         <!-- Draw options (visible only in draw mode) -->
         <template v-if="drawMode">
-          <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-0.5" />
+          <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-0.5" />
           <input v-model="drawColor" type="color" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" title="Pen color" />
           <select v-model.number="drawSize" class="text-xs bg-gray-100 dark:bg-white/10 rounded px-1.5 py-1 text-gray-600 dark:text-gray-300 border-0 cursor-pointer">
             <option :value="2">Thin</option>
@@ -422,7 +427,7 @@ const handleResetPdf = async () => {
             <option :value="8">Bold</option>
           </select>
         </template>
-        <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+        <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Reset -->
         <button @click="showConfirmReset = true" :disabled="annotations.annotations.value.length === 0 && annotations.drawings.value.length === 0"

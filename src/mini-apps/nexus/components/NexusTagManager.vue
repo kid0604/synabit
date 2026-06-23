@@ -64,21 +64,21 @@ const getBoxStyle = (count: number) => {
     const ratio = count / maxTagCount.value;
     if (ratio > 0.4 && count > 5) {
         return {
-            classes: 'col-span-2 row-span-2 p-6',
-            titleSize: 'text-2xl',
-            countSize: 'text-7xl font-black opacity-[0.08] absolute bottom-2 right-4 tracking-tighter',
+            classes: 'col-span-1 sm:col-span-2 row-span-1 sm:row-span-2 p-4 sm:p-6',
+            titleSize: 'text-lg sm:text-2xl',
+            countSize: 'text-5xl sm:text-7xl font-black opacity-[0.08] absolute bottom-2 right-4 tracking-tighter',
             showBadge: false,
         };
     } else if (ratio > 0.15 && count > 2) {
         return {
-            classes: 'col-span-2 row-span-1 p-5',
-            titleSize: 'text-lg',
-            countSize: 'text-5xl font-black opacity-[0.08] absolute bottom-1 right-4 tracking-tighter',
+            classes: 'col-span-1 sm:col-span-2 row-span-1 p-3 sm:p-5',
+            titleSize: 'text-[15px] sm:text-lg',
+            countSize: 'text-4xl sm:text-5xl font-black opacity-[0.08] absolute bottom-1 right-4 tracking-tighter',
             showBadge: false,
         };
     } else {
         return {
-            classes: 'col-span-1 row-span-1 p-4',
+            classes: 'col-span-1 sm:col-span-1 row-span-1 p-3 sm:p-4',
             titleSize: 'text-[15px]',
             countSize: '',
             showBadge: true,
@@ -151,7 +151,7 @@ onMounted(() => {
   <div class="h-full w-full bg-[#fdfdfc] dark:bg-[#1a1a1c] flex flex-col animate-in fade-in zoom-in-95 duration-200">
       
       <!-- Header -->
-      <div class="h-16 flex items-center justify-between px-8 border-b border-gray-200 dark:border-[#2c2c2e] bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md flex-shrink-0">
+      <div class="h-auto min-h-[64px] py-3 flex flex-wrap items-center justify-between px-4 sm:px-8 gap-3 border-b border-gray-200 dark:border-[#2c2c2e] bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md flex-shrink-0">
           <div class="flex items-center gap-4">
               <button @click="emit('back')" class="p-2 -ml-2 text-gray-500 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-[#2c2c2e] rounded-xl transition-all flex items-center gap-1">
                   <ArrowLeft class="w-5 h-5" />
@@ -166,7 +166,7 @@ onMounted(() => {
               </div>
           </div>
           
-          <div class="relative w-64">
+          <div class="relative w-full sm:w-64 flex-shrink-0">
               <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input 
                   v-model="searchQuery"
@@ -178,7 +178,7 @@ onMounted(() => {
       </div>
       
       <!-- Content -->
-      <div class="flex-1 overflow-y-auto p-6 lg:p-10">
+      <div class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 overflow-x-hidden">
           <div class="w-full max-w-[1600px] mx-auto">
               
               <div v-if="loading" class="flex justify-center py-20">
@@ -190,13 +190,14 @@ onMounted(() => {
                   <p class="font-medium">No tags found.</p>
               </div>
               
-              <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" style="grid-auto-flow: dense; grid-auto-rows: minmax(100px, auto);">
+              <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4" style="grid-auto-flow: dense; grid-auto-rows: minmax(80px, auto);">
                   <div v-for="tag in filteredTags" :key="tag.name" 
                        class="group bg-white dark:bg-[#242426] border backdrop-blur-sm rounded-3xl transition-all flex flex-col hover:-translate-y-0.5 hover:shadow-xl hover:z-10 relative overflow-hidden"
                        :class="[getBoxStyle(tag.count).classes, getGradientClass(tag.name)]">
                       
                       <!-- Background Large Count -->
                       <div v-if="!getBoxStyle(tag.count).showBadge" 
+                           class="hidden sm:block"
                            :class="getBoxStyle(tag.count).countSize" 
                            style="line-height: 0.8; user-select: none;">
                           {{ tag.count }}
@@ -225,7 +226,7 @@ onMounted(() => {
                                   <span class="text-indigo-600/50 dark:text-indigo-400/50 font-mono text-lg font-light">#</span>
                                   <h3 class="font-bold text-gray-800 dark:text-gray-100 truncate hover:text-indigo-600 transition-colors" :class="getBoxStyle(tag.count).titleSize">{{ tag.name }}</h3>
                               </div>
-                              <span v-if="getBoxStyle(tag.count).showBadge" class="ml-2 px-2 py-0.5 bg-white/60 dark:bg-black/20 text-gray-600 dark:text-gray-300 text-[11px] font-bold rounded-md flex-shrink-0 border border-white/40 dark:border-white/10 shadow-sm">{{ tag.count }}</span>
+                              <span :class="['ml-2 px-2 py-0.5 bg-white/60 dark:bg-black/20 text-gray-600 dark:text-gray-300 text-[11px] font-bold rounded-md flex-shrink-0 border border-white/40 dark:border-white/10 shadow-sm', !getBoxStyle(tag.count).showBadge ? 'sm:hidden' : '']">{{ tag.count }}</span>
                           </div>
                           
                           <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity mt-auto z-20 relative pt-2">

@@ -73,14 +73,27 @@ pub fn run() {
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 
-            // Build FTS5 search index on startup
+            // Rebuild FTS5 search index only when needed (schema change or first run)
             {
                 let state: tauri::State<'_, db::DbState> = app.state();
                 let db = state.lock().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = db.reindex_search() {
-                    log::error!("Failed to build search index: {}", e);
+                let needs_reindex = db
+                    .get_kv("fts_needs_reindex")
+                    .unwrap_or(None)
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+
+                if needs_reindex {
+                    let start = std::time::Instant::now();
+                    if let Err(e) = db.reindex_search() {
+                        log::error!("Failed to build search index: {}", e);
+                    } else {
+                        let elapsed = start.elapsed().as_millis();
+                        log::info!("Search index rebuilt in {}ms.", elapsed);
+                        let _ = db.delete_kv("fts_needs_reindex");
+                    }
                 } else {
-                    log::info!("Search index built successfully.");
+                    log::info!("FTS index is up-to-date, skipping rebuild.");
                 }
             }
 

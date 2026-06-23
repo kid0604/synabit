@@ -85,10 +85,12 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
 </script>
 
 <template>
+  <div v-if="sidebarOpen" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-[48]" @click="sidebarOpen = false" />
+  
   <!-- Sidebar: Board List -->
   <div
     v-if="sidebarOpen"
-    class="wb-sidebar flex flex-col relative shrink-0"
+    class="wb-sidebar flex flex-col absolute md:relative z-[49] shrink-0"
     :style="{ width: wSidebar + 'px' }"
   >
     <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragSidebar"></div>
@@ -215,15 +217,6 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
     </div>
   </div>
 
-  <!-- Toggle sidebar button when closed -->
-  <button
-    v-if="!sidebarOpen"
-    @click="sidebarOpen = true"
-    class="absolute top-3 left-1 z-50 wb-icon-btn bg-surface dark:bg-surface-dark border border-border dark:border-border-dark shadow-md"
-    :title="$t('whiteboard.open_sidebar')"
-  >
-    <PanelLeft class="w-4 h-4" />
-  </button>
 </template>
 
 <style scoped>

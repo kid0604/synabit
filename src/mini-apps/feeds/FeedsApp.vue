@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { usePlatform } from '../../composables/usePlatform';
-import { Rss, RefreshCw, Plus } from 'lucide-vue-next';
+import { Rss, RefreshCw, Plus, PanelLeft, X } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import { ask } from '@tauri-apps/plugin-dialog';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -48,6 +48,20 @@ const viewMode = ref<'magazine' | 'cards' | 'titles'>(config.value.defaultView |
 
 // Mobile state
 const mobilePanel = ref<'list' | 'reader'>('list');
+const isSidebarOpen = ref(false);
+
+const handleSelectSourceMobile = (id: string | null) => {
+  handleSelectSource(id);
+  isSidebarOpen.value = false;
+};
+const handleSelectCategoryMobile = (id: string | null) => {
+  handleSelectCategory(id);
+  isSidebarOpen.value = false;
+};
+const handleSelectViewMobile = (view: typeof currentView.value) => {
+  handleSelectView(view);
+  isSidebarOpen.value = false;
+};
 
 // Resize state
 const sidebarWidth = ref(260);
@@ -406,20 +420,23 @@ defineExpose({ openFeedById, openArticleById });
     </div>
 
     <!-- Topbar -->
-    <div class="flex items-center justify-between p-6 shrink-0">
-      <div>
-        <h1 class="text-2xl font-bold flex items-center gap-2">
-          <NavButtons />
-          <Rss class="w-6 h-6 text-orange-500" />
+    <div class="flex items-center justify-between p-4 md:p-6 shrink-0 border-b border-border dark:border-border-dark md:border-none">
+      <div class="flex items-center gap-2 md:gap-3">
+        <NavButtons />
+        <button @click="isSidebarOpen = !isSidebarOpen" class="md:hidden p-2 -ml-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            <PanelLeft class="w-6 h-6" />
+        </button>
+        <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
+          <Rss class="w-5 h-5 md:w-6 md:h-6 text-orange-500" />
           {{ t('feeds.title') }}
         </h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('feeds.subtitle') }}</p>
+        <p class="hidden md:block text-sm text-gray-500 dark:text-gray-400 ml-2">{{ t('feeds.subtitle') }}</p>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2 md:gap-3">
         <button @click="handleRefresh" :disabled="refreshing" class="p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50" :title="t('feeds.refresh_all')">
           <RefreshCw class="w-5 h-5" :class="{ 'animate-spin': refreshing }" />
         </button>
-        <button @click="showAddFeedModal = true" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-colors shadow-sm font-medium">
+        <button @click="showAddFeedModal = true" class="hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-colors shadow-sm font-medium">
           <Plus class="w-5 h-5" />
           <span>{{ t('feeds.add_feed') }}</span>
         </button>
@@ -438,6 +455,42 @@ defineExpose({ openFeedById, openArticleById });
       <template v-else>
         <ArticleList v-if="mobilePanel === 'list'" :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="viewMode = $event" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" class="flex-1" />
         <ArticleReader v-else :article="selectedArticle" :config="config" :sources="sources" :show-back-button="true" @back="handleMobileBack" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" class="flex-1" />
+      
+        <!-- Mobile Sidebar Drawer -->
+        <div v-if="isSidebarOpen" class="fixed inset-0 z-50 flex">
+            <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="isSidebarOpen = false"></div>
+            <div class="relative w-[280px] bg-base dark:bg-base-dark flex flex-col shadow-2xl h-full border-r border-border dark:border-border-dark" @click.stop>
+               <div class="flex items-center justify-between p-4 shrink-0 border-b border-border dark:border-border-dark">
+                    <span class="font-bold text-lg text-text dark:text-text-dark">Feeds Menu</span>
+                    <button @click="isSidebarOpen = false" class="p-2 -mr-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X class="w-5 h-5" />
+                    </button>
+               </div>
+               <FeedsSidebar 
+                 class="flex-1 overflow-y-auto"
+                 :sources="sources" 
+                 :categories="categories" 
+                 :unread-counts="unreadCounts" 
+                 :total-unread="totalUnread" 
+                 :selected-source-id="selectedSourceId" 
+                 :selected-category-id="selectedCategoryId" 
+                 :current-view="currentView" 
+                 @select-source="handleSelectSourceMobile" 
+                 @select-category="handleSelectCategoryMobile" 
+                 @select-view="handleSelectViewMobile" 
+                 @remove-source="handleRemoveSource" 
+                 @rename-source="handleRenameSource" 
+                 @open-opml="showImportExportModal = true" 
+                 @pause-source="handlePauseSource" 
+                 @mark-source-read="handleMarkSourceRead"
+               />
+            </div>
+        </div>
+
+        <!-- FAB for Mobile -->
+        <button v-if="!isSidebarOpen && mobilePanel === 'list'" @click="showAddFeedModal = true" class="md:hidden absolute bottom-6 right-6 w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl hover:bg-orange-600 transition-colors z-40">
+            <Plus class="w-6 h-6" />
+        </button>
       </template>
     </div>
 

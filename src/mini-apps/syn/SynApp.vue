@@ -77,7 +77,7 @@ const {
 const conversations = ref<SynConversation[]>([]);
 const activeConversationId = ref<string | null>(null);
 const activeMessages = ref<SynMessage[]>([]);
-const showSidebar = ref(true);
+const showSidebar = ref(window.innerWidth >= 768);
 const showSettings = ref(false);
 const loading = ref(true);
 
@@ -135,6 +135,9 @@ const selectConversation = async (id: string) => {
   activeConversationId.value = id;
   clearStreaming();
   await loadConversation(id);
+  if (window.innerWidth < 768) {
+      showSidebar.value = false;
+  }
 };
 
 // Create new conversation
@@ -148,6 +151,9 @@ const createConversation = async () => {
     activeConversationId.value = conv.id;
     activeMessages.value = [];
     clearStreaming();
+    if (window.innerWidth < 768) {
+        showSidebar.value = false;
+    }
   } catch (e) {
     logger.error('[Syn] Failed to create conversation', e);
   }
@@ -474,7 +480,19 @@ defineExpose({ refresh });
     </div>
 
     <!-- Main content -->
-    <div v-else class="flex-1 flex min-h-0 overflow-hidden">
+    <div v-else class="flex-1 flex min-h-0 overflow-hidden relative">
+      <!-- Mobile Backdrop -->
+      <Transition
+        enter-active-class="transition-opacity duration-200"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition-opacity duration-200"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div v-if="showSidebar" @click="showSidebar = false" class="md:hidden absolute inset-0 bg-black/50 dark:bg-black/70 z-20 backdrop-blur-sm"></div>
+      </Transition>
+
       <!-- Sidebar -->
       <Transition
         enter-active-class="transition-all duration-200 ease-out"
@@ -485,8 +503,8 @@ defineExpose({ refresh });
         leave-to-class="-translate-x-full opacity-0"
       >
         <div
-          v-if="showSidebar"
-          class="w-[260px] flex-shrink-0 border-r border-border dark:border-border-dark overflow-hidden"
+          v-show="showSidebar"
+          class="absolute md:relative inset-y-0 left-0 z-30 w-[280px] md:w-[260px] h-full bg-gray-50 dark:bg-[#0f1115] flex-shrink-0 border-r border-border dark:border-border-dark overflow-hidden shadow-2xl md:shadow-none"
         >
           <ConversationList
             :conversations="conversations"

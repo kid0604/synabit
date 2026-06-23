@@ -60,6 +60,9 @@ const loadingLinks = ref(false);
 const allDebts = ref<any[]>([]);
 const allTransactions = ref<any[]>([]);
 
+const isMobile = ref(window.innerWidth < 768);
+const isSidebarOpen = ref(false);
+
 const fetchPeople = async () => {
     loading.value = true;
     try {
@@ -149,6 +152,7 @@ watch(() => selectedPerson.value?.id, (newId, oldId) => {
             linkedNodes.value = [];
         }
         activeTab.value = 'overview';
+        if (isMobile.value) isSidebarOpen.value = false;
     }
 });
 
@@ -179,6 +183,9 @@ onMounted(async () => {
         // Clear query to avoid re-triggering later unexpectedly, or keep it.
         router.replace({ query: {} });
     }
+
+    const handleResize = () => { isMobile.value = window.innerWidth < 768; };
+    window.addEventListener('resize', handleResize);
 
     bus.on('vault:file-created-deleted', () => {
         debouncedLoad(() => {
@@ -583,10 +590,12 @@ defineExpose({ openPersonById });
 </script>
 
 <template>
-    <div class="h-full flex bg-base dark:bg-base-dark text-text dark:text-text-dark overflow-hidden">
+    <div class="h-full flex bg-base dark:bg-base-dark text-text dark:text-text-dark overflow-hidden relative">
+
+        <div v-if="isMobile && isSidebarOpen" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-[48]" @click="isSidebarOpen = false" />
 
         <!-- LEFT PANEL: People List -->
-        <div class="w-80 flex-shrink-0 border-r border-border dark:border-border-dark flex flex-col bg-surface dark:bg-surface-dark">
+        <div v-show="!isMobile || isSidebarOpen" class="w-80 flex-shrink-0 border-r border-border dark:border-border-dark flex flex-col bg-surface dark:bg-surface-dark absolute md:relative z-[49] h-full shadow-lg md:shadow-none">
             <!-- Header -->
             <div class="h-14 border-b border-border dark:border-border-dark flex items-center justify-between px-4 flex-shrink-0" data-tauri-drag-region>
                 <div class="flex items-center gap-2 font-semibold">
@@ -685,14 +694,19 @@ defineExpose({ openPersonById });
 
             <div v-if="selectedPerson" class="flex-1 flex flex-col overflow-hidden">
                 <!-- Profile Header -->
-                <div class="flex-shrink-0 px-8 pt-8 pb-4">
-                    <div class="flex items-start gap-5 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-5 shadow-sm relative group">
-                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg opacity-0 group-hover:opacity-100 transition-all">
+                <div class="flex-shrink-0 px-4 md:px-8 pt-4 md:pt-8 pb-4">
+                    <div class="md:hidden mb-4">
+                        <button @click="isSidebarOpen = true" class="flex items-center gap-1.5 text-blue-500 hover:text-blue-600 font-medium">
+                            <PanelLeft class="w-5 h-5" /> {{ $t('people.all_people') || 'All People' }}
+                        </button>
+                    </div>
+                    <div class="flex items-start gap-3 md:gap-5 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 md:p-5 shadow-sm relative group">
+                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all">
                             <Edit2 class="w-4 h-4" />
                         </button>
 
                         <!-- Avatar -->
-                        <div class="w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-bold flex-shrink-0 overflow-hidden shadow-md"
+                        <div class="w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center text-xl md:text-2xl font-bold flex-shrink-0 overflow-hidden shadow-md"
                              :class="getAvatarSrc(selectedPerson) ? '' : 'bg-gradient-to-br from-blue-500 to-purple-600 text-white'">
                             <img v-if="getAvatarSrc(selectedPerson)" :src="getAvatarSrc(selectedPerson)" class="w-full h-full object-cover" />
                             <span v-else>{{ getInitials(getDisplayName(selectedPerson)) }}</span>
@@ -755,8 +769,8 @@ defineExpose({ openPersonById });
                 </div>
 
                 <!-- Tab Bar -->
-                <div class="flex-shrink-0 px-8">
-                    <div class="flex items-center gap-1 border-b border-border dark:border-border-dark">
+                <div class="flex-shrink-0 px-4 md:px-8">
+                    <div class="flex flex-wrap items-center gap-1 border-b border-border dark:border-border-dark pb-1 md:pb-0">
                         <button
                             v-for="tab in tabs" :key="tab.id"
                             @click="activeTab = tab.id as any"
@@ -770,7 +784,7 @@ defineExpose({ openPersonById });
                             <component :is="tab.icon" class="w-4 h-4" />
                             {{ tab.label }}
                         </button>
-                        <div class="ml-auto -mb-px flex items-center gap-1">
+                        <div class="w-full md:w-auto md:ml-auto md:-mb-px flex items-center gap-1 mt-1 md:mt-0 justify-end">
                             <button @click="showLinkModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors">
                                 <UserPlus class="w-3.5 h-3.5" /> Link Person
                             </button>
@@ -782,7 +796,7 @@ defineExpose({ openPersonById });
                 </div>
 
                 <!-- Tab Content -->
-                <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark">
+                <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark p-4 md:p-8">
                     <div class="max-w-3xl mx-auto">
                         <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" />
                         <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" :all-debts="allDebts" :all-transactions="allTransactions" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />

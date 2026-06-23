@@ -355,18 +355,31 @@ function selectDrawSub(sub: DrawSubTool) {
 <style scoped>
 .wb-toolbar {
   position: absolute;
-  left: 16px;
-  top: 50%;
-  transform: translateY(-50%);
+  left: 50%;
+  bottom: 16px;
+  top: auto;
+  transform: translateX(-50%);
   z-index: 50;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 4px;
   padding: 8px;
   background: var(--color-surface, #fff);
   border: 1px solid var(--color-border, #e6e6e6);
   border-radius: 14px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  max-width: calc(100vw - 32px);
+  overflow-x: auto;
+}
+@media (min-width: 768px) {
+  .wb-toolbar {
+    left: 16px;
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+    flex-direction: column;
+    overflow-x: visible;
+  }
 }
 .dark .wb-toolbar {
   background: var(--color-surface-dark, #1e1e1e);
@@ -404,10 +417,17 @@ function selectDrawSub(sub: DrawSubTool) {
   cursor: not-allowed;
 }
 .wb-toolbar-divider {
-  width: 24px;
-  height: 1px;
-  margin: 4px auto;
+  width: 1px;
+  height: 24px;
+  margin: auto 4px;
   background: var(--color-border, #e6e6e6);
+}
+@media (min-width: 768px) {
+  .wb-toolbar-divider {
+    width: 24px;
+    height: 1px;
+    margin: 4px auto;
+  }
 }
 .dark .wb-toolbar-divider {
   background: var(--color-border-dark, #2c2c2c);
@@ -416,8 +436,11 @@ function selectDrawSub(sub: DrawSubTool) {
 /* ─── Draw Picker Popup ─────────────────────────── */
 .wb-draw-picker {
   position: absolute;
-  left: 48px;
-  top: -8px;
+  left: 50%;
+  bottom: 100%;
+  top: auto;
+  margin-bottom: 12px;
+  transform: translateX(-50%);
   width: 200px;
   padding: 10px;
   background: var(--color-surface, #fff);
@@ -425,6 +448,15 @@ function selectDrawSub(sub: DrawSubTool) {
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.12);
   z-index: 100;
+}
+@media (min-width: 768px) {
+  .wb-draw-picker {
+    left: 48px;
+    top: -8px;
+    bottom: auto;
+    margin-bottom: 0;
+    transform: none;
+  }
 }
 .dark .wb-draw-picker {
   background: var(--color-surface-dark, #1e1e1e);
@@ -532,10 +564,14 @@ function selectDrawSub(sub: DrawSubTool) {
 /* ─── Shape Picker Popup ─────────────────────────── */
 .wb-shape-picker {
   position: absolute;
-  left: 48px;
-  top: -8px;
+  left: 50%;
+  bottom: 100%;
+  top: auto;
+  margin-bottom: 12px;
+  transform: translateX(-50%);
   width: 320px;
-  max-height: 600px;
+  max-width: calc(100vw - 32px);
+  max-height: 400px;
   overflow-y: auto;
   padding: 10px;
   background: var(--color-surface, #fff);
@@ -543,6 +579,16 @@ function selectDrawSub(sub: DrawSubTool) {
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.12);
   z-index: 100;
+}
+@media (min-width: 768px) {
+  .wb-shape-picker {
+    left: 48px;
+    top: -8px;
+    bottom: auto;
+    margin-bottom: 0;
+    transform: none;
+    max-height: 600px;
+  }
 }
 .dark .wb-shape-picker {
   background: var(--color-surface-dark, #1e1e1e);

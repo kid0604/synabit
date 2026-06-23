@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
-import { Settings2, Eye, GitMerge, ListFilter } from 'lucide-vue-next';
+import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
 
 interface GraphNode {
     id: string;
@@ -161,9 +161,10 @@ const renderGraph = () => {
         });
 
     if (!initialZoomSet && width > 0 && height > 0) {
+        const initialScale = width < 768 ? 0.35 : 0.7;
         transform = d3.zoomIdentity
             .translate(width / 2, height / 2)
-            .scale(0.7)
+            .scale(initialScale)
             .translate(-width / 2, -height / 2);
         initialZoomSet = true;
     }
@@ -256,6 +257,41 @@ const renderGraph = () => {
     d3.select(canvas).call(drag as any);
 
     return () => resizeObserver.disconnect();
+};
+
+const fitView = () => {
+    if (!canvasRef.value || !containerRef.value || !zoomBehavior) return;
+    const width = containerRef.value.clientWidth || window.innerWidth;
+    const height = containerRef.value.clientHeight || window.innerHeight;
+    
+    // Determine bounds of current nodes
+    if (currentNodes.length > 0) {
+        const xExtent = d3.extent(currentNodes, d => d.x || 0) as [number, number];
+        const yExtent = d3.extent(currentNodes, d => d.y || 0) as [number, number];
+        const dx = xExtent[1] - xExtent[0];
+        const dy = yExtent[1] - yExtent[0];
+        const cx = (xExtent[0] + xExtent[1]) / 2;
+        const cy = (yExtent[0] + yExtent[1]) / 2;
+        
+        const scale = Math.max(0.1, Math.min(2, 0.8 / Math.max(dx / width, dy / height)));
+        
+        d3.select(canvasRef.value).transition().duration(750).call(
+            zoomBehavior.transform as any,
+            d3.zoomIdentity
+                .translate(width / 2, height / 2)
+                .scale(scale)
+                .translate(-cx, -cy)
+        );
+    } else {
+        const initialScale = width < 768 ? 0.35 : 0.7;
+        d3.select(canvasRef.value).transition().duration(750).call(
+            zoomBehavior.transform as any,
+            d3.zoomIdentity
+                .translate(width / 2, height / 2)
+                .scale(initialScale)
+                .translate(-width / 2, -height / 2)
+        );
+    }
 };
 
 const draw = (ctx: CanvasRenderingContext2D) => {
@@ -373,17 +409,26 @@ onUnmounted(() => {
         <!-- Toggle Button -->
         <button 
             @click.stop="isPanelOpen = !isPanelOpen" 
-            class="absolute top-6 right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
+            class="absolute top-[100px] right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
             :class="{ 'rotate-90': isPanelOpen }"
         >
             <Settings2 class="w-5 h-5 text-gray-700 dark:text-gray-300" />
+        </button>
+
+        <!-- Fit View Button -->
+        <button 
+            @click.stop="fitView" 
+            class="absolute bottom-24 right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
+            title="Fit to Screen"
+        >
+            <Focus class="w-5 h-5 text-gray-700 dark:text-gray-300" />
         </button>
         
         <!-- Obsidian-Style Floating Settings Panel -->
         <div 
             v-show="isPanelOpen"
             @click.stop
-            class="absolute top-20 right-6 z-20 w-80 max-h-[calc(100vh-100px)] flex flex-col bg-white/95 dark:bg-[#1e1e20]/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gray-200/50 dark:border-[#3a3a3c]/50 overflow-hidden animate-in slide-in-from-right-8 duration-300"
+            class="absolute top-[150px] right-6 z-20 w-80 max-h-[calc(100vh-180px)] flex flex-col bg-white/95 dark:bg-[#1e1e20]/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gray-200/50 dark:border-[#3a3a3c]/50 overflow-hidden animate-in slide-in-from-right-8 duration-300"
         >
             <!-- Tabs Header -->
             <div class="flex border-b border-gray-200 dark:border-[#3a3a3c]">

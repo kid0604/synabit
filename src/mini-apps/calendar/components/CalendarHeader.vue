@@ -29,19 +29,19 @@ const emit = defineEmits<{
             </div>
         </div>
         
-        <div class="flex items-center gap-2 md:gap-4 select-none w-full md:w-auto overflow-x-auto no-scrollbar">
+        <div class="flex flex-wrap items-center gap-2 md:gap-4 select-none w-full md:w-auto">
             <!-- View Switcher -->
-            <div class="flex bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333] shrink-0">
+            <div class="flex w-full md:w-auto bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333] shrink-0">
                <button v-for="v in (['day','week','month','year'] as ViewMode[])" :key="v"
                        @click="emit('update:viewMode', v)"
-                       class="px-3 py-1.5 md:px-4 md:py-1.5 text-[11px] md:text-xs font-semibold rounded-lg capitalize transition-all"
+                       class="flex-1 md:flex-none px-3 py-1.5 md:px-4 md:py-1.5 text-[11px] md:text-xs font-semibold rounded-lg capitalize transition-all"
                        :class="viewMode === v ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-purple-600 dark:bg-[#333] dark:text-purple-400' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'">
                    {{ v }}
                </button>
             </div>
 
             <!-- Nav Controls -->
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex w-full md:w-auto items-center justify-between md:justify-start gap-2 shrink-0">
                 <button @click="emit('go-today')" class="px-2 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-[#2c2c2c] dark:hover:bg-[#3a3a3a] rounded-lg transition-colors border border-transparent dark:border-gray-700">
                     Today
                 </button>

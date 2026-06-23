@@ -319,8 +319,12 @@ const cleanSnippet = (snippet: string) => {
         </div>
 
         <!-- Search Results Overlay -->
-        <div v-if="searchQuery" class="absolute inset-0 z-10 pt-32 px-8 pb-16 bg-[#fdfdfc]/90 dark:bg-[#1a1a1c]/90 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
-            <div class="max-w-3xl mx-auto">
+        <div v-if="searchQuery" class="absolute inset-0 z-10 bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-200">
+            <!-- OmniBar Backdrop Spacer to prevent scroll overlap -->
+            <div class="h-[116px] flex-shrink-0 w-full bg-[#fdfdfc]/90 dark:bg-[#1a1a1c]/90 backdrop-blur-3xl border-b border-gray-200 dark:border-[#2c2c2e] z-10 shadow-sm"></div>
+            
+            <div class="flex-1 overflow-y-auto px-4 sm:px-8 pb-16 pt-8">
+                <div class="max-w-3xl mx-auto">
                 <div v-if="isSearching" class="text-center py-10 opacity-50 flex items-center justify-center gap-2">
                     <div class="w-5 h-5 rounded-full border-2 border-black dark:border-white border-t-transparent animate-spin"></div>
                 </div>
@@ -376,6 +380,7 @@ const cleanSnippet = (snippet: string) => {
                         </div>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
         </template>

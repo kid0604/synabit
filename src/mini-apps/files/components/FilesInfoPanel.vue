@@ -151,7 +151,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="w-72 flex-shrink-0 bg-white/70 dark:bg-white/[0.03] backdrop-blur-xl border-l border-gray-200/50 dark:border-white/5 flex flex-col overflow-hidden">
+  <div class="absolute md:relative inset-0 md:inset-auto z-40 w-full md:w-72 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col overflow-hidden">
     <!-- Header -->
     <div class="h-12 px-4 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
       <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Info</h3>

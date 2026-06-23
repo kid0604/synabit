@@ -5847,7 +5847,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "ammonia",
  "argon2",

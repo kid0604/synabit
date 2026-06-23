@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
-import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
+import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 import { logger } from '../utils/logger';
 
 /**
@@ -76,20 +76,27 @@ export function useGDrive(
   async function finishConnect() {
       gdriveConnected.value = true;
       try {
+          gdriveSyncError.value = 'Step 3: Getting cache path...';
           const cachePath = await invoke<string>('gdrive_get_cache_path');
+          gdriveSyncError.value = `Step 4: Setting vault path: ${cachePath}`;
           await appStore.setVaultPath(cachePath, 'gdrive');
+          gdriveSyncError.value = 'Step 5: Calling syncGDrive()...';
           await syncGDrive();
           setupAutoSync();
+          gdriveSyncError.value = ''; // Success!
       } catch (e: any) {
-          gdriveSyncError.value = e?.toString() || 'Vault initialization failed';
+          gdriveSyncError.value = 'Error in finishConnect: ' + (e?.toString() || 'Vault initialization failed');
       } finally {
           gdriveAuthLoading.value = false;
       }
   }
 
   // --- Global Deep Link Listener (For Android Cold Starts) ---
-  onOpenUrl(async (urls) => {
-      const url = urls[0] || '';
+  async function handleDeepLink(url: string) {
+      if (!url) return;
+      logger.info(`Received deep link: ${url}`);
+      // DEBUG: surface the deep link visually to verify intent reception
+      gdriveSyncError.value = `Intent captured: ${url}`;
       if (url.includes('?code=') || url.includes('&code=')) {
           const codeMatch = url.match(/[?&]code=([^&]+)/);
           const stateMatch = url.match(/[?&]state=([^&]+)/);
@@ -103,21 +110,51 @@ export function useGDrive(
                   import('@tauri-apps/api/event').then(({ emit }) => {
                       emit('omnidrive-auth-code', { code });
                   });
+              } else if (state === 'omni_browse') {
+                  // File manager browse flow
+                  gdriveAuthLoading.value = true;
+                  gdriveSyncError.value = 'OmniBrowse Exchange started...';
+                  try {
+                      await invoke('gdrive_browse_auth_complete', { authCode: code });
+                      gdriveConnected.value = true;
+                      window.dispatchEvent(new CustomEvent('gdrive-browse-connected'));
+                  } catch(err: any) {
+                      gdriveSyncError.value = err?.toString() || 'OmniDrive OAuth failed';
+                  } finally {
+                      gdriveAuthLoading.value = false;
+                  }
               } else {
                   // Vault Sync flow
                   gdriveAuthLoading.value = true;
-                  gdriveSyncError.value = '';
+                  gdriveSyncError.value = 'Step 1: Exchanging Token...';
                   try {
                       await invoke('gdrive_auth_complete', { authCode: code });
+                      gdriveSyncError.value = 'Step 2: Token exchanged! Finishing connect...';
                       await finishConnect();
                   } catch(err: any) {
-                      gdriveSyncError.value = err?.toString() || 'OAuth Exchange failed';
+                      gdriveSyncError.value = 'Error: ' + (err?.toString() || 'OAuth Exchange failed');
                       gdriveAuthLoading.value = false;
                   }
               }
           }
+      } else {
+          gdriveSyncError.value = `Intent captured but NO CODE: ${url}`;
       }
-  }).catch(logger.error);
+  }
+
+  onOpenUrl(async (urls) => {
+      const url = urls[0] || '';
+      await handleDeepLink(url);
+  });
+
+  // Check initial deep link in case app was cold-started from browser redirect
+  getCurrent().then((urls) => {
+      if (urls && urls.length > 0) {
+          handleDeepLink(urls[0] || '');
+      }
+  }).catch(e => {
+      logger.error('Failed to get current deep link: ' + e?.toString());
+  });
 
   async function connectGDrive() {
     gdriveAuthLoading.value = true;

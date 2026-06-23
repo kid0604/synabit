@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen } from 'lucide-vue-next';
+import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, PanelLeft, TrendingUp, TrendingDown, RefreshCw, Trash2 } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
@@ -62,6 +62,10 @@ const adjustingAccount = ref<{id: string, name: string, balance: number} | null>
 
 const needsOnboarding = ref(false);
 const loading = ref(true);
+
+const isMobile = ref(window.innerWidth < 768);
+const isSidebarOpen = ref(false);
+const showSummaryStats = ref(window.innerWidth >= 768);
 
 // --- Computed ---
 const currentMonth = computed(() => {
@@ -739,6 +743,9 @@ onMounted(async () => {
         debouncedLoad(() => loadData());
     });
 
+    const handleResize = () => { isMobile.value = window.innerWidth < 768; };
+    window.addEventListener('resize', handleResize);
+
     bus.on('vault:file-created-deleted', () => {
         debouncedLoad(() => loadData());
     });
@@ -772,21 +779,26 @@ defineExpose({ openMonthById });
       <FinanceOnboarding v-if="needsOnboarding" @complete="finishOnboarding" />
       
       <!-- Topbar -->
-      <div v-else class="flex items-center justify-between p-6 shrink-0">
-          <div>
-              <h1 class="text-2xl font-bold flex items-center gap-2">
-                  <NavButtons />
-                  <Wallet class="w-6 h-6 text-blue-500" />
-                  Finance
-              </h1>
-              <p class="text-sm text-gray-500 dark:text-gray-400">{{ $t('finance.subtitle') }}</p>
+      <div v-else class="flex items-center justify-between p-4 md:p-6 shrink-0 relative z-10">
+          <div class="flex items-center gap-3">
+              <button @click="isSidebarOpen = true" class="md:hidden p-1.5 -ml-1 text-gray-500 hover:text-blue-500 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                  <PanelLeft class="w-6 h-6" />
+              </button>
+              <div>
+                  <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
+                      <NavButtons class="hidden md:flex" />
+                      <Wallet class="w-6 h-6 text-blue-500 hidden md:block" />
+                      Finance
+                  </h1>
+                  <p class="text-xs md:text-sm text-gray-500 dark:text-gray-400">{{ $t('finance.subtitle') }}</p>
+              </div>
           </div>
           
-          <div class="flex items-center gap-3">
-              <button @click="showSettingsModal = true" class="p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm">
+          <div class="flex items-center gap-2 md:gap-3">
+              <button @click="showSettingsModal = true" class="p-2 md:p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm">
                   <Settings class="w-5 h-5" />
               </button>
-              <button @click="openAddTx" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">
+              <button @click="openAddTx" class="hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">
                   <Plus class="w-5 h-5" />
                   <span>{{ $t('finance.add_transaction') }}</span>
               </button>
@@ -794,36 +806,39 @@ defineExpose({ openMonthById });
       </div>
 
       <!-- Main Content Area -->
-      <div v-if="currentMonth || currentView === 'reports' || currentView === 'debts'" class="flex-1 flex gap-6 px-6 pb-6 overflow-hidden">
+      <div v-if="currentMonth || currentView === 'reports' || currentView === 'debts'" class="flex-1 flex gap-6 px-2 md:px-6 pb-2 md:pb-6 overflow-hidden relative">
           
+          <!-- Backdrop -->
+          <div v-if="isMobile && isSidebarOpen" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-[48]" @click="isSidebarOpen = false" />
+
           <!-- Sidebar (Global Context) -->
-          <div class="w-[280px] flex flex-col gap-6 shrink-0 overflow-y-auto hidden-scrollbar pr-2">
+          <div v-show="!isMobile || isSidebarOpen" class="w-[280px] flex flex-col gap-6 shrink-0 overflow-y-auto hidden-scrollbar pr-2 absolute md:relative z-[49] h-full bg-base dark:bg-base-dark md:bg-transparent shadow-lg md:shadow-none p-4 md:p-0 pt-0 md:pt-0">
               
               <!-- Navigation Menu -->
               <div class="flex flex-col gap-1">
                   <button 
-                      @click="currentView = 'transactions'" 
+                      @click="currentView = 'transactions'; if(isMobile) isSidebarOpen = false;" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'transactions' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Wallet class="w-5 h-5" />
                       Ledger
                   </button>
                   <button 
-                      @click="currentView = 'reports'" 
+                      @click="currentView = 'reports'; if(isMobile) isSidebarOpen = false;" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'reports' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <PieChart class="w-5 h-5" />
                       Reports & Analytics
                   </button>
                   <button 
-                      @click="currentView = 'debts'" 
+                      @click="currentView = 'debts'; if(isMobile) isSidebarOpen = false;" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'debts' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <BookOpen class="w-5 h-5" />
                       Debts
                   </button>
                   <button 
-                      @click="currentView = 'budgets'" 
+                      @click="currentView = 'budgets'; if(isMobile) isSidebarOpen = false;" 
                       :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'budgets' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Target class="w-5 h-5" />
@@ -864,29 +879,39 @@ defineExpose({ openMonthById });
           <div v-if="currentView === 'transactions'" class="flex-1 flex flex-col gap-6 overflow-hidden">
               
               <!-- Monthly Dashboard Header -->
-              <div class="flex gap-4 shrink-0">
+              <div class="flex flex-col md:flex-row gap-4 shrink-0 px-2 md:px-0">
                   <!-- Month Selector -->
-                  <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col items-center justify-center gap-2 shrink-0">
-                      <span class="text-xs text-gray-500 font-medium uppercase tracking-wider">Summary for</span>
-                      <div class="flex items-center gap-2">
-                          <div class="relative">
-                              <select v-model.number="selectedMonthNum" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
-                                  <option v-for="m in 12" :key="m" :value="m">{{ m.toString().padStart(2, '0') }}</option>
-                              </select>
-                              <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                          </div>
-                          <span class="text-lg font-bold text-gray-400">/</span>
-                          <div class="relative">
-                              <select v-model.number="selectedYear" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
-                                  <option v-for="y in 10" :key="y" :value="nowDate.getFullYear() - 5 + y">{{ nowDate.getFullYear() - 5 + y }}</option>
-                              </select>
-                              <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col md:items-center justify-center gap-3 shrink-0">
+                      <div class="flex items-center justify-between md:justify-center w-full">
+                          <span class="text-xs text-gray-500 font-medium uppercase tracking-wider mr-1">Summary for</span>
+                          <div class="flex items-center gap-2">
+                              <div class="relative">
+                                  <select v-model.number="selectedMonthNum" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
+                                      <option v-for="m in 12" :key="m" :value="m">{{ m.toString().padStart(2, '0') }}</option>
+                                  </select>
+                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              </div>
+                              <span class="text-lg font-bold text-gray-400">/</span>
+                              <div class="relative">
+                                  <select v-model.number="selectedYear" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
+                                      <option v-for="y in 10" :key="y" :value="nowDate.getFullYear() - 5 + y">{{ nowDate.getFullYear() - 5 + y }}</option>
+                                  </select>
+                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              </div>
                           </div>
                       </div>
+                      
+                      <!-- Toggle Summary Button -->
+                      <button @click="showSummaryStats = !showSummaryStats" class="md:hidden flex items-center justify-center gap-2 w-full px-4 py-2 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors border border-border dark:border-border-dark">
+                          <span class="text-sm font-medium text-gray-600 dark:text-gray-300">
+                              {{ showSummaryStats ? 'Hide Summary' : 'Show Summary' }}
+                          </span>
+                          <ChevronDown :class="['w-4 h-4 text-gray-500 transition-transform', showSummaryStats ? 'rotate-180' : '']" />
+                      </button>
                   </div>
                   
                   <!-- Summary Stats -->
-                  <div class="flex-1 grid grid-cols-3 gap-4">
+                  <div v-show="showSummaryStats" class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4">
                       <!-- Income -->
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
@@ -901,7 +926,7 @@ defineExpose({ openMonthById });
                               <div class="w-2 h-2 rounded-full bg-red-500"></div>
                               <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Expense</span>
                           </div>
-                          <p class="text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(totalExpense) }}</p>
+                          <p class="text-lg md:text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(totalExpense) }}</p>
                       </div>
                       <!-- Net Flow -->
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
@@ -909,14 +934,14 @@ defineExpose({ openMonthById });
                               <div class="w-2 h-2 rounded-full bg-blue-500"></div>
                               <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Monthly Balance</span>
                           </div>
-                          <p :class="['text-xl font-bold', balance >= 0 ? 'text-text dark:text-text-dark' : 'text-red-500']">{{ balance > 0 ? '+' : '' }}{{ formatCurrency(balance) }}</p>
+                          <p :class="['text-lg md:text-xl font-bold', balance >= 0 ? 'text-text dark:text-text-dark' : 'text-red-500']">{{ balance > 0 ? '+' : '' }}{{ formatCurrency(balance) }}</p>
                       </div>
                   </div>
               </div>
 
               <!-- Transaction List -->
-              <div class="flex-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden">
-              <div class="p-4 border-b border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/50 shrink-0 flex flex-col gap-3">
+              <div class="flex-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden mx-2 md:mx-0">
+              <div class="p-3 md:p-4 border-b border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/50 shrink-0 flex flex-col gap-3">
                       <div class="flex items-center justify-between">
                       <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.transaction_history') }}</h3>
                   </div>
@@ -1046,6 +1071,12 @@ defineExpose({ openMonthById });
               />
           </div>
       </div>
+
+      <!-- Mobile FAB -->
+      <button v-if="isMobile && !needsOnboarding && currentView === 'transactions'" @click="openAddTx" class="md:hidden absolute bottom-6 right-6 p-4 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-lg z-[40]" :title="$t('finance.add_transaction')">
+          <Plus class="w-6 h-6" />
+      </button>
+
       <!-- Modals -->
       <TransactionModal 
           :show="showTxModal"
