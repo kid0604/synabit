@@ -9,6 +9,7 @@ mod search;
 mod nodes;
 mod crdt;
 mod rag;
+pub mod metrics;
 
 use std::sync::Mutex;
 use rusqlite::Connection;

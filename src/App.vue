@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -17,10 +17,13 @@ const SettingsModal = defineAsyncComponent(() => import('./shared/components/Set
 const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2eeOnboarding.vue'));
 const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
+const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
+const GDriveMigrationModal = defineAsyncComponent(() => import('./shared/components/GDriveMigrationModal.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
 import { useGDrive } from './composables/useGDrive';
+import { useP2PSync } from './composables/useP2PSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 
@@ -212,6 +215,18 @@ const isFloatingView = ref(false);
 
 // ─── GDrive ─────────────────────────────────────────────────
 const gdrive = useGDrive(vaultPath, vaultType);
+const showGDriveMigrationModal = ref(false);
+
+const handleGDriveMigrated = async (newPath: string) => {
+    showGDriveMigrationModal.value = false;
+    await appStore.setVaultPath(newPath, 'local');
+
+    invoke('start_vault_watcher', { vaultPath: newPath }).catch(logger.error);
+    gdrive.syncGDrive();
+};
+
+// ─── P2P Sync ────────────────────────────────────────────────
+const p2p = useP2PSync(vaultPath);
 
 import { appDataDir } from '@tauri-apps/api/path';
 
@@ -222,7 +237,6 @@ const selectVault = async () => {
             const dataDir = await appDataDir();
             const vaultDir = `${dataDir}/vault`;
             await appStore.setVaultPath(vaultDir, 'local');
-            await runMigration(vaultPath.value);
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
             return;
         }
@@ -236,7 +250,6 @@ const selectVault = async () => {
         });
         if (selected) {
             await appStore.setVaultPath(selected as string, 'local');
-            await runMigration(vaultPath.value);
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
         }
     } catch(err) { logger.error(String(err)); }
@@ -403,24 +416,6 @@ const updateFeedsUnreadCount = async () => {
     }
 };
 
-// ─── Migration Logic ───────────────────────────────────────
-const isMigrating = ref(false);
-const migrationMessage = ref('Upgrading your Vault to Event-Sourced CRDT...');
-
-const runMigration = async (path: string) => {
-    if (!path) return;
-    isMigrating.value = true;
-    try {
-        logger.info(`Starting migration for ${path}`);
-        const result = await invoke<string>('run_crdt_migration', { vaultPath: path });
-        logger.info(`Migration result: ${result}`);
-    } catch (e) {
-        logger.error('Migration failed:', e);
-    } finally {
-        isMigrating.value = false;
-    }
-};
-
 // ─── Keyboard shortcuts for navigation ───────────────────
 const handleKeyboardNav = (e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;
@@ -456,9 +451,6 @@ onMounted(async () => {
   }
 
   if (vaultPath.value) {
-     // Run migration on startup if a vault is already selected
-     await runMigration(vaultPath.value);
-     
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
@@ -478,6 +470,11 @@ onMounted(async () => {
   }
 
   gdrive.checkGDriveAuth().then(() => { gdrive.setupAutoSync(); });
+  p2p.autoReconnect();
+
+  if (vaultType.value === 'gdrive') {
+      showGDriveMigrationModal.value = true;
+  }
 
   bus.on('vault:file-created-deleted', (payload: any) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
@@ -497,7 +494,7 @@ onMounted(async () => {
       
       setTimeout(() => checkUnreadNotifications(), 500);
       
-      if (vaultType.value === 'gdrive' && gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
+      if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
   });
@@ -569,6 +566,11 @@ onMounted(async () => {
   });
 
   logger.info("Synabit Frontend App Mount Complete.");
+  
+  // Show window smoothly after everything is initialized
+  setTimeout(() => {
+      getCurrentWindow().show().catch(logger.error);
+  }, 100);
 });
 
 onUnmounted(() => {
@@ -582,8 +584,12 @@ onUnmounted(() => {
 <template>
   <div class="flex h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none">
        
+    <!-- Application State 0: Initializing -->
+    <div v-if="!appStore.isReady" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
+    </div>
+
     <!-- Application State 1: No Vault Selected -->
-    <div v-if="!vaultPath" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
+    <div v-else-if="!vaultPath" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
         <div class="max-w-lg w-full text-center space-y-8">
             <div class="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto shadow-inner">
                <FileText class="w-10 h-10 text-gray-400" />
@@ -622,6 +628,7 @@ onUnmounted(() => {
 
     <!-- Application State 2: Vault Selected -->
     <template v-else>
+
       <component :is="useMobileLayout ? MobileLayout : DesktopLayout" :activeTool="activeTool" @update:activeTool="activeTool = $event">
         
         <!-- SIDEBAR / BOTTOMBAR -->
@@ -709,13 +716,18 @@ onUnmounted(() => {
              
              <!-- Settings & Sync bottom icons for desktop -->
              <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
-                <button v-if="vaultType === 'gdrive'" @click="gdrive.syncGDrive()" :disabled="gdrive.gdriveSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', gdrive.gdriveSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="gdrive.gdriveSyncing.value ? 'Syncing...' : gdrive.lastSyncTime.value ? `Last sync: ${gdrive.lastSyncTime.value}` : 'Sync with Google Drive'">
+                <button v-if="gdrive.gdriveConnected.value" @click="gdrive.syncGDrive()" :disabled="gdrive.gdriveSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', gdrive.gdriveSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="gdrive.gdriveSyncing.value ? 'Syncing...' : gdrive.lastSyncTime.value ? `Last sync: ${gdrive.lastSyncTime.value}` : 'Sync with Google Drive'">
                    <RefreshCw v-if="gdrive.gdriveSyncing.value" class="w-5 h-5 animate-spin" />
                    <CloudOff v-else-if="gdrive.gdriveSyncError.value" class="w-5 h-5" />
                    <Cloud v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ gdrive.gdriveSyncing.value ? 'Syncing…' : gdrive.gdriveSyncError.value ? 'Sync Error' : gdrive.lastSyncTime.value ? `Synced ${gdrive.lastSyncTime.value}` : 'Sync Now' }}</span>
                 </button>
-                <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="p2p.p2pConnected.value" @click="p2p.syncP2P()" :disabled="p2p.p2pSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', p2p.p2pSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="p2p.p2pSyncing.value ? 'Syncing...' : p2p.lastSyncTime.value ? `P2P synced ${p2p.lastSyncTime.value}` : 'P2P Sync'">
+                   <RefreshCw v-if="p2p.p2pSyncing.value" class="w-5 h-5 animate-spin" />
+                   <Server v-else class="w-5 h-5" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ p2p.p2pSyncing.value ? 'P2P Syncing…' : p2p.p2pSyncError.value ? 'P2P Error' : p2p.lastSyncTime.value ? `P2P ${p2p.lastSyncTime.value}` : 'P2P Sync' }}</span>
+                </button>
+                 <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
                 </button>
@@ -746,6 +758,15 @@ onUnmounted(() => {
                     />
                 </keep-alive>
             </router-view>
+            
+            <!-- Conflict Toast -->
+            <SyncConflictToast />
+
+            <!-- GDrive Migration Modal -->
+            <GDriveMigrationModal 
+              :show="showGDriveMigrationModal" 
+              @migrated="handleGDriveMigrated" 
+            />
         </div>
 
 
@@ -760,16 +781,33 @@ onUnmounted(() => {
             :last-sync-time="gdrive.lastSyncTime.value"
             :gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value"
             :gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value"
+            :p2p-connected="p2p.p2pConnected.value"
+            :p2p-syncing="p2p.p2pSyncing.value"
+            :p2p-sync-error="p2p.p2pSyncError.value"
+            :p2p-connecting="p2p.p2pConnecting.value"
+            :p2p-last-sync-time="p2p.lastSyncTime.value"
+            :p2p-auto-sync-enabled="p2p.p2pAutoSyncEnabled.value"
+            :p2p-auto-sync-interval="p2p.p2pAutoSyncInterval.value"
+            :p2p-server-addr="appStore.p2pServerAddr"
+            :p2p-server-id-hex="appStore.p2pServerIdHex"
             @clear-vault="clearVault"
             @sync-gdrive="gdrive.syncGDrive()"
             @connect-gdrive="gdrive.connectGDrive()"
-            @disconnect-gdrive="gdrive.disconnectGDrive().then(clearVault)"
+            @disconnect-gdrive="gdrive.disconnectGDrive()"
             @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
             @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"
+            @p2p-connect="(addr: string, id: string) => p2p.connectP2P(addr, id)"
+            @p2p-disconnect="p2p.disconnectP2P()"
+            @p2p-sync="p2p.syncP2P()"
+            @update:p2p-auto-sync-enabled="p2p.p2pAutoSyncEnabled.value = $event"
+            @update:p2p-auto-sync-interval="p2p.p2pAutoSyncInterval.value = $event"
             @show-setup-pin="(mode: 'setup' | 'change') => { setupPinMode = mode; showSetupPinModal = true; }"
           />
         </template>
       </component>
+
+      <!-- Sync Conflict Toast (floating bottom-right) -->
+      <SyncConflictToast />
     </template>
 
     <!-- E2EE Onboarding Modal -->
@@ -791,12 +829,6 @@ onUnmounted(() => {
       @cancel="showSetupPinModal = false"
     />
 
-    <!-- Migration Overlay Spinner -->
-    <div v-if="isMigrating" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-white" @mousedown.stop>
-        <RefreshCw class="w-12 h-12 text-blue-500 animate-spin mb-4" />
-        <h2 class="text-xl font-bold mb-2 text-center">Migrating Data</h2>
-        <p class="text-sm text-gray-300 max-w-sm text-center">{{ migrationMessage }}<br/>Please do not close the app.</p>
-    </div>
   </div>
 </template>
 

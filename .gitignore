@@ -50,3 +50,8 @@ test-results/
 src-tauri/secrets/
 *.env
 .env*
+
+# Exclude target and random big files
+sync-server/target/
+synabit_logcat.txt
+root@*

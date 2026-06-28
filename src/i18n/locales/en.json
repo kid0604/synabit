@@ -6,6 +6,7 @@
       "notes": "Notes",
       "tasks": "Tasks",
       "security": "Security",
+      "devices": "Devices",
       "about": "About"
     },
     "general": {
@@ -20,6 +21,7 @@
       "syncing": "Syncing...",
       "sync_now": "Sync Now",
       "reconnect": "Reconnect",
+      "connect": "Connect",
       "last_synced": "Last synced",
       "periodic_auto_sync": "Periodic Auto Sync",
       "sync_interval": "Sync interval (minutes)",

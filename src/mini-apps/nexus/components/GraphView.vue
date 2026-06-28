@@ -103,8 +103,8 @@ const getFilteredData = () => {
             ...node,
             val: node.item_type === 'tag' ? 3 : 5,
             degree: 0,
-            x: Math.random() * 500, // scatter start positions slightly
-            y: Math.random() * 500
+            x: (Math.random() - 0.5) * 500, // scatter start positions slightly around 0,0
+            y: (Math.random() - 0.5) * 500
         };
         nodes.push(simNode);
         nodeMap.set(node.id, simNode);
@@ -153,10 +153,14 @@ const renderGraph = () => {
     if (!context) return;
 
     // Zoom setup
+    let userInteracted = false;
+    let resizeFitTimeout: ReturnType<typeof setTimeout>;
+
     zoomBehavior = d3.zoom<HTMLCanvasElement, unknown>()
         .scaleExtent([0.1, 4])
         .on("zoom", (event) => {
             transform = event.transform;
+            if (event.sourceEvent) userInteracted = true;
             draw(context);
         });
 
@@ -164,8 +168,7 @@ const renderGraph = () => {
         const initialScale = width < 768 ? 0.35 : 0.7;
         transform = d3.zoomIdentity
             .translate(width / 2, height / 2)
-            .scale(initialScale)
-            .translate(-width / 2, -height / 2);
+            .scale(initialScale);
         initialZoomSet = true;
     }
 
@@ -180,9 +183,9 @@ const renderGraph = () => {
     simulation = d3.forceSimulation<SimNode>(nodes)
         .force("link", d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(linkDist.value))
         .force("charge", d3.forceManyBody().strength(-repelForce.value).distanceMax(400))
-        .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("x", d3.forceX(width / 2).strength(0.05))
-        .force("y", d3.forceY(height / 2).strength(0.05))
+        .force("center", d3.forceCenter(0, 0))
+        .force("x", d3.forceX(0).strength(0.05))
+        .force("y", d3.forceY(0).strength(0.05))
         .force("collide", d3.forceCollide().radius(d => ((d as SimNode).val * 1.5 * nodeSize.value) + 5));
 
     simulation.on("tick", () => {
@@ -190,16 +193,41 @@ const renderGraph = () => {
     });
 
     // Resize observer
+    let oldW = canvas.width;
+    let oldH = canvas.height;
     const resizeObserver = new ResizeObserver(entries => {
         if (!entries || !entries.length) return;
         const { width: w, height: h } = entries[0].contentRect;
-        if (w > 0 && h > 0) {
+        if (w > 0 && h > 0 && oldW > 0 && oldH > 0) {
+            const dx = (w - oldW) / 2;
+            const dy = (h - oldH) / 2;
+            
             canvas.width = w;
             canvas.height = h;
-            simulation.force("center", d3.forceCenter(w / 2, h / 2));
-            simulation.force("x", d3.forceX(w / 2).strength(0.05));
-            simulation.force("y", d3.forceY(h / 2).strength(0.05));
+            
+            if (zoomBehavior) {
+                zoomBehavior.extent([[0, 0], [w, h]]);
+                transform = d3.zoomIdentity.translate(
+                    transform.x + dx, 
+                    transform.y + dy
+                ).scale(transform.k);
+                d3.select(canvas).call(zoomBehavior.transform as any, transform);
+            }
+
             simulation.alpha(0.3).restart();
+            
+            if (!userInteracted) {
+                clearTimeout(resizeFitTimeout);
+                resizeFitTimeout = setTimeout(() => fitView(), 150);
+            }
+            
+            oldW = w;
+            oldH = h;
+        } else if (w > 0 && h > 0) {
+            canvas.width = w;
+            canvas.height = h;
+            oldW = w;
+            oldH = h;
         }
     });
     resizeObserver.observe(containerRef.value);

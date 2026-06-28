@@ -91,7 +91,7 @@ const emit = defineEmits<{
 }>();
 
 // --- Settings ---
-const { nestedNumberListStyle } = useSettings();
+const { nestedNumberListStyle, codeBlockTabSize } = useSettings();
 
 // --- Composables ---
 const { injectLocalAssets, stripLocalAssets } = useAssetPaths(props.vaultPath);
@@ -176,6 +176,100 @@ const editor = useEditor({
     CodeBlockLowlight.extend({
       addNodeView() {
         return VueNodeViewRenderer(CodeBlockComponent);
+      },
+      addKeyboardShortcuts() {
+        return {
+          ...this.parent?.(),
+          'Mod-a': () => {
+            const { state } = this.editor;
+            const { $from } = state.selection;
+            
+            if ($from.parent.type.name === 'codeBlock') {
+              const start = $from.start();
+              const end = start + $from.parent.content.size;
+              
+              // If already fully selected, allow default behavior (select entire note)
+              if (state.selection.from === start && state.selection.to === end) {
+                return false;
+              }
+              
+              this.editor.commands.setTextSelection({ from: start, to: end });
+              return true;
+            }
+            return false;
+          },
+          'Tab': () => {
+            if (!this.editor.isActive('codeBlock')) return false;
+            const { state, dispatch } = this.editor.view;
+            const { selection, tr } = state;
+            const tabStr = ' '.repeat(codeBlockTabSize.value);
+            
+            if (selection.empty) {
+               if (dispatch) {
+                   tr.insertText(tabStr);
+                   dispatch(tr);
+               }
+               return true;
+            }
+            // Multi-line indent
+            const text = state.doc.textBetween(selection.from, selection.to, '\n');
+            const indented = text.split('\n').map(line => tabStr + line).join('\n');
+            if (dispatch) {
+               tr.insertText(indented, selection.from, selection.to);
+               dispatch(tr);
+            }
+            return true;
+          },
+          'Shift-Tab': () => {
+            if (!this.editor.isActive('codeBlock')) return false;
+            const { state, dispatch } = this.editor.view;
+            const { selection, tr } = state;
+            const tabSize = codeBlockTabSize.value;
+            const tabStr = ' '.repeat(tabSize);
+            
+            // Get the block's text
+            const { $from, $to } = selection;
+            const blockStart = $from.start();
+            const blockEnd = blockStart + $from.parent.content.size;
+            
+            const text = state.doc.textBetween(blockStart, blockEnd, '\n');
+            const lines = text.split('\n');
+            
+            let currentPos = blockStart;
+            let newText = '';
+            let firstChange = false;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineStart = currentPos;
+                const lineEnd = currentPos + line.length;
+                
+                if (lineEnd >= selection.from && lineStart <= selection.to) {
+                    if (line.startsWith(tabStr)) {
+                        newText += line.substring(tabSize);
+                        firstChange = true;
+                    } else if (line.startsWith('\t') || line.startsWith(' ')) {
+                        newText += line.substring(1);
+                        firstChange = true;
+                    } else {
+                        newText += line;
+                    }
+                } else {
+                    newText += line;
+                }
+                
+                if (i < lines.length - 1) newText += '\n';
+                currentPos = lineEnd + 1;
+            }
+            
+            if (firstChange && dispatch) {
+                tr.insertText(newText, blockStart, blockEnd);
+                tr.setSelection(state.selection.constructor.create(tr.doc, Math.max(blockStart, selection.from - tabSize), Math.max(blockStart, selection.to - tabSize)));
+                dispatch(tr);
+            }
+            return true;
+          },
+        };
       },
     }).configure({
       lowlight,

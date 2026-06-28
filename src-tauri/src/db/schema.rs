@@ -192,6 +192,21 @@ impl DbBridge {
             "CREATE INDEX IF NOT EXISTS idx_crdt_updates_doc_id ON crdt_updates(doc_id);"
         ).map_err(|e| AppError::General(format!("DB Index Error (crdt_updates): {}", e)))?;
 
+        // ─── Identity Mapping (Phase 5) ─────────────────────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS document_paths (
+                doc_id TEXT PRIMARY KEY,
+                rel_path TEXT NOT NULL UNIQUE,
+                path_updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (document_paths): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_document_paths_rel_path ON document_paths(rel_path);"
+        ).map_err(|e| AppError::General(format!("DB Index Error (document_paths): {}", e)))?;
+
         // ─── FTS5 Full-Text Search Index (versioned) ─────────────
         // Only DROP + CREATE when the schema version changes.
         // Incremental updates (upsert_search_entry / delete_search_entry)
@@ -348,6 +363,19 @@ impl DbBridge {
              CREATE INDEX IF NOT EXISTS idx_ffl_fetched ON feed_fetch_log(fetched_at);",
         )
         .map_err(|e| AppError::General(format!("DB Index Error (feed_fetch_log): {}", e)))?;
+
+        // ─── Sync Metrics (Phase 4 Mobile Optimization) ───────────
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_metrics (
+                date TEXT PRIMARY KEY,
+                cellular_bytes_tx INTEGER NOT NULL DEFAULT 0,
+                cellular_bytes_rx INTEGER NOT NULL DEFAULT 0,
+                wifi_bytes_tx INTEGER NOT NULL DEFAULT 0,
+                wifi_bytes_rx INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (sync_metrics): {}", e)))?;
 
         Ok(Self { conn })
     }

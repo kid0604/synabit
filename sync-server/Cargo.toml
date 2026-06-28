@@ -1,0 +1,61 @@
+[package]
+name = "synabit-sync-server"
+version = "0.1.0"
+edition = "2021"
+description = "Synabit Sync Server — encrypted mailbox + relay for P2P CRDT sync"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "synabit-sync-server"
+path = "src/main.rs"
+
+[dependencies]
+# Networking — Iroh P2P stack (QUIC, NAT traversal)
+iroh = "1.0.0"
+
+# TLS crypto provider — must match iroh's tls-ring feature
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+# Database — SQLite with bundled C library for portability
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+
+# Hashing — BLAKE3 for content-addressing and token derivation
+blake3 = "1.6.1"
+
+# Async runtime
+tokio = { version = "1.45", features = ["full"] }
+
+# Serialization — postcard for compact binary wire format (replaces unmaintained bincode)
+postcard = { version = "1.1.3", features = ["use-std"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP health endpoint
+axum = "0.8"
+
+# Error handling
+anyhow = "1"
+
+# Constant-time comparison for auth tokens
+subtle = "2"
+
+# Hex encoding for hash display
+hex = "0.4"
+
+# Async utilities (CancellationToken for graceful shutdown)
+tokio-util = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

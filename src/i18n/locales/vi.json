@@ -6,6 +6,7 @@
       "notes": "Ghi chú",
       "tasks": "Công việc",
       "security": "Bảo mật",
+      "devices": "Thiết bị",
       "about": "Thông tin"
     },
     "general": {
@@ -20,6 +21,7 @@
       "syncing": "Đang đồng bộ...",
       "sync_now": "Đồng bộ ngay",
       "reconnect": "Kết nối lại",
+      "connect": "Kết nối",
       "last_synced": "Đồng bộ lần cuối",
       "periodic_auto_sync": "Tự động đồng bộ định kỳ",
       "sync_interval": "Khoảng cách đồng bộ (phút)",

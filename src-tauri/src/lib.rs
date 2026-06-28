@@ -1,7 +1,9 @@
 pub mod commands;
 pub mod db;
 pub mod error;
-mod gdrive;
+pub mod gdrive;
+#[cfg(target_os = "android")]
+pub mod jni;
 pub mod models;
 pub mod path_utils;
 pub mod search;
@@ -11,11 +13,12 @@ pub mod chat_engine;
 pub mod watcher;
 pub mod crdt_bridge;
 pub mod sync;
+pub mod p2p;
 pub mod secrets;
 pub mod feed_engine;
 pub mod syn;
 
-use commands::{chat, feeds, files, nexus, nodes, syn as syn_commands, whiteboards};
+use commands::{chat, feeds, files, nexus, nodes, p2p_sync, syn as syn_commands, whiteboards};
 use db::DbBridge;
 
 #[tauri::command]
@@ -104,6 +107,10 @@ pub fn run() {
             // App Lock
             app.manage(commands::app_lock::AppLockState::default());
 
+            // P2P Sync
+            app.manage(p2p_sync::P2pSyncState::default());
+            app.manage(p2p_sync::PairingState::default());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -162,8 +169,7 @@ pub fn run() {
             commands::e2ee::restore_e2ee_from_phrase,
             commands::e2ee::get_recovery_phrase,
 
-            // Migration
-            commands::migration::run_crdt_migration,
+
 
             // Google Drive
             gdrive::auth::gdrive_auth_start,
@@ -171,7 +177,7 @@ pub fn run() {
             gdrive::auth::gdrive_auth_status,
             gdrive::auth::gdrive_disconnect,
             gdrive::sync::gdrive_sync_full,
-            gdrive::sync::gdrive_get_cache_path,
+            gdrive::sync::migrate_gdrive_vault,
             // Watcher
             watcher::start_vault_watcher,
             // Whiteboards
@@ -239,6 +245,24 @@ pub fn run() {
             syn_commands::syn_save_settings,
             syn_commands::syn_pin_conversation,
             syn_commands::syn_export_conversation,
+            // P2P Sync
+            p2p_sync::p2p_sync_connect,
+            p2p_sync::p2p_sync_full,
+            p2p_sync::p2p_sync_disconnect,
+            p2p_sync::p2p_sync_status,
+            p2p_sync::p2p_sync_metrics,
+            p2p_sync::p2p_sync_update_worker_config,
+            // P2P Device Pairing
+            p2p_sync::p2p_pair_initiate,
+            p2p_sync::p2p_pair_cancel,
+            p2p_sync::p2p_pair_accept,
+            p2p_sync::p2p_list_devices,
+            p2p_sync::p2p_remove_device,
+
+            // Key Rotation
+            p2p_sync::p2p_current_epoch,
+            p2p_sync::p2p_revoke_device,
+
             // System
             open_app_log_folder,
         ])

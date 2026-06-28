@@ -16,6 +16,7 @@ pub mod api;
 pub mod auth;
 pub mod browse;
 pub mod sync;
+pub mod transport;
 
 // ──────────────────────────────────────────────
 // Shared Constants
@@ -144,16 +145,6 @@ pub(crate) fn manifest_path(vault_path: &str) -> PathBuf {
 
 pub fn gdrive_cache_dir(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir(app_handle).join("gdrive-cache")
-}
-
-pub(crate) fn file_sha256(path: &Path) -> String {
-    if let Ok(bytes) = fs::read(path) {
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        format!("{:x}", hasher.finalize())
-    } else {
-        String::new()
-    }
 }
 
 pub(crate) fn load_manifest(vault_path: &str) -> SyncManifest {

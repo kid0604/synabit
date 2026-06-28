@@ -76,11 +76,7 @@ export function useGDrive(
   async function finishConnect() {
       gdriveConnected.value = true;
       try {
-          gdriveSyncError.value = 'Step 3: Getting cache path...';
-          const cachePath = await invoke<string>('gdrive_get_cache_path');
-          gdriveSyncError.value = `Step 4: Setting vault path: ${cachePath}`;
-          await appStore.setVaultPath(cachePath, 'gdrive');
-          gdriveSyncError.value = 'Step 5: Calling syncGDrive()...';
+          gdriveSyncError.value = 'Syncing directly to active local vault...';
           await syncGDrive();
           setupAutoSync();
           gdriveSyncError.value = ''; // Success!

@@ -8,7 +8,7 @@ import { i18n } from '../i18n';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
-const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security'>('general');
+const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security' | 'devices'>('general');
 const showE2eeOnboarding = ref(false);
 
 let isInitialized = false;
@@ -16,7 +16,7 @@ let isInitialized = false;
 export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
-  const { themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
+  const { themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
 
   const isValidDailyFormat = computed(() => {
     const val = dailyNoteFormat.value.toUpperCase();
@@ -93,6 +93,7 @@ export function useSettings() {
     dailyNoteFormat,
     dailyNoteTag,
     nestedNumberListStyle,
+    codeBlockTabSize,
     defaultApp,
     hiddenSidebarApps,
     isValidDailyFormat,

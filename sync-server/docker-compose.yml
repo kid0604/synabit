@@ -1,0 +1,31 @@
+# ============================================================================
+# Synabit Sync Server — Docker Compose
+# ============================================================================
+
+services:
+  sync-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: synabit-sync-server
+    restart: unless-stopped
+    ports:
+      # QUIC endpoint (UDP)
+      - "4433:4433/udp"
+      # HTTP health endpoint
+      - "8080:8080/tcp"
+    volumes:
+      # Persist data (SQLite DB, blobs) across container restarts.
+      - sync-data:/app/data
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  sync-data:
+    driver: local

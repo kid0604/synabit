@@ -7,6 +7,8 @@ use zeroize::Zeroize;
 
 /// Wire format version for auto-key encryption (no Argon2, no salt)
 const FORMAT_V3: u8 = 0x03;
+/// Wire format version for epoch-based encryption (key rotation)
+const FORMAT_V4: u8 = 0x04;
 /// Wire format version for password-based encryption (Argon2 + random salt)
 const FORMAT_V2: u8 = 0x02;
 /// Legacy hardcoded salt (for v1 password-based decryption)
@@ -63,6 +65,18 @@ pub fn mnemonic_to_key(phrase: &str) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
+// ─── Epoch Key Derivation ────────────────────────────────
+
+/// Derive an epoch-specific encryption key from the master key.
+///
+/// Each epoch produces a completely independent key via BLAKE3 keyed
+/// derivation, so revoking a device (incrementing the epoch) makes all
+/// future ciphertext unreadable to holders of only the old epoch key.
+pub fn derive_epoch_key(master_key: &[u8; 32], epoch: u32) -> [u8; 32] {
+    let context = format!("synabit-e2ee-epoch-{}", epoch);
+    blake3::derive_key(&context, master_key)
+}
+
 // ─── Encryption (v3 format: no Argon2, direct key) ───────
 
 /// Encrypt payload with a raw 256-bit key.
@@ -85,25 +99,80 @@ pub fn encrypt(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
-/// Decrypt payload encrypted with v3 format (raw key, no Argon2).
-/// Wire format: [0x03][24-byte nonce][ciphertext+tag]
-pub fn decrypt(key: &[u8; 32], encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
-    if encrypted_payload.len() < 1 + 24 {
-        return Err("Payload too short".to_string());
-    }
-    if encrypted_payload[0] != FORMAT_V3 {
-        return Err("Not a v3 encrypted payload".to_string());
-    }
+// ─── Encryption (v4 format: epoch-based key rotation) ────
 
-    let nonce_bytes = &encrypted_payload[1..25];
-    let ciphertext = &encrypted_payload[25..];
+/// Encrypt with epoch-based v4 wire format.
+/// Format: [0x04][epoch: u32 LE][nonce: 24 bytes][ciphertext + poly1305 tag]
+///
+/// The master key is never used directly — an epoch-specific key is derived
+/// first, so rotating the epoch invalidates all future ciphertext for
+/// devices that only know a previous epoch's key.
+pub fn encrypt_v4(master_key: &[u8; 32], epoch: u32, plaintext: &[u8]) -> Vec<u8> {
+    let epoch_key = derive_epoch_key(master_key, epoch);
+    let cipher = XChaCha20Poly1305::new((&epoch_key).into());
+    let mut nonce_bytes = [0u8; 24];
+    rand::rng().fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, plaintext).expect("encryption failed");
 
-    let cipher = XChaCha20Poly1305::new(key.into());
-    let nonce = XNonce::from_slice(nonce_bytes);
+    let mut out = Vec::with_capacity(1 + 4 + 24 + ciphertext.len());
+    out.push(FORMAT_V4); // version marker
+    out.extend_from_slice(&epoch.to_le_bytes());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    out
+}
+
+/// Decrypt v4: extract epoch from header, derive key, decrypt.
+/// `data` layout after stripping the version byte:
+///   [epoch: 4 bytes LE][nonce: 24 bytes][ciphertext + tag]
+fn decrypt_v4(master_key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.len() < 4 + 24 + 16 {
+        return Err("v4 ciphertext too short".into());
+    }
+    let epoch = u32::from_le_bytes(data[0..4].try_into().unwrap());
+    let nonce_bytes: [u8; 24] = data[4..28].try_into().unwrap();
+    let ciphertext = &data[28..];
+
+    let epoch_key = derive_epoch_key(master_key, epoch);
+    let cipher = XChaCha20Poly1305::new((&epoch_key).into());
+    let nonce = XNonce::from(nonce_bytes);
 
     cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|e| format!("Decryption failed: {}", e))
+        .decrypt(&nonce, ciphertext)
+        .map_err(|_| format!("v4 decryption failed (epoch={})", epoch))
+}
+
+// ─── Unified Decrypt (v3 + v4) ───────────────────────────
+
+/// Decrypt payload — auto-detects wire format version.
+///
+/// Supported formats:
+/// - `0x03` — v3 (direct key, no epoch)
+/// - `0x04` — v4 (epoch-based key rotation)
+pub fn decrypt(key: &[u8; 32], encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
+    if encrypted_payload.is_empty() {
+        return Err("Payload too short".to_string());
+    }
+
+    match encrypted_payload[0] {
+        FORMAT_V3 => {
+            if encrypted_payload.len() < 1 + 24 {
+                return Err("Payload too short".to_string());
+            }
+            let nonce_bytes = &encrypted_payload[1..25];
+            let ciphertext = &encrypted_payload[25..];
+
+            let cipher = XChaCha20Poly1305::new(key.into());
+            let nonce = XNonce::from_slice(nonce_bytes);
+
+            cipher
+                .decrypt(nonce, ciphertext)
+                .map_err(|e| format!("Decryption failed: {}", e))
+        }
+        FORMAT_V4 => decrypt_v4(key, &encrypted_payload[1..]),
+        other => Err(format!("Unknown wire format version: 0x{:02x}", other)),
+    }
 }
 
 // ─── Legacy Decryption (for migration) ───────────────────
@@ -176,4 +245,82 @@ fn derive_key_v1(password: &str) -> Result<[u8; 32], String> {
         .map_err(|e| format!("Argon2 v1 derivation failed: {}", e))?;
     pwd.zeroize();
     Ok(key)
+}
+
+// ─── Tests ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encrypt_decrypt_v4_roundtrip() {
+        let master_key = generate_key();
+        let plaintext = b"hello epoch-based encryption";
+        let epoch = 42u32;
+
+        let ciphertext = encrypt_v4(&master_key, epoch, plaintext);
+
+        // Version byte should be 0x04
+        assert_eq!(ciphertext[0], 0x04);
+
+        let decrypted = decrypt(&master_key, &ciphertext).expect("decrypt should succeed");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_v4_different_epochs_different_ciphertext() {
+        let master_key = generate_key();
+        let plaintext = b"same plaintext, different epochs";
+
+        let ct_epoch0 = encrypt_v4(&master_key, 0, plaintext);
+        let ct_epoch1 = encrypt_v4(&master_key, 1, plaintext);
+
+        // Ciphertext should differ (different derived keys + random nonces)
+        assert_ne!(ct_epoch0, ct_epoch1);
+
+        // Both should decrypt correctly
+        let pt0 = decrypt(&master_key, &ct_epoch0).unwrap();
+        let pt1 = decrypt(&master_key, &ct_epoch1).unwrap();
+        assert_eq!(pt0, plaintext);
+        assert_eq!(pt1, plaintext);
+    }
+
+    #[test]
+    fn test_v4_wrong_epoch_fails() {
+        let master_key = generate_key();
+        let plaintext = b"secret data";
+
+        let ciphertext = encrypt_v4(&master_key, 5, plaintext);
+
+        // Tamper with the epoch field (bytes 1..5) to a different epoch
+        let mut tampered = ciphertext.clone();
+        tampered[1..5].copy_from_slice(&99u32.to_le_bytes());
+
+        let result = decrypt(&master_key, &tampered);
+        assert!(result.is_err(), "decryption with wrong epoch should fail");
+    }
+
+    #[test]
+    fn test_v3_still_works() {
+        let key = generate_key();
+        let plaintext = b"backward compat test for v3";
+
+        let ciphertext = encrypt(&key, plaintext).expect("v3 encrypt should succeed");
+        assert_eq!(ciphertext[0], 0x03);
+
+        let decrypted = decrypt(&key, &ciphertext).expect("v3 decrypt should succeed");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_derive_epoch_key_deterministic() {
+        let master_key = [0xABu8; 32];
+        let k1 = derive_epoch_key(&master_key, 7);
+        let k2 = derive_epoch_key(&master_key, 7);
+        assert_eq!(k1, k2, "same epoch should derive the same key");
+
+        let k3 = derive_epoch_key(&master_key, 8);
+        assert_ne!(k1, k3, "different epochs should derive different keys");
+    }
 }

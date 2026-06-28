@@ -1,0 +1,30 @@
+# ============================================================================
+# Synabit Sync Server — Example Configuration
+# ============================================================================
+# Copy this file to `config.toml` and adjust as needed.
+# All values shown below are defaults.
+
+[server]
+# Port for the QUIC (Iroh) endpoint that serves the mailbox protocol.
+quic_port = 4433
+
+# Port for the HTTP health/stats endpoint.
+health_port = 8080
+
+# Bind address. Use "0.0.0.0" to listen on all interfaces.
+bind_addr = "0.0.0.0"
+
+[storage]
+# Root directory for persistent data (SQLite DB, blob files).
+data_dir = "./data"
+
+# Default per-vault storage quota in bytes (1 GiB).
+default_max_vault_bytes = 1073741824
+
+[retention]
+# How often (in seconds) the garbage-collection task runs.
+cleanup_interval_secs = 300
+
+# Maximum age (in seconds) for mailbox entries, even if not ACKed by all devices.
+# Default: 30 days = 2592000 seconds.
+max_entry_age_secs = 2592000

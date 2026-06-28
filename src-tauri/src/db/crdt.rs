@@ -115,4 +115,52 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("DB Error deleting crdt_updates: {}", e)))?;
         Ok(())
     }
+
+    /// Identity Mapping: Get `node_id` by `rel_path`
+    pub fn get_node_id_by_path(&self, rel_path: &str) -> AppResult<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT doc_id FROM document_paths WHERE rel_path = ?1")
+            .map_err(|e| AppError::General(format!("DB Error prepare get_node_id_by_path: {}", e)))?;
+        let mut rows = stmt.query(params![rel_path])
+            .map_err(|e| AppError::General(format!("DB Error querying document_paths: {}", e)))?;
+        
+        if let Some(row) = rows.next().unwrap_or(None) {
+            let doc_id: String = row.get(0).map_err(|e| AppError::General(e.to_string()))?;
+            Ok(Some(doc_id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Identity Mapping: Get `rel_path` by `node_id`
+    pub fn get_path_by_node_id(&self, doc_id: &str) -> AppResult<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT rel_path FROM document_paths WHERE doc_id = ?1")
+            .map_err(|e| AppError::General(format!("DB Error prepare get_path_by_node_id: {}", e)))?;
+        let mut rows = stmt.query(params![doc_id])
+            .map_err(|e| AppError::General(format!("DB Error querying document_paths: {}", e)))?;
+        
+        if let Some(row) = rows.next().unwrap_or(None) {
+            let rel_path: String = row.get(0).map_err(|e| AppError::General(e.to_string()))?;
+            Ok(Some(rel_path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Identity Mapping: Upsert a document path mapping
+    pub fn upsert_document_path(&self, doc_id: &str, rel_path: &str) -> AppResult<()> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        self.conn.execute(
+            "INSERT INTO document_paths (doc_id, rel_path, path_updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(doc_id) DO UPDATE SET rel_path=excluded.rel_path, path_updated_at=excluded.path_updated_at",
+            params![doc_id, rel_path, timestamp]
+        ).map_err(|e| AppError::General(format!("DB Error upserting document_path: {}", e)))?;
+        Ok(())
+    }
+
+    /// Identity Mapping: Delete a mapping
+    pub fn delete_document_path(&self, doc_id: &str) -> AppResult<()> {
+        self.conn.execute("DELETE FROM document_paths WHERE doc_id = ?1", params![doc_id])
+            .map_err(|e| AppError::General(format!("DB Error deleting document_path: {}", e)))?;
+        Ok(())
+    }
 }

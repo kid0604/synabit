@@ -21,7 +21,7 @@ pub fn run_cleanup(
     max_per_feed: i64,
 ) -> Result<CleanupResult, String> {
     let mut total_deleted_articles: usize = 0;
-    let mut deleted_logs: usize = 0;
+    let deleted_logs: usize;
 
     // 1. Delete read articles older than max_age_days (keep starred & read_later)
     let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
