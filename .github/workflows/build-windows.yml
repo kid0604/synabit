@@ -1,0 +1,42 @@
+name: Build Windows MSI
+
+on:
+  push:
+    tags:
+      - '*' # Tự động chạy khi bạn tạo tag mới (ví dụ: git tag 0.8.5)
+  workflow_dispatch: # Cho phép bạn bấm nút chạy bằng tay trên GitHub
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # action này sẽ tự động chạy npm run tauri build
+          # và tự động đính kèm file .msi và .exe vào Release trên GitHub
+          tagName: ${{ github.ref_name }} # Sử dụng tên tag hiện tại
+          releaseName: "Synabit ${{ github.ref_name }}"
+          releaseBody: "Tự động build bản phát hành cho Windows."
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
