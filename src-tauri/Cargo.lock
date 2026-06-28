@@ -7243,7 +7243,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "ammonia",
  "argon2",
