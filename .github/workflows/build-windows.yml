@@ -31,6 +31,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNABIT_GOOGLE_CLIENT_ID: ${{ secrets.SYNABIT_GOOGLE_CLIENT_ID }}
+          SYNABIT_GOOGLE_CLIENT_SECRET: ${{ secrets.SYNABIT_GOOGLE_CLIENT_SECRET }}
         with:
           # action này sẽ tự động chạy npm run tauri build
           # và tự động đính kèm file .msi và .exe vào Release trên GitHub
