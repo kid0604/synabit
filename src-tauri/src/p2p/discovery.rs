@@ -31,6 +31,12 @@ pub struct PeerInfo {
     pub is_lan: bool,
     /// Unix timestamp (seconds) of when the peer was last seen.
     pub last_seen: u64,
+    /// The local IP address if discovered via mDNS.
+    pub lan_address: Option<std::net::SocketAddr>,
+    /// Device name (optional, from mDNS TXT record).
+    pub device_name: Option<String>,
+    /// Pairing code (optional, from mDNS TXT record).
+    pub pairing_code: Option<String>,
 }
 
 /// Registry of known peer devices.
@@ -111,6 +117,9 @@ mod tests {
             node_id: key.public(),
             is_lan: false,
             last_seen,
+            lan_address: None,
+            device_name: None,
+            pairing_code: None,
         }
     }
 

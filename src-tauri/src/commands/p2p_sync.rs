@@ -347,19 +347,30 @@ pub fn p2p_pair_initiate(app_handle: tauri::AppHandle) -> Result<PairingInfo, St
     let node_id_hex = {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        db.get_kv("device_node_id")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "unknown".to_string())
+        match db.get_kv("device_node_id") {
+            Ok(Some(id)) if !id.is_empty() => id,
+            _ => {
+                let secret_key = iroh::SecretKey::generate();
+                let id = hex::encode(secret_key.public().as_bytes());
+                let _ = db.set_kv("device_node_id", &id);
+                id
+            }
+        }
     };
 
     let device_name = local_device_name();
-    let session = PairingSession::new(node_id_hex, device_name);
+    let session = PairingSession::new(node_id_hex, device_name.clone());
     let info = session.pairing_info();
 
     let pairing_state = app_handle.state::<PairingState>();
     let mut state = pairing_state.lock().unwrap_or_else(|e| e.into_inner());
     *state = Some(session);
+
+    // Broadcast pairing code via mDNS
+    let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
+    if let Some(mdns) = mdns_state {
+        mdns.update_pairing_code(11204, device_name, Some(info.code.clone()));
+    }
 
     log::info!("Pairing initiated, code={}", info.code);
     Ok(info)
@@ -371,6 +382,12 @@ pub fn p2p_pair_cancel(app_handle: tauri::AppHandle) -> Result<(), String> {
     let pairing_state = app_handle.state::<PairingState>();
     let mut state = pairing_state.lock().unwrap_or_else(|e| e.into_inner());
     *state = None;
+
+    let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
+    let device_name = local_device_name();
+    if let Some(mdns) = mdns_state {
+        mdns.update_pairing_code(11204, device_name, None);
+    }
 
     log::info!("Pairing session cancelled");
     Ok(())
@@ -386,7 +403,7 @@ pub fn p2p_pair_cancel(app_handle: tauri::AppHandle) -> Result<(), String> {
 /// and stores it in the device registry. In a full implementation this
 /// would initiate a P2P connection to the peer.
 #[tauri::command]
-pub fn p2p_pair_accept(
+pub async fn p2p_pair_accept(
     app_handle: tauri::AppHandle,
     code: String,
 ) -> Result<PairedDevice, String> {
@@ -398,11 +415,43 @@ pub fn p2p_pair_accept(
         .unwrap_or_default()
         .as_secs();
 
-    // For now, create a device entry with the code as identifier.
-    // In a full implementation, this would initiate P2P connection.
+    // Look for real node_id in mDNS discovery
+    let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
+    let mut real_node_id = None;
+    let mut peer_name = format!("Device-{}", &normalized[..4]);
+
+    if let Some(disc) = discovery {
+        // Poll for up to 3 seconds
+        for _ in 0..15 {
+            let peers = disc.online_peers();
+            for peer in peers {
+                if let Some(ref c) = peer.pairing_code {
+                    if normalize_code(c) == normalized {
+                        real_node_id = Some(hex::encode(peer.node_id.as_bytes()));
+                        if let Some(n) = peer.device_name {
+                            peer_name = n;
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            if real_node_id.is_some() {
+                break;
+            }
+            
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    let node_id_hex = match real_node_id {
+        Some(id) => id,
+        None => return Err("No device found on the local network with this pairing code. Make sure both devices are on the same Wi-Fi and the code is correct.".to_string()),
+    };
+
     let device = PairedDevice {
-        device_name: format!("Device-{}", &normalized[..4]),
-        node_id_hex: normalized.clone(),
+        device_name: peer_name,
+        node_id_hex,
         paired_at: now,
         last_seen: now,
     };

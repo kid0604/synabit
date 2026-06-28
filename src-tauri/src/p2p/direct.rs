@@ -62,6 +62,8 @@ pub struct DirectP2PTransport {
     mailbox_token: [u8; 32],
     /// Stable device identifier
     device_id: String,
+    /// Local LAN address if discovered via mDNS
+    lan_address: Option<std::net::SocketAddr>,
     /// Active session (connection + stream), lazily established
     session: Arc<Mutex<Option<P2PSession>>>,
 }
@@ -71,6 +73,7 @@ impl std::fmt::Debug for DirectP2PTransport {
         f.debug_struct("DirectP2PTransport")
             .field("peer_id", &format!("{}", self.peer_id.fmt_short()))
             .field("device_id", &self.device_id)
+            .field("lan_address", &self.lan_address)
             .finish()
     }
 }
@@ -84,11 +87,13 @@ impl DirectP2PTransport {
     /// * `peer_id` — the peer device's public key
     /// * `e2ee_key` — the vault's E2EE key (for deriving auth credentials)
     /// * `device_id` — this device's stable UUID
+    /// * `lan_address` — optional direct IP address discovered via mDNS
     pub fn new(
         endpoint: iroh::Endpoint,
         peer_id: iroh::EndpointId,
         e2ee_key: &[u8; 32],
         device_id: &str,
+        lan_address: Option<std::net::SocketAddr>,
     ) -> Self {
         let vault_hash: [u8; 32] = *blake3::hash(e2ee_key).as_bytes();
         let mailbox_token: [u8; 32] = blake3::derive_key("synabit-mailbox-v1", e2ee_key);
@@ -104,6 +109,7 @@ impl DirectP2PTransport {
             vault_hash,
             mailbox_token,
             device_id: device_id.to_string(),
+            lan_address,
             session: Arc::new(Mutex::new(None)),
         }
     }
@@ -117,8 +123,12 @@ impl DirectP2PTransport {
 
         info!("Connecting to peer {}...", self.peer_id.fmt_short());
 
-        // Connect to the peer via Iroh relay/discovery (no socket address needed)
-        let peer_addr = iroh::EndpointAddr::new(self.peer_id);
+        // Connect to the peer via Iroh relay/discovery
+        let mut peer_addr = iroh::EndpointAddr::new(self.peer_id);
+        if let Some(addr) = self.lan_address {
+            peer_addr = peer_addr.with_ip_addr(addr);
+        }
+        
         let conn: iroh::endpoint::Connection = self
             .endpoint
             .connect(peer_addr, P2P_SYNC_ALPN)

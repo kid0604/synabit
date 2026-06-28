@@ -22,3 +22,41 @@ pub mod handler;
 pub mod hybrid;
 pub mod pairing;
 pub mod transport;
+pub mod mdns;
+
+use std::sync::Arc;
+use tauri::Manager;
+
+/// Initialize P2P managed state
+pub fn init(app: &tauri::App) -> Result<(), String> {
+    let registry = Arc::new(discovery::PeerDiscovery::new());
+    app.manage(registry.clone());
+    
+    // Attempt to start mDNS
+    let node_id_hex = {
+        let db_state = app.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        match db.get_kv("device_node_id") {
+            Ok(Some(id)) if !id.is_empty() => id,
+            _ => {
+                let secret_key = iroh::SecretKey::generate();
+                let id = hex::encode(secret_key.public().as_bytes());
+                let _ = db.set_kv("device_node_id", &id);
+                id
+            }
+        }
+    };
+    
+    let device_name = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "Desktop".to_string());
+        
+    if node_id_hex != "unknown" {
+        // Use a default port for now until PersistentEndpoint is wired
+        if let Ok(mdns) = mdns::MdnsDiscovery::start(node_id_hex, 11204, device_name, registry) {
+            app.manage(Arc::new(mdns));
+        }
+    }
+    
+    Ok(())
+}

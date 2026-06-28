@@ -110,6 +110,10 @@ pub fn run() {
             // P2P Sync
             app.manage(p2p_sync::P2pSyncState::default());
             app.manage(p2p_sync::PairingState::default());
+            
+            if let Err(e) = crate::p2p::init(app) {
+                log::error!("Failed to init P2P module: {}", e);
+            }
 
             Ok(())
         })
