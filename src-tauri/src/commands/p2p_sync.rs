@@ -369,7 +369,10 @@ pub fn p2p_pair_initiate(app_handle: tauri::AppHandle) -> Result<PairingInfo, St
     // Broadcast pairing code via mDNS
     let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
     if let Some(mdns) = mdns_state {
+        log::info!("mDNS state found, broadcasting pairing code: {}", info.code);
         mdns.update_pairing_code(11204, device_name, Some(info.code.clone()));
+    } else {
+        log::warn!("mDNS state NOT found — mDNS was not initialized");
     }
 
     log::info!("Pairing initiated, code={}", info.code);
@@ -419,15 +422,21 @@ pub async fn p2p_pair_accept(
     let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
     let mut real_node_id = None;
     let mut peer_name = format!("Device-{}", &normalized[..4]);
+    let mut peer_lan_addr: Option<std::net::SocketAddr> = None;
 
     if let Some(disc) = discovery {
-        // Poll for up to 3 seconds
-        for _ in 0..15 {
+        log::info!("PeerDiscovery found, polling for peer with code {} ...", normalized);
+        // Poll for up to 10 seconds (more time for UDP to propagate)
+        for attempt in 0..50 {
             let peers = disc.online_peers();
+            if attempt % 10 == 0 {
+                log::info!("LAN poll attempt {}/50, known peers: {}", attempt, peers.len());
+            }
             for peer in peers {
                 if let Some(ref c) = peer.pairing_code {
                     if normalize_code(c) == normalized {
                         real_node_id = Some(hex::encode(peer.node_id.as_bytes()));
+                        peer_lan_addr = peer.lan_address;
                         if let Some(n) = peer.device_name {
                             peer_name = n;
                         }
@@ -437,11 +446,14 @@ pub async fn p2p_pair_accept(
             }
             
             if real_node_id.is_some() {
+                log::info!("Found matching peer!");
                 break;
             }
             
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+    } else {
+        log::warn!("PeerDiscovery NOT found in app state");
     }
 
     let node_id_hex = match real_node_id {
@@ -457,6 +469,15 @@ pub async fn p2p_pair_accept(
     };
 
     DeviceRegistry::add(&app_handle, device.clone()).map_err(|e| e.to_string())?;
+
+    // Send pair_accept back to the peer so they also save us
+    if let Some(addr) = peer_lan_addr {
+        let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
+        if let Some(mdns) = mdns_state {
+            let my_device_name = local_device_name();
+            mdns.send_pair_accept(addr, &my_device_name);
+        }
+    }
 
     log::info!("Pairing accepted via code, device_name={}", device.device_name);
     Ok(device)

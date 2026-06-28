@@ -1,5 +1,6 @@
 import { ref, computed, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../utils/logger';
 
 // ─── Types ──────────────────────────────────────────────────
@@ -157,9 +158,27 @@ export function useDevicePairing() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   });
 
+  // --- Listen for remote pairing acceptance ---
+  let unlistenPairingAccepted: UnlistenFn | null = null;
+  
+  // Set up listener for when a remote device accepts our pairing code
+  listen<{ device_name: string; node_id_hex: string }>('pairing-accepted', (event) => {
+    logger.info('Pairing accepted by remote device:', event.payload.device_name);
+    pairingSuccess.value = true;
+    isPairing.value = false;
+    pairingCode.value = '';
+    stopCountdown();
+    loadDevices();
+  }).then((unlisten) => {
+    unlistenPairingAccepted = unlisten;
+  });
+
   // --- Cleanup on unmount ---
   onUnmounted(() => {
     stopCountdown();
+    if (unlistenPairingAccepted) {
+      unlistenPairingAccepted();
+    }
   });
 
   return {

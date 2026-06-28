@@ -66,6 +66,15 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                .max_file_size(10_000_000) // 10 MB
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .filter(|metadata| {
+                    // Filter out noisy iroh transport logs that flood the file
+                    let target = metadata.target();
+                    !target.starts_with("iroh::socket::transports")
+                        && !target.starts_with("iroh::socket::remote_map")
+                        && !target.starts_with("tracing::span")
+                })
                 .build(),
         )
         .manage(watcher::WatcherState::default())
