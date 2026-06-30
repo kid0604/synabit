@@ -16,7 +16,7 @@ export function useNoteRename(
   saveTimeouts: Map<string, ReturnType<typeof setTimeout>>,
   saveNoteForTab: (tabId: string) => void,
   scanVault: () => Promise<void>,
-  editorRefs: Ref<any[]>,
+  editorRefs: Ref<Record<string, any>>,
 ) {
   const renameModal = ref<{ show: boolean; noteId: string; value: string }>({ show: false, noteId: '', value: '' });
 
@@ -95,10 +95,11 @@ export function useNoteRename(
     const note = notes.value.find(n => n.id === currentNoteId.value);
     
     const focusEditor = () => {
-        if (editorRefs.value && editorRefs.value.length > 0) {
-            editorRefs.value.forEach(ref => {
-                if (ref && typeof ref.focus === 'function') ref.focus();
-            });
+        if (editorRefs.value && currentNoteId.value) {
+            const activeEditor = editorRefs.value[currentNoteId.value];
+            if (activeEditor && typeof activeEditor.focus === 'function') {
+                activeEditor.focus();
+            }
         }
     };
 

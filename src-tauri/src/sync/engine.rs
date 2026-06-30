@@ -226,7 +226,7 @@ pub async fn p2p_sync_full(
     let entries = transport.pull_since(cursor).await?;
     info!("PULL: {} entries since seq {}", entries.len(), cursor);
 
-    let mut max_seq: u64 = 0;
+    let mut max_seq: u64 = cursor;
     let mut pulled_node_ids: HashSet<String> = HashSet::new();
 
     let pull_total = entries.len() as u32;
@@ -372,11 +372,68 @@ pub async fn p2p_sync_full(
         result.pulled_files.push(payload.rel_path.clone());
     }
 
-    // Persist cursor
-    if max_seq > 0 {
-        let db_state = app_handle.state::<crate::db::DbState>();
-        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.set_kv("p2p_sync:cursor", &max_seq.to_string());
+    // (Cursor will be persisted after PUSH and ACK phases)
+
+    // ════════════════════════════════════════════════════════
+    // ASSET PULL phase (Phase 2.5)
+    // ════════════════════════════════════════════════════════
+    let local_files = collect_local_files(vault_path);
+    let mut missing_assets = std::collections::HashSet::new();
+    let re = regex::Regex::new(r#"assets/[^)"'\s\]]+"#).unwrap();
+
+    for rel_path in &local_files {
+        if is_asset(rel_path) {
+            continue;
+        }
+        let local_path = vault.join(rel_path);
+        if let Ok(content) = fs::read_to_string(&local_path) {
+            for cap in re.captures_iter(&content) {
+                let asset_path = urlencoding::decode(&cap[0])
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| cap[0].to_string());
+                let asset_full = vault.join(&asset_path);
+                if !asset_full.exists() {
+                    missing_assets.insert(asset_path);
+                }
+            }
+        }
+    }
+
+    for asset_path in missing_assets {
+        let asset_hash = doc_hash(&asset_path);
+        match transport.pull_asset(&asset_hash).await {
+            Ok(Some(encrypted_data)) => {
+                result.rx_bytes += encrypted_data.len() as u64;
+                match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_data) {
+                    Ok(decrypted) => {
+                        let asset_full = vault.join(&asset_path);
+                        if let Err(e) = atomic_write(&asset_full, &decrypted) {
+                            result.errors.push(format!("Write asset {}: {}", asset_path, e));
+                        } else {
+                            let current_sha = file_sha256(&asset_full);
+                            let db_state = app_handle.state::<crate::db::DbState>();
+                            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                            let _ = db.set_kv(
+                                &format!("p2p_sync:sha256:{}", asset_path),
+                                &current_sha,
+                            );
+                            result.pulled += 1;
+                            result.pulled_files.push(asset_path.clone());
+                            info!("PULL ASSET OK: {}", asset_path);
+                        }
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("Decrypt asset {}: {}", asset_path, e));
+                    }
+                }
+            }
+            Ok(None) => {
+                warn!("Asset not found on remote: {}", asset_path);
+            }
+            Err(e) => {
+                result.errors.push(format!("Pull asset {}: {}", asset_path, e));
+            }
+        }
     }
 
     // ════════════════════════════════════════════════════════
@@ -388,8 +445,60 @@ pub async fn p2p_sync_full(
 
     let push_total = local_files.len() as u32;
     for (push_idx, rel_path) in local_files.iter().enumerate() {
-        // (a) Skip assets (Phase 2)
+        // (a) Handle assets (Phase 2)
         if is_asset(rel_path) {
+            let local_path = vault.join(rel_path);
+            let current_sha = file_sha256(&local_path);
+            if current_sha.is_empty() {
+                continue;
+            }
+
+            let stored_sha: Option<String> = {
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                db.get_kv(&format!("p2p_sync:sha256:{}", rel_path))
+                    .unwrap_or(None)
+            };
+
+            if stored_sha.as_deref() == Some(current_sha.as_str()) {
+                debug!("PUSH skip asset (unchanged): {}", rel_path);
+                continue;
+            }
+
+            let file_content = match fs::read(&local_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    result.errors.push(format!("Read asset {}: {}", rel_path, e));
+                    continue;
+                }
+            };
+
+            let asset_hash = doc_hash(rel_path);
+            let encrypted = match crate::sync::crypto::encrypt(&e2ee_key, &file_content) {
+                Ok(enc) => enc,
+                Err(e) => {
+                    result.errors.push(format!("Encrypt asset {}: {}", rel_path, e));
+                    continue;
+                }
+            };
+
+            result.tx_bytes += encrypted.len() as u64;
+
+            match transport.push_asset(&asset_hash, encrypted).await {
+                Ok(_) => {
+                    let db_state = app_handle.state::<crate::db::DbState>();
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = db.set_kv(
+                        &format!("p2p_sync:sha256:{}", rel_path),
+                        &current_sha,
+                    );
+                    result.pushed += 1;
+                    info!("PUSH ASSET: {}", rel_path);
+                }
+                Err(e) => {
+                    result.errors.push(format!("Push asset {}: {}", rel_path, e));
+                }
+            }
             continue;
         }
 
@@ -626,9 +735,21 @@ pub async fn p2p_sync_full(
     // ACK phase
     // ════════════════════════════════════════════════════════
 
-    if max_seq > 0 {
-        transport.ack(max_seq).await?;
-        info!("ACK: up_to_seq={}", max_seq);
+    if max_seq > cursor {
+        // 1. Persist cursor locally
+        {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = db.set_kv("p2p_sync:cursor", &max_seq.to_string());
+        }
+
+        // 2. Send ACK to server
+        if let Err(e) = transport.ack(max_seq).await {
+            warn!("Failed to send ACK for {}: {}", max_seq, e);
+            result.errors.push(format!("ACK {}: {}", max_seq, e));
+        } else {
+            info!("ACK: up_to_seq={}", max_seq);
+        }
     }
 
     // Emit completion event

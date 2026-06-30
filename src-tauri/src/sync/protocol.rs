@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub const MAILBOX_ALPN: &[u8] = b"synabit/mailbox/1";
 
 /// Maximum framed message size (16 MiB).
-pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
+pub const MAX_MESSAGE_SIZE: u32 = 128 * 1024 * 1024;
 
 
 // ---------------------------------------------------------------------------

@@ -10,14 +10,14 @@ const FilesApp = () => import('../mini-apps/files/FilesApp.vue');
 const WhiteboardApp = () => import('../mini-apps/whiteboard/WhiteboardApp.vue');
 const PeopleApp = () => import('../mini-apps/people/PeopleApp.vue');
 const FinanceApp = () => import('../mini-apps/finance/FinanceApp.vue');
-const ChatApp = () => import('../mini-apps/chat/ChatApp.vue');
 const FeedsApp = () => import('../mini-apps/feeds/FeedsApp.vue');
-const SynApp = () => import('../mini-apps/syn/SynApp.vue');
+const MessagesApp = () => import('../mini-apps/messages/MessagesApp.vue');
 
 const routes: Array<RouteRecordRaw> = [
   { path: '/', redirect: '/nexus' },
   { path: '/nexus', name: 'nexus', component: Nexus },
-  { path: '/chat', name: 'chat', component: ChatApp },
+  { path: '/messages', name: 'messages', component: MessagesApp },
+  { path: '/chat', redirect: '/messages' },
   { path: '/note', name: 'note', component: NoteApp },
   { path: '/quickcap', name: 'quickcap', component: QuickCap },
   { path: '/task', name: 'task', component: Tasks },
@@ -27,7 +27,7 @@ const routes: Array<RouteRecordRaw> = [
   { path: '/people', name: 'people', component: PeopleApp },
   { path: '/finance', name: 'finance', component: FinanceApp },
   { path: '/feeds', name: 'feeds', component: FeedsApp },
-  { path: '/syn', name: 'syn', component: SynApp },
+  { path: '/syn', redirect: '/messages' },
 ];
 
 const router = createRouter({

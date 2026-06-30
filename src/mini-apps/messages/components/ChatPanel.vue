@@ -8,6 +8,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import type { SynMessage, SynToolCallEvent, SourceRef } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
+import NotificationCard from './NotificationCard.vue';
 
 const MAX_IMAGES = 4;
 
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   stop: [];
   'open-source': [source: SourceRef];
   'regenerate': [messageId: string];
+  'notification-action': [notification: any];
 }>();
 
 const inputText = ref('');
@@ -300,14 +302,20 @@ const handleStop = () => {
         </div>
 
         <!-- Message list -->
-        <MessageBubble
-          v-for="msg in messages"
-          :key="msg.id"
-          :message="msg"
-          :vault-path="vaultPath"
-          @open-source="$emit('open-source', $event)"
-          @regenerate="$emit('regenerate', msg.id)"
-        />
+        <template v-for="msg in messages" :key="msg.id">
+          <NotificationCard 
+            v-if="msg.notification" 
+            :notification="msg.notification"
+            @action="$emit('notification-action', $event)"
+          />
+          <MessageBubble
+            v-else
+            :message="msg"
+            :vault-path="vaultPath"
+            @open-source="$emit('open-source', $event)"
+            @regenerate="$emit('regenerate', msg.id)"
+          />
+        </template>
 
         <!-- Streaming message -->
         <MessageBubble

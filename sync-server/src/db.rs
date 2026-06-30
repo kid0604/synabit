@@ -99,6 +99,20 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_mailbox_vault_doc
                 ON mailbox(vault_hash, doc_hash);
 
+            CREATE TABLE IF NOT EXISTS vault_sequences (
+                vault_hash TEXT PRIMARY KEY REFERENCES vaults(vault_hash),
+                seq INTEGER NOT NULL DEFAULT 0
+            );
+
+            -- Populate vault_sequences with the maximum seq known so far across mailbox and cursors
+            INSERT OR IGNORE INTO vault_sequences (vault_hash, seq)
+            SELECT v.vault_hash, 
+                   MAX(
+                       COALESCE((SELECT MAX(seq) FROM mailbox m WHERE m.vault_hash = v.vault_hash), 0),
+                       COALESCE((SELECT MAX(last_seq) FROM cursors c WHERE c.vault_hash = v.vault_hash), 0)
+                   )
+            FROM vaults v;
+
             CREATE TABLE IF NOT EXISTS trash_meta (
                 vault_hash     TEXT NOT NULL,
                 doc_hash       BLOB NOT NULL,
@@ -156,7 +170,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
         let seq: Option<i64> = conn
             .query_row(
-                "SELECT MAX(seq) FROM mailbox WHERE vault_hash = ?1",
+                "SELECT seq FROM vault_sequences WHERE vault_hash = ?1",
                 params![vault_hash],
                 |row| row.get(0),
             )
@@ -179,16 +193,18 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
         let now = unix_now();
 
-        // Compute next seq inside the same lock to avoid races.
-        let current: Option<i64> = conn
+        // Ensure vault_sequences exists for this vault
+        conn.execute(
+            "INSERT OR IGNORE INTO vault_sequences (vault_hash, seq) VALUES (?1, 0)",
+            params![vault_hash],
+        )?;
+
+        let next_seq: i64 = conn
             .query_row(
-                "SELECT MAX(seq) FROM mailbox WHERE vault_hash = ?1",
+                "UPDATE vault_sequences SET seq = seq + 1 WHERE vault_hash = ?1 RETURNING seq",
                 params![vault_hash],
                 |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
-        let next_seq = (current.unwrap_or(0) + 1) as u64;
+            )?;
 
         conn.execute(
             "INSERT INTO mailbox (vault_hash, doc_hash, source_device, seq, blob_path, blob_size, payload_hash, created_at, is_delete)
@@ -197,15 +213,15 @@ impl Database {
                 vault_hash,
                 doc_hash,
                 source_device,
-                next_seq as i64,
+                next_seq,
                 blob_path,
                 blob_size as i64,
                 payload_hash,
                 now,
-                is_delete as i32,
+                is_delete
             ],
         )?;
-        Ok(next_seq)
+        Ok(next_seq as u64)
     }
 
     /// Pull all entries for a vault with `seq > since_seq`.

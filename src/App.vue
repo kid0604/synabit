@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, MessageCircle, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -48,8 +48,7 @@ const {
 
 const ALL_APPS = [
   { id: 'nexus', name: 'Nexus', icon: Globe },
-  { id: 'chat', name: 'Chat', icon: MessageSquare },
-  { id: 'syn', name: 'Syn', icon: SynIcon },
+  { id: 'messages', name: 'Messages', icon: MessageCircle },
   { id: 'quickcap', name: 'QuickCap', icon: Zap },
   { id: 'note', name: 'Notes', icon: FileText },
   { id: 'task', name: 'Tasks', icon: CheckSquare },
@@ -67,14 +66,12 @@ const getAppName = (appId: string): string => {
 
 const mobileVisibleApps = computed(() => {
     return ALL_APPS
-        .filter(a => !(a.id === 'syn' && useMobileLayout.value))
         .filter(a => !hiddenSidebarApps.value.includes(a.id))
         .slice(0, 4)
         .map(a => a.id);
 });
 
 const isAppVisible = (appId: string) => {
-    if (appId === 'syn' && useMobileLayout.value) return false;
     if (hiddenSidebarApps.value.includes(appId)) return false;
     if (useMobileLayout.value && !mobileVisibleApps.value.includes(appId)) return false;
     return true;
@@ -82,7 +79,6 @@ const isAppVisible = (appId: string) => {
 
 const moreMenuApps = computed(() => {
     return ALL_APPS.filter(a => {
-        if (a.id === 'syn' && useMobileLayout.value) return false;
         const isUserHidden = hiddenSidebarApps.value.includes(a.id);
         const isMobileHidden = useMobileLayout.value && !mobileVisibleApps.value.includes(a.id);
         return isUserHidden || isMobileHidden;
@@ -151,9 +147,9 @@ watch(activeTool, async (newTool, oldTool) => {
     }
   }
   
-  if (newTool === 'chat' && vaultPath.value) {
-     if (chatAppRef.value) {
-         chatAppRef.value.fetchMessages();
+  if (newTool === 'messages' && vaultPath.value) {
+     if (messagesAppRef.value) {
+         messagesAppRef.value.fetchNotifications();
      }
      
      if (unreadNotificationCount.value > 0) {
@@ -175,7 +171,7 @@ watch(activeTool, async (newTool, oldTool) => {
 
 
 // ─── Mini App Refs for cross-app navigation ─────────────────
-const chatAppRef = ref<any>(null);
+const messagesAppRef = ref<any>(null);
 const noteAppRef = ref<any>(null);
 const quickCapAppRef = ref<any>(null);
 const taskAppRef = ref<any>(null);
@@ -185,11 +181,10 @@ const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
 const feedsAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
-const synAppRef = ref<any>(null);
 
 const setAppRef = (el: any, name: string) => {
     if (!el) return;
-    if (name === 'chat') chatAppRef.value = el;
+    if (name === 'messages') messagesAppRef.value = el;
     else if (name === 'note') noteAppRef.value = el;
     else if (name === 'quickcap') quickCapAppRef.value = el;
     else if (name === 'task') taskAppRef.value = el;
@@ -199,7 +194,6 @@ const setAppRef = (el: any, name: string) => {
     else if (name === 'finance') financeAppRef.value = el;
     else if (name === 'feeds') feedsAppRef.value = el;
     else if (name === 'file') filesAppRef.value = el;
-    else if (name === 'syn') synAppRef.value = el;
 };
 
 // ─── Floating Note (opened in new window) ─────────────────
@@ -497,6 +491,9 @@ onMounted(async () => {
       if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
+      if (p2p.p2pConnected.value && !p2p.p2pSyncing.value) {
+          p2p.syncP2P();
+      }
   });
 
   bus.on('vault:file-modified', (payload: any) => {
@@ -516,12 +513,19 @@ onMounted(async () => {
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
+
+      if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
+          gdrive.syncGDrive();
+      }
+      if (p2p.p2pConnected.value && !p2p.p2pSyncing.value) {
+          p2p.syncP2P();
+      }
   });
 
   bus.on('chat:new-message', () => {
       checkUnreadNotifications();
-      if (chatAppRef.value) {
-          chatAppRef.value.fetchMessages();
+      if (messagesAppRef.value) {
+          messagesAppRef.value.fetchNotifications();
       }
   });
 
@@ -640,15 +644,10 @@ onUnmounted(() => {
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
 
-                <button v-if="isAppVisible('chat')" @click="activeTool = 'chat'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'chat' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <MessageSquare class="w-5 h-5" />
+                <button v-if="isAppVisible('messages')" @click="activeTool = 'messages'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'messages' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <MessageCircle class="w-5 h-5" />
                    <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Chat</span>
-                </button>
-
-                <button v-if="isAppVisible('syn')" @click="activeTool = 'syn'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'syn' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <SynIcon class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Messages</span>
                 </button>
 
                 <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">

@@ -37,6 +37,7 @@ export interface SynMessage {
   sources?: SourceRef[];  // Source references from RAG
   tool_calls_log?: SynToolCallEvent[];
   images?: string[];  // base64 encoded
+  notification?: any; // The raw chat notification
 }
 
 export interface SourceRef {

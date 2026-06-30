@@ -13,7 +13,7 @@ export function useNoteSave(
   bus: any,
 ) {
   const saveTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-  const editorRefs = ref<any[]>([]);
+  const editorRefs = ref<Record<string, any>>({});
   let suppressWatcherUntil = 0;
 
   const getSuppressWatcherUntil = () => suppressWatcherUntil;

@@ -14,7 +14,7 @@ pub const MAILBOX_ALPN: &[u8] = b"synabit/mailbox/1";
 
 /// Maximum size of a single framed message (16 MiB).
 /// Prevents a malicious peer from forcing unbounded memory allocation.
-pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
+pub const MAX_MESSAGE_SIZE: u32 = 128 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Trash metadata (synced soft-delete)

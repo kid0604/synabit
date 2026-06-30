@@ -570,7 +570,7 @@ onMounted(async () => {
                    </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">
-                   <TiptapEditor ref="save.editorRefs" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :notes="notes" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
+                   <TiptapEditor :ref="(el) => { const refs = save.editorRefs.value || save.editorRefs; if (el) refs[tabId] = el; else delete refs[tabId]; }" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :notes="notes" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
                 </div>
                 </div>
               </div>
