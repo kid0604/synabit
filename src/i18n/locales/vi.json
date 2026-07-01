@@ -885,5 +885,15 @@
     "confirm_pull_btn": "Tải",
     "pull_error_title": "Không thể tải model",
     "pull_error_desc": "Không tìm thấy model hoặc lỗi mạng. Kiểm tra lại tên model và thử lại."
+  },
+  "update": {
+    "available": "Synabit {version} đã sẵn sàng!",
+    "installNow": "Cập nhật ngay",
+    "later": "Để sau",
+    "downloading": "Đang tải bản cập nhật...",
+    "checking": "Đang kiểm tra...",
+    "checkNow": "Kiểm tra cập nhật",
+    "upToDate": "Bạn đang dùng phiên bản mới nhất!",
+    "failed": "Cập nhật thất bại. Vui lòng thử lại sau."
   }
 }

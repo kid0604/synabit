@@ -885,5 +885,15 @@
     "confirm_pull_btn": "Pull",
     "pull_error_title": "Failed to download model",
     "pull_error_desc": "Model not found or network error. Check the model name and try again."
+  },
+  "update": {
+    "available": "Synabit {version} is available!",
+    "installNow": "Update Now",
+    "later": "Later",
+    "downloading": "Downloading update...",
+    "checking": "Checking...",
+    "checkNow": "Check for Updates",
+    "upToDate": "You're running the latest version!",
+    "failed": "Update failed. Please try again later."
   }
 }

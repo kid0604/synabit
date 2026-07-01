@@ -46,6 +46,8 @@
       ]
     },
     "opener:allow-open-url",
-    "notification:default"
+    "notification:default",
+    "updater:default",
+    "process:default"
   ]
 }

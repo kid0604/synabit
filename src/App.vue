@@ -26,6 +26,7 @@ import { useGDrive } from './composables/useGDrive';
 import { useP2PSync } from './composables/useP2PSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
+import { useAppUpdate } from './composables/useAppUpdate';
 
 import SynIcon from './shared/icons/SynIcon.vue';
 
@@ -40,6 +41,14 @@ import { storeToRefs } from 'pinia';
 
 const bus = useEventBus();
 const ns = useNodeService();
+
+// ─── Auto-Update ──────────────────────────────────────────
+const {
+  updateAvailable, updateVersion,
+  isDownloading: updateDownloading,
+  downloadProgress: updateProgress,
+  downloadAndInstall, dismissUpdate,
+} = useAppUpdate();
 
 // ─── Settings ─────────────────────────────────────────────
 const {
@@ -587,7 +596,43 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none">
-       
+
+    <!-- ═══ Auto-Update Banner ═══ -->
+    <Transition name="slide-down">
+      <div v-if="updateAvailable && !updateDownloading"
+           class="fixed top-0 left-0 right-0 z-[9999] bg-indigo-600 text-white px-4 py-2.5 flex items-center justify-between shadow-lg">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <svg class="w-4 h-4 flex-shrink-0 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span class="text-sm font-medium truncate">{{ $t('update.available', { version: updateVersion }) }}</span>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <button @click="downloadAndInstall"
+                  class="bg-white text-indigo-600 px-3 py-1 rounded-md text-xs font-semibold hover:bg-indigo-50 transition cursor-pointer">
+            {{ $t('update.installNow') }}
+          </button>
+          <button @click="dismissUpdate"
+                  class="text-indigo-200 hover:text-white px-2 py-1 text-xs transition cursor-pointer">
+            {{ $t('update.later') }}
+          </button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ═══ Update Download Progress ═══ -->
+    <div v-if="updateDownloading"
+         class="fixed top-0 left-0 right-0 z-[9999] bg-indigo-600 text-white px-4 py-2.5 shadow-lg">
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-xs font-medium">{{ $t('update.downloading') }}</span>
+        <span class="text-xs tabular-nums">{{ updateProgress }}%</span>
+      </div>
+      <div class="w-full bg-indigo-400/50 rounded-full h-1.5">
+        <div class="bg-white h-1.5 rounded-full transition-all duration-300 ease-out"
+             :style="{ width: updateProgress + '%' }"/>
+      </div>
+    </div>
+
     <!-- Application State 0: Initializing -->
     <div v-if="!appStore.isReady" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
     </div>
@@ -834,5 +879,16 @@ onUnmounted(() => {
 <style scoped>
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
+}
+
+/* Auto-Update banner slide transition */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  transform: translateY(-100%);
+  opacity: 0;
 }
 </style>
