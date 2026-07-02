@@ -24,7 +24,7 @@ const {
 } = useSettings();
 
 const {
-  updateAvailable, updateVersion,
+  updateAvailable, updateVersion, updateNotes,
   isChecking: updateChecking,
   isDownloading: updateDownloading,
   downloadProgress: updateProgress,
@@ -904,7 +904,7 @@ const restoreFromPhrase = async () => {
                     
                     <div v-if="isDesktop" class="mt-8 flex flex-col items-center gap-3">
                       <!-- Check for Updates -->
-                      <button @click="checkForUpdates(false)" 
+                      <button @click="checkForUpdates(false, true)" 
                               :disabled="updateChecking || updateDownloading"
                               class="px-4 py-2 rounded-lg text-[12px] font-medium border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         <RefreshCw v-if="updateChecking" class="w-4 h-4 animate-spin" />
@@ -932,6 +932,12 @@ const restoreFromPhrase = async () => {
                               class="px-4 py-2 rounded-lg text-[12px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-all">
                         {{ $t('update.installNow') }}
                       </button>
+
+                      <!-- Release Notes (khi có update) -->
+                      <p v-if="updateAvailable && updateNotes" 
+                         class="text-[11px] text-gray-500 dark:text-gray-400 max-w-xs text-center leading-relaxed">
+                        {{ updateNotes.split('\n').slice(0, 3).join('\n') }}
+                      </p>
 
                       <!-- Open Logs -->
                       <button @click="openLogFolder" class="px-4 py-2 rounded-lg text-[12px] font-medium border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] transition-all flex items-center gap-2">
@@ -1004,6 +1010,16 @@ const restoreFromPhrase = async () => {
 }
 .settings-modal-leave-to > div:last-child {
   transform: scale(0.95) translateY(10px);
+  opacity: 0;
+}
+
+/* Fade transition for update check result */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

@@ -44,7 +44,7 @@ const ns = useNodeService();
 
 // ─── Auto-Update ──────────────────────────────────────────
 const {
-  updateAvailable, updateVersion,
+  updateAvailable, updateVersion, updateNotes,
   isDownloading: updateDownloading,
   downloadProgress: updateProgress,
   downloadAndInstall, dismissUpdate,
@@ -605,7 +605,10 @@ onUnmounted(() => {
           <svg class="w-4 h-4 flex-shrink-0 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
-          <span class="text-sm font-medium truncate">{{ $t('update.available', { version: updateVersion }) }}</span>
+          <div class="min-w-0">
+            <span class="text-sm font-medium truncate block">{{ $t('update.available', { version: updateVersion }) }}</span>
+            <span v-if="updateNotes" class="text-xs text-indigo-200 truncate block mt-0.5">{{ updateNotes.split('\n')[0] }}</span>
+          </div>
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
           <button @click="downloadAndInstall"

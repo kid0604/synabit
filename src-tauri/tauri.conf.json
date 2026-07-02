@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost blob: data: https://*.tile.openstreetmap.org; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://router.project-osrm.org; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://*.google.com https://google.com https://*.openstreetmap.org https://openstreetmap.org;",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost blob: data: https://*.tile.openstreetmap.org; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://router.project-osrm.org https://github.com https://objects.githubusercontent.com; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://*.google.com https://google.com https://*.openstreetmap.org https://openstreetmap.org;",
       "assetProtocol": {
         "enable": true,
         "scope": [
