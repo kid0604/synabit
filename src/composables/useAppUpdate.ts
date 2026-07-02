@@ -23,6 +23,9 @@ export function useAppUpdate() {
   const isDownloading = ref(false)
   const downloadProgress = ref(0) // 0-100
   const error = ref<string | null>(null)
+  // Result of last manual check: 'up-to-date' | 'error' | null
+  const lastCheckResult = ref<'up-to-date' | 'error' | null>(null)
+  let resultClearTimer: ReturnType<typeof setTimeout> | null = null
 
   // Internal reference to the Update object (not reactive — it's a class instance)
   let pendingUpdate: Update | null = null
@@ -46,10 +49,15 @@ export function useAppUpdate() {
         updateAvailable.value = true
         updateVersion.value = update.version
         updateNotes.value = update.body ?? ''
+        lastCheckResult.value = null
         console.log(`[Update] New version available: ${update.version}`)
         return true
       } else {
         updateAvailable.value = false
+        if (!silent) {
+          lastCheckResult.value = 'up-to-date'
+          autoCleanResult()
+        }
         console.log('[Update] Already up to date.')
         return false
       }
@@ -59,11 +67,21 @@ export function useAppUpdate() {
 
       if (!silent) {
         error.value = message
+        lastCheckResult.value = 'error'
+        autoCleanResult()
       }
       return false
     } finally {
       isChecking.value = false
     }
+  }
+
+  /** Auto-clear the check result after 5 seconds */
+  function autoCleanResult() {
+    if (resultClearTimer) clearTimeout(resultClearTimer)
+    resultClearTimer = setTimeout(() => {
+      lastCheckResult.value = null
+    }, 5000)
   }
 
   /**
@@ -138,6 +156,7 @@ export function useAppUpdate() {
     isDownloading,
     downloadProgress,
     error,
+    lastCheckResult,
 
     // Actions
     checkForUpdates,

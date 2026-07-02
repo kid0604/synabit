@@ -28,6 +28,7 @@ const {
   isChecking: updateChecking,
   isDownloading: updateDownloading,
   downloadProgress: updateProgress,
+  lastCheckResult,
   checkForUpdates, downloadAndInstall,
 } = useAppUpdate();
 
@@ -914,6 +915,16 @@ const restoreFromPhrase = async () => {
                         </template>
                         <template v-else>{{ $t('update.checkNow') }}</template>
                       </button>
+
+                      <!-- Check Result Feedback -->
+                      <Transition name="fade">
+                        <p v-if="lastCheckResult === 'up-to-date'" class="text-[12px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                          <Check class="w-3.5 h-3.5" /> {{ $t('update.upToDate') }}
+                        </p>
+                        <p v-else-if="lastCheckResult === 'error'" class="text-[12px] text-red-500 dark:text-red-400">
+                          {{ $t('update.failed') }}
+                        </p>
+                      </Transition>
 
                       <!-- Install button (khi có update) -->
                       <button v-if="updateAvailable && !updateDownloading" 
