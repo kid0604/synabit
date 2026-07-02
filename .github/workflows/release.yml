@@ -22,8 +22,8 @@ jobs:
             rust-target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
 
-          # macOS Intel
-          - platform: macos-13
+          # macOS Intel (cross-compile on ARM runner — macos-13 runners are scarce)
+          - platform: macos-latest
             rust-target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
 
