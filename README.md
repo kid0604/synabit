@@ -1,20 +1,32 @@
 # Synabit Productivity Suite
 
-Synabit is a modern, ultra-fast productivity workspace built for macOS. Combining the power of a Markdown-based Zettelkasten knowledge vault with high-speed fleeting notes (QuickCaps), Synabit is designed to keep you focused.
+Synabit is a modern, ultra-fast, local-first productivity workspace. Designed to be your ultimate digital brain, it eliminates the need to jump between multiple apps by unifying your notes, tasks, calendar, and ideas into one seamless, cross-platform environment.
 
-## Features (v0.5.0)
-- **Note Vault**: A robust Markdown note management system. Notes are stored securely in your local `Notes/` folder.
-- **QuickCap**: A lightning-fast fleeting note tool inspired by Google Keep and Apple Notes.
-  - Masonry layout for variable-height cards.
-  - Image pasting (`Cmd+V`) support directly into notes.
-  - Inline, Bear.app style tagging system (e.g., `#idea#`) supporting multi-word tags.
-  - Real-time text search and `#tag` filtering.
-- **Privacy First**: Everything is stored as local `.md` files on your device, not on the cloud.
+Whether you are a developer, student, or professional, Synabit keeps you focused, organized, and in complete control of your own data.
+
+## Why Synabit?
+
+- **All-in-One Digital Workspace**: No more context switching. Manage your deep-focus writing, quick fleeting ideas, daily tasks, calendar, and even RSS feeds or finances from a single beautiful interface.
+- **True Local-First & Privacy**: Your data belongs to you. Everything is stored locally on your device inside an encrypted database. Zero telemetry, no forced cloud accounts, and no vendor lock-in.
+- **Serverless P2P Sync**: Keep your devices in sync seamlessly. Synabit uses custom peer-to-peer (P2P) technology to securely transfer your data across devices over LAN—no central server required.
+- **AI-Powered**: Integrate with your local LLMs (like Ollama) or cloud models to brainstorm, summarize, and assist you right inside your workspace without compromising privacy.
+
+## Key Features
+
+- **Note Vault**: A robust, block-based Markdown knowledge base with a rich-text editor for deep work.
+- **QuickCap**: A lightning-fast, masonry-layout tool for capturing fleeting ideas, images, and links instantly.
+- **Whiteboard**: An infinite canvas for drawing, architecture diagrams, and visual thinking.
+- **Task Management**: Comprehensive task tracking with Kanban boards, Gantt charts, and Eisenhower matrices.
+- **Smart Mini-Apps**: Built-in modules for managing RSS Feeds, Calendar, People (Contacts), and Personal Finance.
+- **Drive / Files**: Integrated local file manager with Google Drive backup support.
 
 ## Tech Stack
+Synabit is built for speed, beauty, and cross-platform compatibility (macOS, Windows, Linux, and Mobile):
 - **Frontend**: Vue 3, Vite, Tailwind CSS, TypeScript
-- **UI Framework**: Vanilla CSS with Modern Glassmorphism and Lucide Icons
-- **Backend/Core**: Tauri (Rust Platform)
+- **UI Framework**: Custom Modern Glassmorphism & Micro-animations
+- **Backend/Core**: Tauri 2.0 (Rust)
+- **Database**: SQLite (`rusqlite`)
+- **Networking**: `iroh` (P2P Sync)
 
 ## Development
 ```bash
