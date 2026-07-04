@@ -77,6 +77,14 @@ hex = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
+# Licensing
+sysinfo = "0.33.0"
+ed25519-dalek = { version = "2.2.0" }
+machine-uid = "0.6.0"
+
 [dev-dependencies]
 text-diff = "0.4.0"
 
+[features]
+default = []
+official-build = []

@@ -1,0 +1,11 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/bitflags-2434b435db9c2df9.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/iter.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/parser.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/traits.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/public.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/internal.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/external.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libbitflags-2434b435db9c2df9.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/iter.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/parser.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/traits.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/public.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/internal.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/external.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/iter.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/parser.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/traits.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/public.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/internal.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.0/src/external.rs:

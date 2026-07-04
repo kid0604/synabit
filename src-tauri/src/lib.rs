@@ -18,7 +18,11 @@ pub mod secrets;
 pub mod feed_engine;
 pub mod syn;
 
-use commands::{chat, feeds, files, nexus, nodes, p2p_sync, syn as syn_commands, whiteboards};
+pub mod hwid;
+pub mod signing;
+pub mod license;
+
+use commands::{chat, feeds, files, nexus, nodes, p2p_sync, syn as syn_commands, whiteboards, license_cmds};
 use db::DbBridge;
 
 #[tauri::command]
@@ -124,6 +128,17 @@ pub fn run() {
             
             if let Err(e) = crate::p2p::init(app) {
                 log::error!("Failed to init P2P module: {}", e);
+            }
+
+            #[cfg(feature = "official-build")]
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    log::info!("Running background license heartbeat check...");
+                    // Try heartbeat. We ignore errors since it could be offline.
+                    // If revoked, the command itself will delete the local license file.
+                    let _ = commands::license_cmds::heartbeat_license(app_handle).await;
+                });
             }
 
             Ok(())
@@ -277,6 +292,15 @@ pub fn run() {
             // Key Rotation
             p2p_sync::p2p_current_epoch,
             p2p_sync::p2p_revoke_device,
+
+            // License
+            license_cmds::get_license_state,
+            license_cmds::get_hwid,
+            license_cmds::activate_trial,
+            license_cmds::activate_license_key,
+            license_cmds::deactivate_license,
+            license_cmds::refresh_license,
+            license_cmds::heartbeat_license,
 
             // System
             open_app_log_folder,

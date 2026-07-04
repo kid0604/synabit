@@ -1,0 +1,12 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/crc-33ed8dae7054a923.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc128.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc16.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc32.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc64.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc8.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/table.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/util.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libcrc-33ed8dae7054a923.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc128.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc16.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc32.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc64.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc8.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/table.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/util.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc128.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc16.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc32.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc64.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/crc8.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/table.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crc-3.4.0/src/util.rs:

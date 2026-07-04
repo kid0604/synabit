@@ -18,6 +18,7 @@ import { storeToRefs } from 'pinia';
 import { logger } from '../../utils/logger';
 import type { NavEntry } from '../../stores/useNavigationStore';
 import { useAppLockStore } from '../../stores/useAppLockStore';
+import { useLicenseStore } from '../../stores/useLicenseStore';
 
 import type { NoteItem } from './helpers';
 import { formatDate, buildNotePayload } from './helpers';
@@ -49,6 +50,7 @@ const props = defineProps<{
 
 const appStore = useAppStore();
 const appLockStore = useAppLockStore();
+const licenseStore = useLicenseStore();
 const { enableDailyNotes, dailyNoteFormat, dailyNoteTag } = storeToRefs(appStore);
 const vaultPathRef = toRef(props, 'vaultPath');
 
@@ -566,7 +568,8 @@ onMounted(async () => {
                        @input="tabs.focusedTitles.value[tabId] = ($event.target as HTMLTextAreaElement).value"
                        @blur="rename.renameTopTitle"
                        @keydown.enter.prevent="rename.renameTopTitle"
-                       :placeholder="$t('note.note_title')"></textarea>
+                       :placeholder="$t('note.note_title')"
+                       :readonly="licenseStore.isReadOnly"></textarea>
                    </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">

@@ -1,0 +1,14 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/thiserror-895ff3f441ea570c.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libthiserror-895ff3f441ea570c.rlib: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libthiserror-895ff3f441ea570c.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out

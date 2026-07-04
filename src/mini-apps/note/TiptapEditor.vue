@@ -40,6 +40,7 @@ import EmojiSuggestionMenu from './EmojiSuggestionMenu.vue';
 import { emojiData } from './emojiData';
 import CodeBlockComponent from './CodeBlockComponent.vue';
 import { useSettings } from '../../composables/useSettings';
+import { useLicenseStore } from '../../stores/useLicenseStore';
 import { logger } from '../../utils/logger';
 
 // --- Extracted CSS ---
@@ -108,7 +109,8 @@ onMounted(async () => {
   }
 });
 
-// --- Bubble Menu ---
+
+// --- Toolbar Toggles ---
 const showBubble = ref(false);
 const bubblePos = ref({ top: 0, left: 0 });
 
@@ -145,8 +147,11 @@ const slashCommandItems = (): SlashCommandItem[] => createSlashCommandItems({
 });
 
 // --- Editor ---
+const licenseStore = useLicenseStore();
+
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
+  editable: !licenseStore.isReadOnly,
   extensions: [
     StarterKit.configure({
       codeBlock: false,

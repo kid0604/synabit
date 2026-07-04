@@ -1,0 +1,12 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/thiserror-c5440f0c2e32bfe5.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libthiserror-c5440f0c2e32bfe5.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/thiserror-609a11dd09e95319/out

@@ -10,4 +10,4 @@ pub mod app_lock;
 pub mod feeds;
 pub mod syn;
 pub mod p2p_sync;
-
+pub mod license_cmds;

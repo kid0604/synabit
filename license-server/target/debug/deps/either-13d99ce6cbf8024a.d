@@ -1,0 +1,11 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/either-13d99ce6cbf8024a.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged_optional.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/iterator.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/into_either.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libeither-13d99ce6cbf8024a.rlib: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged_optional.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/iterator.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/into_either.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libeither-13d99ce6cbf8024a.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged_optional.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/iterator.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/into_either.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/serde_untagged_optional.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/iterator.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.16.0/src/into_either.rs:

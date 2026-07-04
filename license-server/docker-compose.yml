@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  license-server:
+    build: .
+    container_name: synabit-license-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite://data/license.db
+      - LICENSE_PRIVATE_KEY=${LICENSE_PRIVATE_KEY}
+      - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET}
+      - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN}

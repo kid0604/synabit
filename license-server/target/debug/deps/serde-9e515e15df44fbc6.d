@@ -1,0 +1,14 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/serde-9e515e15df44fbc6.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libserde-9e515e15df44fbc6.rlib: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libserde-9e515e15df44fbc6.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/serde-23fcc076a5b7eed8/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/build/serde-23fcc076a5b7eed8/out

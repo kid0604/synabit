@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, MessageCircle, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageSquare, MessageCircle, Palette, MoreHorizontal, Rss, Server, Shield, TerminalSquare } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -37,7 +37,13 @@ import MobileLayout from './layouts/MobileLayout.vue';
 import { useAppStore } from './stores/useAppStore';
 import { useNavigationStore, type NavEntry } from './stores/useNavigationStore';
 import { useAppLockStore } from './stores/useAppLockStore';
+import { useLicenseStore } from './stores/useLicenseStore';
 import { storeToRefs } from 'pinia';
+
+const LicenseModal = defineAsyncComponent(() => import('./shared/components/LicenseModal.vue'));
+const showLicenseModal = ref(false);
+
+const licenseStore = useLicenseStore();
 
 const bus = useEventBus();
 const ns = useNodeService();
@@ -439,6 +445,10 @@ onMounted(async () => {
   await appStore.initialize();
   await initSettings();
   await initEventBus();
+  await licenseStore.checkState();
+  if (licenseStore.licenseStatus.type === 'NoLicense') {
+      showLicenseModal.value = true;
+  }
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   window.addEventListener('keydown', handleKeyboardNav);
@@ -774,6 +784,16 @@ onUnmounted(() => {
                    <Server v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ p2p.p2pSyncing.value ? 'P2P Syncing…' : p2p.p2pSyncError.value ? 'P2P Error' : p2p.lastSyncTime.value ? `P2P ${p2p.lastSyncTime.value}` : 'P2P Sync' }}</span>
                 </button>
+                 <button @click="showLicenseModal = true" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showLicenseModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <div v-if="licenseStore.isPro" class="text-green-500 font-bold text-xs"><Shield class="w-5 h-5"/></div>
+                   <div v-else-if="licenseStore.isTrial" class="text-orange-500 font-bold text-xs flex flex-col items-center leading-none">
+                       <span>{{ licenseStore.daysLeft }}</span>
+                       <span class="text-[8px]">days</span>
+                   </div>
+                   <TerminalSquare v-else-if="licenseStore.isDev" class="w-5 h-5 text-blue-500" />
+                   <Shield v-else class="w-5 h-5 text-red-500" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">License</span>
+                </button>
                  <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
@@ -859,6 +879,7 @@ onUnmounted(() => {
 
     <!-- E2EE Onboarding Modal -->
     <E2eeOnboarding v-if="showE2eeOnboarding" @done="showE2eeOnboarding = false" />
+    <LicenseModal :isOpen="showLicenseModal" @close="showLicenseModal = false" />
 
     <!-- Tier 1: App Lock Screen -->
     <LockScreen

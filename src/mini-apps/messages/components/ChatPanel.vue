@@ -9,7 +9,9 @@ import type { SynMessage, SynToolCallEvent, SourceRef } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
 import NotificationCard from './NotificationCard.vue';
+import { useLicenseStore } from '../../../stores/useLicenseStore';
 
+const licenseStore = useLicenseStore();
 const MAX_IMAGES = 4;
 
 const props = defineProps<{
@@ -215,7 +217,7 @@ const removeImage = (index: number) => {
 
 // Whether the send button should be active
 const canSend = computed(() => {
-  return (inputText.value.trim() || pendingImages.value.length > 0) && !props.isStreaming;
+  return (inputText.value.trim() || pendingImages.value.length > 0) && !props.isStreaming && !licenseStore.isReadOnly;
 });
 
 const handleSend = () => {
@@ -399,8 +401,8 @@ const handleStop = () => {
               @paste="handlePaste"
               @compositionstart="isComposing = true"
               @compositionend="isComposing = false"
-              :placeholder="$t('syn.input_placeholder')"
-              :disabled="false"
+              :placeholder="licenseStore.isReadOnly ? 'App is in Read-Only mode' : $t('syn.input_placeholder')"
+              :disabled="licenseStore.isReadOnly"
               rows="1"
               class="flex-1 resize-none bg-transparent px-4 py-3.5 text-sm text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500 outline-none max-h-[200px] leading-relaxed"
             />
@@ -410,9 +412,9 @@ const handleStop = () => {
               <!-- Attach image button -->
               <button
                 @click="handleAttachImage"
-                :disabled="pendingImages.length >= MAX_IMAGES"
+                :disabled="pendingImages.length >= MAX_IMAGES || licenseStore.isReadOnly"
                 class="p-2 rounded-xl transition-all cursor-pointer"
-                :class="pendingImages.length >= MAX_IMAGES
+                :class="pendingImages.length >= MAX_IMAGES || licenseStore.isReadOnly
                   ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
                   : 'text-gray-400 dark:text-gray-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
                 :title="$t('syn.attach_image')"
