@@ -15,10 +15,7 @@ useSeoMeta({
 
     <!-- Hero Section -->
     <UContainer class="pt-24 pb-32 text-center">
-      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 text-sm font-medium mb-8 ring-1 ring-cyan-500/20">
-        <UIcon name="i-heroicons-sparkles" class="w-4 h-4" />
-        <span>Synabit 0.6.0 is out now!</span>
-      </div>
+
       
       <h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-r from-slate-900 via-slate-700 to-slate-500 dark:from-white dark:via-slate-200 dark:to-slate-400 bg-clip-text text-transparent">
         Your Ultimate <br class="hidden md:block" /> Digital Brain
