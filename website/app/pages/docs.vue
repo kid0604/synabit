@@ -7,8 +7,9 @@ useSeoMeta({
   description: 'Learn how to use Synabit, the local-first digital brain.'
 })
 
-// Trỏ tới thư mục public/content hoặc một URL từ GitHub Raw
-const { data: markdownContent } = await useFetch('/content/docs/getting-started.md')
+// Trỏ tới GitHub Raw để luôn lấy bản mới nhất khi push lên Github
+const githubRawUrl = 'https://raw.githubusercontent.com/kid0604/synabit/main/website/public/content/docs/getting-started.md'
+const { data: markdownContent } = await useFetch(githubRawUrl)
 
 const htmlContent = computed(() => {
   if (!markdownContent.value) return 'Loading documentation...'
