@@ -35,10 +35,10 @@ const links = [
   {
     title: 'Core Features',
     items: [
-      { label: 'Note Vault', to: '/docs' },
-      { label: 'Task Management', to: '/docs' },
-      { label: 'Whiteboard', to: '/docs' },
-      { label: 'Local AI', to: '/docs' }
+      { label: 'Note Vault', to: '/docs/note-vault' },
+      { label: 'Task Management', to: '/docs/task-management' },
+      { label: 'Whiteboard', to: '/docs/whiteboard' },
+      { label: 'Local AI', to: '/docs/local-ai' }
     ]
   }
 ]
