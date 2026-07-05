@@ -33,5 +33,5 @@ COPY --from=builder /usr/src/app/migrations ./migrations
 
 EXPOSE 3000
 
-ENV DATABASE_URL=sqlite://data/license.db
-CMD ["./license-server"]
+ENV DATABASE_URL=sqlite:///app/data/license.db
+CMD mkdir -p /app/data && touch /app/data/license.db && ./license-server
