@@ -1,39 +1,59 @@
-# ============================================================================
-# Synabit Sync Server & License Server — Docker Compose
-# ============================================================================
+version: '3.8'
 
 services:
-  sync-server:
-    build:
-      context: ./sync-server
-      dockerfile: Dockerfile
-    container_name: synabit-sync-server
-    restart: unless-stopped
+  traefik:
+    image: traefik:v3.0
+    container_name: synabit-traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.sync.address=:4433/udp"
+      # Cấu hình tự động lấy chứng chỉ SSL Let's Encrypt
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=admin@synabit.net"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
     ports:
-      # QUIC endpoint (UDP)
+      - "80:80"
+      - "443:443"
       - "4433:4433/udp"
-      # HTTP health endpoint
-      - "8080:8080/tcp"
     volumes:
-      # Persist data (SQLite DB, blobs) across container restarts.
-      - sync-data:/app/data
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-certs:/letsencrypt"
+    networks:
+      - synabit-network
+    restart: unless-stopped
+
+  website:
+    build: 
+      context: ./website
+      dockerfile: Dockerfile
+    container_name: synabit-website
     environment:
-      - RUST_LOG=info
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
+      - HOST=0.0.0.0
+      - PORT=3000
+      - NODE_ENV=production
+    labels:
+      - "traefik.enable=true"
+      # HTTPS router
+      - "traefik.http.routers.website.rule=Host(`synabit.net`) || Host(`www.synabit.net`)"
+      - "traefik.http.routers.website.entrypoints=websecure"
+      - "traefik.http.routers.website.tls.certresolver=myresolver"
+      # HTTP to HTTPS redirect
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.website-http.rule=Host(`synabit.net`) || Host(`www.synabit.net`)"
+      - "traefik.http.routers.website-http.entrypoints=web"
+      - "traefik.http.routers.website-http.middlewares=redirect-to-https"
+    networks:
+      - synabit-network
+    restart: unless-stopped
 
   license-server:
     build:
       context: ./license-server
       dockerfile: Dockerfile
     container_name: synabit-license-server
-    restart: unless-stopped
-    ports:
-      - "3000:3000/tcp"
     volumes:
       - license-data:/app/data
     env_file:
@@ -44,9 +64,48 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`license.synabit.net`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=myresolver"
+    networks:
+      - synabit-network
+    restart: unless-stopped
+
+  sync-server:
+    build:
+      context: ./sync-server
+      dockerfile: Dockerfile
+    container_name: synabit-sync-server
+    volumes:
+      - sync-data:/app/data
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.udp.routers.sync.entrypoints=sync"
+      # Forward port 4433 UDP into the container
+      - "traefik.udp.services.sync.loadbalancer.server.port=4433"
+    networks:
+      - synabit-network
+    restart: unless-stopped
+
+networks:
+  synabit-network:
+    driver: overlay
+    attachable: true
 
 volumes:
   sync-data:
     driver: local
   license-data:
+    driver: local
+  traefik-certs:
     driver: local
