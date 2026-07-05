@@ -1,4 +1,4 @@
-version: '3.8'
+name: synabit
 
 services:
   traefik:
@@ -29,7 +29,7 @@ services:
 
   website:
     build: 
-      context: ./website
+      context: ../website
       dockerfile: Dockerfile
     container_name: synabit-website
     environment:
@@ -53,7 +53,7 @@ services:
 
   license-server:
     build:
-      context: ./license-server
+      context: ../license-server
       dockerfile: Dockerfile
     container_name: synabit-license-server
     volumes:
@@ -63,7 +63,7 @@ services:
       - LICENSE_PRIVATE_KEY=b304c40591ce072522ff6cc19c5cff1c201880e60ab435ea6fcdb203cba26e85
       - POLAR_WEBHOOK_SECRET=dummy_secret
     env_file:
-      - ./license-server/.env
+      - ../license-server/.env
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=Host(`license.synabit.net`)"
@@ -75,7 +75,7 @@ services:
 
   sync-server:
     build:
-      context: ./sync-server
+      context: ../sync-server
       dockerfile: Dockerfile
     container_name: synabit-sync-server
     volumes:
