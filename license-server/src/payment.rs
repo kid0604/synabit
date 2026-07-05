@@ -76,9 +76,15 @@ impl PaymentProvider for PolarProvider {
         // Calculate HMAC-SHA256
         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
         
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.webhook_secret.as_bytes())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            
+        // Polar (Svix) webhook secret is a base64 encoded string prefixed with 'whsec_'
+        let secret_str = self.webhook_secret.strip_prefix("whsec_").unwrap_or(&self.webhook_secret);
+        let secret = base64::engine::general_purpose::STANDARD.decode(secret_str)
+            .unwrap_or_else(|_| self.webhook_secret.as_bytes().to_vec());
+
+        let mut mac = match Hmac::<Sha256>::new_from_slice(&secret) {
+            Ok(m) => m,
+            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
         mac.update(signed_payload.as_bytes());
         let expected_sig = BASE64.encode(mac.finalize().into_bytes());
 
