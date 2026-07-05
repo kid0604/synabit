@@ -22,6 +22,8 @@ pub struct PaymentEvent {
     pub customer_email: String,
     pub payment_id: String, // Subscription ID
     pub action: PaymentAction,
+    pub provider: String,
+    pub customer_id: Option<String>,
 }
 
 pub enum PaymentAction {
@@ -108,6 +110,7 @@ impl PaymentProvider for PolarProvider {
         struct PolarWebhookData {
             id: String, // Subscription ID
             status: String,
+            customer_id: Option<String>,
             customer: Option<PolarCustomer>,
         }
         
@@ -139,6 +142,8 @@ impl PaymentProvider for PolarProvider {
             customer_email: email,
             payment_id: event.data.id,
             action,
+            provider: "polar".to_string(),
+            customer_id: event.data.customer_id,
         }))
     }
 }
@@ -192,10 +197,10 @@ pub async fn handle_webhook(
                 
                 sqlx::query!(
                     r#"
-                    INSERT INTO licenses (license_key, type, status, max_devices, expires_at, customer_email, payment_id, created_at)
-                    VALUES (?, 'pro_monthly', 'active', 10, ?, ?, ?, ?)
+                    INSERT INTO licenses (license_key, type, status, max_devices, expires_at, customer_email, payment_id, payment_provider, customer_id, created_at)
+                    VALUES (?, 'pro_monthly', 'active', 10, ?, ?, ?, ?, ?, ?)
                     "#,
-                    new_key, expires_at, event.customer_email, event.payment_id, now
+                    new_key, expires_at, event.customer_email, event.payment_id, event.provider, event.customer_id, now
                 )
                 .execute(&mut *tx)
                 .await

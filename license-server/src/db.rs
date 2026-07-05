@@ -11,6 +11,8 @@ pub struct License {
     pub expires_at: chrono::NaiveDateTime,
     pub customer_email: Option<String>,
     pub payment_id: Option<String>,
+    pub payment_provider: Option<String>,
+    pub customer_id: Option<String>,
     pub created_at: chrono::NaiveDateTime,
 }
 
