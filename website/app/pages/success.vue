@@ -18,30 +18,30 @@ useSeoMeta({
         </div>
 
         <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white mb-6">
-          Thanh toán thành công!
+          Payment Successful!
         </h1>
         
         <p class="text-lg text-slate-600 dark:text-slate-300 mb-8 leading-relaxed">
-          Cảm ơn bạn đã nâng cấp lên Synabit Pro. Hệ thống đang tự động xử lý đơn hàng của bạn.
+          Thank you for upgrading to Synabit Pro. Your order is being processed automatically.
         </p>
 
         <div class="bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl ring-1 ring-slate-200 dark:ring-white/10 rounded-2xl p-8 mb-12 max-w-lg mx-auto text-left shadow-xl shadow-slate-200/20 dark:shadow-black/40">
           <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <UIcon name="i-heroicons-envelope-open" class="w-6 h-6 text-cyan-500" />
-            Bước tiếp theo
+            Next Steps
           </h3>
           <ul class="space-y-4">
             <li class="flex gap-3 text-slate-600 dark:text-slate-300">
               <span class="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center text-sm font-bold">1</span>
-              <span>Kiểm tra hộp thư email của bạn (bao gồm cả thư mục Spam/Junk).</span>
+              <span>Check your email inbox (including Spam/Junk folder).</span>
             </li>
             <li class="flex gap-3 text-slate-600 dark:text-slate-300">
               <span class="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center text-sm font-bold">2</span>
-              <span>Copy <strong>License Key</strong> đính kèm trong email.</span>
+              <span>Copy the <strong>License Key</strong> attached in the email.</span>
             </li>
             <li class="flex gap-3 text-slate-600 dark:text-slate-300">
               <span class="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center text-sm font-bold">3</span>
-              <span>Mở ứng dụng Synabit Desktop, vào Cài đặt > Bản quyền và dán mã để kích hoạt.</span>
+              <span>Open Synabit Desktop, go to Settings > License and paste the key to activate.</span>
             </li>
           </ul>
         </div>
@@ -54,7 +54,7 @@ useSeoMeta({
             variant="ghost"
             class="ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full px-8"
           >
-            Về trang chủ
+            Back to Home
           </UButton>
         </div>
       </div>
