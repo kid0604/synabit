@@ -99,8 +99,7 @@ services:
 
 networks:
   synabit-network:
-    driver: overlay
-    attachable: true
+    driver: bridge
 
 volumes:
   sync-data:
