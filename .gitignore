@@ -53,5 +53,8 @@ src-tauri/secrets/
 
 # Exclude target and random big files
 sync-server/target/
+license-server/target/
+src-tauri/target/
+target/
 synabit_logcat.txt
 root@*
