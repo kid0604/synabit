@@ -24,6 +24,7 @@ pub struct PaymentEvent {
     pub action: PaymentAction,
     pub provider: String,
     pub customer_id: Option<String>,
+    pub expires_at: Option<chrono::NaiveDateTime>,
 }
 
 pub enum PaymentAction {
@@ -112,6 +113,7 @@ impl PaymentProvider for PolarProvider {
             status: String,
             customer_id: Option<String>,
             customer: Option<PolarCustomer>,
+            current_period_end: Option<chrono::DateTime<chrono::Utc>>,
         }
         
         #[derive(Deserialize)]
@@ -144,6 +146,7 @@ impl PaymentProvider for PolarProvider {
             action,
             provider: "polar".to_string(),
             customer_id: event.data.customer_id,
+            expires_at: event.data.current_period_end.map(|d| d.naive_utc()),
         }))
     }
 }
@@ -180,7 +183,8 @@ pub async fn handle_webhook(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let now = Utc::now().naive_utc();
-            let expires_at = now + Duration::days(31); // Add 31 days for monthly
+            // Sử dụng expires_at từ Polar, nếu không có thì mặc định cộng 31 ngày
+            let expires_at = event.expires_at.unwrap_or_else(|| now + Duration::days(31));
 
             if let Some(id) = existing_id {
                 // Renew
