@@ -14,8 +14,7 @@ pub async fn send_license_email(to_email: &str, license_key: &str) -> Result<(),
     let client = Client::new();
     let url = "https://api.resend.com/emails";
 
-    // Vui lòng đổi email gửi tại đây nếu bạn verify domain thật.
-    let from_email = "onboarding@resend.dev"; // Dùng email mặc định của Resend để test
+    let from_email = "noreply@synabit.net";
 
     let html_content = format!(
         r#"
