@@ -954,6 +954,7 @@ name = "license-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "blake3",
  "chrono",
  "dotenvy",

@@ -10,7 +10,6 @@ use std::env;
 use std::sync::Arc;
 use hmac::{Hmac, Mac, KeyInit};
 use sha2::Sha256;
-use hex;
 
 use crate::api::AppState;
 
@@ -45,23 +44,53 @@ impl PolarProvider {
 
 impl PaymentProvider for PolarProvider {
     fn verify_webhook(&self, headers: &HeaderMap, body: &[u8]) -> Result<(), StatusCode> {
-        // Polar uses standard Stripe-like webhook signatures
-        // Header: `webhook-signature` or `stripe-signature`
-        // We'll use a simplified HMAC validation for Polar
-        
-        let signature_header = headers.get("webhook-signature")
+        // Polar uses Standard Webhooks (Svix)
+        let msg_id = headers.get("webhook-id")
+            .ok_or(StatusCode::UNAUTHORIZED)?
+            .to_str()
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+            
+        let msg_timestamp = headers.get("webhook-timestamp")
+            .ok_or(StatusCode::UNAUTHORIZED)?
+            .to_str()
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+            
+        let msg_signature = headers.get("webhook-signature")
             .ok_or(StatusCode::UNAUTHORIZED)?
             .to_str()
             .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
+        // Construct the signed payload: "msg_id.timestamp.body"
+        let mut signed_payload = String::new();
+        signed_payload.push_str(msg_id);
+        signed_payload.push('.');
+        signed_payload.push_str(msg_timestamp);
+        signed_payload.push('.');
+        
+        let body_str = std::str::from_utf8(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        signed_payload.push_str(body_str);
+
+        // Calculate HMAC-SHA256
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        
         let mut mac = Hmac::<Sha256>::new_from_slice(self.webhook_secret.as_bytes())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             
-        mac.update(body);
-        let result = mac.finalize().into_bytes();
-        let expected_signature = hex::encode(result);
+        mac.update(signed_payload.as_bytes());
+        let expected_sig = BASE64.encode(mac.finalize().into_bytes());
 
-        if signature_header != expected_signature {
+        // webhook-signature can contain multiple space-separated signatures: "v1,sig1 v1,sig2"
+        let mut is_valid = false;
+        for sig_part in msg_signature.split(' ') {
+            if let Some(sig) = sig_part.strip_prefix("v1,") {
+                if sig == expected_sig {
+                    is_valid = true;
+                    break;
+                }
+            }
+        }
+
+        if !is_valid {
             return Err(StatusCode::UNAUTHORIZED);
         }
 
@@ -79,7 +108,12 @@ impl PaymentProvider for PolarProvider {
         struct PolarWebhookData {
             id: String, // Subscription ID
             status: String,
-            user_email: Option<String>,
+            customer: Option<PolarCustomer>,
+        }
+        
+        #[derive(Deserialize)]
+        struct PolarCustomer {
+            email: String,
         }
 
         let event: PolarWebhook = serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -99,7 +133,7 @@ impl PaymentProvider for PolarProvider {
             _ => return Ok(None),
         };
 
-        let email = event.data.user_email.unwrap_or_default();
+        let email = event.data.customer.map(|c| c.email).unwrap_or_default();
 
         Ok(Some(PaymentEvent {
             customer_email: email,
