@@ -215,6 +215,15 @@ pub async fn handle_webhook(
                 .execute(&mut *tx)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                // Gửi email không đợi (fire and forget) để tránh block webhook
+                let email_clone = event.customer_email.clone();
+                let key_clone = new_key.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::email::send_license_email(&email_clone, &key_clone).await {
+                        tracing::error!("Failed to send license email in background: {}", e);
+                    }
+                });
             }
         }
         PaymentAction::CancelledOrExpired => {

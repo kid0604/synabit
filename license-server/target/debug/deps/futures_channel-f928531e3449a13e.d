@@ -1,0 +1,10 @@
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/futures_channel-f928531e3449a13e.d: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lock.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/mod.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/queue.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/sink_impl.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/oneshot.rs
+
+/Users/kid0604/Desktop/Projects/synabit/license-server/target/debug/deps/libfutures_channel-f928531e3449a13e.rmeta: /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lib.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lock.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/mod.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/queue.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/sink_impl.rs /Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/oneshot.rs
+
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lib.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/lock.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/mod.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/queue.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/sink_impl.rs:
+/Users/kid0604/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/oneshot.rs:

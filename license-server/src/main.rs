@@ -2,6 +2,7 @@ mod api;
 mod crypto;
 mod db;
 mod payment;
+pub mod email;
 
 use axum::{
     routing::{post, get},
