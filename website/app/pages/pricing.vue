@@ -41,7 +41,7 @@ const plans = [
     buttonText: 'Subscribe Now',
     buttonColor: 'primary',
     buttonVariant: 'solid',
-    buttonTo: '#'
+    buttonTo: 'https://buy.polar.sh/polar_cl_xjks376haGFsjPFNyh2uRpAV4TfG4orQnHiQS4ERlye'
   }
 ]
 </script>
