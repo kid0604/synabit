@@ -784,16 +784,7 @@ onUnmounted(() => {
                    <Server v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ p2p.p2pSyncing.value ? 'P2P Syncing…' : p2p.p2pSyncError.value ? 'P2P Error' : p2p.lastSyncTime.value ? `P2P ${p2p.lastSyncTime.value}` : 'P2P Sync' }}</span>
                 </button>
-                 <button @click="showLicenseModal = true" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showLicenseModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <div v-if="licenseStore.isPro" class="text-green-500 font-bold text-xs"><Shield class="w-5 h-5"/></div>
-                   <div v-else-if="licenseStore.isTrial" class="text-orange-500 font-bold text-xs flex flex-col items-center leading-none">
-                       <span>{{ licenseStore.daysLeft }}</span>
-                       <span class="text-[8px]">days</span>
-                   </div>
-                   <TerminalSquare v-else-if="licenseStore.isDev" class="w-5 h-5 text-blue-500" />
-                   <Shield v-else class="w-5 h-5 text-red-500" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">License</span>
-                </button>
+
                  <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>

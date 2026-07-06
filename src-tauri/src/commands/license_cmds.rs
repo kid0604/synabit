@@ -6,7 +6,7 @@ use tauri::{AppHandle, command};
 use crate::hwid::{generate_hwid, get_device_name};
 use crate::license::{check_license_status, save_license, LicenseStatus};
 
-const LICENSE_SERVER_URL: &str = "https://license.synabit.io/api/license"; // TBD: Change based on env config
+const LICENSE_SERVER_URL: &str = "https://license.synabit.net/api/license"; // TBD: Change based on env config
 
 #[derive(Serialize)]
 struct ActivateRequest {
@@ -96,7 +96,16 @@ pub async fn activate_license_key(app: AppHandle, key: String) -> Result<License
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !res.status().is_success() {
-        let text = res.text().await.unwrap_or_default();
+        let status = res.status();
+        let mut text = res.text().await.unwrap_or_default();
+        if text.is_empty() {
+            text = match status {
+                reqwest::StatusCode::NOT_FOUND => "License key not found".to_string(),
+                reqwest::StatusCode::FORBIDDEN => "License is expired or revoked".to_string(),
+                reqwest::StatusCode::TOO_MANY_REQUESTS => "Device limit reached".to_string(),
+                _ => format!("Server error ({})", status),
+            };
+        }
         return Err(format!("Activation failed: {}", text));
     }
 

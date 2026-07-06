@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { Search, Edit3, Trash2, Tag as TagIcon, ArrowLeft } from 'lucide-vue-next';
+import { Search, Edit3, Trash2, Tag as TagIcon, ArrowLeft, LayoutGrid, Cloud } from 'lucide-vue-next';
 
 import { confirm } from '@tauri-apps/plugin-dialog';
 
@@ -22,6 +22,7 @@ interface TagItem {
 const tags = ref<TagItem[]>([]);
 const searchQuery = ref('');
 const loading = ref(true);
+const viewMode = ref<'grid' | 'cloud'>('grid');
 
 const loadTags = async () => {
     loading.value = true;
@@ -58,6 +59,42 @@ const getGradientClass = (name: string) => {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
     return gradients[Math.abs(hash) % gradients.length];
+};
+
+const textColors = [
+    'text-blue-600 dark:text-blue-400', 
+    'text-emerald-600 dark:text-emerald-400', 
+    'text-orange-600 dark:text-orange-400', 
+    'text-purple-600 dark:text-purple-400', 
+    'text-cyan-600 dark:text-cyan-400', 
+    'text-amber-600 dark:text-amber-400',
+    'text-rose-600 dark:text-rose-400',
+    'text-indigo-600 dark:text-indigo-400'
+];
+
+const getTextColorClass = (name: string) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return textColors[Math.abs(hash) % textColors.length];
+};
+
+const getCloudStyle = (count: number) => {
+    const minSize = 14;
+    const maxSize = 72;
+    const minCount = Math.min(...tags.value.map(t => t.count), 1);
+    const maxCount = maxTagCount.value;
+    
+    let fontSize = minSize;
+    if (maxCount > minCount) {
+        fontSize = minSize + ((count - minCount) / (maxCount - minCount)) * (maxSize - minSize);
+    }
+    
+    return {
+        fontSize: `${fontSize}px`,
+        opacity: Math.max(0.4, 0.4 + ((count - minCount) / (maxCount - minCount)) * 0.6)
+    };
 };
 
 const getBoxStyle = (count: number) => {
@@ -166,14 +203,25 @@ onMounted(() => {
               </div>
           </div>
           
-          <div class="relative w-full sm:w-64 flex-shrink-0">
-              <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                  v-model="searchQuery"
-                  type="text"
-                  placeholder="Find tags..."
-                  class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-[#1c1c1e] border border-transparent dark:border-[#3a3a3c] focus:border-indigo-500 dark:focus:border-indigo-500 rounded-xl text-sm focus:outline-none transition-all shadow-inner"
-              />
+          <div class="flex items-center gap-2">
+              <div class="hidden sm:flex items-center bg-gray-100 dark:bg-[#1c1c1e] rounded-xl p-1 shadow-inner mr-2">
+                  <button @click="viewMode = 'grid'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'grid' ? 'bg-white dark:bg-[#2c2c2e] text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300']" title="Grid View">
+                      <LayoutGrid class="w-4 h-4" />
+                  </button>
+                  <button @click="viewMode = 'cloud'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'cloud' ? 'bg-white dark:bg-[#2c2c2e] text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300']" title="Word Cloud View">
+                      <Cloud class="w-4 h-4" />
+                  </button>
+              </div>
+              
+              <div class="relative w-full sm:w-64 flex-shrink-0">
+                  <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input 
+                      v-model="searchQuery"
+                      type="text"
+                      placeholder="Find tags..."
+                      class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-[#1c1c1e] border border-transparent dark:border-[#3a3a3c] focus:border-indigo-500 dark:focus:border-indigo-500 rounded-xl text-sm focus:outline-none transition-all shadow-inner"
+                  />
+              </div>
           </div>
       </div>
       
@@ -190,7 +238,7 @@ onMounted(() => {
                   <p class="font-medium">No tags found.</p>
               </div>
               
-              <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4" style="grid-auto-flow: dense; grid-auto-rows: minmax(80px, auto);">
+              <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4" style="grid-auto-flow: dense; grid-auto-rows: minmax(80px, auto);">
                   <div v-for="tag in filteredTags" :key="tag.name" 
                        class="group bg-white dark:bg-[#242426] border backdrop-blur-sm rounded-3xl transition-all flex flex-col hover:-translate-y-0.5 hover:shadow-xl hover:z-10 relative overflow-hidden"
                        :class="[getBoxStyle(tag.count).classes, getGradientClass(tag.name)]">
@@ -239,6 +287,21 @@ onMounted(() => {
                           </div>
                       </template>
                       
+                  </div>
+              </div>
+              
+              <div v-else-if="viewMode === 'cloud'" class="flex flex-wrap justify-center items-center gap-x-6 gap-y-4 py-12 px-4 max-w-4xl mx-auto">
+                  <div v-for="tag in filteredTags" :key="tag.name"
+                       class="cursor-pointer transition-all hover:scale-110 group relative flex items-center justify-center"
+                       :style="getCloudStyle(tag.count)"
+                       @click="emit('search-tag', tag.name)"
+                  >
+                      <span class="font-bold tracking-tight hover:!opacity-100" :class="getTextColorClass(tag.name)" style="line-height: 1.1;">
+                          {{ tag.name }}
+                      </span>
+                      <span class="text-[10px] font-bold absolute -top-2 -right-3 bg-gray-100 dark:bg-[#2c2c2e] text-gray-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 dark:border-[#3c3c3e] shadow-sm pointer-events-none" style="font-size: 10px;">
+                          {{ tag.count }}
+                      </span>
                   </div>
               </div>
               

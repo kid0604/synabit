@@ -83,9 +83,11 @@ impl SynabitServerTransport {
         e2ee_key: &[u8; 32],
         device_id: &str,
     ) -> AppResult<Self> {
-        let addr: SocketAddr = server_socket
-            .parse()
-            .map_err(|e| AppError::General(format!("invalid server address: {}", e)))?;
+        let addr = tokio::net::lookup_host(server_socket)
+            .await
+            .map_err(|e| AppError::General(format!("failed to resolve server address: {}", e)))?
+            .next()
+            .ok_or_else(|| AppError::General("could not resolve server address".into()))?;
 
         // Build EndpointAddr with the server's public key + direct socket address
         let server_addr = EndpointAddr::new(server_id).with_ip_addr(addr);

@@ -161,7 +161,7 @@ const handleRefresh = async () => {
                             <input 
                                 v-model="licenseKey" 
                                 type="text" 
-                                placeholder="SYN-..." 
+                                placeholder="SYNC-..." 
                                 class="w-full pl-10 pr-4 py-2.5 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl focus:ring-2 focus:ring-primary focus:outline-none text-text dark:text-text-dark font-mono uppercase"
                                 @keyup.enter="handleActivateKey"
                             />
@@ -176,7 +176,7 @@ const handleRefresh = async () => {
                     </div>
                     
                     <p class="text-xs text-text-muted dark:text-text-muted-dark mt-2">
-                        Don't have a key? <a href="https://synabit.io/pricing" target="_blank" class="text-primary hover:underline">Purchase one here</a>.
+                        Don't have a key? <a href="https://synabit.net/pricing" target="_blank" class="text-primary hover:underline">Purchase one here</a>.
                     </p>
                 </div>
             </div>

@@ -161,9 +161,9 @@ const handleDisconnectAll = () => {
 // Official Synabit Sync Server config
 // TODO: Update these when the official server is deployed
 const OFFICIAL_SERVER = {
-  addr: 'sync.synabit.app:4433',
-  id: '', // Will be set when server is deployed
-  available: false, // Set to true when server is live
+  addr: 'sync.synabit.net:4433',
+  id: 'a68ab6ca34233b3cb2b5613bfd9eebd6377c0895b2fb9ddcb338543aab593be1',
+  available: true,
 };
 
 // ─── App Lock ─────────────────────────────────────────────────

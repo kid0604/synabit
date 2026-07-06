@@ -97,7 +97,22 @@ pub fn check_license_status(app: &AppHandle) -> LicenseStatus {
 }
 
 #[cfg(not(feature = "official-build"))]
-pub fn check_license_status(_app: &AppHandle) -> LicenseStatus {
+pub fn check_license_status(app: &AppHandle) -> LicenseStatus {
+    // Try to load real license first so we can test the activation flow in dev mode
+    if let Ok(Some(license)) = load_license(app) {
+        if license.status == "revoked" {
+            return LicenseStatus::Revoked;
+        }
+        if license.hwid != crate::hwid::generate_hwid() {
+            return LicenseStatus::Invalid("License not valid for this device. (HWID mismatch)".to_string());
+        }
+        if Utc::now() > license.expires_at {
+            return LicenseStatus::Expired;
+        }
+        return LicenseStatus::Active(license);
+    }
+
+    // Fallback to Developer Mode if no real license is found
     LicenseStatus::Active(LicenseFile {
         license_key: "DEV-MODE".to_string(),
         status: "active".to_string(),
