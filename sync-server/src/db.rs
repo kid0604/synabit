@@ -11,9 +11,11 @@
 //! across async tasks safely (rusqlite::Connection is !Send without Mutex).
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, OptionalExtension};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::protocol::MailboxEntry;
@@ -21,7 +23,7 @@ use crate::protocol::MailboxEntry;
 /// Thread-safe database handle.
 #[derive(Clone)]
 pub struct Database {
-    conn: Arc<Mutex<Connection>>,
+    pool: Pool<SqliteConnectionManager>,
 }
 
 impl std::fmt::Debug for Database {
@@ -33,26 +35,23 @@ impl std::fmt::Debug for Database {
 impl Database {
     /// Open (or create) the SQLite database at `path` and apply migrations.
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)
-            .with_context(|| format!("failed to open database at {}", path.display()))?;
+        let manager = SqliteConnectionManager::file(path)
+            .with_init(|c| {
+                c.execute_batch("PRAGMA journal_mode = WAL;")?;
+                c.execute_batch("PRAGMA busy_timeout = 5000;")?;
+                c.execute_batch("PRAGMA foreign_keys = ON;")
+            });
+        let pool = Pool::new(manager).context("failed to create connection pool")?;
 
-        // Enable WAL mode for better concurrent-read performance.
-        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-        // Set a busy timeout so concurrent writers don't fail immediately.
-        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
-        // Enable foreign-key enforcement.
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-
-        let db = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
+        let db = Self { pool };
         db.migrate()?;
         Ok(db)
     }
 
-    /// Run schema migrations (idempotent — uses IF NOT EXISTS).
+    /// Run schema migrations
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
+
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS vaults (
@@ -133,7 +132,7 @@ impl Database {
     /// Look up the stored mailbox_token for a vault. Returns `None` if the
     /// vault has never been registered.
     pub fn get_vault_token(&self, vault_hash: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let token: Option<Vec<u8>> = conn
             .query_row(
                 "SELECT mailbox_token FROM vaults WHERE vault_hash = ?1",
@@ -151,7 +150,7 @@ impl Database {
         mailbox_token: &[u8],
         max_storage_bytes: u64,
     ) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
             "INSERT INTO vaults (vault_hash, mailbox_token, created_at, max_storage_bytes)
@@ -167,7 +166,7 @@ impl Database {
 
     /// Get the current max sequence number for a vault (0 if empty).
     pub fn current_seq(&self, vault_hash: &str) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let seq: Option<i64> = conn
             .query_row(
                 "SELECT seq FROM vault_sequences WHERE vault_hash = ?1",
@@ -190,7 +189,7 @@ impl Database {
         payload_hash: &str,
         is_delete: bool,
     ) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
 
         // Ensure vault_sequences exists for this vault
@@ -226,7 +225,7 @@ impl Database {
 
     /// Pull all entries for a vault with `seq > since_seq`.
     pub fn pull_entries(&self, vault_hash: &str, since_seq: u64) -> Result<Vec<MailboxEntry>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let mut stmt = conn.prepare(
             "SELECT seq, doc_hash, source_device, blob_path, payload_hash, created_at, is_delete, blob_size
              FROM mailbox
@@ -294,7 +293,7 @@ impl Database {
         device_id: &str,
         last_seq: u64,
     ) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
             "INSERT INTO cursors (vault_hash, device_id, last_seq, last_seen)
@@ -308,7 +307,7 @@ impl Database {
 
     /// Touch the `last_seen` timestamp for a device (called on Auth).
     pub fn touch_device(&self, vault_hash: &str, device_id: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
             "INSERT INTO cursors (vault_hash, device_id, last_seq, last_seen)
@@ -323,7 +322,7 @@ impl Database {
     /// Get the minimum `last_seq` across all devices for a vault.
     /// Entries at or below this seq have been ACKed by everyone and can be GC'd.
     pub fn min_cursor(&self, vault_hash: &str) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let min: Option<i64> = conn
             .query_row(
                 "SELECT MIN(last_seq) FROM cursors WHERE vault_hash = ?1",
@@ -347,7 +346,7 @@ impl Database {
         blob_path: &str,
         blob_size: u64,
     ) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
             "INSERT OR REPLACE INTO assets (vault_hash, asset_hash, blob_path, blob_size, created_at)
@@ -363,7 +362,7 @@ impl Database {
         vault_hash: &str,
         asset_hash: &str,
     ) -> Result<Option<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let path: Option<String> = conn
             .query_row(
                 "SELECT blob_path FROM assets WHERE vault_hash = ?1 AND asset_hash = ?2",
@@ -386,7 +385,7 @@ impl Database {
         meta_encrypted: &[u8],
         deleted_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         conn.execute(
             "INSERT OR REPLACE INTO trash_meta (vault_hash, doc_hash, meta_encrypted, deleted_at, is_purged)
              VALUES (?1, ?2, ?3, ?4, 0)",
@@ -397,7 +396,7 @@ impl Database {
 
     /// Get all trash metadata entries for a vault.
     pub fn get_trash_meta(&self, vault_hash: &str) -> Result<Vec<TrashMetaRow>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let mut stmt = conn.prepare(
             "SELECT doc_hash, meta_encrypted, deleted_at, is_purged
              FROM trash_meta
@@ -419,7 +418,7 @@ impl Database {
 
     /// Mark a trash metadata entry as purged.
     pub fn mark_trash_purged(&self, vault_hash: &str, doc_hash: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         conn.execute(
             "UPDATE trash_meta SET is_purged = 1 WHERE vault_hash = ?1 AND doc_hash = ?2",
             params![vault_hash, doc_hash],
@@ -429,7 +428,7 @@ impl Database {
 
     /// Remove a trash metadata entry (used when restoring a document).
     pub fn remove_trash_meta(&self, vault_hash: &str, doc_hash: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         conn.execute(
             "DELETE FROM trash_meta WHERE vault_hash = ?1 AND doc_hash = ?2",
             params![vault_hash, doc_hash],
@@ -444,7 +443,7 @@ impl Database {
     /// Delete all mailbox entries that have been ACKed by all devices (seq ≤ min_cursor)
     /// and return their blob paths so the caller can delete the files.
     pub fn gc_acked_entries(&self, vault_hash: &str, min_seq: u64) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
 
         // Collect blob paths first.
         let mut stmt = conn.prepare(
@@ -466,7 +465,7 @@ impl Database {
     /// Delete mailbox entries older than `max_age_secs`, regardless of ACK state.
     /// Returns blob paths for cleanup.
     pub fn gc_old_entries(&self, max_age_secs: u64) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let cutoff = unix_now() - max_age_secs as i64;
 
         let mut stmt = conn.prepare(
@@ -482,7 +481,7 @@ impl Database {
 
     /// List all vault hashes (for cleanup iteration).
     pub fn list_vault_hashes(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let mut stmt = conn.prepare("SELECT vault_hash FROM vaults")?;
         let hashes: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
@@ -496,14 +495,14 @@ impl Database {
 
     /// Count the number of registered vaults.
     pub fn vault_count(&self) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM vaults", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
     /// Count total mailbox entries across all vaults.
     pub fn entry_count(&self) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM mailbox", [], |row| row.get(0))?;
         Ok(count as u64)
@@ -511,7 +510,7 @@ impl Database {
 
     /// Count total assets across all vaults.
     pub fn asset_count(&self) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))?;
         Ok(count as u64)
@@ -519,7 +518,7 @@ impl Database {
 
     /// Total blob storage used (mailbox entries + assets) in bytes.
     pub fn total_storage_bytes(&self) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let mailbox_bytes: Option<i64> = conn
             .query_row(
                 "SELECT COALESCE(SUM(blob_size), 0) FROM mailbox",
@@ -539,7 +538,7 @@ impl Database {
 
     /// Get total storage used by a specific vault (mailbox + assets) in bytes.
     pub fn total_vault_storage(&self, vault_hash: &str) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let mailbox_bytes: i64 = conn.query_row(
             "SELECT COALESCE(SUM(blob_size), 0) FROM mailbox WHERE vault_hash = ?1",
             params![vault_hash],
@@ -555,7 +554,7 @@ impl Database {
 
     /// Get the storage limit for a vault.
     pub fn get_vault_limit(&self, vault_hash: &str) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let limit: i64 = conn.query_row(
             "SELECT max_storage_bytes FROM vaults WHERE vault_hash = ?1",
             params![vault_hash],
@@ -566,7 +565,7 @@ impl Database {
 
     /// Delete assets older than cutoff and return blob paths for file removal.
     pub fn gc_old_assets(&self, max_age_secs: u64) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         let cutoff = unix_now() - max_age_secs as i64;
         let mut stmt = conn.prepare(
             "SELECT blob_path FROM assets WHERE created_at < ?1",
@@ -584,7 +583,7 @@ impl Database {
 
     /// Replace the mailbox token for a vault (called after epoch rotation).
     pub fn update_vault_token(&self, vault_hash: &str, new_token: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         conn.execute(
             "UPDATE vaults SET mailbox_token = ?1 WHERE vault_hash = ?2",
             params![new_token, vault_hash],
@@ -594,7 +593,7 @@ impl Database {
 
     /// Delete the cursor for a specific device in a vault (device revocation).
     pub fn delete_cursor(&self, vault_hash: &str, device_id: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        let conn = self.pool.get().context("pool get")?;
         conn.execute(
             "DELETE FROM cursors WHERE vault_hash = ?1 AND device_id = ?2",
             params![vault_hash, device_id],

@@ -52,6 +52,14 @@ export function useP2PSync(vaultPath: Ref<string>) {
 
   async function setupEventListeners() {
     try {
+      const unlistenPush = await listen('sync-server-push', () => {
+        console.log('[P2P Sync] Received server push notification. Triggering sync...');
+        if (!p2pSyncing.value && p2pConnected.value) {
+          syncP2P();
+        }
+      });
+      unlistenFns.push(unlistenPush);
+
       const unlistenProgress = await listen<SyncProgressEvent>('sync-progress', (event) => {
         syncProgress.value = event.payload;
         if (event.payload.errors && event.payload.errors.length > 0) {
@@ -81,6 +89,8 @@ export function useP2PSync(vaultPath: Ref<string>) {
   setupEventListeners();
 
   let autoSyncTimer: number | null = null;
+  let reconnectTimer: number | null = null;
+
 
   // --- Auto Sync ---
   function setupAutoSync() {
@@ -192,6 +202,10 @@ export function useP2PSync(vaultPath: Ref<string>) {
         window.clearInterval(autoSyncTimer);
         autoSyncTimer = null;
       }
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
     } catch (e) {
       logger.error('P2P disconnect failed:', e);
     }
@@ -243,6 +257,15 @@ export function useP2PSync(vaultPath: Ref<string>) {
     } catch (e: any) {
       p2pSyncError.value = e?.toString() || 'Sync failed';
       logger.error('P2P Sync failed:', e);
+      
+      const errStr = e?.toString().toLowerCase();
+      if (errStr && (errStr.includes('connection') || errStr.includes('io error') || errStr.includes('broken pipe'))) {
+        p2pConnected.value = false;
+        if (appStore.p2pAutoSyncEnabled) {
+          logger.info('Sync failed due to connection error, triggering auto-reconnect...');
+          autoReconnect(0);
+        }
+      }
     } finally {
       p2pSyncing.value = false;
     }
@@ -259,7 +282,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
   }
 
   // --- Auto-reconnect from persisted config ---
-  async function autoReconnect() {
+  async function autoReconnect(attempt = 0) {
     const addr = appStore.p2pServerAddr;
     const id = appStore.p2pServerIdHex;
     if (addr && id) {
@@ -282,8 +305,19 @@ export function useP2PSync(vaultPath: Ref<string>) {
         setupAutoSync();
         logger.info('P2P auto-reconnected to', addr);
       } catch (e) {
-        logger.warn('P2P auto-reconnect failed:', e);
+        logger.warn(`P2P auto-reconnect failed (attempt ${attempt}):`, e);
         p2pConnected.value = false;
+        
+        if (attempt < 5) {
+          const backoff = Math.min(1000 * Math.pow(2, attempt), 30000);
+          if (reconnectTimer !== null) {
+            window.clearTimeout(reconnectTimer);
+          }
+          logger.info(`Scheduling auto-reconnect attempt ${attempt + 1} in ${backoff}ms...`);
+          reconnectTimer = window.setTimeout(() => {
+            autoReconnect(attempt + 1);
+          }, backoff);
+        }
       }
     }
   }

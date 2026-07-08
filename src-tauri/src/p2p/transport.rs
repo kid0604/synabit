@@ -16,8 +16,8 @@
 use async_trait::async_trait;
 use iroh::EndpointAddr;
 use log::{debug, error, info, warn};
-use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
@@ -29,7 +29,8 @@ use crate::sync::{RemoteSyncEntry, SyncTransport};
 /// A connected session to the Sync Server.
 struct MailboxSession {
     send: iroh::endpoint::SendStream,
-    recv: iroh::endpoint::RecvStream,
+    recv: tokio::sync::mpsc::Receiver<Result<MailboxResponse, AppError>>,
+    conn: iroh::endpoint::Connection,
 }
 
 /// Client transport that connects to the Synabit Sync Server.
@@ -61,6 +62,8 @@ pub struct SynabitServerTransport {
     device_id: String,
     /// Active session (connection + stream), lazily established
     session: Arc<Mutex<Option<MailboxSession>>>,
+    /// Tauri AppHandle for emitting events
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl std::fmt::Debug for SynabitServerTransport {
@@ -82,6 +85,7 @@ impl SynabitServerTransport {
         server_id: iroh::EndpointId,
         e2ee_key: &[u8; 32],
         device_id: &str,
+        app_handle: Option<tauri::AppHandle>,
     ) -> AppResult<Self> {
         let addr = tokio::net::lookup_host(server_socket)
             .await
@@ -115,6 +119,7 @@ impl SynabitServerTransport {
             mailbox_token,
             device_id: device_id.to_string(),
             session: Arc::new(Mutex::new(None)),
+            app_handle,
         })
     }
 
@@ -135,12 +140,43 @@ impl SynabitServerTransport {
             .map_err(|e| AppError::General(format!("connect to sync server failed: {}", e)))?;
 
         // Open a bidirectional stream for the mailbox protocol
-        let (send, recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) = conn
+        let (send, mut recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) = conn
             .open_bi()
             .await
             .map_err(|e| AppError::General(format!("open stream failed: {}", e)))?;
 
-        *session = Some(MailboxSession { send, recv });
+        let (resp_tx, resp_rx) = tokio::sync::mpsc::channel(10);
+        let app_handle = self.app_handle.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let resp_res = crate::sync::protocol::read_message::<_, MailboxResponse>(&mut recv).await;
+                match resp_res {
+                    Ok(Some(MailboxResponse::NotifyNewData { trigger_seq })) => {
+                        log::info!("Received server push notification: seq={}", trigger_seq);
+                        if let Some(app) = &app_handle {
+                            use tauri::Emitter;
+                            let _ = app.emit("sync-server-push", ());
+                        }
+                    }
+                    Ok(Some(msg)) => {
+                        if resp_tx.send(Ok(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        let _ = resp_tx.send(Err(AppError::SyncError("server closed connection".into()))).await;
+                        break;
+                    }
+                    Err(e) => {
+                        let _ = resp_tx.send(Err(AppError::SyncError(format!("recv failed: {}", e)))).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        *session = Some(MailboxSession { send, recv: resp_rx, conn });
 
         // Authenticate on the stream
         drop(session); // Release lock before calling send_auth (which re-acquires)
@@ -156,6 +192,36 @@ impl SynabitServerTransport {
             .as_mut()
             .ok_or_else(|| AppError::General("no active session".to_string()))?;
 
+        // 1. Send Hello for version negotiation
+        let hello = MailboxRequest::Hello { version: 1 };
+        write_message(&mut s.send, &hello)
+            .await
+            .map_err(|e| AppError::General(format!("hello send failed: {}", e)))?;
+
+        let hello_resp = Self::wait_for_response(&mut s.recv).await?;
+
+        match hello_resp {
+            MailboxResponse::HelloOk { server_version, max_bytes } => {
+                info!("Server protocol version {}, max_bytes: {}", server_version, max_bytes);
+            }
+            MailboxResponse::Error { message } => {
+                error!("Server hello failed: {}", message);
+                // We could fallback or fail depending on message, but for now we continue
+                // since the server might be an older version that expects Auth first.
+                // Wait, if it expects Auth first, it might have dropped the connection or returned Error.
+                // If it returned Error, we probably should fail.
+                drop(session);
+                self.close().await;
+                return Err(AppError::General(format!("protocol negotiation failed: {}", message)));
+            }
+            _ => {
+                drop(session);
+                self.close().await;
+                return Err(AppError::General("unexpected response to Hello".to_string()));
+            }
+        }
+
+        // 2. Send Auth
         let auth = MailboxRequest::Auth {
             vault_hash: self.vault_hash,
             mailbox_token: self.mailbox_token,
@@ -166,12 +232,7 @@ impl SynabitServerTransport {
             .await
             .map_err(|e| AppError::General(format!("auth send failed: {}", e)))?;
 
-        let response: MailboxResponse = read_message(&mut s.recv)
-            .await
-            .map_err(|e| AppError::General(format!("auth recv failed: {}", e)))?
-            .ok_or_else(|| {
-                AppError::General("server closed connection during auth".to_string())
-            })?;
+        let response = Self::wait_for_response(&mut s.recv).await?;
 
         match response {
             MailboxResponse::AuthOk => {
@@ -191,6 +252,15 @@ impl SynabitServerTransport {
                 error!("Unexpected auth response: {:?}", other);
                 Err(AppError::General("unexpected auth response".to_string()))
             }
+        }
+    }
+
+    /// Read response from the background duplex channel.
+    async fn wait_for_response(recv: &mut tokio::sync::mpsc::Receiver<Result<MailboxResponse, AppError>>) -> AppResult<MailboxResponse> {
+        match recv.recv().await {
+            Some(Ok(msg)) => Ok(msg),
+            Some(Err(e)) => Err(e),
+            None => Err(AppError::SyncError("channel closed".into())),
         }
     }
 
@@ -218,21 +288,13 @@ impl SynabitServerTransport {
             write_message(&mut s.send, req)
                 .await
                 .map_err(|e| AppError::SyncError(format!("retry send failed: {}", e)))?;
-            let resp: MailboxResponse = read_message(&mut s.recv)
-                .await
-                .map_err(|e| AppError::SyncError(format!("retry recv failed: {}", e)))?
-                .ok_or_else(|| {
-                    AppError::SyncError("server closed after retry".to_string())
-                })?;
+            
+            let resp = Self::wait_for_response(&mut s.recv).await?;
             return Ok(resp);
         }
 
         // Read response
-        let resp: MailboxResponse = read_message(&mut s.recv)
-            .await
-            .map_err(|e| AppError::SyncError(format!("recv failed: {}", e)))?
-            .ok_or_else(|| AppError::SyncError("server closed connection".to_string()))?;
-
+        let resp = Self::wait_for_response(&mut s.recv).await?;
         Ok(resp)
     }
 
@@ -242,6 +304,14 @@ impl SynabitServerTransport {
         *session = None;
         self.endpoint.close().await;
         info!("SynabitServerTransport closed");
+    }
+}
+
+impl Drop for SynabitServerTransport {
+    fn drop(&mut self) {
+        if let Ok(mut session) = self.session.try_lock() {
+            *session = None;
+        }
     }
 }
 
@@ -402,8 +472,22 @@ impl SyncTransport for SynabitServerTransport {
         }
     }
 
+    async fn ping(&self) -> AppResult<()> {
+        let resp = self.request(&MailboxRequest::Ping).await?;
+        match resp {
+            MailboxResponse::Pong => Ok(()),
+            MailboxResponse::Error { message } => {
+                Err(AppError::SyncError(format!("ping failed: {}", message)))
+            }
+            _ => Err(AppError::SyncError("Unexpected response to Ping".into())),
+        }
+    }
+
     async fn is_available(&self) -> bool {
         let session = self.session.lock().await;
-        session.is_some()
+        match session.as_ref() {
+            Some(s) => s.conn.close_reason().is_none(),
+            None => false,
+        }
     }
 }

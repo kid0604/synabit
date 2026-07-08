@@ -95,6 +95,19 @@ pub trait SyncTransport: Send + Sync {
         encrypted_payload: Vec<u8>,
     ) -> AppResult<u64>;
 
+    /// Push multiple encrypted document snapshots in a single batch.
+    /// Returns the maximum assigned sequence number.
+    async fn push_doc_batch(
+        &self,
+        items: Vec<([u8; 32], Vec<u8>)>,
+    ) -> AppResult<u64> {
+        let mut max_seq = 0;
+        for (doc_hash, payload) in items {
+            max_seq = max_seq.max(self.push_doc(&doc_hash, payload).await?);
+        }
+        Ok(max_seq)
+    }
+
     /// Pull all entries since a given sequence number.
     async fn pull_since(&self, since_seq: u64) -> AppResult<Vec<RemoteSyncEntry>>;
 
@@ -116,6 +129,7 @@ pub trait SyncTransport: Send + Sync {
 
     /// Check if the transport is currently connected/available.
     async fn is_available(&self) -> bool;
+    async fn ping(&self) -> crate::error::AppResult<()>;
 }
 
 /// Configuration for connecting to a Synabit Sync Server.

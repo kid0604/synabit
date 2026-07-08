@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout -1
+set pass ")r5SSq({Qrjb,Z\[%"
+set host "45.76.153.98"
+set user "root"
+
+spawn scp -o StrictHostKeyChecking=no sync-server.tar.gz $user@$host:/root/
+expect {
+    "password:" {
+        send "$pass\r"
+        exp_continue
+    }
+    eof
+}

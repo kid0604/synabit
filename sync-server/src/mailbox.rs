@@ -38,20 +38,25 @@ pub struct MailboxHandler {
     endpoint_id: RwLock<String>,
     /// Per-vault concurrent connection counter for basic rate limiting.
     concurrent_connections: Arc<Mutex<HashMap<String, u32>>>,
+    /// Registry of active connections waiting for push notifications.
+    /// Maps vault_hash (hex) to a list of channels.
+    active_subscriptions: Arc<tokio::sync::RwLock<HashMap<String, Vec<tokio::sync::mpsc::Sender<u64>>>>>,
 }
 
 impl MailboxHandler {
     /// Create a new mailbox handler.
-    pub fn new(db: Database, config: AppConfig) -> Result<Self> {
+    pub async fn new(db: Database, config: AppConfig) -> Result<Self> {
         let blob_dir = config.data_dir.join("blobs");
-        std::fs::create_dir_all(&blob_dir)
-            .with_context(|| format!("failed to create blob directory: {}", blob_dir.display()))?;
+        tokio::fs::create_dir_all(&blob_dir)
+            .await
+            .with_context(|| format!("failed to create blob dir: {}", blob_dir.display()))?;
         Ok(Self {
             db,
             config,
             blob_dir,
             endpoint_id: RwLock::new(String::new()),
             concurrent_connections: Arc::new(Mutex::new(HashMap::new())),
+            active_subscriptions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
 
@@ -178,59 +183,80 @@ impl MailboxHandler {
         };
 
         // --- Step 2: Message loop ---
+        // Create an mpsc channel for this connection to receive push notifications
+        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<u64>(100);
+
+        // Register the channel in active_subscriptions
+        {
+            let mut subs = self.active_subscriptions.write().await;
+            subs.entry(vault_hash_hex.clone()).or_default().push(notify_tx);
+        }
+
+        // Spawn a task to read requests, because read_message is not cancellation-safe.
+        let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<Result<Option<MailboxRequest>, anyhow::Error>>(10);
+        let mut recv_task = tokio::spawn(async move {
+            loop {
+                let req = read_message(&mut recv).await;
+                if req_tx.send(req).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         loop {
-            let request: MailboxRequest = match read_message(&mut recv).await {
-                Ok(Some(msg)) => msg,
-                Ok(None) => {
-                    debug!(
-                        vault = vault_hash_hex,
-                        device = device_id,
-                        "client closed stream"
-                    );
-                    break;
-                }
-                Err(e) => {
-                    warn!(
-                        vault = vault_hash_hex,
-                        device = device_id,
-                        error = %e,
-                        "error reading from stream"
-                    );
-                    break;
-                }
-            };
+            tokio::select! {
+                req_opt = req_rx.recv() => {
+                    let request = match req_opt {
+                        Some(Ok(Some(msg))) => msg,
+                        Some(Ok(None)) | None => {
+                            debug!(vault = vault_hash_hex, device = device_id, "client closed stream");
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            warn!(vault = vault_hash_hex, device = device_id, error = %e, "error reading from stream");
+                            break;
+                        }
+                    };
 
-            let response = self
-                .handle_request(&vault_hash_hex, &device_id, request)
-                .await;
+                    let response = self
+                        .handle_request(&vault_hash_hex, &device_id, request)
+                        .await;
 
-            match response {
-                Ok(resp) => {
-                    if let Err(e) = write_message(&mut send, &resp).await {
-                        warn!(
-                            vault = vault_hash_hex,
-                            device = device_id,
-                            error = %e,
-                            "error writing response"
-                        );
+                    match response {
+                        Ok(resp) => {
+                            if let Err(e) = write_message(&mut send, &resp).await {
+                                warn!(vault = vault_hash_hex, device = device_id, error = %e, "error writing response");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!(vault = vault_hash_hex, device = device_id, error = %e, "internal error handling request");
+                            let _ = write_message(&mut send, &MailboxResponse::Error { message: "internal server error".to_string() }).await;
+                            break;
+                        }
+                    }
+                }
+                Some(trigger_seq) = notify_rx.recv() => {
+                    debug!(vault = vault_hash_hex, device = device_id, "pushing NotifyNewData");
+                    let response = MailboxResponse::NotifyNewData { trigger_seq };
+                    if let Err(e) = write_message(&mut send, &response).await {
+                        warn!(vault = vault_hash_hex, device = device_id, error = %e, "error writing NotifyNewData");
                         break;
                     }
                 }
-                Err(e) => {
-                    error!(
-                        vault = vault_hash_hex,
-                        device = device_id,
-                        error = %e,
-                        "internal error handling request"
-                    );
-                    let _ = write_message(
-                        &mut send,
-                        &MailboxResponse::Error {
-                            message: "internal server error".to_string(),
-                        },
-                    )
-                    .await;
-                    break;
+            }
+        }
+
+        recv_task.abort();
+
+        // Cleanup subscription
+        {
+            let mut subs = self.active_subscriptions.write().await;
+            if let Some(list) = subs.get_mut(&vault_hash_hex) {
+                // Since Sender doesn't have an ID, we just remove all closed channels
+                list.retain(|tx| !tx.is_closed());
+                if list.is_empty() {
+                    subs.remove(&vault_hash_hex);
                 }
             }
         }
@@ -239,6 +265,15 @@ impl MailboxHandler {
     }
 
     /// Dispatch a single request within an authenticated session.
+    
+    async fn notify_subscribers(&self, vault_hash: &str, seq: u64) {
+        let subs = self.active_subscriptions.read().await;
+        if let Some(list) = subs.get(vault_hash) {
+            for tx in list {
+                let _ = tx.send(seq).await;
+            }
+        }
+    }
     async fn handle_request(
         &self,
         vault_hash: &str,
@@ -246,6 +281,12 @@ impl MailboxHandler {
         request: MailboxRequest,
     ) -> Result<MailboxResponse> {
         match request {
+            MailboxRequest::Hello { .. } => {
+                Ok(MailboxResponse::Error {
+                    message: "hello already sent".to_string(),
+                })
+            }
+
             MailboxRequest::Auth { .. } => {
                 // Re-auth on the same stream is not allowed.
                 Ok(MailboxResponse::Error {
@@ -258,10 +299,35 @@ impl MailboxHandler {
                 encrypted_payload,
                 payload_hash,
             } => {
-                self.handle_push(vault_hash, device_id, doc_hash, encrypted_payload, payload_hash)
+                self.handle_push(vault_hash, device_id, doc_hash, encrypted_payload, payload_hash).await
             }
 
             MailboxRequest::Pull { since_seq } => self.handle_pull(vault_hash, since_seq),
+
+            MailboxRequest::PushBatch { items } => {
+                let mut max_seq = 0;
+                for item in items {
+                    match self.handle_push(
+                        vault_hash,
+                        device_id,
+                        item.doc_hash,
+                        item.encrypted_payload,
+                        item.payload_hash,
+                    ).await {
+                        Ok(MailboxResponse::PushOk { seq }) => {
+                            max_seq = max_seq.max(seq);
+                        }
+                        Ok(resp) => {
+                            tracing::warn!("PushBatch item unexpected response: {:?}", resp);
+                        }
+                        Err(e) => {
+                            tracing::warn!("PushBatch item failed: {}", e);
+                        }
+                    }
+                }
+
+                Ok(MailboxResponse::PushBatchOk { max_seq })
+            }
 
             MailboxRequest::Ack { up_to_seq } => {
                 self.handle_ack(vault_hash, device_id, up_to_seq)
@@ -270,14 +336,14 @@ impl MailboxHandler {
             MailboxRequest::PushAsset {
                 asset_hash,
                 encrypted_data,
-            } => self.handle_push_asset(vault_hash, asset_hash, encrypted_data),
+            } => self.handle_push_asset(vault_hash, asset_hash, encrypted_data).await,
 
             MailboxRequest::PullAsset { asset_hash } => {
-                self.handle_pull_asset(vault_hash, asset_hash)
+                self.handle_pull_asset(vault_hash, asset_hash).await
             }
 
             MailboxRequest::PushDelete { doc_hash } => {
-                self.handle_push_delete(vault_hash, device_id, doc_hash)
+                self.handle_push_delete(vault_hash, device_id, doc_hash).await
             }
 
             MailboxRequest::PushTrashMeta { entries } => {
@@ -289,7 +355,7 @@ impl MailboxHandler {
             }
 
             MailboxRequest::PushRestore { doc_hash } => {
-                self.handle_push_restore(vault_hash, device_id, doc_hash)
+                self.handle_push_restore(vault_hash, device_id, doc_hash).await
             }
 
             MailboxRequest::RevokeDevice { device_id: revoked_device_id } => {
@@ -299,6 +365,10 @@ impl MailboxHandler {
             MailboxRequest::RotateToken { new_mailbox_token } => {
                 self.handle_rotate_token(vault_hash, &new_mailbox_token)
             }
+
+            MailboxRequest::Ping => {
+                Ok(MailboxResponse::Pong)
+            }
         }
     }
 
@@ -306,7 +376,7 @@ impl MailboxHandler {
     // Individual request handlers
     // -----------------------------------------------------------------------
 
-    fn handle_push(
+    async fn handle_push(
         &self,
         vault_hash: &str,
         device_id: &str,
@@ -340,8 +410,9 @@ impl MailboxHandler {
         // Write blob to disk.
         let blob_filename = format!("{vault_hash}_{doc_hash_hex}_{payload_hash_hex}.blob");
         let blob_path = self.blob_dir.join(&blob_filename);
-        std::fs::write(&blob_path, &encrypted_payload)
-            .with_context(|| format!("failed to write blob: {}", blob_path.display()))?;
+        tokio::fs::write(&blob_path, &encrypted_payload)
+            .await
+            .with_context(|| format!("failed to write blob file to {}", blob_path.display()))?;
 
         let blob_path_str = blob_path
             .to_str()
@@ -367,6 +438,8 @@ impl MailboxHandler {
             "document pushed"
         );
 
+        self.notify_subscribers(vault_hash, seq).await;
+        self.notify_subscribers(vault_hash, seq).await;
         Ok(MailboxResponse::PushOk { seq })
     }
 
@@ -397,7 +470,7 @@ impl MailboxHandler {
         Ok(MailboxResponse::AckOk)
     }
 
-    fn handle_push_asset(
+    async fn handle_push_asset(
         &self,
         vault_hash: &str,
         asset_hash: [u8; 32],
@@ -420,8 +493,9 @@ impl MailboxHandler {
         let blob_filename = format!("{vault_hash}_asset_{asset_hash_hex}.blob");
         let blob_path = self.blob_dir.join(&blob_filename);
 
-        std::fs::write(&blob_path, &encrypted_data)
-            .with_context(|| format!("failed to write asset blob: {}", blob_path.display()))?;
+        tokio::fs::write(&blob_path, &encrypted_data)
+            .await
+            .with_context(|| format!("failed to write asset blob to {}", blob_path.display()))?;
 
         let blob_path_str = blob_path
             .to_str()
@@ -441,7 +515,7 @@ impl MailboxHandler {
         Ok(MailboxResponse::AssetOk)
     }
 
-    fn handle_pull_asset(
+    async fn handle_pull_asset(
         &self,
         vault_hash: &str,
         asset_hash: [u8; 32],
@@ -450,8 +524,8 @@ impl MailboxHandler {
 
         match self.db.get_asset_path(vault_hash, &asset_hash_hex)? {
             Some(blob_path) => {
-                let data = std::fs::read(&blob_path).with_context(|| {
-                    format!("failed to read asset blob at {blob_path}")
+                let data = tokio::fs::read(&blob_path).await.with_context(|| {
+                    format!("failed to read asset blob from {}", blob_path)
                 })?;
                 debug!(
                     vault = vault_hash,
@@ -472,7 +546,7 @@ impl MailboxHandler {
         }
     }
 
-    fn handle_push_delete(
+    async fn handle_push_delete(
         &self,
         vault_hash: &str,
         device_id: &str,
@@ -501,6 +575,7 @@ impl MailboxHandler {
             "delete tombstone pushed"
         );
 
+        self.notify_subscribers(vault_hash, seq).await;
         Ok(MailboxResponse::DeleteOk { seq })
     }
 
@@ -559,7 +634,7 @@ impl MailboxHandler {
         Ok(MailboxResponse::TrashMetaResult { entries })
     }
 
-    fn handle_push_restore(
+    async fn handle_push_restore(
         &self,
         vault_hash: &str,
         device_id: &str,

@@ -1,0 +1,16 @@
+#!/usr/bin/expect -f
+set timeout -1
+set pass ")r5SSq({Qrjb,Z\[%"
+set host "45.76.153.98"
+set user "root"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect "password:"
+send "$pass\r"
+expect "# "
+
+send "docker ps\r"
+expect "# "
+
+send "exit\r"
+expect eof

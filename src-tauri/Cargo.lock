@@ -4029,6 +4029,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "lz4_flex"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "lzma-rust2"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7386,7 +7395,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "ammonia",
  "argon2",
@@ -7410,6 +7419,7 @@ dependencies = [
  "log",
  "lopdf",
  "loro",
+ "lz4_flex",
  "machine-uid",
  "md-5 0.11.0",
  "notify",
@@ -8566,6 +8576,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
 name = "typed-path"

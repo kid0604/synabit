@@ -9,6 +9,7 @@ use zeroize::Zeroize;
 const FORMAT_V3: u8 = 0x03;
 /// Wire format version for epoch-based encryption (key rotation)
 const FORMAT_V4: u8 = 0x04;
+const FORMAT_V5: u8 = 0x05;
 /// Wire format version for password-based encryption (Argon2 + random salt)
 const FORMAT_V2: u8 = 0x02;
 /// Legacy hardcoded salt (for v1 password-based decryption)
@@ -143,6 +144,55 @@ fn decrypt_v4(master_key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|_| format!("v4 decryption failed (epoch={})", epoch))
 }
 
+pub fn encrypt_v5(key: &[u8; 32], payload: &[u8], compress: bool) -> Result<Vec<u8>, String> {
+    let payload_to_encrypt = if compress {
+        lz4_flex::block::compress_prepend_size(payload)
+    } else {
+        payload.to_vec()
+    };
+
+    let cipher = XChaCha20Poly1305::new(key.into());
+    let mut nonce_bytes = [0u8; 24];
+    rand::rng().fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, payload_to_encrypt.as_slice())
+        .map_err(|e| format!("Encryption failed: {}", e))?;
+
+    let flags = if compress { 0x01 } else { 0x00 };
+    let mut result = Vec::with_capacity(1 + 1 + 24 + ciphertext.len());
+    result.push(FORMAT_V5);
+    result.push(flags);
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+fn decrypt_v5(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.len() < 1 + 24 {
+        return Err("v5 ciphertext too short".into());
+    }
+    let flags = data[0];
+    let nonce_bytes: [u8; 24] = data[1..25].try_into().unwrap();
+    let ciphertext = &data[25..];
+
+    let cipher = XChaCha20Poly1305::new(key.into());
+    let nonce = XNonce::from(nonce_bytes);
+
+    let decrypted = cipher
+        .decrypt(&nonce, ciphertext)
+        .map_err(|e| format!("v5 decryption failed: {}", e))?;
+
+    if flags & 0x01 != 0 {
+        lz4_flex::block::decompress_size_prepended(&decrypted)
+            .map_err(|e| format!("decompression failed: {}", e))
+    } else {
+        Ok(decrypted)
+    }
+}
+
+
 // ─── Unified Decrypt (v3 + v4) ───────────────────────────
 
 /// Decrypt payload — auto-detects wire format version.
@@ -171,6 +221,7 @@ pub fn decrypt(key: &[u8; 32], encrypted_payload: &[u8]) -> Result<Vec<u8>, Stri
                 .map_err(|e| format!("Decryption failed: {}", e))
         }
         FORMAT_V4 => decrypt_v4(key, &encrypted_payload[1..]),
+        FORMAT_V5 => decrypt_v5(key, &encrypted_payload[1..]),
         other => Err(format!("Unknown wire format version: 0x{:02x}", other)),
     }
 }

@@ -34,7 +34,7 @@ pub fn spawn_cleanup_task(
                     break;
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = run_cleanup(handler.db(), max_age) {
+                    if let Err(e) = run_cleanup(handler.db(), max_age).await {
                         error!(error = %e, "cleanup cycle failed");
                     }
                 }
@@ -44,7 +44,7 @@ pub fn spawn_cleanup_task(
 }
 
 /// Execute one cleanup cycle.
-fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Result<()> {
+async fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Result<()> {
     debug!("starting cleanup cycle");
 
     // Phase 1: Per-vault ACK-based GC.
@@ -56,7 +56,7 @@ fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Result<()
         if min_seq > 0 {
             let paths = db.gc_acked_entries(vault_hash, min_seq)?;
             for path in &paths {
-                remove_blob(path);
+                remove_blob(path).await;
             }
             total_ack_deleted += paths.len();
         }
@@ -65,13 +65,13 @@ fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Result<()
     // Phase 2: Age-based GC (hard TTL) for mailbox entries.
     let old_paths = db.gc_old_entries(max_age_secs)?;
     for path in &old_paths {
-        remove_blob(path);
+        remove_blob(path).await;
     }
 
     // Phase 3: Age-based GC for assets.
     let old_asset_paths = db.gc_old_assets(max_age_secs)?;
     for path in &old_asset_paths {
-        remove_blob(path);
+        remove_blob(path).await;
     }
 
     if total_ack_deleted > 0 || !old_paths.is_empty() || !old_asset_paths.is_empty() {
@@ -90,11 +90,11 @@ fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Result<()
 
 /// Best-effort deletion of a blob file. Tombstones (marker paths) and
 /// already-deleted files are silently ignored.
-fn remove_blob(path: &str) {
+async fn remove_blob(path: &str) {
     if path == "(tombstone)" {
         return;
     }
-    match std::fs::remove_file(path) {
+    match tokio::fs::remove_file(path).await {
         Ok(()) => debug!(path = path, "blob removed"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Already gone — fine.

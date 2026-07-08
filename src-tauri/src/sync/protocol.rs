@@ -19,7 +19,18 @@ pub const MAX_MESSAGE_SIZE: u32 = 128 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PushBatchItem {
+    pub doc_hash: [u8; 32],
+    pub encrypted_payload: Vec<u8>,
+    pub payload_hash: [u8; 32],
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MailboxRequest {
+    /// Initial handshake to negotiate protocol version.
+    Hello {
+        version: u32,
+    },
     Auth {
         vault_hash: [u8; 32],
         mailbox_token: [u8; 32],
@@ -29,6 +40,10 @@ pub enum MailboxRequest {
         doc_hash: [u8; 32],
         encrypted_payload: Vec<u8>,
         payload_hash: [u8; 32],
+    },
+    /// Batch push multiple documents
+    PushBatch {
+        items: Vec<PushBatchItem>,
     },
     Pull {
         since_seq: u64,
@@ -55,6 +70,8 @@ pub enum MailboxRequest {
     RotateToken {
         new_mailbox_token: Vec<u8>,
     },
+    /// Application-level keepalive ping.
+    Ping,
 }
 
 // ---------------------------------------------------------------------------
@@ -63,9 +80,20 @@ pub enum MailboxRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MailboxResponse {
+    /// Server push notification: new data is available for this vault.
+    NotifyNewData {
+        /// The sequence number that triggered this notification.
+        trigger_seq: u64,
+    },
+    /// Handshake successful.
+    HelloOk {
+        server_version: u32,
+        max_bytes: u64,
+    },
     AuthOk,
     AuthFailed { reason: String },
     PushOk { seq: u64 },
+    PushBatchOk { max_seq: u64 },
     PullResult { entries: Vec<MailboxEntry> },
     AckOk,
     AssetOk,
@@ -82,6 +110,8 @@ pub enum MailboxResponse {
     RevokeOk,
     /// Mailbox token rotated successfully.
     TokenRotated,
+    /// Application-level keepalive pong.
+    Pong,
 }
 
 // ---------------------------------------------------------------------------

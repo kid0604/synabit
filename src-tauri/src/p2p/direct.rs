@@ -419,6 +419,8 @@ impl SyncTransport for DirectP2PTransport {
         }
     }
 
+    async fn ping(&self) -> AppResult<()> { Ok(()) }
+
     async fn is_available(&self) -> bool {
         let session = self.session.lock().await;
         session.is_some()

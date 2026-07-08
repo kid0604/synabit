@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+set timeout -1
+set pass ")r5SSq({Qrjb,Z\[%"
+set host "45.76.153.98"
+set user "root"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect "password:"
+send "$pass\r"
+expect "# "
+
+send "docker cp sync-server/target/release/synabit-sync-server synabit-sync-server:/app/synabit-sync-server\r"
+expect "# "
+
+send "docker restart synabit-sync-server\r"
+expect "# "
+
+send "docker logs --tail 10 synabit-sync-server\r"
+expect "# "
+
+send "exit\r"
+expect eof

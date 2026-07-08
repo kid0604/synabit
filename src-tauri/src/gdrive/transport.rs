@@ -139,6 +139,8 @@ impl SyncTransport for GDriveTransport {
         ))
     }
 
+    async fn ping(&self) -> AppResult<()> { Ok(()) }
+
     async fn is_available(&self) -> bool {
         // GDrive is available if we have a valid OAuth token.
         super::auth::get_valid_token(&self.app_handle)

@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
     info!(path = %db_path.display(), "database opened");
 
     // --- Create the mailbox handler ---
-    let handler = Arc::new(MailboxHandler::new(db, config.clone())?);
+    let handler = Arc::new(MailboxHandler::new(db, config.clone()).await?);
 
     // --- Bind Iroh endpoint ---
     // We use the N0 preset with relay and discovery for NAT traversal.

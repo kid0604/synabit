@@ -19,6 +19,7 @@ use crate::p2p::devices::DeviceRegistry;
 use crate::p2p::pairing::{normalize_code, validate_code, PairedDevice, PairingInfo, PairingSession};
 use crate::p2p::transport::SynabitServerTransport;
 use crate::secrets::SecretManager;
+use crate::sync::SyncTransport;
 
 // ---------------------------------------------------------------------------
 // Managed state
@@ -32,7 +33,7 @@ pub struct P2pSyncConfig {
 }
 
 /// Tauri managed state — `None` means disconnected.
-pub type P2pSyncState = Mutex<Option<P2pSyncConfig>>;
+pub type P2pSyncState = Mutex<Option<(P2pSyncConfig, std::sync::Arc<crate::p2p::transport::SynabitServerTransport>)>>;
 
 /// Tauri managed state for an active pairing session.
 pub type PairingState = Mutex<Option<PairingSession>>;
@@ -75,16 +76,17 @@ fn ensure_device_id(app_handle: &tauri::AppHandle) -> Result<String, String> {
 async fn build_transport(
     app_handle: &tauri::AppHandle,
     config: &P2pSyncConfig,
-) -> Result<SynabitServerTransport, String> {
+) -> Result<std::sync::Arc<crate::p2p::transport::SynabitServerTransport>, String> {
     let e2ee_key = SecretManager::get_e2ee_key(Some(app_handle))
         .ok_or_else(|| "E2EE key not configured — set up encryption first".to_string())?;
 
     let device_id = ensure_device_id(app_handle)?;
     let server_id = parse_server_id(&config.server_id_hex)?;
 
-    SynabitServerTransport::new(&config.server_addr, server_id, &e2ee_key, &device_id)
+    let t = SynabitServerTransport::new(&config.server_addr, server_id, &e2ee_key, &device_id, Some(app_handle.clone()))
         .await
-        .map_err(|e| format!("failed to create transport: {}", e))
+        .map_err(|e| format!("failed to create transport: {}", e))?;
+    Ok(std::sync::Arc::new(t))
 }
 
 /// Get the local hostname from environment variables (no external crate).
@@ -141,13 +143,11 @@ pub async fn p2p_sync_connect(
         let mut guard = state
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        *guard = Some(config);
+        *guard = Some((config, transport.clone()));
     }
 
-    // Gracefully close connection after auth test
-    let _ = transport.disconnect().await;
-
-    // Record last successful connection time
+    // The connection is now persistent and stored in state.
+    // It will remain active for push notifications and subsequent syncs.
     {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -175,21 +175,18 @@ pub async fn p2p_sync_full(
     }
 
     // Read config from managed state
-    let config = {
+    let transport = {
         let state = app_handle.state::<P2pSyncState>();
         let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-        guard
-            .clone()
-            .ok_or_else(|| "not connected — call p2p_sync_connect first".to_string())?
+        let (_, t) = guard.as_ref().ok_or_else(|| "not connected — call p2p_sync_connect first".to_string())?;
+        t.clone()
     };
-
-    let transport = build_transport(&app_handle, &config).await?;
 
     let device_id = ensure_device_id(&app_handle)?;
 
     let result = crate::sync::engine::p2p_sync_full(
         &app_handle,
-        &transport,
+        &*transport,
         &vault_path,
         &device_id,
     )
@@ -257,7 +254,7 @@ pub fn p2p_sync_status(
     let connected = guard.is_some();
     let server_addr = guard
         .as_ref()
-        .map(|c| c.server_addr.clone())
+        .map(|c| c.0.server_addr.clone())
         .unwrap_or_default();
 
     // Read last sync time from KV store

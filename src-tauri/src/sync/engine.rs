@@ -249,6 +249,41 @@ pub async fn p2p_sync_full(
             debug!("PULL skip own push: seq={}", entry.seq);
             continue;
         }
+        // ── PULL DELETE ──────────────────────────────────────
+        if entry.is_delete {
+            info!("PULL delete: doc_hash={} (seq={})", hex::encode(&entry.doc_hash), entry.seq);
+            let known_paths = {
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                db.get_all_document_paths().unwrap_or_default()
+            };
+            
+            let mut found = None;
+            for (nid, rel_path) in known_paths {
+                if doc_hash(&nid) == entry.doc_hash {
+                    found = Some((nid, rel_path));
+                    break;
+                }
+            }
+
+            if let Some((nid, rel_path)) = found {
+                let local_path = vault.join(&rel_path);
+                if local_path.exists() {
+                    let _ = fs::remove_file(&local_path);
+                }
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = db.delete_document_path(&nid);
+                let _ = db.delete_crdt_doc(&nid);
+                let _ = db.delete_node(&nid);
+                db.delete_search_entry(&nid);
+                info!("PULL delete applied for {}", rel_path);
+                result.deleted += 1;
+            } else {
+                warn!("PULL delete: could not find local node for doc_hash at seq={}", entry.seq);
+            }
+            continue;
+        }
 
         // (b) Integrity check: BLAKE3(encrypted_payload) == payload_hash
         let computed_hash = *blake3::hash(&entry.encrypted_payload).as_bytes();
@@ -268,23 +303,26 @@ pub async fn p2p_sync_full(
         result.rx_bytes += entry.encrypted_payload.len() as u64;
 
         // (c) Decrypt
-        let decrypted =
-            crate::sync::crypto::decrypt(&e2ee_key, &entry.encrypted_payload)
-                .map_err(|e| {
-                    AppError::SyncError(format!(
-                        "Decryption failed at seq={}: {}",
-                        entry.seq, e
-                    ))
-                })?;
+        let decrypted = match crate::sync::crypto::decrypt(&e2ee_key, &entry.encrypted_payload) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("PULL: decrypt failed at seq={}: {}", entry.seq, e);
+                result.errors.push(format!("Decrypt failed (seq {}): {}", entry.seq, e));
+                max_seq = max_seq.max(entry.seq);
+                continue;
+            }
+        };
 
         // (d) Deserialize payload
-        let payload: DocSyncPayload =
-            postcard::from_bytes(&decrypted).map_err(|e| {
-                AppError::SyncError(format!(
-                    "Payload deserialize failed at seq={}: {}",
-                    entry.seq, e
-                ))
-            })?;
+        let payload: DocSyncPayload = match postcard::from_bytes(&decrypted) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("PULL: deserialize failed at seq={}: {}", entry.seq, e);
+                result.errors.push(format!("Deserialize failed (seq {}): {}", entry.seq, e));
+                max_seq = max_seq.max(entry.seq);
+                continue;
+            }
+        };
 
         let node_id = &payload.node_id;
         pulled_node_ids.insert(node_id.clone());
@@ -314,25 +352,6 @@ pub async fn p2p_sync_full(
         let _ = db.upsert_document_path(node_id, &payload.rel_path);
         // Drop the lock before proceeding to avoid deadlocks with pull_markdown
         drop(db);
-
-        // ── DELETE ──────────────────────────────────────────
-        if entry.is_delete {
-            info!("PULL delete: {} (seq={})", node_id, entry.seq);
-            if local_path.exists() {
-                let _ = fs::remove_file(&local_path);
-            }
-
-            // Clean up DB state (node, search index, CRDT doc)
-            let db_state = app_handle.state::<crate::db::DbState>();
-            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.delete_crdt_doc(node_id);
-            let _ = db.delete_node(node_id);
-            db.delete_search_entry(node_id);
-            let _ = db.delete_document_path(node_id);
-
-            result.deleted += 1;
-            continue;
-        }
 
         // ── DOCUMENT UPDATE ─────────────────────────────────
         if let Some(parent) = local_path.parent() {
@@ -372,7 +391,13 @@ pub async fn p2p_sync_full(
         result.pulled_files.push(payload.rel_path.clone());
     }
 
-    // (Cursor will be persisted after PUSH and ACK phases)
+    // Persist cursor immediately after pull succeeds to avoid losing progress if push fails
+    if max_seq > cursor {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.set_kv("p2p_sync:cursor", &max_seq.to_string());
+        info!("Cursor persisted after pull phase: {}", max_seq);
+    }
 
     // ════════════════════════════════════════════════════════
     // ASSET PULL phase (Phase 2.5)
@@ -443,7 +468,44 @@ pub async fn p2p_sync_full(
     let local_files = collect_local_files(vault_path);
     info!("PUSH: {} local files to consider", local_files.len());
 
+    // ── PUSH DELETIONS ───────────────────────────────────────
+    {
+        let known_paths = {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.get_all_document_paths().unwrap_or_default()
+        };
+
+        let local_files_set: std::collections::HashSet<&String> = local_files.iter().collect();
+        for (node_id, rel_path) in known_paths {
+            if !local_files_set.contains(&rel_path) && !is_asset(&rel_path) {
+                info!("PUSH DELETE: {} (node_id={})", rel_path, node_id);
+                let doc_hash_bytes = doc_hash(&node_id);
+                match transport.push_delete(&doc_hash_bytes).await {
+                    Ok(_) => {
+                        let db_state = app_handle.state::<crate::db::DbState>();
+                        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = db.delete_document_path(&node_id);
+                        let _ = db.delete_crdt_doc(&node_id);
+                        let _ = db.delete_node(&node_id);
+                        db.delete_search_entry(&node_id);
+                        result.deleted += 1;
+                    }
+                    Err(e) => {
+                        if !e.to_string().contains("not supported") {
+                            warn!("Push delete failed for {}: {}", rel_path, e);
+                            result.errors.push(format!("Push delete failed ({}): {}", rel_path, e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let push_total = local_files.len() as u32;
+    let mut doc_batch = Vec::new();
+    let mut doc_batch_info = Vec::new();
+
     for (push_idx, rel_path) in local_files.iter().enumerate() {
         // (a) Handle assets (Phase 2)
         if is_asset(rel_path) {
@@ -474,7 +536,7 @@ pub async fn p2p_sync_full(
             };
 
             let asset_hash = doc_hash(rel_path);
-            let encrypted = match crate::sync::crypto::encrypt(&e2ee_key, &file_content) {
+            let encrypted = match crate::sync::crypto::encrypt_v5(&e2ee_key, &file_content, false) {
                 Ok(enc) => enc,
                 Err(e) => {
                     result.errors.push(format!("Encrypt asset {}: {}", rel_path, e));
@@ -502,11 +564,7 @@ pub async fn p2p_sync_full(
             continue;
         }
 
-        // (b) Skip files we just pulled (we track by node_id now, but we can also skip by path)
-        if pulled_node_ids.contains(rel_path.as_str()) {
-            debug!("PUSH skip (just pulled path): {}", rel_path);
-            continue;
-        }
+        // (b) Skip files we just pulled is handled below after determining node_id
 
         let local_path = vault.join(rel_path);
 
@@ -671,7 +729,7 @@ pub async fn p2p_sync_full(
 
         // (l) Encrypt
         let encrypted =
-            crate::sync::crypto::encrypt(&e2ee_key, &serialized).map_err(
+            crate::sync::crypto::encrypt_v5(&e2ee_key, &serialized, true).map_err(
                 |e| {
                     AppError::SyncError(format!(
                         "Encryption failed for {}: {}",
@@ -684,51 +742,49 @@ pub async fn p2p_sync_full(
         // (m) Compute doc_hash
         let hash = doc_hash(rel_path);
 
-        // (n) Push
-        let push_result = transport.push_doc(&hash, encrypted).await;
-        let push_seq = match push_result {
-            Ok(seq) => seq,
-            Err(ref e) => {
-                let err_msg = format!("{}", e);
-                if err_msg.contains("QuotaExceeded") {
-                    warn!("PUSH: quota exceeded for {}", rel_path);
-                    result.errors.push(format!(
-                        "Storage quota exceeded while pushing {}",
-                        rel_path
-                    ));
-                    continue;
+        doc_batch.push((hash, encrypted));
+        doc_batch_info.push((
+            rel_path.clone(),
+            current_sha.clone(),
+            push_idx as u32,
+        ));
+
+        // Flush batch if full or at end
+        if doc_batch.len() >= 50 || push_idx == push_total as usize - 1 {
+            match transport.push_doc_batch(doc_batch.clone()).await {
+                Ok(seq) => {
+                    if seq > max_seq {
+                        max_seq = seq;
+                    }
+                    let db_state = app_handle.state::<crate::db::DbState>();
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    for (path, sha, idx) in &doc_batch_info {
+                        info!("PUSH BATCH OK: {} → max_seq={}", path, seq);
+                        let _ = db.set_kv(&format!("p2p_sync:sha256:{}", path), sha);
+                        result.pushed += 1;
+                        let _ = app_handle.emit("sync-progress", SyncProgressEvent {
+                            phase: SyncPhase::Push,
+                            current: *idx + 1,
+                            total: push_total,
+                            file_name: path.clone(),
+                            bytes_transferred: 0,
+                        });
+                    }
                 }
-                return Err(push_result.unwrap_err());
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if err_msg.contains("QuotaExceeded") {
+                        warn!("PUSH BATCH: quota exceeded");
+                        result.errors.push("Storage quota exceeded while pushing batch".to_string());
+                    } else {
+                        warn!("PUSH BATCH failed: {}", e);
+                        result.errors.push(format!("Push batch failed: {}", e));
+                    }
+                }
             }
-        };
-        info!("PUSH: {} → seq={}", rel_path, push_seq);
-
-        // Emit push progress
-        let _ = app_handle.emit("sync-progress", SyncProgressEvent {
-            phase: SyncPhase::Push,
-            current: push_idx as u32 + 1,
-            total: push_total,
-            file_name: rel_path.clone(),
-            bytes_transferred: 0,
-        });
-
-        // Track max_seq from our own pushes for the ACK
-        if push_seq > max_seq {
-            max_seq = push_seq;
+            doc_batch.clear();
+            doc_batch_info.clear();
         }
-
-        // (o) Store hash
-        {
-            let db_state = app_handle.state::<crate::db::DbState>();
-            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.set_kv(
-                &format!("p2p_sync:sha256:{}", rel_path),
-                &current_sha,
-            );
-        }
-
-        // (p) Increment
-        result.pushed += 1;
     }
 
     // ════════════════════════════════════════════════════════

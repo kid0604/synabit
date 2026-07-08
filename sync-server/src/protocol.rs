@@ -36,7 +36,18 @@ pub struct TrashMetaEntry {
 
 /// Requests sent from a client device to the mailbox server.
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PushBatchItem {
+    pub doc_hash: [u8; 32],
+    pub encrypted_payload: Vec<u8>,
+    pub payload_hash: [u8; 32],
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MailboxRequest {
+    /// Initial handshake to negotiate protocol version.
+    Hello {
+        version: u32,
+    },
     /// Authenticate this connection for a specific vault.
     /// Must be the first message on every stream.
     Auth {
@@ -57,6 +68,10 @@ pub enum MailboxRequest {
         encrypted_payload: Vec<u8>,
         /// BLAKE3 hash of `encrypted_payload` for integrity verification.
         payload_hash: [u8; 32],
+    },
+    /// Batch push multiple documents
+    PushBatch {
+        items: Vec<PushBatchItem>,
     },
 
     /// Pull all mailbox entries with `seq > since_seq`.
@@ -97,6 +112,9 @@ pub enum MailboxRequest {
     /// Pull all trash metadata for the vault.
     PullTrashMeta,
 
+    /// Application-level keepalive ping.
+    Ping,
+
     /// Notify server that a document has been restored from trash.
     PushRestore {
         doc_hash: [u8; 32],
@@ -120,6 +138,16 @@ pub enum MailboxRequest {
 /// Responses sent from the mailbox server back to the client.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MailboxResponse {
+    /// Server push notification: new data is available for this vault.
+    NotifyNewData {
+        /// The sequence number that triggered this notification.
+        trigger_seq: u64,
+    },
+    /// Handshake successful.
+    HelloOk {
+        server_version: u32,
+        max_bytes: u64,
+    },
     /// Authentication succeeded.
     AuthOk,
 
@@ -128,6 +156,7 @@ pub enum MailboxResponse {
 
     /// Document push accepted; returns the assigned sequence number.
     PushOk { seq: u64 },
+    PushBatchOk { max_seq: u64 },
 
     /// Result of a Pull request — a batch of entries since the requested cursor.
     PullResult { entries: Vec<MailboxEntry> },
@@ -149,6 +178,9 @@ pub enum MailboxResponse {
 
     /// Generic error.
     Error { message: String },
+
+    /// Application-level keepalive pong.
+    Pong,
 
     /// Storage quota exceeded — the vault has used all its allocated space.
     QuotaExceeded {

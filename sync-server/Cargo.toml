@@ -19,6 +19,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Database — SQLite with bundled C library for portability
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.31.0"
 
 # Hashing — BLAKE3 for content-addressing and token derivation
 blake3 = "1.6.1"
@@ -53,6 +55,7 @@ hex = "0.4"
 
 # Async utilities (CancellationToken for graceful shutdown)
 tokio-util = "0.7"
+lz4_flex = "0.13.1"
 
 [profile.release]
 opt-level = 3

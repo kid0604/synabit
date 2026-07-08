@@ -18,7 +18,7 @@ services:
       # Persist data (SQLite DB, blobs) across container restarts.
       - sync-data:/app/data
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,iroh_net=warn,iroh=warn,quinn=warn
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

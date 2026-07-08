@@ -146,6 +146,26 @@ impl DbBridge {
         }
     }
 
+    /// Identity Mapping: Get all known document paths
+    pub fn get_all_document_paths(&self) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT doc_id, rel_path FROM document_paths")
+            .map_err(|e| AppError::General(format!("DB Error prepare get_all_document_paths: {}", e)))?;
+        
+        let rows = stmt.query_map([], |row| {
+            let doc_id: String = row.get(0)?;
+            let rel_path: String = row.get(1)?;
+            Ok((doc_id, rel_path))
+        }).map_err(|e| AppError::General(format!("DB Error querying document_paths: {}", e)))?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            if let Ok(path) = row {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
+    }
+
     /// Identity Mapping: Upsert a document path mapping
     pub fn upsert_document_path(&self, doc_id: &str, rel_path: &str) -> AppResult<()> {
         let timestamp = chrono::Utc::now().timestamp_millis();

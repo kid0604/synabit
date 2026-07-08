@@ -132,21 +132,26 @@ export function useSynModels() {
 
   // ── Polling: auto-detect Ollama when disconnected ──────────
 
-  const startPolling = (vaultPath?: string) => {
+  const startPolling = (vaultPath?: string, attempt = 0) => {
     if (pollTimer) return; // already polling
     isPolling.value = true;
-    pollTimer = setInterval(async () => {
+    
+    const backoff = Math.min(5000 * Math.pow(1.5, attempt), 60000);
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
       const result = await checkStatus(vaultPath);
       if (result.connected) {
-        stopPolling();
+        isPolling.value = false;
         await fetchModels(vaultPath);
+      } else {
+        startPolling(vaultPath, attempt + 1);
       }
-    }, 5000);
+    }, backoff);
   };
 
   const stopPolling = () => {
     if (pollTimer) {
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
     }
     isPolling.value = false;

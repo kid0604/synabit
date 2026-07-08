@@ -202,6 +202,25 @@ impl P2PSyncHandler {
                 debug!("P2P Push request received");
                 self.handle_push(doc_hash, encrypted_payload, payload_hash)
             }
+            MailboxRequest::PushBatch { items } => {
+                let mut max_seq = 0;
+                for item in items {
+                    match self.handle_push(
+                        item.doc_hash,
+                        item.encrypted_payload,
+                        item.payload_hash,
+                    ) {
+                        MailboxResponse::PushOk { seq } => {
+                            max_seq = max_seq.max(seq);
+                        }
+                        resp => {
+                            warn!("DirectSync PushBatch item unexpected response: {:?}", resp);
+                        }
+                    }
+                }
+                MailboxResponse::PushBatchOk { max_seq }
+            }
+
             MailboxRequest::Ack { up_to_seq } => {
                 debug!("P2P Ack: up_to_seq={}", up_to_seq);
                 MailboxResponse::AckOk
@@ -227,9 +246,20 @@ impl P2PSyncHandler {
                     message: "unexpected Auth message after handshake".to_string(),
                 }
             }
-
-            MailboxRequest::RevokeDevice { .. }
-            | MailboxRequest::RotateToken { .. } => {
+            MailboxRequest::Hello { version } => {
+                debug!("P2P Hello received, version: {}", version);
+                MailboxResponse::HelloOk {
+                    server_version: 1,
+                    max_bytes: 10 * 1024 * 1024 * 1024, // 10GB arbitrary limit
+                }
+            }
+            MailboxRequest::Ping => MailboxResponse::Pong,
+            MailboxRequest::RevokeDevice { .. } => {
+                MailboxResponse::Error {
+                    message: "revoke not supported in P2P mode".to_string(),
+                }
+            }
+            MailboxRequest::RotateToken { .. } => {
                 debug!("P2P: key rotation operations not supported in direct P2P mode");
                 MailboxResponse::Error {
                     message: "key rotation not supported in P2P mode".to_string(),

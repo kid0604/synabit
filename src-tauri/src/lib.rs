@@ -279,7 +279,7 @@ pub fn run() {
             p2p_sync::p2p_sync_connect,
             p2p_sync::p2p_sync_full,
             p2p_sync::p2p_sync_disconnect,
-            p2p_sync::p2p_sync_status,
+                        p2p_sync::p2p_sync_status,
             p2p_sync::p2p_sync_metrics,
             p2p_sync::p2p_sync_update_worker_config,
             // P2P Device Pairing
