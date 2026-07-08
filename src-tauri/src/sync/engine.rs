@@ -749,8 +749,8 @@ pub async fn p2p_sync_full(
             push_idx as u32,
         ));
 
-        // Flush batch if full or at end
-        if doc_batch.len() >= 50 || push_idx == push_total as usize - 1 {
+        // Flush batch if full
+        if doc_batch.len() >= 50 {
             match transport.push_doc_batch(doc_batch.clone()).await {
                 Ok(seq) => {
                     if seq > max_seq {
@@ -786,6 +786,44 @@ pub async fn p2p_sync_full(
             doc_batch_info.clear();
         }
     }
+
+    // Flush any remaining items in the batch
+    if !doc_batch.is_empty() {
+        match transport.push_doc_batch(doc_batch.clone()).await {
+            Ok(seq) => {
+                if seq > max_seq {
+                    max_seq = seq;
+                }
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                for (path, sha, idx) in &doc_batch_info {
+                    info!("PUSH BATCH OK: {} → max_seq={}", path, seq);
+                    let _ = db.set_kv(&format!("p2p_sync:sha256:{}", path), sha);
+                    result.pushed += 1;
+                    let _ = app_handle.emit("sync-progress", SyncProgressEvent {
+                        phase: SyncPhase::Push,
+                        current: *idx + 1,
+                        total: push_total,
+                        file_name: path.clone(),
+                        bytes_transferred: 0,
+                    });
+                }
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                if err_msg.contains("QuotaExceeded") {
+                    warn!("PUSH BATCH: quota exceeded");
+                    result.errors.push("Storage quota exceeded while pushing batch".to_string());
+                } else {
+                    warn!("PUSH BATCH failed: {}", e);
+                    result.errors.push(format!("Push batch failed: {}", e));
+                }
+            }
+        }
+        doc_batch.clear();
+        doc_batch_info.clear();
+    }
+
 
     // ════════════════════════════════════════════════════════
     // ACK phase
