@@ -23,7 +23,8 @@ const {
   themeMode, appLanguage, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
-  nestedNumberListStyle, hiddenSidebarApps
+  nestedNumberListStyle, hiddenSidebarApps, codeBlockTabSize,
+  codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
 } = useSettings();
 
 const {
@@ -476,7 +477,7 @@ const restoreFromPhrase = async () => {
                           <Server class="w-4 h-4 text-emerald-500" />
                         </div>
                         <div class="flex-1 min-w-0">
-                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.p2p_sync', 'Relay Server (P2P)') }}</p>
+                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.p2p_sync', 'Sync Server') }}</p>
                         </div>
                         <span v-if="p2pConnected" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400">
                           <Check class="w-3 h-3" /> Connected
@@ -735,6 +736,36 @@ const restoreFromPhrase = async () => {
                         <option :value="2">2 spaces</option>
                         <option :value="4">4 spaces</option>
                       </select>
+                    </div>
+
+                    <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4 flex flex-col gap-3">
+                      <div class="flex items-center justify-between">
+                        <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.notes.code_theme', 'Code Block Theme (Light)') }}</p>
+                        <button @click="codeBlockBgColorLight = '#f8f9fa'; codeBlockTextColorLight = '#24292e'" class="text-[11px] text-gray-500 hover:text-black dark:hover:text-white transition-colors uppercase tracking-wider font-medium">{{ $t('common.reset', 'Reset') }}</button>
+                      </div>
+                      <div class="flex items-center justify-between pl-2">
+                        <p class="text-[12px] text-gray-500 dark:text-gray-400">Background Color</p>
+                        <input type="color" v-model="codeBlockBgColorLight" class="w-8 h-8 rounded border-none p-0 bg-transparent cursor-pointer" />
+                      </div>
+                      <div class="flex items-center justify-between pl-2">
+                        <p class="text-[12px] text-gray-500 dark:text-gray-400">Text Color</p>
+                        <input type="color" v-model="codeBlockTextColorLight" class="w-8 h-8 rounded border-none p-0 bg-transparent cursor-pointer" />
+                      </div>
+                    </div>
+
+                    <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4 flex flex-col gap-3">
+                      <div class="flex items-center justify-between">
+                        <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.notes.code_theme_dark', 'Code Block Theme (Dark)') }}</p>
+                        <button @click="codeBlockBgColorDark = '#1e1e1e'; codeBlockTextColorDark = '#e4e4e7'" class="text-[11px] text-gray-500 hover:text-black dark:hover:text-white transition-colors uppercase tracking-wider font-medium">{{ $t('common.reset', 'Reset') }}</button>
+                      </div>
+                      <div class="flex items-center justify-between pl-2">
+                        <p class="text-[12px] text-gray-500 dark:text-gray-400">Background Color</p>
+                        <input type="color" v-model="codeBlockBgColorDark" class="w-8 h-8 rounded border-none p-0 bg-transparent cursor-pointer" />
+                      </div>
+                      <div class="flex items-center justify-between pl-2">
+                        <p class="text-[12px] text-gray-500 dark:text-gray-400">Text Color</p>
+                        <input type="color" v-model="codeBlockTextColorDark" class="w-8 h-8 rounded border-none p-0 bg-transparent cursor-pointer" />
+                      </div>
                     </div>
                   </div>
                 </section>

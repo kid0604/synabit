@@ -123,15 +123,17 @@ pub fn scan_all_nodes(
                         if let Some(node) = parse_file_to_node(&vault_path, path) {
                             // --- Phase 1: External Edit Bridge ---
                             if let Ok(file_content) = std::fs::read_to_string(path) {
-                                if let Ok(doc) = db.get_crdt_doc(&rel_path) {
+                                if let Ok(doc) = db.get_crdt_doc(&node.id) {
                                     match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
                                         Ok(delta) => {
-                                            if let Err(e) = db.save_crdt_delta(&rel_path, delta) {
-                                                log::warn!("CRDT delta save failed for {}: {}", rel_path, e);
+                                            if !delta.is_empty() {
+                                                if let Err(e) = db.save_crdt_delta(&node.id, delta) {
+                                                    log::warn!("CRDT delta save failed for {}: {}", node.id, e);
+                                                }
                                             }
                                         }
                                         Err(e) => {
-                                            log::warn!("CRDT update failed for {}: {}", rel_path, e);
+                                            log::warn!("CRDT update failed for {}: {}", node.id, e);
                                         }
                                     }
                                 }
@@ -201,13 +203,20 @@ pub fn scan_specific_nodes(
                         // Ensure document_paths is updated in case this was a rename operation
                         let _ = db.upsert_document_path(&node_id, &rel_path);
                         
-                        if is_json_file {
-                            // JSON files: use snapshot replacement (last-write-wins)
-                            // Character-level CRDT merge is unsuitable for structured JSON data
-                            sync_crdt_snapshot_replace(&db, &node_id, &file_content);
+                        let current_sha = crate::sync::utils::file_sha256(&abs_path);
+                        let stored_sha = db.get_kv(&format!("p2p_sync:sha256:{}", rel_path)).unwrap_or(None);
+                        
+                        if !current_sha.is_empty() && stored_sha.as_deref() == Some(current_sha.as_str()) {
+                            log::debug!("scan_specific_nodes: skipping CRDT update for {} (unchanged since sync)", rel_path);
                         } else {
-                            // Markdown files: use character-level CRDT merge with panic recovery
-                            crdt_apply_safe(&db, &node_id, &file_content);
+                            if is_json_file {
+                                // JSON files: use snapshot replacement (last-write-wins)
+                                // Character-level CRDT merge is unsuitable for structured JSON data
+                                sync_crdt_snapshot_replace(&db, &node_id, &file_content);
+                            } else {
+                                // Markdown files: use character-level CRDT merge with panic recovery
+                                crdt_apply_safe(&db, &node_id, &file_content);
+                            }
                         }
                     }
                 }

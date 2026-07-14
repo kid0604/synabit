@@ -14,7 +14,7 @@ use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use tauri::Manager;
+use tauri::{AppHandle, Manager, Emitter};
 
 use crate::sync::protocol::{
     read_message, write_message, MailboxEntry, MailboxRequest, MailboxResponse,
@@ -32,10 +32,6 @@ pub const P2P_SYNC_ALPN: &[u8] = b"synabit/p2p-sync/1";
 /// processes their sync requests using the local database.
 pub struct P2PSyncHandler {
     app_handle: tauri::AppHandle,
-    /// Set of hex-encoded `PublicKey` strings for authorized peers.
-    paired_devices: Arc<RwLock<HashSet<String>>>,
-    /// Monotonic sequence counter for entries served to peers.
-    seq_counter: AtomicU64,
 }
 
 impl P2PSyncHandler {
@@ -43,29 +39,18 @@ impl P2PSyncHandler {
     pub fn new(app_handle: tauri::AppHandle) -> Self {
         Self {
             app_handle,
-            paired_devices: Arc::new(RwLock::new(HashSet::new())),
-            seq_counter: AtomicU64::new(1),
         }
-    }
-
-    /// Add a device to the set of authorized peers.
-    pub fn add_paired_device(&self, device_id_hex: String) {
-        self.paired_devices.write().unwrap().insert(device_id_hex);
-    }
-
-    /// Remove a device from the set of authorized peers.
-    pub fn remove_paired_device(&self, device_id_hex: &str) {
-        self.paired_devices.write().unwrap().remove(device_id_hex);
     }
 
     /// Check if a device is authorized.
     pub fn is_paired(&self, device_id_hex: &str) -> bool {
-        self.paired_devices.read().unwrap().contains(device_id_hex)
+        let paired_devices = crate::p2p::devices::DeviceRegistry::list(&self.app_handle);
+        paired_devices.into_iter().any(|d| d.node_id_hex == device_id_hex)
     }
 
     /// Number of currently paired devices.
     pub fn paired_count(&self) -> usize {
-        self.paired_devices.read().unwrap().len()
+        crate::p2p::devices::DeviceRegistry::list(&self.app_handle).len()
     }
 
     /// Handle an incoming P2P connection.
@@ -134,6 +119,7 @@ impl P2PSyncHandler {
                     return;
                 }
                 info!("P2P auth OK for device {}", device_id);
+                let _ = crate::p2p::devices::DeviceRegistry::update_last_seen(&self.app_handle, &remote_hex);
                 device_id
             }
             _ => {
@@ -218,6 +204,7 @@ impl P2PSyncHandler {
                         }
                     }
                 }
+                let _ = self.app_handle.emit("sync-server-push", ());
                 MailboxResponse::PushBatchOk { max_seq }
             }
 
@@ -303,31 +290,49 @@ impl P2PSyncHandler {
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
         for rel_path in &local_files {
-            let seq = self.seq_counter.fetch_add(1, Ordering::Relaxed);
+            let local_path = std::path::Path::new(&vault_path).join(rel_path);
+            let modified_ms = std::fs::metadata(&local_path)
+                .and_then(|m| m.modified())
+                .unwrap_or_else(|_| std::time::SystemTime::now())
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let seq = modified_ms;
 
             // Skip entries the peer already has
             if seq <= since_seq {
                 continue;
             }
 
+            let is_json = rel_path.ends_with(".json") || rel_path.ends_with(".canvas");
+
+            let node_id = match db.get_node_id_by_path(rel_path) {
+                Ok(Some(id)) => id,
+                _ => {
+                    warn!("P2P Pull: node ID not found for path: {}", rel_path);
+                    continue;
+                }
+            };
+
             // Export CRDT snapshot
-            let snapshot = match db.get_crdt_doc(rel_path) {
+            let snapshot = match db.get_crdt_doc(&node_id) {
                 Ok(doc) => doc.export_snapshot(),
                 Err(_) => continue, // No CRDT doc, skip
             };
 
-            let is_json = rel_path.ends_with(".json") || rel_path.ends_with(".canvas");
-
             // Build payload (same format as sync engine)
             #[derive(serde::Serialize)]
             struct DocSyncPayload {
-                doc_id: String,
+                node_id: String,
+                rel_path: String,
                 snapshot: Vec<u8>,
                 is_json: bool,
             }
 
             let payload = DocSyncPayload {
-                doc_id: rel_path.clone(),
+                node_id,
+                rel_path: rel_path.clone(),
                 snapshot,
                 is_json,
             };
@@ -391,7 +396,10 @@ impl P2PSyncHandler {
         }
 
         let doc_hash_hex = hex::encode(doc_hash);
-        let seq = self.seq_counter.fetch_add(1, Ordering::Relaxed);
+        let seq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         // Store in KV as a staged P2P entry for the sync engine to process
         let db_state = self.app_handle.state::<crate::db::DbState>();
@@ -479,7 +487,10 @@ impl P2PSyncHandler {
     /// Handle PushDelete: mark a doc as deleted.
     fn handle_push_delete(&self, doc_hash: [u8; 32]) -> MailboxResponse {
         let doc_hash_hex = hex::encode(doc_hash);
-        let seq = self.seq_counter.fetch_add(1, Ordering::Relaxed);
+        let seq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         // Stage the deletion in KV
         let db_state = self.app_handle.state::<crate::db::DbState>();

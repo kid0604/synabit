@@ -31,6 +31,7 @@ impl PersistentEndpoint {
 
         let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
             .secret_key(key)
+            .alpns(vec![crate::p2p::handler::P2P_SYNC_ALPN.to_vec()])
             .bind()
             .await
             .map_err(|e| AppError::General(format!("failed to bind persistent endpoint: {}", e)))?;

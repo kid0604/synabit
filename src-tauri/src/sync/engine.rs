@@ -154,6 +154,76 @@ fn update_db_for_file(
     }
 }
 
+fn apply_doc_payload(
+    app_handle: &tauri::AppHandle,
+    vault: &Path,
+    vault_path: &str,
+    payload: &DocSyncPayload,
+    result: &mut SyncResult,
+) {
+    let node_id = &payload.node_id;
+    let local_path = vault.join(&payload.rel_path);
+
+    // Track path mapping
+    let db_state = app_handle.state::<crate::db::DbState>();
+    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Check if file was moved/renamed locally
+    let old_path_opt = db.get_path_by_node_id(node_id).unwrap_or(None);
+    if let Some(old_path) = old_path_opt {
+        if old_path != payload.rel_path {
+            let old_local_path = vault.join(&old_path);
+            if old_local_path.exists() {
+                // File was renamed by remote. Move it locally to match.
+                info!("PULL rename: {} -> {}", old_path, payload.rel_path);
+                if let Some(parent) = local_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::rename(&old_local_path, &local_path);
+            }
+        }
+    }
+    
+    let _ = db.upsert_document_path(node_id, &payload.rel_path);
+    // Drop the lock before proceeding to avoid deadlocks with pull_markdown
+    drop(db);
+
+    // ── DOCUMENT UPDATE ─────────────────────────────────
+    if let Some(parent) = local_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    if payload.is_json {
+        let _ = pull_json(app_handle, vault_path, &local_path, node_id, payload);
+    } else {
+        let _ = pull_markdown(
+            app_handle,
+            vault_path,
+            &local_path,
+            node_id,
+            payload,
+            result,
+        );
+    }
+
+    // Update node DB + search index
+    update_db_for_file(app_handle, vault_path, &local_path, node_id);
+
+    // Store SHA-256 of the file we just wrote so we don't re-push it
+    {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let sha = file_sha256(&local_path);
+        let _ = db.set_kv(
+            &format!("p2p_sync:sha256:{}", payload.rel_path),
+            &sha,
+        );
+    }
+
+    result.pulled += 1;
+    result.pulled_files.push(payload.rel_path.clone());
+}
+
 // ---------------------------------------------------------------------------
 // Main sync entry-point
 // ---------------------------------------------------------------------------
@@ -172,6 +242,7 @@ pub async fn p2p_sync_full(
     vault_path: &str,
     device_id: &str,
 ) -> AppResult<SyncResult> {
+    let mut max_seq: u64 = 0;
     let provider = transport.provider_name();
     info!(
         "P2P sync starting via {} for vault: {}",
@@ -208,259 +279,27 @@ pub async fn p2p_sync_full(
     }
 
     // 3. Load cursor (last-processed server sequence number)
+    let cursor_key = if transport.provider_name() == "Sync Server" {
+        "p2p_sync:cursor".to_string()
+    } else {
+        format!("p2p_sync:cursor:{}", transport.transport_id())
+    };
+
     let cursor: u64 = {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        db.get_kv("p2p_sync:cursor")
+        db.get_kv(&cursor_key)
             .unwrap_or(None)
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0)
     };
 
     info!("P2P sync cursor = {}", cursor);
+    max_seq = cursor;
 
-    // ════════════════════════════════════════════════════════
-    // PULL phase
-    // ════════════════════════════════════════════════════════
-
-    let entries = transport.pull_since(cursor).await?;
-    info!("PULL: {} entries since seq {}", entries.len(), cursor);
-
-    let mut max_seq: u64 = cursor;
     let mut pulled_node_ids: HashSet<String> = HashSet::new();
 
-    let pull_total = entries.len() as u32;
-    for (pull_idx, entry) in entries.iter().enumerate() {
-        // Emit pull progress (file_name populated after decrypt)
-        let _ = app_handle.emit("sync-progress", SyncProgressEvent {
-            phase: SyncPhase::Pull,
-            current: pull_idx as u32 + 1,
-            total: pull_total,
-            file_name: String::new(),
-            bytes_transferred: entry.encrypted_payload.len() as u64,
-        });
-        // Track highest seq regardless of processing outcome
-        if entry.seq > max_seq {
-            max_seq = entry.seq;
-        }
-
-        // (a) Skip our own pushes
-        if entry.source_device == device_id {
-            debug!("PULL skip own push: seq={}", entry.seq);
-            continue;
-        }
-        // ── PULL DELETE ──────────────────────────────────────
-        if entry.is_delete {
-            info!("PULL delete: doc_hash={} (seq={})", hex::encode(&entry.doc_hash), entry.seq);
-            let known_paths = {
-                let db_state = app_handle.state::<crate::db::DbState>();
-                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                db.get_all_document_paths().unwrap_or_default()
-            };
-            
-            let mut found = None;
-            for (nid, rel_path) in known_paths {
-                if doc_hash(&nid) == entry.doc_hash {
-                    found = Some((nid, rel_path));
-                    break;
-                }
-            }
-
-            if let Some((nid, rel_path)) = found {
-                let local_path = vault.join(&rel_path);
-                if local_path.exists() {
-                    let _ = fs::remove_file(&local_path);
-                }
-                let db_state = app_handle.state::<crate::db::DbState>();
-                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                let _ = db.delete_document_path(&nid);
-                let _ = db.delete_crdt_doc(&nid);
-                let _ = db.delete_node(&nid);
-                db.delete_search_entry(&nid);
-                info!("PULL delete applied for {}", rel_path);
-                result.deleted += 1;
-            } else {
-                warn!("PULL delete: could not find local node for doc_hash at seq={}", entry.seq);
-            }
-            continue;
-        }
-
-        // (b) Integrity check: BLAKE3(encrypted_payload) == payload_hash
-        let computed_hash = *blake3::hash(&entry.encrypted_payload).as_bytes();
-        if computed_hash != entry.payload_hash {
-            warn!(
-                "PULL: payload hash mismatch at seq={}, skipping",
-                entry.seq
-            );
-            result.errors.push(format!(
-                "Payload integrity check failed at seq={}",
-                entry.seq
-            ));
-            continue;
-        }
-
-        // Track bytes received
-        result.rx_bytes += entry.encrypted_payload.len() as u64;
-
-        // (c) Decrypt
-        let decrypted = match crate::sync::crypto::decrypt(&e2ee_key, &entry.encrypted_payload) {
-            Ok(data) => data,
-            Err(e) => {
-                warn!("PULL: decrypt failed at seq={}: {}", entry.seq, e);
-                result.errors.push(format!("Decrypt failed (seq {}): {}", entry.seq, e));
-                max_seq = max_seq.max(entry.seq);
-                continue;
-            }
-        };
-
-        // (d) Deserialize payload
-        let payload: DocSyncPayload = match postcard::from_bytes(&decrypted) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("PULL: deserialize failed at seq={}: {}", entry.seq, e);
-                result.errors.push(format!("Deserialize failed (seq {}): {}", entry.seq, e));
-                max_seq = max_seq.max(entry.seq);
-                continue;
-            }
-        };
-
-        let node_id = &payload.node_id;
-        pulled_node_ids.insert(node_id.clone());
-
-        let local_path = vault.join(&payload.rel_path);
-
-        // Track path mapping
-        let db_state = app_handle.state::<crate::db::DbState>();
-        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-
-        // Check if file was moved/renamed locally
-        let old_path_opt = db.get_path_by_node_id(node_id).unwrap_or(None);
-        if let Some(old_path) = old_path_opt {
-            if old_path != payload.rel_path {
-                let old_local_path = vault.join(&old_path);
-                if old_local_path.exists() {
-                    // File was renamed by remote. Move it locally to match.
-                    info!("PULL rename: {} -> {}", old_path, payload.rel_path);
-                    if let Some(parent) = local_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    let _ = fs::rename(&old_local_path, &local_path);
-                }
-            }
-        }
-        
-        let _ = db.upsert_document_path(node_id, &payload.rel_path);
-        // Drop the lock before proceeding to avoid deadlocks with pull_markdown
-        drop(db);
-
-        // ── DOCUMENT UPDATE ─────────────────────────────────
-        if let Some(parent) = local_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-
-        if payload.is_json {
-            // ── JSON / Canvas: LWW ──────────────────────────
-            pull_json(app_handle, vault_path, &local_path, node_id, &payload)?;
-        } else {
-            // ── Markdown: CRDT merge ────────────────────────
-            pull_markdown(
-                app_handle,
-                vault_path,
-                &local_path,
-                node_id,
-                &payload,
-                &mut result,
-            )?;
-        }
-
-        // Update node DB + search index
-        update_db_for_file(app_handle, vault_path, &local_path, node_id);
-
-        // Store SHA-256 of the file we just wrote so we don't re-push it
-        {
-            let db_state = app_handle.state::<crate::db::DbState>();
-            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let sha = file_sha256(&local_path);
-            let _ = db.set_kv(
-                &format!("p2p_sync:sha256:{}", payload.rel_path),
-                &sha,
-            );
-        }
-
-        result.pulled += 1;
-        result.pulled_files.push(payload.rel_path.clone());
-    }
-
-    // Persist cursor immediately after pull succeeds to avoid losing progress if push fails
-    if max_seq > cursor {
-        let db_state = app_handle.state::<crate::db::DbState>();
-        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.set_kv("p2p_sync:cursor", &max_seq.to_string());
-        info!("Cursor persisted after pull phase: {}", max_seq);
-    }
-
     // ════════════════════════════════════════════════════════
-    // ASSET PULL phase (Phase 2.5)
-    // ════════════════════════════════════════════════════════
-    let local_files = collect_local_files(vault_path);
-    let mut missing_assets = std::collections::HashSet::new();
-    let re = regex::Regex::new(r#"assets/[^)"'\s\]]+"#).unwrap();
-
-    for rel_path in &local_files {
-        if is_asset(rel_path) {
-            continue;
-        }
-        let local_path = vault.join(rel_path);
-        if let Ok(content) = fs::read_to_string(&local_path) {
-            for cap in re.captures_iter(&content) {
-                let asset_path = urlencoding::decode(&cap[0])
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|_| cap[0].to_string());
-                let asset_full = vault.join(&asset_path);
-                if !asset_full.exists() {
-                    missing_assets.insert(asset_path);
-                }
-            }
-        }
-    }
-
-    for asset_path in missing_assets {
-        let asset_hash = doc_hash(&asset_path);
-        match transport.pull_asset(&asset_hash).await {
-            Ok(Some(encrypted_data)) => {
-                result.rx_bytes += encrypted_data.len() as u64;
-                match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_data) {
-                    Ok(decrypted) => {
-                        let asset_full = vault.join(&asset_path);
-                        if let Err(e) = atomic_write(&asset_full, &decrypted) {
-                            result.errors.push(format!("Write asset {}: {}", asset_path, e));
-                        } else {
-                            let current_sha = file_sha256(&asset_full);
-                            let db_state = app_handle.state::<crate::db::DbState>();
-                            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                            let _ = db.set_kv(
-                                &format!("p2p_sync:sha256:{}", asset_path),
-                                &current_sha,
-                            );
-                            result.pulled += 1;
-                            result.pulled_files.push(asset_path.clone());
-                            info!("PULL ASSET OK: {}", asset_path);
-                        }
-                    }
-                    Err(e) => {
-                        result.errors.push(format!("Decrypt asset {}: {}", asset_path, e));
-                    }
-                }
-            }
-            Ok(None) => {
-                warn!("Asset not found on remote: {}", asset_path);
-            }
-            Err(e) => {
-                result.errors.push(format!("Pull asset {}: {}", asset_path, e));
-            }
-        }
-    }
-
     // ════════════════════════════════════════════════════════
     // PUSH phase
     // ════════════════════════════════════════════════════════
@@ -825,6 +664,299 @@ pub async fn p2p_sync_full(
     }
 
 
+    // PROCESS STAGED DOCS (from passive Push)
+    // ════════════════════════════════════════════════════════
+    {
+        use base64::Engine;
+        let mut staged = Vec::new();
+        {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Ok(staged_kvs) = db.get_kv_prefix("p2p:staged:") {
+                staged = staged_kvs.into_iter()
+                    .filter(|(k, _)| !k.starts_with("p2p:staged_delete:"))
+                    .collect();
+            }
+        }
+        
+        for (key, base64_val) in staged {
+            let encrypted_payload = match base64::engine::general_purpose::STANDARD.decode(&base64_val) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("STAGED: decode failed for {}: {}", key, e);
+                    let db_state = app_handle.state::<crate::db::DbState>();
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = db.delete_kv(&key);
+                    continue;
+                }
+            };
+            
+            let decrypted = match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_payload) {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("STAGED: decrypt failed for {}: {}", key, e);
+                    let db_state = app_handle.state::<crate::db::DbState>();
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = db.delete_kv(&key);
+                    continue;
+                }
+            };
+            
+            let payload: DocSyncPayload = match postcard::from_bytes(&decrypted) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("STAGED: deserialize failed for {}: {}", key, e);
+                    let db_state = app_handle.state::<crate::db::DbState>();
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = db.delete_kv(&key);
+                    continue;
+                }
+            };
+            
+            info!("STAGED: applying staged doc {}", payload.rel_path);
+            pulled_node_ids.insert(payload.node_id.clone());
+            apply_doc_payload(app_handle, vault, vault_path, &payload, &mut result);
+            
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = db.delete_kv(&key);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════
+    // STAGED DELETE DOCS
+    // ════════════════════════════════════════════════════════
+    {
+        let mut staged_deletes = Vec::new();
+        {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Ok(staged_kvs) = db.get_kv_prefix("p2p:staged_delete:") {
+                staged_deletes = staged_kvs;
+            }
+        }
+        
+        for (key, _) in staged_deletes {
+            // Key format: p2p:staged_delete:doc_hash_hex
+            if let Some(doc_hash_hex) = key.strip_prefix("p2p:staged_delete:") {
+                if let Ok(doc_hash_bytes) = hex::decode(doc_hash_hex) {
+                    let known_paths = {
+                        let db_state = app_handle.state::<crate::db::DbState>();
+                        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                        db.get_all_document_paths().unwrap_or_default()
+                    };
+                    
+                    let mut found = None;
+                    for (nid, rel_path) in known_paths {
+                        if doc_hash(&nid) == doc_hash_bytes.as_slice() {
+                            found = Some((nid, rel_path));
+                            break;
+                        }
+                    }
+
+                    if let Some((nid, rel_path)) = found {
+                        let local_path = vault.join(&rel_path);
+                        if local_path.exists() {
+                            let _ = fs::remove_file(&local_path);
+                        }
+                        let db_state = app_handle.state::<crate::db::DbState>();
+                        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = db.delete_document_path(&nid);
+                        let _ = db.delete_crdt_doc(&nid);
+                        let _ = db.delete_node(&nid);
+                        db.delete_search_entry(&nid);
+                        info!("STAGED delete applied for {}", rel_path);
+                        result.deleted += 1;
+                    }
+                }
+            }
+            
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = db.delete_kv(&key);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════
+    // PULL phase
+    // ════════════════════════════════════════════════════════
+
+    let entries = transport.pull_since(cursor).await?;
+    info!("PULL: {} entries since seq {}", entries.len(), cursor);
+
+    
+
+    let pull_total = entries.len() as u32;
+    for (pull_idx, entry) in entries.iter().enumerate() {
+        // Emit pull progress (file_name populated after decrypt)
+        let _ = app_handle.emit("sync-progress", SyncProgressEvent {
+            phase: SyncPhase::Pull,
+            current: pull_idx as u32 + 1,
+            total: pull_total,
+            file_name: String::new(),
+            bytes_transferred: entry.encrypted_payload.len() as u64,
+        });
+        // Track highest seq regardless of processing outcome
+        if entry.seq > max_seq {
+            max_seq = entry.seq;
+        }
+
+        // (a) Skip our own pushes
+        if entry.source_device == device_id {
+            debug!("PULL skip own push: seq={}", entry.seq);
+            continue;
+        }
+        // ── PULL DELETE ──────────────────────────────────────
+        if entry.is_delete {
+            info!("PULL delete: doc_hash={} (seq={})", hex::encode(&entry.doc_hash), entry.seq);
+            let known_paths = {
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                db.get_all_document_paths().unwrap_or_default()
+            };
+            
+            let mut found = None;
+            for (nid, rel_path) in known_paths {
+                if doc_hash(&nid) == entry.doc_hash {
+                    found = Some((nid, rel_path));
+                    break;
+                }
+            }
+
+            if let Some((nid, rel_path)) = found {
+                let local_path = vault.join(&rel_path);
+                if local_path.exists() {
+                    let _ = fs::remove_file(&local_path);
+                }
+                let db_state = app_handle.state::<crate::db::DbState>();
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = db.delete_document_path(&nid);
+                let _ = db.delete_crdt_doc(&nid);
+                let _ = db.delete_node(&nid);
+                db.delete_search_entry(&nid);
+                info!("PULL delete applied for {}", rel_path);
+                result.deleted += 1;
+            } else {
+                warn!("PULL delete: could not find local node for doc_hash at seq={}", entry.seq);
+            }
+            continue;
+        }
+
+        // (b) Integrity check: BLAKE3(encrypted_payload) == payload_hash
+        let computed_hash = *blake3::hash(&entry.encrypted_payload).as_bytes();
+        if computed_hash != entry.payload_hash {
+            warn!(
+                "PULL: payload hash mismatch at seq={}, skipping",
+                entry.seq
+            );
+            result.errors.push(format!(
+                "Payload integrity check failed at seq={}",
+                entry.seq
+            ));
+            continue;
+        }
+
+        // Track bytes received
+        result.rx_bytes += entry.encrypted_payload.len() as u64;
+
+        // (c) Decrypt
+        let decrypted = match crate::sync::crypto::decrypt(&e2ee_key, &entry.encrypted_payload) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("PULL: decrypt failed at seq={}: {}", entry.seq, e);
+                result.errors.push(format!("Decrypt failed (seq {}): {}", entry.seq, e));
+                max_seq = max_seq.max(entry.seq);
+                continue;
+            }
+        };
+
+        // (d) Deserialize payload
+        let payload: DocSyncPayload = match postcard::from_bytes(&decrypted) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("PULL: deserialize failed at seq={}: {}", entry.seq, e);
+                result.errors.push(format!("Deserialize failed (seq {}): {}", entry.seq, e));
+                max_seq = max_seq.max(entry.seq);
+                continue;
+            }
+        };
+
+        let node_id = &payload.node_id;
+        pulled_node_ids.insert(node_id.clone());
+
+        apply_doc_payload(app_handle, vault, vault_path, &payload, &mut result);
+    }
+
+    // Persist cursor immediately after pull succeeds to avoid losing progress if push fails
+    if max_seq > cursor {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.set_kv(&cursor_key, &max_seq.to_string());
+        info!("Cursor persisted after pull phase for {}: {}", cursor_key, max_seq);
+    }
+
+    // ════════════════════════════════════════════════════════
+    // ASSET PULL phase (Phase 2.5)
+    // ════════════════════════════════════════════════════════
+    let local_files = collect_local_files(vault_path);
+    let mut missing_assets = std::collections::HashSet::new();
+    let re = regex::Regex::new(r#"assets/[^)"'\s\]]+"#).unwrap();
+
+    for rel_path in &local_files {
+        if is_asset(rel_path) {
+            continue;
+        }
+        let local_path = vault.join(rel_path);
+        if let Ok(content) = fs::read_to_string(&local_path) {
+            for cap in re.captures_iter(&content) {
+                let asset_path = urlencoding::decode(&cap[0])
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| cap[0].to_string());
+                let asset_full = vault.join(&asset_path);
+                if !asset_full.exists() {
+                    missing_assets.insert(asset_path);
+                }
+            }
+        }
+    }
+
+    for asset_path in missing_assets {
+        let asset_hash = doc_hash(&asset_path);
+        match transport.pull_asset(&asset_hash).await {
+            Ok(Some(encrypted_data)) => {
+                result.rx_bytes += encrypted_data.len() as u64;
+                match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_data) {
+                    Ok(decrypted) => {
+                        let asset_full = vault.join(&asset_path);
+                        if let Err(e) = atomic_write(&asset_full, &decrypted) {
+                            result.errors.push(format!("Write asset {}: {}", asset_path, e));
+                        } else {
+                            let current_sha = file_sha256(&asset_full);
+                            let db_state = app_handle.state::<crate::db::DbState>();
+                            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                            let _ = db.set_kv(
+                                &format!("p2p_sync:sha256:{}", asset_path),
+                                &current_sha,
+                            );
+                            result.pulled += 1;
+                            result.pulled_files.push(asset_path.clone());
+                            info!("PULL ASSET OK: {}", asset_path);
+                        }
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("Decrypt asset {}: {}", asset_path, e));
+                    }
+                }
+            }
+            Ok(None) => {
+                warn!("Asset not found on remote: {}", asset_path);
+            }
+            Err(e) => {
+                result.errors.push(format!("Pull asset {}: {}", asset_path, e));
+            }
+        }
+    }
+
     // ════════════════════════════════════════════════════════
     // ACK phase
     // ════════════════════════════════════════════════════════
@@ -834,7 +966,7 @@ pub async fn p2p_sync_full(
         {
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.set_kv("p2p_sync:cursor", &max_seq.to_string());
+            let _ = db.set_kv(&cursor_key, &max_seq.to_string());
         }
 
         // 2. Send ACK to server
@@ -897,9 +1029,10 @@ fn pull_json(
         String::from_utf8_lossy(&payload.snapshot).to_string()
     };
 
+    let local_text = fs::read_to_string(local_path).unwrap_or_default();
+    
     // Conflict resolution: compare timestamps if local file already exists
     let final_text = if local_path.exists() {
-        let local_text = fs::read_to_string(local_path).unwrap_or_default();
         let local_ts = extract_json_updated_at(&local_text);
         let remote_ts = extract_json_updated_at(&remote_text);
 
@@ -914,26 +1047,28 @@ fn pull_json(
                 "JSON LWW for {}: local wins (local={} > remote={})",
                 node_id, local_ts, remote_ts
             );
-            local_text
+            local_text.clone()
         }
     } else {
         remote_text
     };
 
-    // Atomic write
-    atomic_write(local_path, final_text.as_bytes()).map_err(|e| {
-        AppError::SyncError(format!("Write JSON {}: {}", node_id, e))
-    })?;
+    if final_text != local_text {
+        // Atomic write
+        atomic_write(local_path, final_text.as_bytes()).map_err(|e| {
+            AppError::SyncError(format!("Write JSON {}: {}", node_id, e))
+        })?;
 
-    // Save a fresh CRDT snapshot from the final winner
-    let new_doc = loro::LoroDoc::new();
-    if let Ok(peer_id) = db.get_or_create_peer_id() {
-        new_doc.set_peer_id(peer_id).ok();
-    }
-    let text_handler = new_doc.get_text("content");
-    if text_handler.insert(0, &final_text).is_ok() {
-        new_doc.commit();
-        let _ = db.save_crdt_snapshot(node_id, new_doc.export_snapshot());
+        // Save a fresh CRDT snapshot from the final winner
+        let new_doc = loro::LoroDoc::new();
+        if let Ok(peer_id) = db.get_or_create_peer_id() {
+            new_doc.set_peer_id(peer_id).ok();
+        }
+        let text_handler = new_doc.get_text("content");
+        if text_handler.insert(0, &final_text).is_ok() {
+            new_doc.commit();
+            let _ = db.save_crdt_snapshot(node_id, new_doc.export_snapshot());
+        }
     }
 
     Ok(())
@@ -967,21 +1102,27 @@ fn pull_markdown(
 
             match merge_result {
                 Ok(Ok((delta, merged_text))) => {
-                    if let Err(e) = db.save_crdt_delta(node_id, delta) {
-                        warn!("CRDT delta save failed for {}: {}", node_id, e);
+                    if !delta.is_empty() {
+                        if let Err(e) = db.save_crdt_delta(node_id, delta) {
+                            warn!("CRDT delta save failed for {}: {}", node_id, e);
+                        }
                     }
-                    atomic_write(local_path, merged_text.as_bytes())
-                        .map_err(|e| {
-                            AppError::SyncError(format!(
-                                "Write merged {}: {}",
-                                node_id, e
-                            ))
-                        })?;
-                    // Emit CRDT merge conflict info
-                    let _ = app_handle.emit("sync-conflict", SyncConflictInfo {
-                        file_name: payload.rel_path.clone(),
-                        resolution: "crdt_merge".to_string(),
-                    });
+
+                    let local_text = std::fs::read_to_string(local_path).unwrap_or_default();
+                    if merged_text != local_text {
+                        atomic_write(local_path, merged_text.as_bytes())
+                            .map_err(|e| {
+                                AppError::SyncError(format!(
+                                    "Write merged {}: {}",
+                                    node_id, e
+                                ))
+                            })?;
+                        // Emit CRDT merge conflict info only if actual changes occurred
+                        let _ = app_handle.emit("sync-conflict", SyncConflictInfo {
+                            file_name: payload.rel_path.clone(),
+                            resolution: "crdt_merge".to_string(),
+                        });
+                    }
                 }
                 Ok(Err(e)) => {
                     warn!(
@@ -1047,10 +1188,13 @@ fn pull_markdown_reset(
     match db.get_crdt_doc(node_id) {
         Ok(doc) => {
             let text = doc.get_text("content").to_string();
-            if let Err(e) = atomic_write(local_path, text.as_bytes()) {
-                result
-                    .errors
-                    .push(format!("Write reset {}: {}", node_id, e));
+            let local_text = std::fs::read_to_string(local_path).unwrap_or_default();
+            if text != local_text {
+                if let Err(e) = atomic_write(local_path, text.as_bytes()) {
+                    result
+                        .errors
+                        .push(format!("Write reset {}: {}", node_id, e));
+                }
             }
         }
         Err(e) => {

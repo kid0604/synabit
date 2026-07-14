@@ -192,35 +192,6 @@ impl SynabitServerTransport {
             .as_mut()
             .ok_or_else(|| AppError::General("no active session".to_string()))?;
 
-        // 1. Send Hello for version negotiation
-        let hello = MailboxRequest::Hello { version: 1 };
-        write_message(&mut s.send, &hello)
-            .await
-            .map_err(|e| AppError::General(format!("hello send failed: {}", e)))?;
-
-        let hello_resp = Self::wait_for_response(&mut s.recv).await?;
-
-        match hello_resp {
-            MailboxResponse::HelloOk { server_version, max_bytes } => {
-                info!("Server protocol version {}, max_bytes: {}", server_version, max_bytes);
-            }
-            MailboxResponse::Error { message } => {
-                error!("Server hello failed: {}", message);
-                // We could fallback or fail depending on message, but for now we continue
-                // since the server might be an older version that expects Auth first.
-                // Wait, if it expects Auth first, it might have dropped the connection or returned Error.
-                // If it returned Error, we probably should fail.
-                drop(session);
-                self.close().await;
-                return Err(AppError::General(format!("protocol negotiation failed: {}", message)));
-            }
-            _ => {
-                drop(session);
-                self.close().await;
-                return Err(AppError::General("unexpected response to Hello".to_string()));
-            }
-        }
-
         // 2. Send Auth
         let auth = MailboxRequest::Auth {
             vault_hash: self.vault_hash,

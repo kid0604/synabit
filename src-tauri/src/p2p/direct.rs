@@ -52,6 +52,7 @@ struct P2PSession {
 /// let entries = transport.pull_since(0).await?;
 /// ```
 pub struct DirectP2PTransport {
+    app_handle: tauri::AppHandle,
     /// Shared Iroh endpoint (from PersistentEndpoint)
     endpoint: iroh::Endpoint,
     /// Peer's EndpointId (public key)
@@ -80,15 +81,8 @@ impl std::fmt::Debug for DirectP2PTransport {
 
 impl DirectP2PTransport {
     /// Create a new direct P2P transport.
-    ///
-    /// # Arguments
-    ///
-    /// * `endpoint` — Iroh endpoint from `PersistentEndpoint` (cheap clone)
-    /// * `peer_id` — the peer device's public key
-    /// * `e2ee_key` — the vault's E2EE key (for deriving auth credentials)
-    /// * `device_id` — this device's stable UUID
-    /// * `lan_address` — optional direct IP address discovered via mDNS
     pub fn new(
+        app_handle: tauri::AppHandle,
         endpoint: iroh::Endpoint,
         peer_id: iroh::EndpointId,
         e2ee_key: &[u8; 32],
@@ -104,6 +98,7 @@ impl DirectP2PTransport {
         );
 
         Self {
+            app_handle,
             endpoint,
             peer_id,
             vault_hash,
@@ -129,17 +124,19 @@ impl DirectP2PTransport {
             peer_addr = peer_addr.with_ip_addr(addr);
         }
         
-        let conn: iroh::endpoint::Connection = self
-            .endpoint
-            .connect(peer_addr, P2P_SYNC_ALPN)
-            .await
-            .map_err(|e| {
+        let conn: iroh::endpoint::Connection = match tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            self.endpoint.connect(peer_addr, P2P_SYNC_ALPN)
+        ).await {
+            Ok(res) => res.map_err(|e| {
                 AppError::General(format!(
                     "connect to peer {} failed: {}",
                     self.peer_id.fmt_short(),
                     e
                 ))
-            })?;
+            })?,
+            Err(_) => return Err(AppError::General(format!("connect to peer {} timed out", self.peer_id.fmt_short()))),
+        };
 
         // Open a bidirectional stream for the mailbox protocol
         let (send, recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) = conn
@@ -152,6 +149,11 @@ impl DirectP2PTransport {
         // Authenticate on the stream
         drop(session); // Release lock before calling send_auth (which re-acquires)
         self.send_auth().await?;
+
+        let _ = crate::p2p::devices::DeviceRegistry::update_last_seen(
+            &self.app_handle,
+            &hex::encode(self.peer_id.as_bytes()),
+        );
 
         Ok(())
     }
@@ -268,6 +270,10 @@ impl SyncTransport for DirectP2PTransport {
         "Direct P2P"
     }
 
+    fn transport_id(&self) -> String {
+        format!("p2p_peer_{}", hex::encode(self.peer_id.as_bytes()))
+    }
+
     async fn authenticate(&self) -> AppResult<()> {
         self.ensure_session().await
     }
@@ -302,6 +308,38 @@ impl SyncTransport for DirectP2PTransport {
             }
             other => Err(AppError::SyncError(format!(
                 "unexpected p2p push response: {:?}",
+                other
+            ))),
+        }
+    }
+
+    async fn push_doc_batch(
+        &self,
+        items: Vec<([u8; 32], Vec<u8>)>,
+    ) -> AppResult<u64> {
+        let batch_items = items
+            .into_iter()
+            .map(|(doc_hash, encrypted_payload)| crate::sync::protocol::PushBatchItem {
+                doc_hash,
+                payload_hash: *blake3::hash(&encrypted_payload).as_bytes(),
+                encrypted_payload,
+            })
+            .collect();
+
+        let resp = self
+            .request(&MailboxRequest::PushBatch { items: batch_items })
+            .await?;
+
+        match resp {
+            MailboxResponse::PushBatchOk { max_seq } => {
+                debug!("P2P pushed batch, assigned max_seq={}", max_seq);
+                Ok(max_seq)
+            }
+            MailboxResponse::Error { message } => {
+                Err(AppError::SyncError(format!("p2p push batch failed: {}", message)))
+            }
+            other => Err(AppError::SyncError(format!(
+                "unexpected p2p push batch response: {:?}",
                 other
             ))),
         }

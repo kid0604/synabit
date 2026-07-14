@@ -236,6 +236,7 @@ const handleGDriveMigrated = async (newPath: string) => {
 
 // ─── P2P Sync ────────────────────────────────────────────────
 const p2p = useP2PSync(vaultPath);
+let lastP2PAutoSyncTime = 0;
 
 import { appDataDir } from '@tauri-apps/api/path';
 
@@ -489,20 +490,20 @@ onMounted(async () => {
       showGDriveMigrationModal.value = true;
   }
 
-  bus.on('vault:file-created-deleted', (payload: any) => {
+  bus.on('vault:file-created-deleted', async (payload: any) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
       const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
-          invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+          await invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
           
           const hasFiles = paths.some(p => p.startsWith('assets/') || p.includes('Files/'));
           const hasWhiteboards = paths.some(p => p.startsWith('Whiteboards/'));
-          if (hasFiles) invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
-          if (hasWhiteboards) invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasFiles) await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasWhiteboards) await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
-          invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
-          invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
-          invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
@@ -510,25 +511,29 @@ onMounted(async () => {
       if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
-      if (p2p.p2pConnected.value && !p2p.p2pSyncing.value) {
-          p2p.syncP2P();
+      if (appStore.p2pAutoSyncEnabled && !p2p.p2pSyncing.value) {
+          const now = Date.now();
+          if (now - lastP2PAutoSyncTime > 5000) {
+              lastP2PAutoSyncTime = now;
+              p2p.syncP2P();
+          }
       }
   });
 
-  bus.on('vault:file-modified', (payload: any) => {
+  bus.on('vault:file-modified', async (payload: any) => {
       if (noteAppRef.value) noteAppRef.value.scanVault();
       const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
-          invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
+          await invoke('scan_specific_nodes', { vaultPath: vaultPath.value, paths }).catch(logger.error);
           
           const hasFiles = paths.some(p => p.startsWith('assets/') || p.includes('Files/'));
           const hasWhiteboards = paths.some(p => p.startsWith('Whiteboards/'));
-          if (hasFiles) invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
-          if (hasWhiteboards) invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasFiles) await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          if (hasWhiteboards) await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
-          invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
-          invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
-          invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
+          await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }
       
       setTimeout(() => checkUnreadNotifications(), 500);
@@ -536,8 +541,12 @@ onMounted(async () => {
       if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
           gdrive.syncGDrive();
       }
-      if (p2p.p2pConnected.value && !p2p.p2pSyncing.value) {
-          p2p.syncP2P();
+      if (appStore.p2pAutoSyncEnabled && !p2p.p2pSyncing.value) {
+          const now = Date.now();
+          if (now - lastP2PAutoSyncTime > 5000) {
+              lastP2PAutoSyncTime = now;
+              p2p.syncP2P();
+          }
       }
   });
 
@@ -779,7 +788,7 @@ onUnmounted(() => {
                    <Cloud v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ gdrive.gdriveSyncing.value ? 'Syncing…' : gdrive.gdriveSyncError.value ? 'Sync Error' : gdrive.lastSyncTime.value ? `Synced ${gdrive.lastSyncTime.value}` : 'Sync Now' }}</span>
                 </button>
-                <button v-if="p2p.p2pConnected.value" @click="p2p.syncP2P()" :disabled="p2p.p2pSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', p2p.p2pSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="p2p.p2pSyncing.value ? 'Syncing...' : p2p.lastSyncTime.value ? `P2P synced ${p2p.lastSyncTime.value}` : 'P2P Sync'">
+                <button @click="p2p.syncP2P()" :disabled="p2p.p2pSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', p2p.p2pSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="p2p.p2pSyncing.value ? 'Syncing...' : p2p.lastSyncTime.value ? `P2P synced ${p2p.lastSyncTime.value}` : 'P2P Sync'">
                    <RefreshCw v-if="p2p.p2pSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ p2p.p2pSyncing.value ? 'P2P Syncing…' : p2p.p2pSyncError.value ? 'P2P Error' : p2p.lastSyncTime.value ? `P2P ${p2p.lastSyncTime.value}` : 'P2P Sync' }}</span>

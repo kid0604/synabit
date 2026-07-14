@@ -36,4 +36,28 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("DB Delete KV Error: {}", e)))?;
         Ok(())
     }
+
+    pub fn get_kv_prefix(&self, prefix: &str) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM kv_store WHERE key LIKE ?1")
+            .map_err(|e| AppError::General(format!("DB Get KV Prefix Prepare Error: {}", e)))?;
+        
+        let pattern = format!("{}%", prefix);
+        let rows = stmt
+            .query_map(params![pattern], |row| {
+                let key: String = row.get(0)?;
+                let value: String = row.get(1)?;
+                Ok((key, value))
+            })
+            .map_err(|e| AppError::General(format!("DB Get KV Prefix Query Error: {}", e)))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            if let Ok(pair) = row {
+                results.push(pair);
+            }
+        }
+        Ok(results)
+    }
 }

@@ -4,6 +4,7 @@ import { emit as tauriEmit, listen, type UnlistenFn } from '@tauri-apps/api/even
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
 import { logger } from '../utils/logger';
+import { usePlatform } from './usePlatform';
 
 // ─── Sync UX Event Types ──────────────────────────────────
 export interface SyncProgressEvent {
@@ -47,15 +48,18 @@ export function useP2PSync(vaultPath: Ref<string>) {
   const syncConflicts = ref<SyncConflictInfo[]>([]);
   const quotaWarning = ref<QuotaInfo | null>(null);
 
-  // --- Event Listeners ---
   const unlistenFns: UnlistenFn[] = [];
+  let syncQueued = false;
 
   async function setupEventListeners() {
     try {
       const unlistenPush = await listen('sync-server-push', () => {
-        console.log('[P2P Sync] Received server push notification. Triggering sync...');
-        if (!p2pSyncing.value && p2pConnected.value) {
+        logger.info('[P2P Sync] Received server push notification. Triggering sync...');
+        if (!p2pSyncing.value) {
           syncP2P();
+        } else {
+          logger.info('[P2P Sync] Sync already in progress. Queuing next sync.');
+          syncQueued = true;
         }
       });
       unlistenFns.push(unlistenPush);
@@ -91,6 +95,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
   let autoSyncTimer: number | null = null;
   let reconnectTimer: number | null = null;
 
+  const { isMobileOS } = usePlatform();
 
   // --- Auto Sync ---
   function setupAutoSync() {
@@ -98,11 +103,11 @@ export function useP2PSync(vaultPath: Ref<string>) {
       window.clearInterval(autoSyncTimer);
       autoSyncTimer = null;
     }
-    // Only set up auto-sync if we are connected, auto-sync is enabled, and the app is visible
-    if (appStore.p2pAutoSyncEnabled && p2pConnected.value && document.visibilityState === 'visible') {
+    // Set up auto-sync if it is enabled and the app is visible
+    if (appStore.p2pAutoSyncEnabled && document.visibilityState === 'visible') {
       const mins = Math.max(1, Math.min(60, appStore.p2pAutoSyncInterval));
       autoSyncTimer = window.setInterval(() => {
-        if (!p2pSyncing.value && p2pConnected.value && document.visibilityState === 'visible') {
+        if (!p2pSyncing.value && document.visibilityState === 'visible') {
           syncP2P();
         }
       }, mins * 60 * 1000);
@@ -114,8 +119,15 @@ export function useP2PSync(vaultPath: Ref<string>) {
     if (document.visibilityState === 'visible') {
       logger.info('App foregrounded, resuming auto-sync timer');
       setupAutoSync();
-      // Optionally trigger an immediate sync when returning to the app
-      if (appStore.p2pAutoSyncEnabled && p2pConnected.value) {
+      
+      // HYBRID MOBILE: Reconnect when foregrounded
+      if (isMobileOS.value && appStore.p2pAutoSyncEnabled && !p2pConnected.value && appStore.p2pServerAddr) {
+        logger.info('[Mobile Hybrid] Reconnecting P2P on foreground');
+        connectP2P(appStore.p2pServerAddr, appStore.p2pServerIdHex).then(() => {
+          syncP2P();
+        });
+      } else if (appStore.p2pAutoSyncEnabled) {
+        // Desktop or already connected Mobile: sync immediately
         syncP2P();
       }
     } else {
@@ -123,6 +135,12 @@ export function useP2PSync(vaultPath: Ref<string>) {
       if (autoSyncTimer !== null) {
         window.clearInterval(autoSyncTimer);
         autoSyncTimer = null;
+      }
+      
+      // HYBRID MOBILE: Disconnect when backgrounded to save battery and avoid OS kill
+      if (isMobileOS.value && p2pConnected.value) {
+        logger.info('[Mobile Hybrid] Disconnecting P2P on background to save battery');
+        disconnectP2P();
       }
     }
   }
@@ -268,6 +286,10 @@ export function useP2PSync(vaultPath: Ref<string>) {
       }
     } finally {
       p2pSyncing.value = false;
+      if (syncQueued) {
+        syncQueued = false;
+        setTimeout(() => syncP2P(), 1000);
+      }
     }
   }
 

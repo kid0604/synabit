@@ -1,6 +1,6 @@
 /* === Code Block (Syntax Highlighting) === */
 .tiptap pre {
-  background: #f8f9fa !important;
+  background: var(--code-block-bg-light, #f8f9fa) !important;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 16px 20px;
@@ -9,9 +9,15 @@
   line-height: 1.6;
   overflow-x: auto;
   position: relative;
-  color: #24292e !important;
+  color: var(--code-block-color-light, #24292e) !important;
 }
 .tiptap pre code { background: none !important; padding: 0; font-size: inherit; color: inherit !important; }
+
+/* Code Block Header */
+.code-block-header {
+  background-color: var(--code-block-bg-light, #f3f4f6);
+  background-image: linear-gradient(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.04));
+}
 
 /* Light theme syntax colors */
 .tiptap pre .hljs-comment,
@@ -39,11 +45,17 @@
 .tiptap pre .hljs-meta { color: #6a737d; }
 
 .dark .tiptap pre {
-  background: #1e1e1e !important;
+  background: var(--code-block-bg-dark, #1e1e1e) !important;
   border-color: #2c2c2e;
-  color: #e4e4e7 !important;
+  color: var(--code-block-color-dark, #e4e4e7) !important;
 }
-.dark .tiptap pre code { color: #e4e4e7; }
+
+.dark .code-block-header {
+  background-color: var(--code-block-bg-dark, #252525);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.06));
+}
+
+.dark .tiptap pre code { color: inherit !important; }
 .dark .tiptap pre .hljs-comment,
 .dark .tiptap pre .hljs-quote { color: #636366; }
 .dark .tiptap pre .hljs-keyword,

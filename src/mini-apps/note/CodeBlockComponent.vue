@@ -2,7 +2,7 @@
   <node-view-wrapper class="code-block-wrapper relative group my-4">
     <!-- Header Bar -->
     <div 
-      class="flex items-center justify-between bg-gray-100/80 dark:bg-[#252525] px-3 py-1.5 rounded-t-lg border border-gray-200 dark:border-[#3f3f46] border-b-0"
+      class="code-block-header flex items-center justify-between px-3 py-1.5 rounded-t-lg border border-gray-200 dark:border-[#3f3f46] border-b-0"
       contenteditable="false"
     >
       <!-- Language Selector -->
@@ -50,7 +50,7 @@
     <!-- Mermaid Preview -->
     <div v-if="selectedLanguage === 'mermaid' && displayMode !== 'code'" class="mermaid-preview mt-2 p-4 rounded-lg border border-gray-200 dark:border-[#3f3f46] bg-white dark:bg-[#1e1e1e] flex flex-col items-center justify-center min-h-[100px]" contenteditable="false">
       <div v-if="mermaidError" class="text-red-500 text-xs w-full overflow-x-auto p-2 bg-red-50 dark:bg-red-900/20 rounded font-mono border border-red-100 dark:border-red-900/50">{{ mermaidError }}</div>
-      <div v-html="mermaidSvg" class="mermaid-svg-container w-full overflow-x-auto flex justify-center text-black dark:text-white"></div>
+      <div v-html="mermaidSvg" class="mermaid-svg-container w-full overflow-x-auto flex justify-center"></div>
     </div>
 
     <!-- Markmap Preview -->
@@ -365,6 +365,35 @@ onUnmounted(() => {
    * completely eliminating typing lag in notes with multiple heavy diagrams.
    */
   contain: content;
+}
+
+/* Fix Tailwind CSS breaking mermaid */
+.mermaid-svg-container svg,
+.mermaid-svg-container svg * {
+  max-width: none !important;
+}
+
+.mermaid-svg-container foreignObject > div,
+.mermaid-svg-container foreignObject > div * {
+  all: revert;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.25 !important;
+  font: 300 14px/20px sans-serif !important;
+  max-width: none !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+  white-space: nowrap !important;
+  background: transparent !important;
+  color: inherit;
+}
+
+/* Fix Tailwind preflight overriding SVG markers/paths causing black blobs */
+.mermaid-svg-container path,
+.mermaid-svg-container rect,
+.mermaid-svg-container circle,
+.mermaid-svg-container polygon {
+  /* Prevent tailwind from interfering with stroke/fill if not explicit */
 }
 
 .markmap-container {

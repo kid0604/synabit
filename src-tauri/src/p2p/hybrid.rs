@@ -30,85 +30,114 @@ use crate::sync::{SyncResult, SyncTransport};
 /// - P2P sync failures are non-fatal (logged, skipped).
 pub async fn hybrid_sync(
     app_handle: &tauri::AppHandle,
-    server_transport: &dyn SyncTransport,
+    server_transport: Option<&dyn SyncTransport>,
     p2p_transports: &[&dyn SyncTransport],
     vault_path: &str,
     device_id: &str,
 ) -> AppResult<SyncResult> {
-    // ── 1. Server sync (primary, always) ─────────────────────
+    let mut result = SyncResult::empty();
+    let mut any_success = false;
+    let mut all_errors = Vec::new();
 
-    info!(
-        "Hybrid sync: starting server sync via {}",
-        server_transport.provider_name()
-    );
-
-    let mut result = engine::p2p_sync_full(
-        app_handle,
-        server_transport,
-        vault_path,
-        device_id,
-    )
-    .await?;
-
-    info!(
-        "Hybrid sync: server done (pulled={}, pushed={}, deleted={})",
-        result.pulled, result.pushed, result.deleted
-    );
-
-    // ── 2. P2P sync with each online peer (best-effort) ──────
+    // ── 1. P2P sync with each online peer (Fast Path) ────────
 
     if p2p_transports.is_empty() {
-        info!("Hybrid sync: no P2P peers online, skipping");
-        return Ok(result);
+        info!("Hybrid sync: no P2P peers online, skipping P2P phase");
+    } else {
+        info!(
+            "Hybrid sync: attempting {} P2P peer(s)",
+            p2p_transports.len()
+        );
+
+        for (i, peer_transport) in p2p_transports.iter().enumerate() {
+            let peer_name = peer_transport.provider_name();
+            info!("Hybrid sync: P2P sync starting via {}", peer_name);
+            match engine::p2p_sync_full(
+                app_handle,
+                *peer_transport,
+                vault_path,
+                device_id,
+            )
+            .await
+            {
+                Ok(peer_result) => {
+                    any_success = true;
+                    result.pulled += peer_result.pulled;
+                    result.pushed += peer_result.pushed;
+                    result.deleted += peer_result.deleted;
+                    // Merge errors from peer sync
+                    result.errors.extend(peer_result.errors);
+                    // Merge pulled files list
+                    result.pulled_files.extend(peer_result.pulled_files);
+
+                    info!(
+                        "Hybrid sync: P2P peer {}/{} ({}) done: +{} pulled, +{} pushed",
+                        i + 1,
+                        p2p_transports.len(),
+                        peer_name,
+                        peer_result.pulled,
+                        peer_result.pushed,
+                    );
+                }
+                Err(e) => {
+                    let err_msg = format!("P2P peer {} failed: {}", peer_name, e);
+                    warn!("Hybrid sync: {}", err_msg);
+                    all_errors.push(err_msg);
+                }
+            }
+        }
     }
 
-    info!(
-        "Hybrid sync: attempting {} P2P peer(s)",
-        p2p_transports.len()
-    );
+    // ── 2. Server sync (Backup Path) ─────────────────────────
 
-    for (i, peer_transport) in p2p_transports.iter().enumerate() {
-        let peer_name = peer_transport.provider_name();
+    if let Some(transport) = server_transport {
+        info!(
+            "Hybrid sync: starting server sync via {}",
+            transport.provider_name()
+        );
+
         match engine::p2p_sync_full(
             app_handle,
-            *peer_transport,
+            transport,
             vault_path,
             device_id,
         )
         .await
         {
-            Ok(peer_result) => {
-                result.pulled += peer_result.pulled;
-                result.pushed += peer_result.pushed;
-                result.deleted += peer_result.deleted;
-                // Merge errors from peer sync
-                result.errors.extend(peer_result.errors);
-                // Merge pulled files list
-                result.pulled_files.extend(peer_result.pulled_files);
+            Ok(server_result) => {
+                any_success = true;
+                result.pulled += server_result.pulled;
+                result.pushed += server_result.pushed;
+                result.deleted += server_result.deleted;
+                result.errors.extend(server_result.errors);
+                result.pulled_files.extend(server_result.pulled_files);
 
                 info!(
-                    "Hybrid sync: P2P peer {}/{} ({}) done: +{} pulled, +{} pushed",
-                    i + 1,
-                    p2p_transports.len(),
-                    peer_name,
-                    peer_result.pulled,
-                    peer_result.pushed,
+                    "Hybrid sync: server done (+{} pulled, +{} pushed)",
+                    server_result.pulled, server_result.pushed
                 );
             }
             Err(e) => {
-                warn!(
-                    "Hybrid sync: P2P peer {}/{} ({}) failed (non-fatal): {}",
-                    i + 1,
-                    p2p_transports.len(),
-                    peer_name,
-                    e
-                );
-                result.errors.push(format!(
-                    "P2P sync with {} failed: {}",
-                    peer_name, e
-                ));
+                let err_msg = format!("Server sync failed: {}", e);
+                warn!("Hybrid sync: {}", err_msg);
+                all_errors.push(err_msg);
             }
         }
+    } else {
+        info!("Hybrid sync: server transport is None, skipping server phase");
+    }
+
+    let tried_any = server_transport.is_some() || !p2p_transports.is_empty();
+    
+    if tried_any && !any_success {
+        return Err(crate::error::AppError::SyncError(format!(
+            "All transports failed: {}",
+            all_errors.join(", ")
+        )));
+    }
+
+    if !all_errors.is_empty() {
+        result.errors.extend(all_errors);
     }
 
     info!(

@@ -174,24 +174,63 @@ pub async fn p2p_sync_full(
         return Err("vault_path must not be empty".to_string());
     }
 
-    // Read config from managed state
-    let transport = {
-        let state = app_handle.state::<P2pSyncState>();
-        let guard = state.lock().unwrap_or_else(|e| e.into_inner());
-        let (_, t) = guard.as_ref().ok_or_else(|| "not connected — call p2p_sync_connect first".to_string())?;
-        t.clone()
-    };
-
     let device_id = ensure_device_id(&app_handle)?;
 
-    let result = crate::sync::engine::p2p_sync_full(
+    // 1. Get E2EE key (Required for both Server and P2P)
+    let e2ee_key_opt = crate::secrets::SecretManager::get_e2ee_key(Some(&app_handle));
+    if e2ee_key_opt.is_none() {
+        return Err("E2EE key not set up. Please set up encryption first.".to_string());
+    }
+    let e2ee_key = e2ee_key_opt.unwrap();
+
+    // 2. Read Server config from managed state (optional now)
+    let server_transport_arc = {
+        let state = app_handle.state::<P2pSyncState>();
+        let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|(_, t)| t.clone())
+    };
+
+    // 3. Collect P2P Transports
+    let mut p2p_transports_owned: Vec<crate::p2p::direct::DirectP2PTransport> = Vec::new();
+
+    let persistent_endpoint = app_handle.try_state::<std::sync::Arc<crate::p2p::endpoint::PersistentEndpoint>>();
+    let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
+
+    if let (Some(ep), Some(disc)) = (persistent_endpoint, discovery) {
+        use tauri::Manager;
+        let paired_devices = crate::p2p::devices::DeviceRegistry::list(&app_handle);
+        for device in paired_devices {
+            if let Ok(peer_id) = parse_server_id(&device.node_id_hex) {
+                let lan_address = disc.get_peer(&device.node_id_hex).and_then(|p| p.lan_address);
+                let p2p_t = crate::p2p::direct::DirectP2PTransport::new(
+                    app_handle.clone(),
+                    ep.endpoint_cloned(),
+                    peer_id,
+                    &e2ee_key,
+                    &device_id,
+                    lan_address,
+                );
+                p2p_transports_owned.push(p2p_t);
+            }
+        }
+    }
+
+    let mut p2p_transport_refs: Vec<&dyn crate::sync::SyncTransport> = Vec::new();
+    for t in &p2p_transports_owned {
+        p2p_transport_refs.push(t as &dyn crate::sync::SyncTransport);
+    }
+
+    let server_transport_dyn = server_transport_arc.as_ref().map(|t| t.as_ref() as &dyn crate::sync::SyncTransport);
+
+    let result = crate::p2p::hybrid::hybrid_sync(
         &app_handle,
-        &*transport,
+        server_transport_dyn,
+        &p2p_transport_refs,
         &vault_path,
         &device_id,
     )
     .await
-    .map_err(|e| format!("sync failed: {}", e))?;
+    .map_err(|e| format!("hybrid sync failed: {}", e))?;
 
     // Record last sync time & metrics
     {
@@ -218,10 +257,6 @@ pub async fn p2p_sync_full(
         result.errors.len()
     );
 
-    // Gracefully close the connection to avoid endpoint dropped errors
-    use crate::sync::SyncTransport;
-    let _ = transport.disconnect().await;
-
     Ok(result)
 }
 
@@ -230,9 +265,16 @@ pub async fn p2p_sync_full(
 pub async fn p2p_sync_disconnect(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let state = app_handle.state::<P2pSyncState>();
-    let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
+    let transport = {
+        let state = app_handle.state::<P2pSyncState>();
+        let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.take() // This leaves None in the state and returns the Option
+    };
+
+    if let Some((_, t)) = transport {
+        use crate::sync::SyncTransport;
+        let _ = t.disconnect().await;
+    }
 
     log::info!("P2P sync disconnected");
     Ok(())
@@ -338,9 +380,10 @@ pub fn p2p_sync_update_worker_config(
 ///
 /// The code is valid for 5 minutes. The session is stored in `PairingState`
 /// managed state. Only one session can be active at a time.
+const COORDINATOR_URL: &str = "https://coordinator.synabit.net";
+
 #[tauri::command]
-pub fn p2p_pair_initiate(app_handle: tauri::AppHandle) -> Result<PairingInfo, String> {
-    // Get node_id from KV store
+pub async fn p2p_pair_initiate(app_handle: tauri::AppHandle) -> Result<PairingInfo, String> {
     let node_id_hex = {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -356,21 +399,87 @@ pub fn p2p_pair_initiate(app_handle: tauri::AppHandle) -> Result<PairingInfo, St
     };
 
     let device_name = local_device_name();
-    let session = PairingSession::new(node_id_hex, device_name.clone());
+    let session = PairingSession::new(node_id_hex.clone(), device_name.clone());
     let info = session.pairing_info();
 
     let pairing_state = app_handle.state::<PairingState>();
     let mut state = pairing_state.lock().unwrap_or_else(|e| e.into_inner());
     *state = Some(session);
 
-    // Broadcast pairing code via mDNS
     let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
     if let Some(mdns) = mdns_state {
         log::info!("mDNS state found, broadcasting pairing code: {}", info.code);
-        mdns.update_pairing_code(11204, device_name, Some(info.code.clone()));
+        mdns.update_pairing_code(11204, device_name.clone(), Some(info.code.clone()));
     } else {
         log::warn!("mDNS state NOT found — mDNS was not initialized");
     }
+
+    let code_clone = info.code.clone();
+    let code_normalized = crate::p2p::pairing::normalize_code(&code_clone);
+    let node_id_clone = node_id_hex.clone();
+    let device_name_clone = device_name.clone();
+    let app_handle_clone = app_handle.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({
+            "code": code_normalized,
+            "node_id_hex": node_id_clone,
+            "device_name": device_name_clone,
+        });
+        
+        if let Err(e) = client.post(format!("{}/pair/register", COORDINATOR_URL))
+            .json(&body)
+            .send()
+            .await 
+        {
+            log::warn!("Failed to register with Coordinator: {}", e);
+        } else {
+            log::info!("Registered pairing code with Coordinator");
+            
+            for _ in 0..150 {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                
+                let still_active = {
+                    let st = app_handle_clone.state::<PairingState>();
+                    let x = if let Ok(l) = st.try_lock() {
+                        l.is_some()
+                    } else { false };
+                    x
+                };
+                if !still_active { break; }
+                
+                if let Ok(res) = client.get(format!("{}/pair/poll/{}", COORDINATOR_URL, code_normalized)).send().await {
+                    if res.status().is_success() {
+                        if let Ok(Some(data)) = res.json::<Option<serde_json::Value>>().await {
+                            if let (Some(acc_node), Some(acc_name)) = (data.get("acceptor_node_id_hex").and_then(|v| v.as_str()), data.get("acceptor_device_name").and_then(|v| v.as_str())) {
+                                log::info!("Coordinator returned accept from {}", acc_name);
+                                
+                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                let device = PairedDevice {
+                                    device_name: acc_name.to_string(),
+                                    node_id_hex: acc_node.to_string(),
+                                    paired_at: now,
+                                    last_seen: now,
+                                };
+                                
+                                if let Err(e) = DeviceRegistry::add(&app_handle_clone, device) {
+                                    log::error!("Failed to save paired device: {}", e);
+                                }
+                                
+                                use tauri::Emitter;
+                                let _ = app_handle_clone.emit("pairing-accepted", crate::p2p::mdns::PairingAcceptedEvent {
+                                    device_name: acc_name.to_string(),
+                                    node_id_hex: acc_node.to_string(),
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     log::info!("Pairing initiated, code={}", info.code);
     Ok(info)
@@ -407,33 +516,41 @@ pub async fn p2p_pair_accept(
     app_handle: tauri::AppHandle,
     code: String,
 ) -> Result<PairedDevice, String> {
-    let normalized = normalize_code(&code);
-    validate_code(&normalized).map_err(|e| e.to_string())?;
+    let normalized = crate::p2p::pairing::normalize_code(&code);
+    crate::p2p::pairing::validate_code(&normalized).map_err(|e| e.to_string())?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    // Look for real node_id in mDNS discovery
-    let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
     let mut real_node_id = None;
     let mut peer_name = format!("Device-{}", &normalized[..4]);
-    let mut peer_lan_addr: Option<std::net::SocketAddr> = None;
 
-    if let Some(disc) = discovery {
-        log::info!("PeerDiscovery found, polling for peer with code {} ...", normalized);
-        // Poll for up to 10 seconds (more time for UDP to propagate)
-        for attempt in 0..50 {
-            let peers = disc.online_peers();
-            if attempt % 10 == 0 {
-                log::info!("LAN poll attempt {}/50, known peers: {}", attempt, peers.len());
+    let coord_task = {
+        let code_norm = normalized.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            if let Ok(res) = client.get(format!("{}/pair/lookup/{}", COORDINATOR_URL, code_norm)).send().await {
+                if res.status().is_success() {
+                    if let Ok(Some(data)) = res.json::<Option<serde_json::Value>>().await {
+                        if let (Some(node), Some(name)) = (data.get("node_id_hex").and_then(|v| v.as_str()), data.get("device_name").and_then(|v| v.as_str())) {
+                            return Some((node.to_string(), name.to_string()));
+                        }
+                    }
+                }
             }
-            for peer in peers {
+            None
+        })
+    };
+
+    let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
+    if let Some(disc) = discovery {
+        for _ in 0..25 {
+            for peer in disc.online_peers() {
                 if let Some(ref c) = peer.pairing_code {
-                    if normalize_code(c) == normalized {
+                    if crate::p2p::pairing::normalize_code(c) == normalized {
                         real_node_id = Some(hex::encode(peer.node_id.as_bytes()));
-                        peer_lan_addr = peer.lan_address;
                         if let Some(n) = peer.device_name {
                             peer_name = n;
                         }
@@ -441,40 +558,62 @@ pub async fn p2p_pair_accept(
                     }
                 }
             }
-            
-            if real_node_id.is_some() {
-                log::info!("Found matching peer!");
-                break;
-            }
-            
+            if real_node_id.is_some() { break; }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+    }
+
+    if real_node_id.is_none() {
+        if let Ok(Some((node, name))) = coord_task.await {
+            log::info!("Found peer via Coordinator!");
+            real_node_id = Some(node);
+            peer_name = name;
+        }
     } else {
-        log::warn!("PeerDiscovery NOT found in app state");
+        coord_task.abort();
+        log::info!("Found peer via LAN mDNS!");
     }
 
     let node_id_hex = match real_node_id {
         Some(id) => id,
-        None => return Err("No device found on the local network with this pairing code. Make sure both devices are on the same Wi-Fi and the code is correct.".to_string()),
+        None => return Err("No device found with this pairing code. Make sure the code is correct.".to_string()),
     };
 
     let device = PairedDevice {
         device_name: peer_name,
-        node_id_hex,
+        node_id_hex: node_id_hex.clone(),
         paired_at: now,
         last_seen: now,
     };
 
     DeviceRegistry::add(&app_handle, device.clone()).map_err(|e| e.to_string())?;
 
-    // Send pair_accept back to the peer so they also save us
-    if let Some(addr) = peer_lan_addr {
-        let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
-        if let Some(mdns) = mdns_state {
-            let my_device_name = local_device_name();
-            mdns.send_pair_accept(addr, &my_device_name);
-        }
+    let my_device_name = local_device_name();
+    
+    let mdns_state = app_handle.try_state::<std::sync::Arc<crate::p2p::mdns::MdnsDiscovery>>();
+    if let Some(mdns) = mdns_state {
+        mdns.send_pair_accept(&node_id_hex, &my_device_name);
     }
+
+    let code_norm = normalized.clone();
+    let my_node_id = {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.get_kv("device_node_id").unwrap_or_default().unwrap_or_default()
+    };
+    
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({
+            "code": code_norm,
+            "acceptor_node_id_hex": my_node_id,
+            "acceptor_device_name": my_device_name,
+        });
+        let _ = client.post(format!("{}/pair/accept", COORDINATOR_URL))
+            .json(&body)
+            .send()
+            .await;
+    });
 
     log::info!("Pairing accepted via code, device_name={}", device.device_name);
     Ok(device)
@@ -482,10 +621,37 @@ pub async fn p2p_pair_accept(
 
 // ---------------------------------------------------------------------------
 
+#[derive(serde::Serialize)]
+pub struct PairedDeviceResponse {
+    pub device_name: String,
+    pub node_id_hex: String,
+    pub paired_at: u64,
+    pub last_seen: u64,
+    pub is_online: bool,
+}
+
 /// List all paired devices.
 #[tauri::command]
-pub fn p2p_list_devices(app_handle: tauri::AppHandle) -> Result<Vec<PairedDevice>, String> {
-    Ok(DeviceRegistry::list(&app_handle))
+pub fn p2p_list_devices(app_handle: tauri::AppHandle) -> Result<Vec<PairedDeviceResponse>, String> {
+    let devices = DeviceRegistry::list(&app_handle);
+    
+    // Check mDNS for online peers
+    let mut online_nodes = std::collections::HashSet::new();
+    if let Some(discovery) = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>() {
+        for peer in discovery.online_peers() {
+            online_nodes.insert(hex::encode(peer.node_id.as_bytes()));
+        }
+    }
+
+    let response = devices.into_iter().map(|d| PairedDeviceResponse {
+        is_online: online_nodes.contains(&d.node_id_hex),
+        device_name: d.device_name,
+        node_id_hex: d.node_id_hex,
+        paired_at: d.paired_at,
+        last_seen: d.last_seen,
+    }).collect();
+
+    Ok(response)
 }
 
 /// Remove a paired device by its node ID.

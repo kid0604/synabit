@@ -79,6 +79,11 @@ pub trait SyncTransport: Send + Sync {
     /// Human-readable provider name (for UI display).
     fn provider_name(&self) -> &str;
 
+    /// Unique identifier for this transport instance to maintain separate cursors
+    fn transport_id(&self) -> String {
+        self.provider_name().to_string()
+    }
+
     /// Authenticate with the remote server/service.
     async fn authenticate(&self) -> AppResult<()>;
 

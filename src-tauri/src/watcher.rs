@@ -29,13 +29,13 @@ mod desktop {
         }
     }
 
-    /// Returns true if this path should be ignored by the watcher.
     fn should_ignore(path_str: &str) -> bool {
         path_str.contains(".DS_Store")
             || path_str.contains(".git")
             || path_str.contains(".synabit_sync_manifest.json")
             || path_str.ends_with('~')
             || path_str.contains(".Trash")
+            || path_str.ends_with(".tmp") // Prevent looping on atomic_write temp files
             || path_str.contains(".db") // Prevent looping on db writes
     }
 
@@ -68,6 +68,13 @@ mod desktop {
         let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
         let mut active_vault = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+
+        // Save to KV store for background P2P Sync
+        {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = db.set_kv("vault_path", &vault_path);
+        }
 
         let emit_handle = app_handle.clone();
 
@@ -208,6 +215,13 @@ pub mod mobile_stub {
         let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
         let mut active_vault = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+
+        // Save to KV store for background P2P Sync
+        {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = db.set_kv("vault_path", &vault_path);
+        }
 
         // On mobile, file watching is a no-op.
         // The frontend re-scans on app resume instead.

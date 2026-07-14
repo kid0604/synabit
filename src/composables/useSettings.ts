@@ -16,7 +16,11 @@ let isInitialized = false;
 export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
-  const { themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps } = storeToRefs(appStore);
+  const { 
+    themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, 
+    dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps,
+    codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
+  } = storeToRefs(appStore);
 
   const isValidDailyFormat = computed(() => {
     const val = dailyNoteFormat.value.toUpperCase();
@@ -62,6 +66,22 @@ export function useSettings() {
     watch(appLanguage, (newLang) => {
       i18n.global.locale.value = newLang as any;
     });
+
+    // Watch for code block theme changes
+    watch([codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark], () => {
+      applyCodeBlockTheme();
+    });
+
+    // Apply code block theme initially
+    applyCodeBlockTheme();
+  }
+
+  function applyCodeBlockTheme() {
+    const root = document.documentElement;
+    root.style.setProperty('--code-block-bg-light', codeBlockBgColorLight.value);
+    root.style.setProperty('--code-block-color-light', codeBlockTextColorLight.value);
+    root.style.setProperty('--code-block-bg-dark', codeBlockBgColorDark.value);
+    root.style.setProperty('--code-block-color-dark', codeBlockTextColorDark.value);
   }
 
   function openSettings() {
@@ -94,6 +114,10 @@ export function useSettings() {
     dailyNoteTag,
     nestedNumberListStyle,
     codeBlockTabSize,
+    codeBlockBgColorLight,
+    codeBlockTextColorLight,
+    codeBlockBgColorDark,
+    codeBlockTextColorDark,
     defaultApp,
     hiddenSidebarApps,
     isValidDailyFormat,

@@ -96,6 +96,21 @@ services:
       - synabit-network
     restart: unless-stopped
 
+  coordinator:
+    build:
+      context: ../coordinator-server
+      dockerfile: Dockerfile
+    container_name: synabit-coordinator
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.coordinator.rule=Host(`coordinator.synabit.net`)"
+      - "traefik.http.routers.coordinator.entrypoints=websecure"
+      - "traefik.http.routers.coordinator.tls.certresolver=myresolver"
+      - "traefik.http.services.coordinator.loadbalancer.server.port=8090"
+    networks:
+      - synabit-network
+    restart: unless-stopped
+
 networks:
   synabit-network:
     driver: bridge

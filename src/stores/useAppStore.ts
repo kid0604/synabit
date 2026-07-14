@@ -16,6 +16,10 @@ export const useAppStore = defineStore('app', () => {
   // Editor Settings
     const nestedNumberListStyle = ref<'decimal' | 'alpha' | 'nested'>('decimal');
     const codeBlockTabSize = ref<number>(4);
+    const codeBlockBgColorLight = ref<string>('#f8f9fa');
+    const codeBlockTextColorLight = ref<string>('#24292e');
+    const codeBlockBgColorDark = ref<string>('#1e1e1e');
+    const codeBlockTextColorDark = ref<string>('#e4e4e7');
     
     // App Settings
     const defaultApp = ref<'nexus' | 'note' | 'task' | 'quickcap' | 'file' | 'calendar' | 'whiteboard' | 'pdf'>('nexus');
@@ -77,6 +81,15 @@ export const useAppStore = defineStore('app', () => {
       const tabSize = await storeInstance.get('codeBlockTabSize');
       if (tabSize !== null && tabSize !== undefined) codeBlockTabSize.value = Number(tabSize);
       
+      const cbBgLight = await storeInstance.get('codeBlockBgColorLight');
+      if (cbBgLight) codeBlockBgColorLight.value = cbBgLight as string;
+      const cbTextLight = await storeInstance.get('codeBlockTextColorLight');
+      if (cbTextLight) codeBlockTextColorLight.value = cbTextLight as string;
+      const cbBgDark = await storeInstance.get('codeBlockBgColorDark');
+      if (cbBgDark) codeBlockBgColorDark.value = cbBgDark as string;
+      const cbTextDark = await storeInstance.get('codeBlockTextColorDark');
+      if (cbTextDark) codeBlockTextColorDark.value = cbTextDark as string;
+      
       const defApp = await storeInstance.get('defaultApp');
       if (defApp) defaultApp.value = defApp as any;
       
@@ -126,6 +139,18 @@ export const useAppStore = defineStore('app', () => {
       });
       watch(codeBlockTabSize, async (v) => {
         if (storeInstance) await storeInstance.set('codeBlockTabSize', v);
+      });
+      watch(codeBlockBgColorLight, async (v) => {
+        if (storeInstance) await storeInstance.set('codeBlockBgColorLight', v);
+      });
+      watch(codeBlockTextColorLight, async (v) => {
+        if (storeInstance) await storeInstance.set('codeBlockTextColorLight', v);
+      });
+      watch(codeBlockBgColorDark, async (v) => {
+        if (storeInstance) await storeInstance.set('codeBlockBgColorDark', v);
+      });
+      watch(codeBlockTextColorDark, async (v) => {
+        if (storeInstance) await storeInstance.set('codeBlockTextColorDark', v);
       });
 
     watch(defaultApp, async (v) => {
@@ -196,6 +221,10 @@ export const useAppStore = defineStore('app', () => {
     dailyNoteTag,
     nestedNumberListStyle,
     codeBlockTabSize,
+    codeBlockBgColorLight,
+    codeBlockTextColorLight,
+    codeBlockBgColorDark,
+    codeBlockTextColorDark,
     defaultApp,
     hiddenSidebarApps,
     themeMode,

@@ -96,6 +96,7 @@ impl MailboxHandler {
             Some(msg) => msg,
             None => {
                 debug!(remote = %remote, "client closed stream before auth");
+                let _ = send.finish();
                 return Ok(());
             }
         };
@@ -131,6 +132,7 @@ impl MailboxHandler {
                             vault = vault_hash_hex,
                             "auth rejected: {reason}"
                         );
+                        let _ = send.finish();
                         return Ok(());
                     }
                 }
@@ -143,6 +145,7 @@ impl MailboxHandler {
                     },
                 )
                 .await?;
+                let _ = send.finish();
                 return Ok(());
             }
         };

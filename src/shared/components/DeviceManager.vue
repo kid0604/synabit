@@ -98,8 +98,7 @@ const formatPairedDate = (timestamp: number): string => {
 
 const sortedDevices = computed(() => {
   return [...devices.value].sort((a, b) => {
-    // Online first, then by last_seen descending
-    if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
+    // Sort by last_seen descending
     return b.last_seen - a.last_seen;
   });
 });
@@ -176,13 +175,6 @@ const sortedDevices = computed(() => {
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
               <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ device.device_name || 'Unknown Device' }}</p>
-              <!-- Online/Offline indicator -->
-              <div class="flex items-center gap-1">
-                <div :class="['w-1.5 h-1.5 rounded-full', device.is_online ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600']"></div>
-                <span :class="['text-[10px] font-medium', device.is_online ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500']">
-                  {{ device.is_online ? 'Online' : 'Offline' }}
-                </span>
-              </div>
             </div>
             <div class="flex items-center gap-3 mt-0.5">
               <span class="text-[11px] text-gray-400 dark:text-gray-500">Last seen: {{ formatLastSeen(device.last_seen) }}</span>
