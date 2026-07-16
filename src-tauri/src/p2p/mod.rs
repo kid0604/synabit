@@ -27,6 +27,94 @@ pub mod mdns;
 use std::sync::Arc;
 use tauri::Manager;
 
+/// Direct protocol currently implemented by `direct` + `handler`.
+/// Phase 0 deliberately keeps v1 behind a debug-only unsafe override.
+pub const DIRECT_P2P_PROTOCOL_VERSION: u16 = 1;
+pub const DIRECT_P2P_V2_FEATURE_KEY: &str = "feature:direct_p2p_v2";
+pub const UNSAFE_DIRECT_P2P_V1_ENV: &str = "SYNABIT_ENABLE_UNSAFE_DIRECT_P2P_V1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectP2PMode {
+    Disabled,
+    V2,
+    UnsafeLegacyV1,
+}
+
+impl DirectP2PMode {
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::V2 => "v2",
+            Self::UnsafeLegacyV1 => "unsafe_legacy_v1",
+        }
+    }
+}
+
+fn parse_bool_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+fn resolve_direct_p2p_mode(
+    v2_requested: bool,
+    protocol_version: u16,
+    debug_build: bool,
+    unsafe_v1_requested: bool,
+) -> DirectP2PMode {
+    if v2_requested && protocol_version >= 2 {
+        DirectP2PMode::V2
+    } else if debug_build && unsafe_v1_requested {
+        DirectP2PMode::UnsafeLegacyV1
+    } else {
+        DirectP2PMode::Disabled
+    }
+}
+
+/// Resolve the direct-sync rollout gate for both outgoing and incoming paths.
+///
+/// Release builds cannot enable protocol v1. The environment override exists
+/// only so maintainers can run the Phase 0 two-device regression harness.
+pub fn direct_p2p_mode(app_handle: &tauri::AppHandle) -> DirectP2PMode {
+    let v2_requested = {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.get_kv(DIRECT_P2P_V2_FEATURE_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+            .map(|value| parse_bool_flag(Some(value)))
+            .unwrap_or(false)
+    };
+    let unsafe_v1_requested = std::env::var(UNSAFE_DIRECT_P2P_V1_ENV)
+        .ok()
+        .as_deref()
+        .map(|value| parse_bool_flag(Some(value)))
+        .unwrap_or(false);
+
+    let mode = resolve_direct_p2p_mode(
+        v2_requested,
+        DIRECT_P2P_PROTOCOL_VERSION,
+        cfg!(debug_assertions),
+        unsafe_v1_requested,
+    );
+
+    if v2_requested && DIRECT_P2P_PROTOCOL_VERSION < 2 {
+        log::warn!(
+            "Direct P2P v2 feature requested but protocol v{} is the only implementation; direct sync remains {}",
+            DIRECT_P2P_PROTOCOL_VERSION,
+            mode.label(),
+        );
+    }
+
+    mode
+}
+
 /// Initialize P2P managed state
 pub fn init(app: &tauri::App) -> Result<(), String> {
     log::info!("P2P init starting...");
@@ -108,4 +196,45 @@ pub fn init(app: &tauri::App) -> Result<(), String> {
     });
     
     Ok(())
+}
+
+#[cfg(test)]
+mod rollout_tests {
+    use super::*;
+
+    #[test]
+    fn release_build_never_enables_legacy_v1() {
+        assert_eq!(
+            resolve_direct_p2p_mode(false, 1, false, true),
+            DirectP2PMode::Disabled,
+        );
+    }
+
+    #[test]
+    fn v2_requires_both_flag_and_protocol_support() {
+        assert_eq!(
+            resolve_direct_p2p_mode(true, 1, false, false),
+            DirectP2PMode::Disabled,
+        );
+        assert_eq!(
+            resolve_direct_p2p_mode(true, 2, false, false),
+            DirectP2PMode::V2,
+        );
+    }
+
+    #[test]
+    fn debug_build_can_opt_into_legacy_reproduction() {
+        assert_eq!(
+            resolve_direct_p2p_mode(false, 1, true, true),
+            DirectP2PMode::UnsafeLegacyV1,
+        );
+    }
+
+    #[test]
+    fn bool_flag_parser_is_explicit() {
+        assert!(parse_bool_flag(Some("true")));
+        assert!(parse_bool_flag(Some(" 1 ")));
+        assert!(!parse_bool_flag(Some("enabled")));
+        assert!(!parse_bool_flag(None));
+    }
 }

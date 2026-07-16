@@ -19,7 +19,7 @@ use crate::p2p::devices::DeviceRegistry;
 use crate::p2p::pairing::{normalize_code, validate_code, PairedDevice, PairingInfo, PairingSession};
 use crate::p2p::transport::SynabitServerTransport;
 use crate::secrets::SecretManager;
-use crate::sync::SyncTransport;
+use crate::sync::SyncRunContext;
 
 // ---------------------------------------------------------------------------
 // Managed state
@@ -169,10 +169,20 @@ pub async fn p2p_sync_full(
     app_handle: tauri::AppHandle,
     vault_path: String,
     is_cellular: bool,
+    trigger_reason: Option<String>,
 ) -> Result<crate::sync::SyncResult, String> {
     if vault_path.is_empty() {
         return Err("vault_path must not be empty".to_string());
     }
+
+    let run_context = SyncRunContext::new(&vault_path, trigger_reason.as_deref());
+    log::info!(
+        "sync_run run_id={} trigger={} vault_tag={} scope=command state=start cellular={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
+        is_cellular,
+    );
 
     let device_id = ensure_device_id(&app_handle)?;
 
@@ -190,29 +200,57 @@ pub async fn p2p_sync_full(
         guard.as_ref().map(|(_, t)| t.clone())
     };
 
-    // 3. Collect P2P Transports
+    // 3. Collect P2P Transports only when the rollout safety gate allows it.
+    // Protocol v1 is unsafe and is never enabled in release builds.
     let mut p2p_transports_owned: Vec<crate::p2p::direct::DirectP2PTransport> = Vec::new();
+    let direct_mode = crate::p2p::direct_p2p_mode(&app_handle);
+    let paired_devices = crate::p2p::devices::DeviceRegistry::list(&app_handle);
 
     let persistent_endpoint = app_handle.try_state::<std::sync::Arc<crate::p2p::endpoint::PersistentEndpoint>>();
     let discovery = app_handle.try_state::<std::sync::Arc<crate::p2p::discovery::PeerDiscovery>>();
 
-    if let (Some(ep), Some(disc)) = (persistent_endpoint, discovery) {
-        use tauri::Manager;
-        let paired_devices = crate::p2p::devices::DeviceRegistry::list(&app_handle);
-        for device in paired_devices {
-            if let Ok(peer_id) = parse_server_id(&device.node_id_hex) {
-                let lan_address = disc.get_peer(&device.node_id_hex).and_then(|p| p.lan_address);
-                let p2p_t = crate::p2p::direct::DirectP2PTransport::new(
-                    app_handle.clone(),
-                    ep.endpoint_cloned(),
-                    peer_id,
-                    &e2ee_key,
-                    &device_id,
-                    lan_address,
-                );
-                p2p_transports_owned.push(p2p_t);
+    if direct_mode.is_enabled() {
+        if let (Some(ep), Some(disc)) = (persistent_endpoint, discovery) {
+            for device in &paired_devices {
+                if let Ok(peer_id) = parse_server_id(&device.node_id_hex) {
+                    let lan_address = disc
+                        .get_peer(&device.node_id_hex)
+                        .and_then(|p| p.lan_address);
+                    let p2p_t = crate::p2p::direct::DirectP2PTransport::new(
+                        app_handle.clone(),
+                        ep.endpoint_cloned(),
+                        peer_id,
+                        &e2ee_key,
+                        &device_id,
+                        lan_address,
+                    );
+                    p2p_transports_owned.push(p2p_t);
+                }
             }
         }
+    } else if !paired_devices.is_empty() {
+        log::warn!(
+            "sync_run run_id={} trigger={} vault_tag={} scope=direct_gate state=blocked mode={} protocol=v{} paired_peers={}",
+            run_context.run_id,
+            run_context.trigger_reason,
+            run_context.vault_tag,
+            direct_mode.label(),
+            crate::p2p::DIRECT_P2P_PROTOCOL_VERSION,
+            paired_devices.len(),
+        );
+    }
+
+    if server_transport_arc.is_none() && !paired_devices.is_empty() && !direct_mode.is_enabled() {
+        log::warn!(
+            "sync_run run_id={} trigger={} vault_tag={} scope=command state=blocked reason=direct_v1_safety_gate",
+            run_context.run_id,
+            run_context.trigger_reason,
+            run_context.vault_tag,
+        );
+        return Err(
+            "Direct P2P v1 is safety-disabled until protocol v2 is available. Connect the Sync Server, or use the debug-only unsafe legacy override for regression testing."
+                .to_string(),
+        );
     }
 
     let mut p2p_transport_refs: Vec<&dyn crate::sync::SyncTransport> = Vec::new();
@@ -228,9 +266,18 @@ pub async fn p2p_sync_full(
         &p2p_transport_refs,
         &vault_path,
         &device_id,
+        &run_context,
     )
     .await
-    .map_err(|e| format!("hybrid sync failed: {}", e))?;
+    .map_err(|e| {
+        log::warn!(
+            "sync_run run_id={} trigger={} vault_tag={} scope=command state=failed error_kind=hybrid_sync",
+            run_context.run_id,
+            run_context.trigger_reason,
+            run_context.vault_tag,
+        );
+        format!("hybrid sync failed: {}", e)
+    })?;
 
     // Record last sync time & metrics
     {
@@ -250,11 +297,17 @@ pub async fn p2p_sync_full(
     }
 
     log::info!(
-        "P2P sync complete: pushed={}, pulled={}, deleted={}, errors={}",
-        result.pushed,
+        "sync_run run_id={} trigger={} vault_tag={} scope=command state=complete direct_mode={} pulled={} pushed={} deleted={} errors={} tx_bytes={} rx_bytes={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
+        direct_mode.label(),
         result.pulled,
+        result.pushed,
         result.deleted,
-        result.errors.len()
+        result.errors.len(),
+        result.tx_bytes,
+        result.rx_bytes,
     );
 
     Ok(result)
@@ -294,6 +347,7 @@ pub fn p2p_sync_status(
     let guard = state.lock().unwrap_or_else(|e| e.into_inner());
 
     let connected = guard.is_some();
+    let direct_mode = crate::p2p::direct_p2p_mode(&app_handle);
     let server_addr = guard
         .as_ref()
         .map(|c| c.0.server_addr.clone())
@@ -310,6 +364,8 @@ pub fn p2p_sync_status(
         "connected": connected,
         "server_addr": server_addr,
         "last_sync_time": last_sync_time,
+        "direct_p2p_mode": direct_mode.label(),
+        "direct_p2p_protocol_version": crate::p2p::DIRECT_P2P_PROTOCOL_VERSION,
     }))
 }
 
@@ -692,5 +748,3 @@ pub fn p2p_revoke_device(
 }
 
 // ---------------------------------------------------------------------------
-
-

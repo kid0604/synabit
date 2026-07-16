@@ -60,7 +60,7 @@ services:
       - license-data:/app/data
     environment:
       - DATABASE_URL=sqlite:/app/data/license.db
-      - LICENSE_PRIVATE_KEY=b304c40591ce072522ff6cc19c5cff1c201880e60ab435ea6fcdb203cba26e85
+      - LICENSE_PRIVATE_KEY=${LICENSE_PRIVATE_KEY}
     env_file:
       - ../license-server/.env
     labels:

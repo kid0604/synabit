@@ -31,7 +31,7 @@ mod tests {
     fn test_crypto_signing() {
         // Set fake private key (32 bytes = 64 hex chars)
         unsafe {
-            std::env::set_var("LICENSE_PRIVATE_KEY", "b304c40591ce072522ff6cc19c5cff1c201880e60ab435ea6fcdb203cba26e85");
+            std::env::set_var("LICENSE_PRIVATE_KEY", "0000000000000000000000000000000000000000000000000000000000000000");
         }
         
         let crypto = CryptoService::new();

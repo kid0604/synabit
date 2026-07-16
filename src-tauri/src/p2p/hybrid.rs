@@ -12,7 +12,7 @@ use log::{info, warn};
 
 use crate::error::AppResult;
 use crate::sync::engine;
-use crate::sync::{SyncResult, SyncTransport};
+use crate::sync::{SyncResult, SyncRunContext, SyncTransport};
 
 /// Orchestrate sync across the server + online P2P peers.
 ///
@@ -34,10 +34,20 @@ pub async fn hybrid_sync(
     p2p_transports: &[&dyn SyncTransport],
     vault_path: &str,
     device_id: &str,
+    run_context: &SyncRunContext,
 ) -> AppResult<SyncResult> {
     let mut result = SyncResult::empty();
     let mut any_success = false;
     let mut all_errors = Vec::new();
+
+    info!(
+        "sync_run run_id={} trigger={} vault_tag={} scope=hybrid state=start direct_peers={} server_present={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
+        p2p_transports.len(),
+        server_transport.is_some(),
+    );
 
     // ── 1. P2P sync with each online peer (Fast Path) ────────
 
@@ -57,6 +67,7 @@ pub async fn hybrid_sync(
                 *peer_transport,
                 vault_path,
                 device_id,
+                run_context,
             )
             .await
             {
@@ -65,6 +76,8 @@ pub async fn hybrid_sync(
                     result.pulled += peer_result.pulled;
                     result.pushed += peer_result.pushed;
                     result.deleted += peer_result.deleted;
+                    result.tx_bytes += peer_result.tx_bytes;
+                    result.rx_bytes += peer_result.rx_bytes;
                     // Merge errors from peer sync
                     result.errors.extend(peer_result.errors);
                     // Merge pulled files list
@@ -101,6 +114,7 @@ pub async fn hybrid_sync(
             transport,
             vault_path,
             device_id,
+            run_context,
         )
         .await
         {
@@ -109,6 +123,8 @@ pub async fn hybrid_sync(
                 result.pulled += server_result.pulled;
                 result.pushed += server_result.pushed;
                 result.deleted += server_result.deleted;
+                result.tx_bytes += server_result.tx_bytes;
+                result.rx_bytes += server_result.rx_bytes;
                 result.errors.extend(server_result.errors);
                 result.pulled_files.extend(server_result.pulled_files);
 
@@ -141,11 +157,16 @@ pub async fn hybrid_sync(
     }
 
     info!(
-        "Hybrid sync complete: pulled={}, pushed={}, deleted={}, errors={}",
+        "sync_run run_id={} trigger={} vault_tag={} scope=hybrid state=complete pulled={} pushed={} deleted={} errors={} tx_bytes={} rx_bytes={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
         result.pulled,
         result.pushed,
         result.deleted,
-        result.errors.len()
+        result.errors.len(),
+        result.tx_bytes,
+        result.rx_bytes,
     );
 
     Ok(result)

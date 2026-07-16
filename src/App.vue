@@ -515,7 +515,7 @@ onMounted(async () => {
           const now = Date.now();
           if (now - lastP2PAutoSyncTime > 5000) {
               lastP2PAutoSyncTime = now;
-              p2p.syncP2P();
+              p2p.syncP2P('watcher_create_delete');
           }
       }
   });
@@ -545,7 +545,7 @@ onMounted(async () => {
           const now = Date.now();
           if (now - lastP2PAutoSyncTime > 5000) {
               lastP2PAutoSyncTime = now;
-              p2p.syncP2P();
+              p2p.syncP2P('watcher_modified');
           }
       }
   });

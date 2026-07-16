@@ -14,6 +14,79 @@ pub mod protocol;
 pub mod utils;
 
 // ---------------------------------------------------------------------------
+// Sync run observability
+// ---------------------------------------------------------------------------
+
+/// Correlates every transport involved in one user-visible sync request.
+///
+/// Tags are deliberately derived from hashes so structured logs do not need
+/// to expose the vault path or a peer's full transport identifier.
+#[derive(Debug, Clone)]
+pub struct SyncRunContext {
+    pub run_id: String,
+    pub trigger_reason: String,
+    pub vault_tag: String,
+}
+
+impl SyncRunContext {
+    pub fn new(vault_path: &str, trigger_reason: Option<&str>) -> Self {
+        Self {
+            run_id: uuid::Uuid::new_v4().to_string(),
+            trigger_reason: normalize_trigger_reason(trigger_reason),
+            vault_tag: short_hash_tag(vault_path),
+        }
+    }
+
+    pub fn transport_tag(&self, transport_id: &str) -> String {
+        short_hash_tag(transport_id)
+    }
+
+    pub fn log_phase(
+        &self,
+        provider: &str,
+        transport_tag: &str,
+        phase: &str,
+        result: &SyncResult,
+    ) {
+        log::info!(
+            "sync_phase run_id={} trigger={} vault_tag={} provider={} transport_tag={} phase={} pulled={} pushed={} deleted={} errors={} tx_bytes={} rx_bytes={}",
+            self.run_id,
+            self.trigger_reason,
+            self.vault_tag,
+            provider,
+            transport_tag,
+            phase,
+            result.pulled,
+            result.pushed,
+            result.deleted,
+            result.errors.len(),
+            result.tx_bytes,
+            result.rx_bytes,
+        );
+    }
+}
+
+fn short_hash_tag(value: &str) -> String {
+    let digest = blake3::hash(value.as_bytes()).to_hex();
+    digest[..12].to_string()
+}
+
+fn normalize_trigger_reason(value: Option<&str>) -> String {
+    match value.unwrap_or("manual").trim() {
+        "manual" => "manual",
+        "server_push" => "server_push",
+        "periodic_timer" => "periodic_timer",
+        "app_foreground" => "app_foreground",
+        "initial_connect" => "initial_connect",
+        "watcher_create_delete" => "watcher_create_delete",
+        "watcher_modified" => "watcher_modified",
+        "queued_retry" => "queued_retry",
+        _ => "unknown",
+    }
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Sync result types
 // ---------------------------------------------------------------------------
 
@@ -144,4 +217,26 @@ pub struct SyncServerConfig {
     pub server_addr: String,
     /// Device ID (stable UUID per device)
     pub device_id: String,
+}
+
+#[cfg(test)]
+mod run_context_tests {
+    use super::*;
+
+    #[test]
+    fn run_context_uses_stable_redacted_tags() {
+        let first = SyncRunContext::new("/private/vault", Some("manual"));
+        let second = SyncRunContext::new("/private/vault", Some("manual"));
+
+        assert_eq!(first.vault_tag, second.vault_tag);
+        assert_eq!(first.vault_tag.len(), 12);
+        assert_ne!(first.run_id, second.run_id);
+        assert!(!first.vault_tag.contains("vault"));
+    }
+
+    #[test]
+    fn run_context_rejects_untrusted_trigger_labels() {
+        let context = SyncRunContext::new("vault", Some("manual\nforged=true"));
+        assert_eq!(context.trigger_reason, "unknown");
+    }
 }

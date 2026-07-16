@@ -66,6 +66,18 @@ impl P2PSyncHandler {
         conn: iroh::endpoint::Connection,
     ) {
         let remote_id = conn.remote_id();
+
+        let rollout_mode = crate::p2p::direct_p2p_mode(&self.app_handle);
+        if !rollout_mode.is_enabled() {
+            warn!(
+                "Direct P2P connection rejected by safety gate: peer={}, mode={}, protocol=v{}",
+                remote_id.fmt_short(),
+                rollout_mode.label(),
+                crate::p2p::DIRECT_P2P_PROTOCOL_VERSION,
+            );
+            return;
+        }
+
         let remote_hex = hex::encode(remote_id.as_bytes());
 
         // Check if peer is in paired devices
@@ -105,7 +117,7 @@ impl P2PSyncHandler {
         };
 
         // Verify auth credentials
-        let _device_id = match auth_msg {
+        let peer_device_id = match auth_msg {
             MailboxRequest::Auth {
                 vault_hash: _,
                 mailbox_token: _,
@@ -153,7 +165,7 @@ impl P2PSyncHandler {
                 }
             };
 
-            let response = self.handle_request(msg);
+            let response = self.handle_request(msg, &peer_device_id);
 
             if let Err(e) = write_message(&mut send, &response).await {
                 error!(
@@ -174,7 +186,7 @@ impl P2PSyncHandler {
     /// Handle a single mailbox request from a peer.
     ///
     /// Reads from/writes to the local database to serve real sync data.
-    fn handle_request(&self, req: MailboxRequest) -> MailboxResponse {
+    fn handle_request(&self, req: MailboxRequest, peer_device_id: &str) -> MailboxResponse {
         match req {
             MailboxRequest::Pull { since_seq } => {
                 debug!("P2P Pull request: since_seq={}", since_seq);
@@ -186,7 +198,7 @@ impl P2PSyncHandler {
                 payload_hash,
             } => {
                 debug!("P2P Push request received");
-                self.handle_push(doc_hash, encrypted_payload, payload_hash)
+                self.handle_push(doc_hash, encrypted_payload, payload_hash, peer_device_id)
             }
             MailboxRequest::PushBatch { items } => {
                 let mut max_seq = 0;
@@ -195,6 +207,7 @@ impl P2PSyncHandler {
                         item.doc_hash,
                         item.encrypted_payload,
                         item.payload_hash,
+                        peer_device_id,
                     ) {
                         MailboxResponse::PushOk { seq } => {
                             max_seq = max_seq.max(seq);
@@ -225,7 +238,7 @@ impl P2PSyncHandler {
             }
             MailboxRequest::PushDelete { doc_hash } => {
                 debug!("P2P PushDelete received");
-                self.handle_push_delete(doc_hash)
+                self.handle_push_delete(doc_hash, peer_device_id)
             }
             MailboxRequest::Auth { .. } => {
                 // Auth should only come once at the start
@@ -289,7 +302,12 @@ impl P2PSyncHandler {
         let db_state = self.app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
+        let mut count = 0;
         for rel_path in &local_files {
+            if count >= 50 {
+                break;
+            }
+
             let local_path = std::path::Path::new(&vault_path).join(rel_path);
             let modified_ms = std::fs::metadata(&local_path)
                 .and_then(|m| m.modified())
@@ -371,6 +389,7 @@ impl P2PSyncHandler {
                 timestamp: now,
                 is_delete: false,
             });
+            count += 1;
         }
 
         info!("P2P Pull: serving {} entries (since_seq={})", entries.len(), since_seq);
@@ -386,6 +405,7 @@ impl P2PSyncHandler {
         doc_hash: [u8; 32],
         encrypted_payload: Vec<u8>,
         payload_hash: [u8; 32],
+        peer_device_id: &str,
     ) -> MailboxResponse {
         // Verify payload integrity
         let computed = *blake3::hash(&encrypted_payload).as_bytes();
@@ -405,7 +425,7 @@ impl P2PSyncHandler {
         let db_state = self.app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
-        let key = format!("p2p:staged:{}", doc_hash_hex);
+        let key = format!("p2p:staged:{}:{}", doc_hash_hex, peer_device_id);
         // Store as base64-encoded blob for simplicity
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&encrypted_payload);
@@ -440,8 +460,8 @@ impl P2PSyncHandler {
             }
         };
 
-        // Write asset to vault's assets directory
-        let asset_dir = std::path::Path::new(&vault_path).join("assets");
+        // Write asset to hidden staging directory
+        let asset_dir = std::path::Path::new(&vault_path).join(".synabit").join("p2p_assets_staged");
         if let Err(e) = std::fs::create_dir_all(&asset_dir) {
             return MailboxResponse::Error {
                 message: format!("create assets dir: {}", e),
@@ -464,20 +484,44 @@ impl P2PSyncHandler {
 
     /// Handle PullAsset: read encrypted asset from local storage.
     fn handle_pull_asset(&self, asset_hash: [u8; 32]) -> MailboxResponse {
-        let asset_hash_hex = hex::encode(asset_hash);
-
+        let e2ee_key = match crate::secrets::SecretManager::get_e2ee_key(Some(&self.app_handle)) {
+            Some(k) => k,
+            None => return MailboxResponse::Error { message: "E2EE key not available".to_string() },
+        };
         let vault_path = match self.get_vault_path() {
             Some(p) => p,
             None => return MailboxResponse::AssetNotFound,
         };
 
-        let asset_path = std::path::Path::new(&vault_path)
-            .join("assets")
+        // 1. Check local plain assets
+        let assets_dir = std::path::Path::new(&vault_path).join("assets");
+        if let Ok(entries) = std::fs::read_dir(&assets_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    let file_name = entry.file_name();
+                    let rel_path = format!("assets/{}", file_name.to_string_lossy());
+                    let hash = *blake3::hash(rel_path.as_bytes()).as_bytes();
+                    if hash == asset_hash {
+                        if let Ok(content) = std::fs::read(entry.path()) {
+                            if let Ok(encrypted) = crate::sync::crypto::encrypt_v5(&e2ee_key, &content, false) {
+                                return MailboxResponse::AssetData { data: encrypted };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check staged encrypted assets
+        let asset_hash_hex = hex::encode(asset_hash);
+        let staged_path = std::path::Path::new(&vault_path)
+            .join(".synabit")
+            .join("p2p_assets_staged")
             .join(&asset_hash_hex);
 
-        match std::fs::read(&asset_path) {
+        match std::fs::read(&staged_path) {
             Ok(data) => {
-                info!("P2P PullAsset: serving {} ({} bytes)", asset_hash_hex, data.len());
+                info!("P2P PullAsset: serving staged {} ({} bytes)", asset_hash_hex, data.len());
                 MailboxResponse::AssetData { data }
             }
             Err(_) => MailboxResponse::AssetNotFound,
@@ -485,7 +529,7 @@ impl P2PSyncHandler {
     }
 
     /// Handle PushDelete: mark a doc as deleted.
-    fn handle_push_delete(&self, doc_hash: [u8; 32]) -> MailboxResponse {
+    fn handle_push_delete(&self, doc_hash: [u8; 32], peer_device_id: &str) -> MailboxResponse {
         let doc_hash_hex = hex::encode(doc_hash);
         let seq = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -496,7 +540,7 @@ impl P2PSyncHandler {
         let db_state = self.app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
-        let key = format!("p2p:staged_delete:{}", doc_hash_hex);
+        let key = format!("p2p:staged_delete:{}:{}", doc_hash_hex, peer_device_id);
         match db.set_kv(&key, "1") {
             Ok(_) => {
                 info!("P2P PushDelete: staged {} (seq={})", doc_hash_hex, seq);

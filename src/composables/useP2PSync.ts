@@ -26,6 +26,16 @@ export interface QuotaInfo {
   message: string;
 }
 
+export type SyncTriggerReason =
+  | 'manual'
+  | 'server_push'
+  | 'periodic_timer'
+  | 'app_foreground'
+  | 'initial_connect'
+  | 'watcher_create_delete'
+  | 'watcher_modified'
+  | 'queued_retry';
+
 /**
  * Composable for P2P Sync via Synabit Sync Server.
  * Modeled after useGDrive — manages connection, sync, auto-sync timer.
@@ -50,16 +60,18 @@ export function useP2PSync(vaultPath: Ref<string>) {
 
   const unlistenFns: UnlistenFn[] = [];
   let syncQueued = false;
+  let syncQueuedReason: SyncTriggerReason = 'queued_retry';
 
   async function setupEventListeners() {
     try {
       const unlistenPush = await listen('sync-server-push', () => {
         logger.info('[P2P Sync] Received server push notification. Triggering sync...');
         if (!p2pSyncing.value) {
-          syncP2P();
+          syncP2P('server_push');
         } else {
           logger.info('[P2P Sync] Sync already in progress. Queuing next sync.');
           syncQueued = true;
+          syncQueuedReason = 'server_push';
         }
       });
       unlistenFns.push(unlistenPush);
@@ -108,7 +120,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
       const mins = Math.max(1, Math.min(60, appStore.p2pAutoSyncInterval));
       autoSyncTimer = window.setInterval(() => {
         if (!p2pSyncing.value && document.visibilityState === 'visible') {
-          syncP2P();
+          syncP2P('periodic_timer');
         }
       }, mins * 60 * 1000);
     }
@@ -124,11 +136,11 @@ export function useP2PSync(vaultPath: Ref<string>) {
       if (isMobileOS.value && appStore.p2pAutoSyncEnabled && !p2pConnected.value && appStore.p2pServerAddr) {
         logger.info('[Mobile Hybrid] Reconnecting P2P on foreground');
         connectP2P(appStore.p2pServerAddr, appStore.p2pServerIdHex).then(() => {
-          syncP2P();
+          syncP2P('app_foreground');
         });
       } else if (appStore.p2pAutoSyncEnabled) {
         // Desktop or already connected Mobile: sync immediately
-        syncP2P();
+        syncP2P('app_foreground');
       }
     } else {
       // logger.info('App backgrounded, pausing auto-sync timer to save battery'); // Removed to avoid WebKit IPC Fetch cancellation error
@@ -201,7 +213,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
       }
 
       // Initial sync after connect
-      await syncP2P();
+      await syncP2P('initial_connect');
       setupAutoSync();
     } catch (e: any) {
       p2pSyncError.value = e?.toString() || 'Connection failed';
@@ -230,7 +242,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
   }
 
   // --- Sync ---
-  async function syncP2P() {
+  async function syncP2P(triggerReason: SyncTriggerReason = 'manual') {
     if (p2pSyncing.value || !vaultPath.value) return;
 
     // Determine network and apply policy
@@ -249,6 +261,7 @@ export function useP2PSync(vaultPath: Ref<string>) {
       const result = await invoke<SyncResult>('p2p_sync_full', {
         vaultPath: vaultPath.value,
         isCellular: isCellular,
+        triggerReason,
       });
       const now = new Date().toLocaleTimeString();
       appStore.p2pLastSyncTime = now;
@@ -288,7 +301,9 @@ export function useP2PSync(vaultPath: Ref<string>) {
       p2pSyncing.value = false;
       if (syncQueued) {
         syncQueued = false;
-        setTimeout(() => syncP2P(), 1000);
+        const queuedReason = syncQueuedReason;
+        syncQueuedReason = 'queued_retry';
+        setTimeout(() => syncP2P(queuedReason), 1000);
       }
     }
   }

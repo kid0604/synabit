@@ -29,7 +29,7 @@ use tauri::{Emitter, Manager};
 
 use crate::error::{AppError, AppResult};
 use crate::sync::progress::{SyncConflictInfo, SyncPhase, SyncProgressEvent};
-use crate::sync::{SyncResult, SyncTransport};
+use crate::sync::{SyncResult, SyncRunContext, SyncTransport};
 use crate::sync::utils::{collect_local_files, file_sha256};
 
 // ---------------------------------------------------------------------------
@@ -241,15 +241,21 @@ pub async fn p2p_sync_full(
     transport: &dyn SyncTransport,
     vault_path: &str,
     device_id: &str,
+    run_context: &SyncRunContext,
 ) -> AppResult<SyncResult> {
     let mut max_seq: u64 = 0;
     let provider = transport.provider_name();
-    info!(
-        "P2P sync starting via {} for vault: {}",
-        provider, vault_path
-    );
-
+    let transport_tag = run_context.transport_tag(&transport.transport_id());
     let mut result = SyncResult::empty();
+    info!(
+        "sync_run run_id={} trigger={} vault_tag={} scope=transport state=start provider={} transport_tag={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
+        provider,
+        transport_tag,
+    );
+    run_context.log_phase(provider, &transport_tag, "preflight", &result);
     let vault = Path::new(vault_path);
 
     if !vault.exists() {
@@ -303,6 +309,8 @@ pub async fn p2p_sync_full(
     // ════════════════════════════════════════════════════════
     // PUSH phase
     // ════════════════════════════════════════════════════════
+
+    run_context.log_phase(provider, &transport_tag, "push", &result);
 
     let local_files = collect_local_files(vault_path);
     info!("PUSH: {} local files to consider", local_files.len());
@@ -666,6 +674,7 @@ pub async fn p2p_sync_full(
 
     // PROCESS STAGED DOCS (from passive Push)
     // ════════════════════════════════════════════════════════
+    run_context.log_phase(provider, &transport_tag, "staged_docs", &result);
     {
         use base64::Engine;
         let mut staged = Vec::new();
@@ -737,9 +746,11 @@ pub async fn p2p_sync_full(
         }
         
         for (key, _) in staged_deletes {
-            // Key format: p2p:staged_delete:doc_hash_hex
-            if let Some(doc_hash_hex) = key.strip_prefix("p2p:staged_delete:") {
-                if let Ok(doc_hash_bytes) = hex::decode(doc_hash_hex) {
+            // Key format: p2p:staged_delete:doc_hash_hex:peer_device_id
+            if let Some(doc_hash_hex_with_peer) = key.strip_prefix("p2p:staged_delete:") {
+                let parts: Vec<&str> = doc_hash_hex_with_peer.split(':').collect();
+                if let Some(doc_hash_hex) = parts.first() {
+                    if let Ok(doc_hash_bytes) = hex::decode(doc_hash_hex) {
                     let known_paths = {
                         let db_state = app_handle.state::<crate::db::DbState>();
                         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -770,6 +781,7 @@ pub async fn p2p_sync_full(
                     }
                 }
             }
+        }
             
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -781,7 +793,14 @@ pub async fn p2p_sync_full(
     // PULL phase
     // ════════════════════════════════════════════════════════
 
-    let entries = transport.pull_since(cursor).await?;
+    run_context.log_phase(provider, &transport_tag, "pull", &result);
+    let entries = match transport.pull_since(cursor).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            run_context.log_phase(provider, &transport_tag, "failed_pull", &result);
+            return Err(error);
+        }
+    };
     info!("PULL: {} entries since seq {}", entries.len(), cursor);
 
     
@@ -898,6 +917,7 @@ pub async fn p2p_sync_full(
     // ════════════════════════════════════════════════════════
     // ASSET PULL phase (Phase 2.5)
     // ════════════════════════════════════════════════════════
+    run_context.log_phase(provider, &transport_tag, "assets", &result);
     let local_files = collect_local_files(vault_path);
     let mut missing_assets = std::collections::HashSet::new();
     let re = regex::Regex::new(r#"assets/[^)"'\s\]]+"#).unwrap();
@@ -922,37 +942,58 @@ pub async fn p2p_sync_full(
 
     for asset_path in missing_assets {
         let asset_hash = doc_hash(&asset_path);
-        match transport.pull_asset(&asset_hash).await {
-            Ok(Some(encrypted_data)) => {
-                result.rx_bytes += encrypted_data.len() as u64;
-                match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_data) {
-                    Ok(decrypted) => {
-                        let asset_full = vault.join(&asset_path);
-                        if let Err(e) = atomic_write(&asset_full, &decrypted) {
-                            result.errors.push(format!("Write asset {}: {}", asset_path, e));
-                        } else {
-                            let current_sha = file_sha256(&asset_full);
-                            let db_state = app_handle.state::<crate::db::DbState>();
-                            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                            let _ = db.set_kv(
-                                &format!("p2p_sync:sha256:{}", asset_path),
-                                &current_sha,
-                            );
-                            result.pulled += 1;
-                            result.pulled_files.push(asset_path.clone());
-                            info!("PULL ASSET OK: {}", asset_path);
-                        }
-                    }
-                    Err(e) => {
-                        result.errors.push(format!("Decrypt asset {}: {}", asset_path, e));
-                    }
+        let asset_hash_hex = hex::encode(asset_hash);
+        let staged_asset_path = vault
+            .join(".synabit")
+            .join("p2p_assets_staged")
+            .join(&asset_hash_hex);
+
+        let mut asset_data_opt = None;
+        if staged_asset_path.exists() {
+            if let Ok(data) = fs::read(&staged_asset_path) {
+                asset_data_opt = Some(data);
+                let _ = fs::remove_file(&staged_asset_path);
+                info!("PULL ASSET: Found in staged assets for {}", asset_path);
+            }
+        }
+
+        if asset_data_opt.is_none() {
+            match transport.pull_asset(&asset_hash).await {
+                Ok(Some(encrypted_data)) => {
+                    result.rx_bytes += encrypted_data.len() as u64;
+                    asset_data_opt = Some(encrypted_data);
+                }
+                Ok(None) => {
+                    warn!("Asset not found on remote: {}", asset_path);
+                }
+                Err(e) => {
+                    result.errors.push(format!("Pull asset {}: {}", asset_path, e));
                 }
             }
-            Ok(None) => {
-                warn!("Asset not found on remote: {}", asset_path);
-            }
-            Err(e) => {
-                result.errors.push(format!("Pull asset {}: {}", asset_path, e));
+        }
+
+        if let Some(encrypted_data) = asset_data_opt {
+            match crate::sync::crypto::decrypt(&e2ee_key, &encrypted_data) {
+                Ok(decrypted) => {
+                    let asset_full = vault.join(&asset_path);
+                    if let Err(e) = atomic_write(&asset_full, &decrypted) {
+                        result.errors.push(format!("Write asset {}: {}", asset_path, e));
+                    } else {
+                        let current_sha = file_sha256(&asset_full);
+                        let db_state = app_handle.state::<crate::db::DbState>();
+                        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = db.set_kv(
+                            &format!("p2p_sync:sha256:{}", asset_path),
+                            &current_sha,
+                        );
+                        result.pulled += 1;
+                        result.pulled_files.push(asset_path.clone());
+                        info!("PULL ASSET OK: {}", asset_path);
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Decrypt asset {}: {}", asset_path, e));
+                }
             }
         }
     }
@@ -961,6 +1002,7 @@ pub async fn p2p_sync_full(
     // ACK phase
     // ════════════════════════════════════════════════════════
 
+    run_context.log_phase(provider, &transport_tag, "ack", &result);
     if max_seq > cursor {
         // 1. Persist cursor locally
         {
@@ -987,12 +1029,20 @@ pub async fn p2p_sync_full(
         bytes_transferred: 0,
     });
 
+    run_context.log_phase(provider, &transport_tag, "complete", &result);
     info!(
-        "P2P sync complete: pulled={} pushed={} deleted={} errors={}",
+        "sync_run run_id={} trigger={} vault_tag={} scope=transport state=complete provider={} transport_tag={} pulled={} pushed={} deleted={} errors={} tx_bytes={} rx_bytes={}",
+        run_context.run_id,
+        run_context.trigger_reason,
+        run_context.vault_tag,
+        provider,
+        transport_tag,
         result.pulled,
         result.pushed,
         result.deleted,
-        result.errors.len()
+        result.errors.len(),
+        result.tx_bytes,
+        result.rx_bytes,
     );
 
     Ok(result)
@@ -1259,14 +1309,56 @@ mod tests {
     #[test]
     fn test_payload_roundtrip() {
         let payload = DocSyncPayload {
-            doc_id: "Notes/test.md".to_string(),
+            node_id: "5da91532-a7f0-4990-86de-dc43f084bd08".to_string(),
+            rel_path: "Notes/test.md".to_string(),
             snapshot: vec![1, 2, 3],
             is_json: false,
         };
         let bytes = postcard::to_stdvec(&payload).unwrap();
         let decoded: DocSyncPayload = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(decoded.doc_id, "Notes/test.md");
+        assert_eq!(decoded.node_id, payload.node_id);
+        assert_eq!(decoded.rel_path, "Notes/test.md");
         assert_eq!(decoded.snapshot, vec![1, 2, 3]);
         assert!(!decoded.is_json);
+    }
+
+    /// Phase 0 baseline for the direct-v1 data-loss report.
+    ///
+    /// The model mirrors the production ordering in this engine and handler:
+    /// A pushes its edited snapshot, B stages without applying it, then A pulls
+    /// B's still-stale local snapshot. Phase 1 must make this test pass before
+    /// the ignore marker is removed.
+    #[test]
+    #[ignore = "known direct-P2P v1 rollback; enable after Phase 1 reorders durable apply/pull/push"]
+    fn direct_v1_new_note_edit_must_not_roll_back() {
+        #[derive(Clone)]
+        struct LegacyPeer {
+            local: String,
+            staged: Option<String>,
+        }
+
+        fn legacy_push_then_pull(initiator: &mut LegacyPeer, responder: &mut LegacyPeer) {
+            responder.staged = Some(initiator.local.clone());
+            initiator.local = responder.local.clone();
+        }
+
+        let placeholder = "---\ntitle: Untitled 1784051721342\n---\n\n";
+        let edited = "---\ntitle: Maintainer plan\n---\n\nP2P content must survive.\n";
+        let mut device_a = LegacyPeer {
+            local: edited.to_string(),
+            staged: None,
+        };
+        let mut device_b = LegacyPeer {
+            local: placeholder.to_string(),
+            staged: None,
+        };
+
+        legacy_push_then_pull(&mut device_a, &mut device_b);
+
+        assert_eq!(
+            device_a.local,
+            edited,
+            "device A pulled B's stale placeholder after pushing the edited note"
+        );
     }
 }
