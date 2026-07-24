@@ -781,7 +781,7 @@ defineExpose({ openMonthById });
       <!-- Topbar -->
       <div v-else class="flex items-center justify-between p-4 md:p-6 shrink-0 relative z-10">
           <div class="flex items-center gap-3">
-              <button @click="isSidebarOpen = true" class="md:hidden p-1.5 -ml-1 text-gray-500 hover:text-blue-500 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <button @click="isSidebarOpen = true" class="md:hidden p-1.5 -ml-1 text-gray-500 hover:text-blue-500 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Is Sidebar Open = true">
                   <PanelLeft class="w-6 h-6" />
               </button>
               <div>
@@ -795,7 +795,7 @@ defineExpose({ openMonthById });
           </div>
           
           <div class="flex items-center gap-2 md:gap-3">
-              <button @click="showSettingsModal = true" class="p-2 md:p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm">
+              <button @click="showSettingsModal = true" class="p-2 md:p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm" aria-label="Show Settings Modal = true">
                   <Settings class="w-5 h-5" />
               </button>
               <button @click="openAddTx" class="hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">

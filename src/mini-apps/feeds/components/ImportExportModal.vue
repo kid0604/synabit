@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 
 const emit = defineEmits<{ close: []; imported: [] }>();
 const { t } = useI18n();
@@ -79,7 +79,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           <FileText class="w-5 h-5 text-orange-500" />
           {{ t('feeds.import_export_opml') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
           <X class="w-5 h-5" />
         </button>
       </div>

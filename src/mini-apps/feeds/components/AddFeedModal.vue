@@ -128,7 +128,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           <Rss class="w-5 h-5 text-orange-500" />
           {{ t('feeds.add_feed_title') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -261,7 +261,7 @@ const handleKeydown = (e: KeyboardEvent) => {
                 @click="newCategoryColor = color"
                 class="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
                 :style="{ backgroundColor: color, borderColor: newCategoryColor === color ? '#fff' : 'transparent', boxShadow: newCategoryColor === color ? '0 0 0 2px ' + color : 'none' }"
-              ></button>
+               aria-label="New Category Color = color"></button>
             </div>
           </div>
         </div>

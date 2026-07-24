@@ -442,7 +442,6 @@ impl MailboxHandler {
         );
 
         self.notify_subscribers(vault_hash, seq).await;
-        self.notify_subscribers(vault_hash, seq).await;
         Ok(MailboxResponse::PushOk { seq })
     }
 

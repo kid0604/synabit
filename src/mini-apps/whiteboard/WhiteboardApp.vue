@@ -56,7 +56,7 @@ const store = useWhiteboardStore(vaultPathRef);
 
 // ── Navigation ──────────────────────────────────────────────
 const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
-let skipNavPush = false;
+const skipNavPush = false;
 
 const isMobile = ref(window.innerWidth < 768);
 

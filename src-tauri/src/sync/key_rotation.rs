@@ -10,7 +10,7 @@
 //! The current epoch is stored in the local KV store under key `"e2ee_epoch"`.
 //! Epoch 0 is the implicit default (no rotation has ever occurred).
 
-use log::{info, warn};
+use log::info;
 use tauri::Manager;
 
 use crate::error::{AppError, AppResult};
@@ -46,7 +46,7 @@ impl KeyRotationManager {
     /// `epoch_key = derive_epoch_key(master_key, epoch)`. This ensures a rotated
     /// epoch produces a new token the revoked device cannot compute.
     pub fn derive_mailbox_token(master_key: &[u8; 32], epoch: u32) -> Vec<u8> {
-        let epoch_key = crate::sync::crypto::derive_epoch_key(master_key, epoch);
+        let epoch_key = crate::sync::core::crypto::derive_epoch_key(master_key, epoch);
         blake3::derive_key("synabit-mailbox-v1", &epoch_key).to_vec()
     }
 
@@ -60,15 +60,7 @@ impl KeyRotationManager {
         app_handle: &tauri::AppHandle,
         device_id_to_revoke: &str,
     ) -> AppResult<u32> {
-        // 1. Remove from device registry
-        if let Err(e) = crate::p2p::devices::DeviceRegistry::remove(app_handle, device_id_to_revoke) {
-            warn!(
-                "Key rotation: device {} not found in registry (may already be removed): {}",
-                device_id_to_revoke, e
-            );
-        }
-
-        // 2. Increment epoch
+        // 1. Increment epoch (We no longer use DeviceRegistry for P2P)
         let new_epoch = Self::increment_epoch(app_handle)?;
 
         info!(

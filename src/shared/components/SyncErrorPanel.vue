@@ -86,7 +86,7 @@ onUnmounted(() => {
             Sync {{ errors.length > 0 ? `Error${errors.length > 1 ? 's' : ''} (${errors.length})` : 'Warning' }}
           </span>
         </div>
-        <button @click="dismiss" class="p-1 rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400 dark:text-red-500 transition-colors cursor-pointer">
+        <button @click="dismiss" class="p-1 rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400 dark:text-red-500 transition-colors cursor-pointer" aria-label="Dismiss">
           <X class="w-3.5 h-3.5" />
         </button>
       </div>

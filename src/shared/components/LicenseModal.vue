@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { X, Key, Zap, Shield, CheckCircle2, AlertCircle, RefreshCw, TerminalSquare } from 'lucide-vue-next';
 import { useLicenseStore } from '../../stores/useLicenseStore';
+import { usePlatform } from '../../composables/usePlatform';
 
 const props = defineProps<{
     isOpen: boolean;
@@ -12,6 +13,7 @@ const emit = defineEmits<{
 }>();
 
 const licenseStore = useLicenseStore();
+const { osType } = usePlatform();
 const licenseKey = ref('');
 const errorText = ref('');
 const successText = ref('');
@@ -71,7 +73,7 @@ const handleRefresh = async () => {
             <Shield class="w-5 h-5 text-primary" />
             Synabit License
         </h2>
-        <button @click="emit('close')" class="p-2 rounded-lg hover:bg-hover dark:hover:bg-hover-dark text-text-muted dark:text-text-muted-dark transition-colors">
+        <button @click="emit('close')" class="p-2 rounded-lg hover:bg-hover dark:hover:bg-hover-dark text-text-muted dark:text-text-muted-dark transition-colors" aria-label="More Options">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -137,6 +139,7 @@ const handleRefresh = async () => {
             <div class="space-y-4">
                 <div v-if="licenseStore.licenseStatus.type === 'NoLicense'">
                     <button 
+                        v-if="osType !== 'android'"
                         @click="handleActivateTrial" 
                         :disabled="licenseStore.isLoading"
                         class="w-full py-3 px-4 bg-surface dark:bg-surface-dark hover:bg-hover dark:hover:bg-hover-dark border border-border dark:border-border-dark rounded-xl font-medium text-text dark:text-text-dark flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
@@ -145,7 +148,7 @@ const handleRefresh = async () => {
                         Start 100-Day Free Trial
                     </button>
 
-                    <div class="relative my-6">
+                    <div v-if="osType !== 'android'" class="relative my-6">
                         <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-border dark:border-border-dark"></div></div>
                         <div class="relative flex justify-center text-sm"><span class="px-2 bg-surface dark:bg-surface-dark text-text-muted dark:text-text-muted-dark">Or activate with key</span></div>
                     </div>
@@ -175,7 +178,7 @@ const handleRefresh = async () => {
                         </button>
                     </div>
                     
-                    <p class="text-xs text-text-muted dark:text-text-muted-dark mt-2">
+                    <p v-if="osType !== 'android'" class="text-xs text-text-muted dark:text-text-muted-dark mt-2">
                         Don't have a key? <a href="https://synabit.net/pricing" target="_blank" class="text-primary hover:underline">Purchase one here</a>.
                     </p>
                 </div>

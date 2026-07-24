@@ -49,12 +49,12 @@ defineExpose({ zoomIn, zoomOut, rotate, resetView, zoom });
   <div class="relative flex-1 flex flex-col overflow-hidden bg-[#f0f0f0] dark:bg-[#1a1a1a]">
     <!-- Toolbar -->
     <div class="flex items-center justify-center gap-2 px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5">
-      <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomOut class="w-4 h-4" /></button>
+      <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom Out"><ZoomOut class="w-4 h-4" /></button>
       <span class="text-xs font-mono text-gray-500 w-12 text-center">{{ Math.round(zoom * 100) }}%</span>
-      <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomIn class="w-4 h-4" /></button>
+      <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom In"><ZoomIn class="w-4 h-4" /></button>
       <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
-      <button @click="rotate" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><RotateCw class="w-4 h-4" /></button>
-      <button @click="resetView" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><Maximize2 class="w-4 h-4" /></button>
+      <button @click="rotate" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Rotate"><RotateCw class="w-4 h-4" /></button>
+      <button @click="resetView" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Reset View"><Maximize2 class="w-4 h-4" /></button>
     </div>
     <!-- Image -->
     <div

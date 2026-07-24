@@ -391,19 +391,19 @@ const handleResetPdf = async () => {
       <!-- Toolbar -->
       <div class="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2 md:px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
         <!-- Navigation -->
-        <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronLeft class="w-4 h-4" /></button>
+        <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" aria-label="Prev Page"><ChevronLeft class="w-4 h-4" /></button>
         <span class="text-xs font-mono text-gray-500 min-w-[50px] md:min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
         <button @click="nextPage" :disabled="renderer.currentPage.value >= renderer.totalPages.value" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronRight class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Zoom -->
-        <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomOut class="w-4 h-4" /></button>
+        <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom Out"><ZoomOut class="w-4 h-4" /></button>
         <span class="text-xs font-mono text-gray-500 w-10 text-center">{{ zoomPercent() }}%</span>
-        <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer"><ZoomIn class="w-4 h-4" /></button>
+        <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom In"><ZoomIn class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Dark mode -->
-        <button @click="darkMode = !darkMode" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer">
+        <button @click="darkMode = !darkMode" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Dark Mode = !dark Mode">
           <Moon v-if="!darkMode" class="w-4 h-4" /><Sun v-else class="w-4 h-4" />
         </button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />

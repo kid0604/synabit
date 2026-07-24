@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
-import { X, Calendar, CheckCircle2, Trash2, Tag, Activity, PlusCircle, DollarSign } from 'lucide-vue-next';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { X, Calendar, Trash2, Tag, Activity, PlusCircle, DollarSign } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
 
 const props = defineProps<{
@@ -146,7 +146,7 @@ const handleBackgroundClick = () => {
           
           <div class="flex justify-between items-center px-5 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-[#2c2c2c]" style="padding-top: max(env(safe-area-inset-top), 36px);">
               <h3 class="font-semibold text-lg text-[#1c1c1e] dark:text-[#f4f4f5]">Edit Project</h3>
-              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]">
+              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]" aria-label="Handle Background Click">
                   <X class="w-4 h-4" />
               </button>
           </div>
@@ -222,7 +222,7 @@ const handleBackgroundClick = () => {
                       <div class="flex-1 flex flex-wrap items-center gap-1.5 bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus-within:border-gray-200 dark:focus-within:border-gray-700 rounded p-1 transition-colors min-h-[32px]">
                           <span v-for="(tag, index) in editingProject.tags" :key="index" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-gray-200 dark:bg-[#3d3d3d] text-gray-700 dark:text-gray-300 text-[11px] font-medium">
                               #{{ tag }}
-                              <button @click.prevent="removeTag(index)" class="hover:text-red-500 focus:outline-none"><X class="w-3 h-3"/></button>
+                              <button @click.prevent="removeTag(index)" class="hover:text-red-500 focus:outline-none" aria-label="Remove Tag"><X class="w-3 h-3"/></button>
                           </span>
                           <input v-model="tagInput" @keydown.enter.prevent="addTag" @blur="addTag" placeholder="Add tag..." class="flex-1 min-w-[80px] text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 py-0.5 px-1" />
                       </div>
@@ -241,7 +241,7 @@ const handleBackgroundClick = () => {
                           <button @click.stop="removeCustomProperty(index)" class="text-[10px] bg-red-500 text-white px-2 py-1 rounded font-medium hover:bg-red-600 transition-colors">Yes</button>
                           <button @click.stop="confirmDeleteIndex = null" class="text-[10px] bg-gray-200 dark:bg-[#333] text-gray-700 dark:text-gray-300 px-2 py-1 rounded font-medium hover:bg-gray-300 dark:hover:bg-[#444] transition-colors">Cancel</button>
                       </div>
-                      <button v-else @click="confirmDeleteIndex = index" class="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"><X class="w-3.5 h-3.5" /></button>
+                      <button v-else @click="confirmDeleteIndex = index" class="p-1 text-gray-400 hover:text-red-500 rounded transition-colors" aria-label="Confirm Delete Index = index"><X class="w-3.5 h-3.5" /></button>
                   </div>
               </div>
               <div class="mb-4">

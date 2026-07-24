@@ -92,7 +92,7 @@ const finish = () => {
                               <span class="absolute left-0 bottom-full text-[10px] uppercase text-gray-400 font-bold tracking-wider">Balance</span>
                           </div>
                       </div>
-                      <button @click="removeAccount(idx)" class="p-3 text-gray-400 hover:text-red-500 transition-colors rounded-xl hover:bg-white dark:hover:bg-gray-700">
+                      <button @click="removeAccount(idx)" class="p-3 text-gray-400 hover:text-red-500 transition-colors rounded-xl hover:bg-white dark:hover:bg-gray-700" aria-label="Remove Account">
                           <Trash2 class="w-5 h-5" />
                       </button>
                   </div>
@@ -105,7 +105,7 @@ const finish = () => {
                       <div class="relative flex-1">
                           <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.current_balance_ph')" />
                       </div>
-                      <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50">
+                      <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50" aria-label="Add Account">
                           <Plus class="w-4 h-4" />
                       </button>
                   </div>

@@ -34,8 +34,8 @@ pub async fn setup_e2ee(app_handle: tauri::AppHandle) -> Result<SetupResult, Str
         return Err("E2EE key already exists. Use get_recovery_phrase instead.".to_string());
     }
 
-    let key = crate::sync::crypto::generate_key();
-    let phrase = crate::sync::crypto::key_to_mnemonic(&key)?;
+    let key = crate::sync::core::crypto::generate_key();
+    let phrase = crate::sync::core::crypto::key_to_mnemonic(&key)?;
     
     SecretManager::set_e2ee_key(Some(&app_handle), &key)?;
     
@@ -60,7 +60,7 @@ pub async fn restore_e2ee_from_phrase(
     phrase: String,
 ) -> Result<(), String> {
     use tauri::Manager;
-    let key = crate::sync::crypto::mnemonic_to_key(&phrase)?;
+    let key = crate::sync::core::crypto::mnemonic_to_key(&phrase)?;
     
     SecretManager::set_e2ee_key(Some(&app_handle), &key)?;
     
@@ -81,5 +81,5 @@ pub async fn restore_e2ee_from_phrase(
 pub async fn get_recovery_phrase(app_handle: tauri::AppHandle) -> Result<String, String> {
     let key = SecretManager::get_e2ee_key(Some(&app_handle))
         .ok_or("No encryption key found")?;
-    crate::sync::crypto::key_to_mnemonic(&key)
+    crate::sync::core::crypto::key_to_mnemonic(&key)
 }

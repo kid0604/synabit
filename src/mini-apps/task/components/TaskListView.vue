@@ -26,7 +26,7 @@ const emit = defineEmits<{
           @click="emit('edit-task', task)"
       >
           <!-- Checkbox -->
-          <button @click.stop="emit('toggle-status', task)" class="shrink-0 mr-4 transition-colors cursor-pointer">
+          <button @click.stop="emit('toggle-status', task)" class="shrink-0 mr-4 transition-colors cursor-pointer" aria-label="More Options">
               <CheckCircle2 v-if="task.status === 'done'" class="w-6 h-6 text-green-500 fill-green-50 dark:fill-green-900/30" />
               <Circle v-else class="w-6 h-6 text-gray-300 dark:text-gray-600 hover:text-black dark:hover:text-white" />
           </button>
@@ -45,7 +45,7 @@ const emit = defineEmits<{
           
           <!-- Actions -->
           <div class="hidden md:flex shrink-0 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity items-center gap-1 ml-4 w-[60px] justify-end">
-              <button @click.stop="emit('delete-task', task)" class="p-1.5 text-gray-400 hover:text-red-500 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors cursor-pointer">
+              <button @click.stop="emit('delete-task', task)" class="p-1.5 text-gray-400 hover:text-red-500 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors cursor-pointer" aria-label="More Options">
                   <Trash2 class="w-4 h-4" />
               </button>
           </div>

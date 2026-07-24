@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FolderOpen, FolderSync, X, Plus, Trash2, HardDrive, Unlink,
-  ImageIcon, Video, Music, Code, FileType, Menu, Copy, FilePlus2 } from 'lucide-vue-next';
+  ImageIcon, Video, Music, Code, FileType, Copy, FilePlus2 } from 'lucide-vue-next';
 import type { useFileStore } from '../composables/useFileStore';
 
 const props = defineProps<{
@@ -27,12 +27,12 @@ const catIcon = (t: string) => {
        :class="isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'">
     <div class="p-4 md:p-6 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <button @click="store.syncAllSources" :class="{'animate-spin text-white': store.isScanning.value}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer text-white hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/20">
+        <button @click="store.syncAllSources" :class="{'animate-spin text-white': store.isScanning.value}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer text-white hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/20" aria-label="Store.sync All Sources">
           <FolderSync class="w-4 h-4" />
         </button>
         <h1 class="font-bold text-lg tracking-tight text-gray-900 dark:text-white">Files</h1>
       </div>
-      <button @click="emit('update:isOpen', false)" class="md:hidden p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-500 transition-colors">
+      <button @click="emit('update:isOpen', false)" class="md:hidden p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-500 transition-colors" aria-label="More Options">
         <X class="w-5 h-5" />
       </button>
     </div>
@@ -59,7 +59,7 @@ const catIcon = (t: string) => {
               :class="store.activeSourceId.value === source.id ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
               <FolderOpen class="w-4 h-4" /> <span class="truncate">{{ source.name }}</span>
             </button>
-            <button @click="store.removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all cursor-pointer">
+            <button @click="store.removeSource(source.id)" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all cursor-pointer" aria-label="Store.remove Source">
               <Trash2 class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -84,7 +84,7 @@ const catIcon = (t: string) => {
                 <span v-if="store.gdriveEmail.value" class="text-[10px] opacity-70 truncate">{{ store.gdriveEmail.value }}</span>
               </div>
             </button>
-            <button @click.stop="store.disconnectGDrive" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all cursor-pointer">
+            <button @click.stop="store.disconnectGDrive" class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all cursor-pointer" aria-label="Store.disconnect G Drive">
               <Unlink class="w-3.5 h-3.5" />
             </button>
           </div>

@@ -1,7 +1,7 @@
-//! SynabitServerTransport — client-side transport to Synabit Sync Server.
+//! SynabitServerAdapter — client-side transport to Synabit Sync Server.
 //!
 //! Connects to the Sync Server's Mailbox protocol over Iroh QUIC and
-//! implements the `SyncTransport` trait. This is the primary sync transport
+//! implements the `SyncAdapter` trait. This is the primary sync transport
 //! that replaces Google Drive for always-available push/pull.
 //!
 //! ## Connection model
@@ -15,16 +15,16 @@
 
 use async_trait::async_trait;
 use iroh::EndpointAddr;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
 use crate::sync::protocol::{
-    read_message, write_message, MailboxRequest, MailboxResponse, MAILBOX_ALPN,
+    write_message, MailboxRequest, MailboxResponse, MAILBOX_ALPN,
 };
-use crate::sync::{RemoteSyncEntry, SyncTransport};
+use crate::sync::core::types::{SyncOperation};
+use crate::sync::adapter::{SyncAdapter, PushResult, PullResult, RemoteEntry};
 
 /// A connected session to the Sync Server.
 struct MailboxSession {
@@ -38,7 +38,7 @@ struct MailboxSession {
 /// ## Usage
 ///
 /// ```rust,ignore
-/// let transport = SynabitServerTransport::new(
+/// let transport = SynabitServerAdapter::new(
 ///     "1.2.3.4:4433",       // server socket address
 ///     server_endpoint_id,    // server's public key (EndpointId)
 ///     &e2ee_key,
@@ -49,7 +49,7 @@ struct MailboxSession {
 /// transport.push_doc(&doc_hash, encrypted_data).await?;
 /// let entries = transport.pull_since(0).await?;
 /// ```
-pub struct SynabitServerTransport {
+pub struct SynabitServerAdapter {
     /// Iroh endpoint for QUIC connections
     endpoint: iroh::Endpoint,
     /// Server's EndpointAddr (EndpointId + optional direct address)
@@ -66,16 +66,16 @@ pub struct SynabitServerTransport {
     app_handle: Option<tauri::AppHandle>,
 }
 
-impl std::fmt::Debug for SynabitServerTransport {
+impl std::fmt::Debug for SynabitServerAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SynabitServerTransport")
+        f.debug_struct("SynabitServerAdapter")
             .field("server_addr", &self.server_addr)
             .field("device_id", &self.device_id)
             .finish()
     }
 }
 
-impl SynabitServerTransport {
+impl SynabitServerAdapter {
     /// Create a new transport from a server socket address and EndpointId.
     ///
     /// This binds an Iroh endpoint but does NOT connect to the server yet.
@@ -107,7 +107,7 @@ impl SynabitServerTransport {
             .map_err(|e| AppError::General(format!("failed to bind Iroh endpoint: {}", e)))?;
 
         info!(
-            "SynabitServerTransport created, target={}, server_id={}",
+            "SynabitServerAdapter created, target={}, server_id={}",
             addr,
             server_id.fmt_short()
         );
@@ -274,11 +274,11 @@ impl SynabitServerTransport {
         let mut session = self.session.lock().await;
         *session = None;
         self.endpoint.close().await;
-        info!("SynabitServerTransport closed");
+        info!("SynabitServerAdapter closed");
     }
 }
 
-impl Drop for SynabitServerTransport {
+impl Drop for SynabitServerAdapter {
     fn drop(&mut self) {
         if let Ok(mut session) = self.session.try_lock() {
             *session = None;
@@ -287,65 +287,114 @@ impl Drop for SynabitServerTransport {
 }
 
 // ---------------------------------------------------------------------------
-// SyncTransport implementation
+// SyncAdapter implementation
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl SyncTransport for SynabitServerTransport {
-    fn provider_name(&self) -> &str {
+impl SyncAdapter for SynabitServerAdapter {
+    fn name(&self) -> &str {
         "Synabit Sync Server"
     }
 
-    async fn authenticate(&self) -> AppResult<()> {
+    fn adapter_id(&self) -> String {
+        format!("server:{}", self.device_id)
+    }
+
+    async fn is_connected(&self) -> bool {
+        self.session.lock().await.is_some()
+    }
+
+    async fn connect(&self) -> AppResult<()> {
         self.ensure_session().await
     }
 
     async fn disconnect(&self) -> AppResult<()> {
-        self.close().await;
+        let mut session = self.session.lock().await;
+        *session = None;
         Ok(())
     }
 
-    async fn push_doc(
-        &self,
-        doc_hash: &[u8; 32],
-        encrypted_payload: Vec<u8>,
-    ) -> AppResult<u64> {
-        let payload_hash: [u8; 32] = *blake3::hash(&encrypted_payload).as_bytes();
-
-        let resp = self
-            .request(&MailboxRequest::Push {
-                doc_hash: *doc_hash,
-                encrypted_payload,
-                payload_hash,
-            })
-            .await?;
-
-        match resp {
-            MailboxResponse::PushOk { seq } => {
-                debug!("Pushed doc, assigned seq={}", seq);
-                Ok(seq)
-            }
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("push failed: {}", message)))
-            }
-            other => Err(AppError::SyncError(format!(
-                "unexpected push response: {:?}",
-                other
-            ))),
+    async fn push(&self, operations: Vec<SyncOperation>) -> AppResult<PushResult> {
+        if operations.is_empty() {
+            return Ok(PushResult {
+                accepted: vec![],
+                tx_bytes: 0,
+                new_cursor: String::new(),
+            });
         }
+        
+        let mut tx_bytes = 0;
+        let mut items = Vec::new();
+        let mut delete_ops = Vec::new();
+
+        for op in operations {
+            if op.is_delete {
+                delete_ops.push(op);
+            } else {
+                tx_bytes += op.encrypted_payload.len() as u64;
+                items.push(crate::sync::protocol::PushBatchItem {
+                    doc_hash: op.doc_hash,
+                    encrypted_payload: op.encrypted_payload,
+                    payload_hash: op.payload_hash,
+                });
+            }
+        }
+
+        let mut max_seq = 0;
+
+        // Push normal items
+        if !items.is_empty() {
+            let req = MailboxRequest::PushBatch { items };
+            let resp = self.request(&req).await?;
+
+            match resp {
+                MailboxResponse::PushBatchOk { max_seq: seq } => {
+                    max_seq = max_seq.max(seq);
+                }
+                MailboxResponse::Error { message } => {
+                    return Err(AppError::SyncError(message));
+                }
+                _ => return Err(AppError::SyncError("Unexpected response to PushBatch".into())),
+            }
+        }
+
+        // Push delete items
+        for op in delete_ops {
+            let req = MailboxRequest::PushDelete { doc_hash: op.doc_hash };
+            let resp = self.request(&req).await?;
+            
+            match resp {
+                MailboxResponse::DeleteOk { seq } => {
+                    max_seq = max_seq.max(seq);
+                }
+                MailboxResponse::Error { message } => {
+                    return Err(AppError::SyncError(message));
+                }
+                _ => return Err(AppError::SyncError("Unexpected response to PushDelete".into())),
+            }
+        }
+
+        Ok(PushResult {
+            accepted: vec![],
+            tx_bytes,
+            new_cursor: if max_seq > 0 { max_seq.to_string() } else { String::new() },
+        })
     }
 
-    async fn pull_since(&self, since_seq: u64) -> AppResult<Vec<RemoteSyncEntry>> {
-        let resp = self
-            .request(&MailboxRequest::Pull { since_seq })
-            .await?;
+    async fn pull(&self, since_cursor: &str) -> AppResult<PullResult> {
+        let since_seq: u64 = since_cursor.parse().unwrap_or(0);
+        let req = MailboxRequest::Pull { since_seq };
+        let resp = self.request(&req).await?;
 
         match resp {
             MailboxResponse::PullResult { entries } => {
-                debug!("Pulled {} entries since seq={}", entries.len(), since_seq);
-                Ok(entries
-                    .into_iter()
-                    .map(|e| RemoteSyncEntry {
+                let mut rx_bytes = 0;
+                let mut max_seq = since_seq;
+                
+                let remote_entries: Vec<RemoteEntry> = entries.into_iter().map(|e| {
+                    rx_bytes += e.encrypted_payload.len() as u64;
+                    max_seq = max_seq.max(e.seq);
+                    RemoteEntry {
                         seq: e.seq,
                         doc_hash: e.doc_hash,
                         source_device: e.source_device,
@@ -353,112 +402,52 @@ impl SyncTransport for SynabitServerTransport {
                         payload_hash: e.payload_hash,
                         timestamp: e.timestamp,
                         is_delete: e.is_delete,
-                    })
-                    .collect())
+                    }
+                }).collect();
+
+                Ok(PullResult {
+                    entries: remote_entries,
+                    rx_bytes,
+                    new_cursor: max_seq.to_string(),
+                })
             }
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("pull failed: {}", message)))
-            }
-            other => Err(AppError::SyncError(format!(
-                "unexpected pull response: {:?}",
-                other
-            ))),
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            _ => Err(AppError::SyncError("Unexpected response to Pull".into())),
         }
     }
 
-    async fn ack(&self, up_to_seq: u64) -> AppResult<()> {
-        let resp = self
-            .request(&MailboxRequest::Ack { up_to_seq })
-            .await?;
-
+    async fn ack(&self, cursor: &str) -> AppResult<()> {
+        let up_to_seq: u64 = cursor.parse().unwrap_or(0);
+        let req = MailboxRequest::Ack { up_to_seq };
+        let resp = self.request(&req).await?;
         match resp {
             MailboxResponse::AckOk => Ok(()),
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("ack failed: {}", message)))
-            }
-            _ => Ok(()), // Non-critical
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            _ => Err(AppError::SyncError("Unexpected response to Ack".into())),
         }
     }
 
-    async fn push_asset(
-        &self,
-        asset_hash: &[u8; 32],
-        encrypted_data: Vec<u8>,
-    ) -> AppResult<()> {
-        let resp = self
-            .request(&MailboxRequest::PushAsset {
-                asset_hash: *asset_hash,
-                encrypted_data,
-            })
-            .await?;
-
+    async fn push_asset(&self, hash: [u8; 32], data: Vec<u8>) -> AppResult<()> {
+        let req = MailboxRequest::PushAsset {
+            asset_hash: hash,
+            encrypted_data: data,
+        };
+        let resp = self.request(&req).await?;
         match resp {
             MailboxResponse::AssetOk => Ok(()),
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("push asset failed: {}", message)))
-            }
-            other => Err(AppError::SyncError(format!(
-                "unexpected push asset response: {:?}",
-                other
-            ))),
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            _ => Err(AppError::SyncError("Unexpected response to PushAsset".into())),
         }
     }
 
-    async fn pull_asset(&self, asset_hash: &[u8; 32]) -> AppResult<Option<Vec<u8>>> {
-        let resp = self
-            .request(&MailboxRequest::PullAsset {
-                asset_hash: *asset_hash,
-            })
-            .await?;
-
+    async fn pull_asset(&self, hash: [u8; 32]) -> AppResult<Option<Vec<u8>>> {
+        let req = MailboxRequest::PullAsset { asset_hash: hash };
+        let resp = self.request(&req).await?;
         match resp {
             MailboxResponse::AssetData { data } => Ok(Some(data)),
             MailboxResponse::AssetNotFound => Ok(None),
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("pull asset failed: {}", message)))
-            }
-            other => Err(AppError::SyncError(format!(
-                "unexpected pull asset response: {:?}",
-                other
-            ))),
-        }
-    }
-
-    async fn push_delete(&self, doc_hash: &[u8; 32]) -> AppResult<u64> {
-        let resp = self
-            .request(&MailboxRequest::PushDelete {
-                doc_hash: *doc_hash,
-            })
-            .await?;
-
-        match resp {
-            MailboxResponse::DeleteOk { seq } => Ok(seq),
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("push delete failed: {}", message)))
-            }
-            other => Err(AppError::SyncError(format!(
-                "unexpected delete response: {:?}",
-                other
-            ))),
-        }
-    }
-
-    async fn ping(&self) -> AppResult<()> {
-        let resp = self.request(&MailboxRequest::Ping).await?;
-        match resp {
-            MailboxResponse::Pong => Ok(()),
-            MailboxResponse::Error { message } => {
-                Err(AppError::SyncError(format!("ping failed: {}", message)))
-            }
-            _ => Err(AppError::SyncError("Unexpected response to Ping".into())),
-        }
-    }
-
-    async fn is_available(&self) -> bool {
-        let session = self.session.lock().await;
-        match session.as_ref() {
-            Some(s) => s.conn.close_reason().is_none(),
-            None => false,
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            _ => Err(AppError::SyncError("Unexpected response to PullAsset".into())),
         }
     }
 }

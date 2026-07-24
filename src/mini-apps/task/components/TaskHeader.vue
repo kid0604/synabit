@@ -22,7 +22,7 @@ const emit = defineEmits<{
       <div class="flex items-center justify-between mb-4 md:mb-6">
           <div class="flex items-center gap-3">
               <NavButtons />
-              <button @click="emit('open-mobile-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer">
+              <button @click="emit('open-mobile-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer" aria-label="More Options">
                   <MenuIcon class="w-6 h-6" />
               </button>
               <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize truncate max-w-[200px] sm:max-w-md lg:max-w-xl">
@@ -69,7 +69,7 @@ const emit = defineEmits<{
                   class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
                   :placeholder="$t('task.search_placeholder')" 
               />
-              <button v-if="searchQuery" @click="emit('update:searchQuery', '')" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10">
+              <button v-if="searchQuery" @click="emit('update:searchQuery', '')" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10" aria-label="More Options">
                   <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
               </button>
               

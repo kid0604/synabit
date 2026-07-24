@@ -52,7 +52,7 @@ const handleBackgroundClick = () => {
           <!-- Mobile Header -->
           <div class="flex justify-between items-center px-5 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-[#2c2c2c]" style="padding-top: max(env(safe-area-inset-top), 36px);">
               <h3 class="font-semibold text-lg text-[#1c1c1e] dark:text-[#f4f4f5]">Note Details</h3>
-              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]">
+              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]" aria-label="Handle Background Click">
                   <X class="w-4 h-4" />
               </button>
           </div>

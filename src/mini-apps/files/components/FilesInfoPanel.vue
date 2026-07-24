@@ -155,7 +155,7 @@ onMounted(() => {
     <!-- Header -->
     <div class="h-12 px-4 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
       <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Info</h3>
-      <button @click="emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 cursor-pointer"><X class="w-3.5 h-3.5" /></button>
+      <button @click="emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 cursor-pointer" aria-label="More Options"><X class="w-3.5 h-3.5" /></button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-4 space-y-5">
@@ -186,7 +186,7 @@ onMounted(() => {
         <div class="flex flex-wrap items-center gap-1.5">
           <span v-for="tag in file.tags" :key="tag" class="group relative px-2 py-0.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md text-[11px] font-medium border border-indigo-100 dark:border-indigo-500/20 flex items-center gap-1">
             #{{ tag }}
-            <button v-if="!isAssetsFile" @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving">
+            <button v-if="!isAssetsFile" @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" aria-label="Handle Remove Tag">
               <X class="w-2.5 h-2.5" />
             </button>
           </span>
@@ -207,7 +207,7 @@ onMounted(() => {
         <div class="flex flex-wrap items-center gap-1.5 mb-2">
           <span v-for="link in (file.people || [])" :key="link" class="group relative px-2 py-0.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-md text-[11px] font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
             @{{ getPersonName(link) }}
-            <button v-if="!isAssetsFile" @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving">
+            <button v-if="!isAssetsFile" @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" aria-label="Handle Remove Person">
               <X class="w-2.5 h-2.5" />
             </button>
           </span>

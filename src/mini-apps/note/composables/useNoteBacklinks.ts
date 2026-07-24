@@ -65,7 +65,7 @@ export function useNoteBacklinks(
             const note = notes.value.find(n => n.id === newId);
             const backlinks = await ns.getLinkedNodes(note?.title || '', newId);
             
-            let outgoingProjects: NodeMetadata[] = [];
+            const outgoingProjects: NodeMetadata[] = [];
             const linkedProjects: string[] = (note as any)?.linked_projects || [];
             for (const link of linkedProjects) {
                const m = /synabit:\/\/project\/([^\s\)"']+)/.exec(link);

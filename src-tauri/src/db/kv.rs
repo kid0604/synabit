@@ -53,10 +53,8 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("DB Get KV Prefix Query Error: {}", e)))?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(pair) = row {
-                results.push(pair);
-            }
+        for pair in rows.flatten() {
+            results.push(pair);
         }
         Ok(results)
     }

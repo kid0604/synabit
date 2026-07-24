@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Search, X, LayoutGrid, List, Table, Mail, Phone, Edit2, Trash2, Users, Hash, Building, PanelLeft } from 'lucide-vue-next';
+import { Search, X, LayoutGrid, List, Table, Mail, Phone, Edit2, Trash2, Users, Building, PanelLeft } from 'lucide-vue-next';
 
 const props = defineProps<{
     people: any[];
@@ -68,7 +68,7 @@ const formatDate = (d: string) => {
         <!-- Header bar -->
         <div class="flex items-center justify-between px-4 md:px-6 h-10 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
             <div class="flex items-center gap-2 md:gap-3">
-                <button @click="$emit('open-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-blue-500 rounded-md transition-colors">
+                <button @click="$emit('open-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-blue-500 rounded-md transition-colors" aria-label="$emit">
                     <PanelLeft class="w-5 h-5" />
                 </button>
                 <Users class="hidden md:block w-4.5 h-4.5 text-blue-500" />
@@ -98,7 +98,7 @@ const formatDate = (d: string) => {
             <div class="relative w-full mb-8">
                 <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b]" />
                 <input v-model="searchQuery" type="text" :placeholder="$t('people.search_people')" class="w-full pl-12 pr-12 py-3 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl text-base text-text dark:text-text-dark shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
-                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors">
+                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors" aria-label="Search Query =">
                     <X class="w-4 h-4" />
                 </button>
             </div>
@@ -184,10 +184,10 @@ const formatDate = (d: string) => {
                     </div>
                     <!-- Actions -->
                     <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
-                        <button @click="emit('edit', person)" class="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500">
+                        <button @click="emit('edit', person)" class="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500" aria-label="More Options">
                             <Edit2 class="w-3.5 h-3.5" />
                         </button>
-                        <button @click="emit('delete', person)" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500">
+                        <button @click="emit('delete', person)" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500" aria-label="More Options">
                             <Trash2 class="w-3.5 h-3.5" />
                         </button>
                     </div>

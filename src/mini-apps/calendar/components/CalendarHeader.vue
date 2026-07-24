@@ -46,8 +46,8 @@ const emit = defineEmits<{
                     Today
                 </button>
                 <div class="flex bg-gray-100 dark:bg-[#2c2c2c] rounded-lg p-0.5 border border-transparent dark:border-gray-700">
-                    <button @click="emit('navigate-prev')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors"><ChevronLeft class="w-4 h-4" /></button>
-                    <button @click="emit('navigate-next')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors"><ChevronRight class="w-4 h-4" /></button>
+                    <button @click="emit('navigate-prev')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors" aria-label="More Options"><ChevronLeft class="w-4 h-4" /></button>
+                    <button @click="emit('navigate-next')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors" aria-label="More Options"><ChevronRight class="w-4 h-4" /></button>
                 </div>
                 <button @click="emit('add-event')" class="flex items-center gap-1.5 px-3 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors shadow-sm ml-0.5 md:ml-1">
                     <Plus class="w-3.5 h-3.5" />

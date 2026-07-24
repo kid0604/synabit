@@ -182,7 +182,7 @@ const toggleColorPicker = (capId: string) => {
 };
 
 const changeCapColor = async (cap: NodeMetadata, colorValue: string) => {
-    let rawContent = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    const rawContent = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
     let updatedContent = rawContent;
     if (colorValue) {
         updatedContent = `<!--color:${colorValue}-->\n${rawContent}`;
@@ -298,7 +298,7 @@ const editor = useEditor({
     Placeholder.configure({ placeholder: 'Note content...' }),
   ],
   onUpdate: ({ editor: ed }) => {
-    let md = (ed.storage as any).markdown.getMarkdown();
+    const md = (ed.storage as any).markdown.getMarkdown();
     editingContent.value = stripLocalAssets(md);
     
     if (saveTimeout) clearTimeout(saveTimeout);
@@ -347,7 +347,7 @@ const editor = useEditor({
 
 const openFullView = (cap: NodeMetadata) => {
     selectedCap.value = cap;
-    let rawStr = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
+    const rawStr = cap.content.replace(/<!--color:.*?-->\n?/g, '').trim();
     
     currentTags.value = extractTags(rawStr);
     
@@ -685,7 +685,7 @@ const extractTags = (content: string) => {
     wrappedMatches.forEach(m => tags.push(m[1].trim()));
     
     // 2. Remove them so we don't accidentally match parts of them next
-    let remaining = content.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
+    const remaining = content.replace(/(?:^|\s)#([^#\n]+)#(?=\s|$)/g, ' ');
     
     // 3. Extract traditional tags: #tag
     const tradMatches = [...remaining.matchAll(/(?:^|\s)#([a-zA-Z0-9_\-\u00C0-\u024F\u1E00-\u1EFF]+)(?=\s|$)/g)];
@@ -707,11 +707,11 @@ const removeTag = async (cap: NodeMetadata, tag: string) => {
     const safeTag = tag.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
     
     // Attempt to remove wrapped version first
-    let regexWrapped = new RegExp(`(?:^|\\s)#${safeTag}#(?=\\s|$)`, 'g');
+    const regexWrapped = new RegExp(`(?:^|\\s)#${safeTag}#(?=\\s|$)`, 'g');
     let updatedContent = cap.content.replace(regexWrapped, ' ');
     
     // Attempt to remove traditional version
-    let regexTrad = new RegExp(`(?:^|\\s)#${safeTag}(?=\\s|$)`, 'g');
+    const regexTrad = new RegExp(`(?:^|\\s)#${safeTag}(?=\\s|$)`, 'g');
     updatedContent = updatedContent.replace(regexTrad, ' ').trim();
     
     // Clean up excessive newlines caused by tag removal
@@ -729,8 +729,8 @@ const removeActiveTag = (tag: string) => {
     currentTags.value = currentTags.value.filter(t => t !== tag);
     
     const safeTag = tag.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-    let regexWrapped = new RegExp(`(?:^|\\s)#${safeTag}#(?=\\s|$)`, 'g');
-    let regexTrad = new RegExp(`(?:^|\\s)#${safeTag}(?=\\s|$)`, 'g');
+    const regexWrapped = new RegExp(`(?:^|\\s)#${safeTag}#(?=\\s|$)`, 'g');
+    const regexTrad = new RegExp(`(?:^|\\s)#${safeTag}(?=\\s|$)`, 'g');
     
     let updatedContent = editingContent.value.replace(regexWrapped, ' ');
     updatedContent = updatedContent.replace(regexTrad, ' ').trim();
@@ -873,7 +873,7 @@ const deleteCap = async (id: string) => {
                 class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
                 :placeholder="$t('quickcap.search_placeholder')" 
             />
-            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer">
+            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer" aria-label="Search Query =">
                 <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
             </button>
         </div>
@@ -912,7 +912,7 @@ const deleteCap = async (id: string) => {
                    <div v-if="extractTags(cap.content).length > 0" class="flex flex-wrap gap-1.5 w-full">
                        <span v-for="tag in extractTags(cap.content)" :key="tag" class="group/tag inline-flex items-center text-[11px] font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2 py-0.5 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                            {{ tag }}
-                           <button @click.stop="removeTag(cap, tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer">
+                           <button @click.stop="removeTag(cap, tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer" aria-label="Remove Tag">
                                <X class="w-2.5 h-2.5" />
                            </button>
                        </span>
@@ -985,7 +985,7 @@ const deleteCap = async (id: string) => {
     </div>
 
     <!-- Mobile FAB -->
-    <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-[0_8px_16px_rgba(37,99,235,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);">
+    <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-[0_8px_16px_rgba(37,99,235,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);" aria-label="Is Mobile Modal Open = true">
         <Plus class="w-6 h-6" />
     </button>
 
@@ -1014,10 +1014,10 @@ const deleteCap = async (id: string) => {
             <button :title="$t('quickcap.lists_coming_soon')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
                 <CheckSquare class="w-5 h-5"/>
             </button>
-            <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+            <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" aria-label="Pick Image For New Cap">
                 <ImageIcon class="w-5 h-5"/>
             </button>
-            <button @click="appendTagToInput" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+            <button @click="appendTagToInput" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" aria-label="Append Tag To Input">
                 <Tag class="w-5 h-5"/>
             </button>
         </div>
@@ -1033,7 +1033,7 @@ const deleteCap = async (id: string) => {
                 <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0 pt-4 border-t border-gray-100 dark:border-[#2c2c2c]">
                    <span v-for="tag in activeTags" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                        {{ tag }}
-                       <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer">
+                       <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer" aria-label="Remove Active Tag">
                            <X class="w-3 h-3" />
                        </button>
                    </span>

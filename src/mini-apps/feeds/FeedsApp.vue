@@ -423,7 +423,7 @@ defineExpose({ openFeedById, openArticleById });
     <div class="flex items-center justify-between p-4 md:p-6 shrink-0 border-b border-border dark:border-border-dark md:border-none">
       <div class="flex items-center gap-2 md:gap-3">
         <NavButtons />
-        <button @click="isSidebarOpen = !isSidebarOpen" class="md:hidden p-2 -ml-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="isSidebarOpen = !isSidebarOpen" class="md:hidden p-2 -ml-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Is Sidebar Open = !is Sidebar Open">
             <PanelLeft class="w-6 h-6" />
         </button>
         <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
@@ -462,7 +462,7 @@ defineExpose({ openFeedById, openArticleById });
             <div class="relative w-[280px] bg-base dark:bg-base-dark flex flex-col shadow-2xl h-full border-r border-border dark:border-border-dark" @click.stop>
                <div class="flex items-center justify-between p-4 shrink-0 border-b border-border dark:border-border-dark">
                     <span class="font-bold text-lg text-text dark:text-text-dark">Feeds Menu</span>
-                    <button @click="isSidebarOpen = false" class="p-2 -mr-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                    <button @click="isSidebarOpen = false" class="p-2 -mr-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" aria-label="Is Sidebar Open = false">
                         <X class="w-5 h-5" />
                     </button>
                </div>
@@ -488,7 +488,7 @@ defineExpose({ openFeedById, openArticleById });
         </div>
 
         <!-- FAB for Mobile -->
-        <button v-if="!isSidebarOpen && mobilePanel === 'list'" @click="showAddFeedModal = true" class="md:hidden absolute bottom-6 right-6 w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl hover:bg-orange-600 transition-colors z-40">
+        <button v-if="!isSidebarOpen && mobilePanel === 'list'" @click="showAddFeedModal = true" class="md:hidden absolute bottom-6 right-6 w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl hover:bg-orange-600 transition-colors z-40" aria-label="Show Add Feed Modal = true">
             <Plus class="w-6 h-6" />
         </button>
       </template>

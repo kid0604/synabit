@@ -76,29 +76,45 @@ impl DbBridge {
         Ok(())
     }
 
-    pub fn compact_crdt_history(&self, doc_id: &str) -> AppResult<()> {
+    pub fn compact_crdt_history(&mut self, doc_id: &str) -> AppResult<()> {
         let doc = self.get_crdt_doc(doc_id)?;
         let snapshot = doc.export_snapshot();
-        self.save_crdt_snapshot(doc_id, snapshot)?;
         
-        self.conn.execute(
+        let tx = self.conn.transaction()
+            .map_err(|e| AppError::General(format!("DB Error starting transaction: {}", e)))?;
+            
+        tx.execute(
+            "INSERT INTO crdt_documents (doc_id, snapshot) VALUES (?1, ?2)
+             ON CONFLICT(doc_id) DO UPDATE SET snapshot=excluded.snapshot",
+            params![doc_id, snapshot]
+        ).map_err(|e| AppError::General(format!("DB Error saving crdt_snapshot in tx: {}", e)))?;
+        
+        tx.execute(
             "DELETE FROM crdt_updates WHERE doc_id = ?1",
             params![doc_id]
-        ).map_err(|e| AppError::General(format!("DB Error compacting crdt_updates: {}", e)))?;
+        ).map_err(|e| AppError::General(format!("DB Error compacting crdt_updates in tx: {}", e)))?;
+        
+        tx.commit()
+            .map_err(|e| AppError::General(format!("DB Error committing transaction: {}", e)))?;
+            
         Ok(())
     }
 
-    pub fn compact_all_crdt(&self) -> AppResult<()> {
-        // Only compact documents that have accumulated significant deltas
-        let mut stmt = self.conn.prepare(
-            "SELECT doc_id, COUNT(*) as cnt FROM crdt_updates GROUP BY doc_id HAVING cnt > 20"
-        ).map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
-        let rows = stmt.query_map([], |row| {
-            let doc_id: String = row.get(0)?;
-            Ok(doc_id)
-        }).map_err(|e| AppError::General(format!("DB Map error in compaction: {}", e)))?;
+    pub fn compact_all_crdt(&mut self) -> AppResult<()> {
+        // Collect doc_ids first to avoid holding a read cursor while writing
+        let doc_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT doc_id, COUNT(*) as cnt FROM crdt_updates GROUP BY doc_id HAVING cnt > 20"
+            ).map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
+            let rows = stmt.query_map([], |row| {
+                let doc_id: String = row.get(0)?;
+                Ok(doc_id)
+            }).map_err(|e| AppError::General(format!("DB Map error in compaction: {}", e)))?;
+            
+            rows.flatten().collect()
+        };
         
-        for doc_id in rows.flatten() {
+        for doc_id in doc_ids {
             let _ = self.compact_crdt_history(&doc_id);
         }
         Ok(())
@@ -158,10 +174,8 @@ impl DbBridge {
         }).map_err(|e| AppError::General(format!("DB Error querying document_paths: {}", e)))?;
 
         let mut paths = Vec::new();
-        for row in rows {
-            if let Ok(path) = row {
-                paths.push(path);
-            }
+        for path in rows.flatten() {
+            paths.push(path);
         }
         Ok(paths)
     }

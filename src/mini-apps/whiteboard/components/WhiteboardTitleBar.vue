@@ -57,9 +57,9 @@ function removeBoardTag(tag: string) {
 
 <template>
   <!-- Title bar -->
-  <div class="wb-title-bar">
+  <div class="wb-title-bar bg-white/85 dark:bg-[#1e1e1e]/85 backdrop-blur-md border-b border-border dark:border-border-dark">
     <div class="flex items-center gap-2 min-w-0 flex-1">
-      <button @click="$emit('open-sidebar')" class="md:hidden p-1.5 -ml-2 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark transition-colors">
+      <button @click="$emit('open-sidebar')" class="md:hidden p-1.5 -ml-2 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark transition-colors" aria-label="Open Sidebar">
         <PanelLeft class="w-4.5 h-4.5" />
       </button>
       <NavButtons />
@@ -85,16 +85,16 @@ function removeBoardTag(tag: string) {
   </div>
 
   <!-- Tags row -->
-  <div class="wb-tags-bar">
-    <Tag class="w-3 h-3 text-muted dark:text-muted-dark flex-shrink-0" />
+  <div v-if="boardData.tags?.length" class="wb-tags-bar bg-white/85 dark:bg-[#1e1e1e]/85 backdrop-blur-md border-b border-border dark:border-border-dark">
+    <Tag class="w-3.5 h-3.5 text-muted dark:text-muted-dark opacity-70" />
     <div class="flex items-center gap-1 flex-wrap min-w-0">
       <span
         v-for="tag in boardData.tags"
         :key="tag"
-        class="wb-tag group"
+        class="wb-tag group bg-accent/10 text-accent dark:bg-[#a78bfa]/15 dark:text-[#a78bfa]"
       >
         #{{ tag }}
-        <button @click.stop="removeBoardTag(tag)" class="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-danger transition-opacity">
+        <button @click.stop="removeBoardTag(tag)" class="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-danger transition-opacity" aria-label="Remove Board Tag">
           <X class="w-2.5 h-2.5" />
         </button>
       </span>
@@ -109,7 +109,7 @@ function removeBoardTag(tag: string) {
         class="wb-tag-input"
         autofocus
       />
-      <button v-else @click="isAddingTag = true" class="wb-tag-add" :title="$t('whiteboard.add_tag')">
+      <button v-if="!isAddingTag" @click="isAddingTag = true" class="wb-tag-add border-border text-text-secondary hover:border-accent hover:text-accent dark:border-[#3f3f46] dark:text-[#71717a] dark:hover:border-[#a78bfa] dark:hover:text-[#a78bfa]" aria-label="Add Tag" :title="$t('whiteboard.add_tag')">
         <Plus class="w-3 h-3" />
       </button>
     </div>
@@ -127,19 +127,11 @@ function removeBoardTag(tag: string) {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--color-surface, #fff);
-  border-bottom: 1px solid var(--color-border, #e6e6e6);
-  backdrop-filter: blur(8px);
-  background: rgba(255,255,255,0.85);
 }
 @media (min-width: 768px) {
   .wb-title-bar {
     padding: 8px 72px;
   }
-}
-:global(.dark) .wb-title-bar {
-  background: rgba(30,30,30,0.85);
-  border-color: var(--color-border-dark, #2c2c2c);
 }
 .wb-tags-bar {
   position: absolute;
@@ -151,18 +143,11 @@ function removeBoardTag(tag: string) {
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  background: rgba(255,255,255,0.85);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--color-border, #e6e6e6);
 }
 @media (min-width: 768px) {
   .wb-tags-bar {
     padding: 4px 72px;
   }
-}
-:global(.dark) .wb-tags-bar {
-  background: rgba(30,30,30,0.85);
-  border-color: var(--color-border-dark, #2c2c2c);
 }
 .wb-tag {
   display: inline-flex;
@@ -171,13 +156,7 @@ function removeBoardTag(tag: string) {
   border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
-  background: rgba(124, 58, 237, 0.1);
-  color: var(--color-accent, #7c3aed);
   cursor: default;
-}
-:global(.dark) .wb-tag {
-  background: rgba(167, 139, 250, 0.12);
-  color: #a78bfa;
 }
 .wb-tag-input {
   width: 60px;
@@ -197,22 +176,10 @@ function removeBoardTag(tag: string) {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  border: 1px dashed var(--color-border, #d4d4d8);
+  border-width: 1px;
+  border-style: dashed;
   background: transparent;
-  color: var(--color-text-secondary, #a1a1aa);
   cursor: pointer;
   transition: all 0.15s;
-}
-.wb-tag-add:hover {
-  border-color: var(--color-accent, #7c3aed);
-  color: var(--color-accent, #7c3aed);
-}
-:global(.dark) .wb-tag-add {
-  border-color: var(--color-border-dark, #3f3f46);
-  color: var(--color-text-secondary-dark, #71717a);
-}
-:global(.dark) .wb-tag-add:hover {
-  border-color: #a78bfa;
-  color: #a78bfa;
 }
 </style>

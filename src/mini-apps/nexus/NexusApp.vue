@@ -288,7 +288,7 @@ const cleanSnippet = (snippet: string) => {
                            ]"
                            title="Case Sensitive"
                        >Aa</button>
-                       <button v-if="searchQuery" @click="searchQuery = ''" class="w-7 h-7 flex items-center justify-center cursor-pointer">
+                       <button v-if="searchQuery" @click="searchQuery = ''" class="w-7 h-7 flex items-center justify-center cursor-pointer" aria-label="Search Query =">
                            <X class="h-4 w-4 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
                        </button>
                    </div>

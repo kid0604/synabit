@@ -305,7 +305,7 @@ watch(() => props.vaultPath, () => {
     <button
       @click="openCreateModal"
       class="md:hidden fixed bottom-20 right-6 z-[100] flex items-center justify-center w-14 h-14 bg-blue-500 text-white rounded-full shadow-[0_4px_20px_rgba(59,130,246,0.4)] hover:bg-blue-600 active:scale-95 transition-all"
-    >
+     aria-label="Open Create Modal">
       <Plus class="w-6 h-6" />
     </button>
 

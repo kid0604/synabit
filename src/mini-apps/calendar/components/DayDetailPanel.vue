@@ -31,7 +31,7 @@ const emit = defineEmits<{
         <div class="h-16 flex items-center justify-between px-6 border-b border-[#e6e6e6] dark:border-[#2c2c2c] flex-shrink-0 relative" data-tauri-drag-region>
             <div class="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full md:hidden"></div>
             <h2 class="font-bold text-lg text-purple-600 dark:text-purple-400 select-none mt-2 md:mt-0">{{ selectedDateDisplay }}</h2>
-            <button @click="emit('close')" class="mt-2 md:mt-0 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-500 transition-colors">
+            <button @click="emit('close')" class="mt-2 md:mt-0 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-500 transition-colors" aria-label="More Options">
                 <X class="w-5 h-5" />
             </button>
         </div>
@@ -53,7 +53,7 @@ const emit = defineEmits<{
                         <div class="flex justify-between items-start mb-1">
                             <h4 class="font-bold text-base text-gray-900 dark:text-gray-100 line-clamp-1">{{ ev.title }}</h4>
                             <div class="flex items-center gap-1 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity">
-                               <button @click.stop="emit('delete-event', ev, selectedDateFormattedStr)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"><Trash2 class="w-3 h-3"/></button>
+                               <button @click.stop="emit('delete-event', ev, selectedDateFormattedStr)" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500" aria-label="More Options"><Trash2 class="w-3 h-3"/></button>
                             </div>
                         </div>
                         <div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400 mb-2">

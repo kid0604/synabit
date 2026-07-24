@@ -281,7 +281,7 @@ onMounted(() => {
                               <button @click="startEdit(tag.name)" class="flex-1 py-1.5 text-gray-600 dark:text-gray-300 hover:text-indigo-700 bg-white/40 hover:bg-white/80 dark:bg-black/20 dark:hover:bg-indigo-500/30 rounded-xl transition-all flex items-center justify-center gap-1.5 border border-white/50 dark:border-white/10 hover:shadow-sm">
                                   <Edit3 class="w-3.5 h-3.5" /> <span class="text-[10px] font-bold uppercase tracking-wider">Rename</span>
                               </button>
-                              <button @click="deleteTag(tag.name)" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 bg-white/40 hover:bg-red-100 dark:bg-black/20 dark:hover:bg-red-500/30 rounded-xl transition-all border border-white/50 dark:border-white/10 hover:shadow-sm">
+                              <button @click="deleteTag(tag.name)" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 bg-white/40 hover:bg-red-100 dark:bg-black/20 dark:hover:bg-red-500/30 rounded-xl transition-all border border-white/50 dark:border-white/10 hover:shadow-sm" aria-label="Delete Tag">
                                   <Trash2 class="w-3.5 h-3.5" />
                               </button>
                           </div>

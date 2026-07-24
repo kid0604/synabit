@@ -53,7 +53,7 @@ const handleExport = () => {
         <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
           <Download class="w-4 h-4 text-gray-500" /> Export Note
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 transition-colors">
+        <button @click="emit('close')" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 transition-colors" aria-label="More Options">
           <X class="w-4 h-4" />
         </button>
       </div>

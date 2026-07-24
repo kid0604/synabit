@@ -104,7 +104,7 @@ const save = () => {
                 <h3 class="text-xl font-bold text-text dark:text-text-dark flex items-center gap-2">
                     {{ debt.type === 'lend' ? 'Log Repayment' : 'Log Debt Payment' }}
                 </h3>
-                <button @click="emit('close')" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500">
+                <button @click="emit('close')" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500" aria-label="More Options">
                     <X class="w-5 h-5" />
                 </button>
             </div>

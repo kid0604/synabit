@@ -32,7 +32,8 @@ chrono = "0.4.44"
 serde_yaml = "0.9.34"
 opener = "0.8.4"
 urlencoding = "2.1.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "multipart", "stream"] }
+rustls = { version = "0.23", features = ["ring"] }
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 dirs = "6"
@@ -81,10 +82,14 @@ tauri-plugin-process = "2"
 # Licensing
 sysinfo = "0.33.0"
 ed25519-dalek = { version = "2.2.0" }
-machine-uid = "0.6.0"
 lz4_flex = "0.13.1"
-get_if_addrs = "0.5.3"
-mdns-sd = "0.20.1"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+machine-uid = "0.6.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-context = "0.1.1"
+ctor = "0.2"
 
 [dev-dependencies]
 text-diff = "0.4.0"

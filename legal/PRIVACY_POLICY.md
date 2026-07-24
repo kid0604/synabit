@@ -57,13 +57,17 @@ Since we do not collect user data, there is minimal information usage:
 | Subscription management | Email address (if provided during purchase) |
 | Customer support | Information you voluntarily share when contacting us |
 
-## 4. Data Sharing
+## 4. Data Sharing & Third-Party Services
 
-We do **not** sell, rent, or share your personal data with any third party.
+We do **not** sell, rent, or share your personal data with any third party for advertising or tracking purposes.
 
-The only third-party services involved are:
-- **Google APIs** — only when you voluntarily connect Google Drive
-- **Payment processors** — only when you purchase a subscription
+The App only connects to essential third-party services to provide core functionality:
+- **Google APIs** — only when you voluntarily connect Google Drive for vault sync.
+- **GitHub** — to check for and download application updates.
+- **OpenStreetMap / OSRM** — to provide map tiles and routing services if you use map-related features.
+- **Payment processors** — only when you purchase a subscription.
+
+*Note on Licensing:* To prevent abuse and manage your active devices, the App transmits a hashed, anonymous Hardware ID (HWID) and your device name to our secure license server (`license.synabit.net`). This transmission does **not** include any of your personal data or vault content.
 
 ## 5. Data Security
 

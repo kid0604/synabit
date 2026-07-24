@@ -71,7 +71,7 @@ const selectCategory = (cat: string) => {
           <!-- Header with Close Button -->
           <div class="flex items-center justify-between px-5 pb-4 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
               <h2 class="text-xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('task.views') }}</h2>
-              <button @click="emit('close-mobile')" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="emit('close-mobile')" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" aria-label="More Options">
                   <X class="w-5 h-5" />
               </button>
           </div>

@@ -15,7 +15,10 @@ pub fn apply_text_update(doc: &LoroDoc, new_text: &str) -> Result<Vec<u8>, Strin
     // Lưu version vector TRƯỚC khi apply changes để export_from trả về đúng delta
     let old_vv = doc.oplog_vv();
 
-    let diff = TextDiff::from_chars(old_text.as_str(), new_text);
+    let diff = TextDiff::configure()
+        .timeout(std::time::Duration::from_millis(200))
+        .diff_chars(old_text.as_str(), new_text);
+        
     let mut char_ops: Vec<(usize, usize, String)> = Vec::new();
 
     let new_chars: Vec<char> = new_text.chars().collect();

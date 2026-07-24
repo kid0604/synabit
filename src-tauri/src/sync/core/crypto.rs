@@ -108,20 +108,21 @@ pub fn encrypt(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, String> {
 /// The master key is never used directly — an epoch-specific key is derived
 /// first, so rotating the epoch invalidates all future ciphertext for
 /// devices that only know a previous epoch's key.
-pub fn encrypt_v4(master_key: &[u8; 32], epoch: u32, plaintext: &[u8]) -> Vec<u8> {
+pub fn encrypt_v4(master_key: &[u8; 32], epoch: u32, plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let epoch_key = derive_epoch_key(master_key, epoch);
     let cipher = XChaCha20Poly1305::new((&epoch_key).into());
     let mut nonce_bytes = [0u8; 24];
     rand::rng().fill_bytes(&mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext).expect("encryption failed");
+    let ciphertext = cipher.encrypt(nonce, plaintext)
+        .map_err(|e| format!("v4 encryption failed: {}", e))?;
 
     let mut out = Vec::with_capacity(1 + 4 + 24 + ciphertext.len());
     out.push(FORMAT_V4); // version marker
     out.extend_from_slice(&epoch.to_le_bytes());
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
-    out
+    Ok(out)
 }
 
 /// Decrypt v4: extract epoch from header, derive key, decrypt.
@@ -169,7 +170,7 @@ pub fn encrypt_v5(key: &[u8; 32], payload: &[u8], compress: bool) -> Result<Vec<
     Ok(result)
 }
 
-fn decrypt_v5(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn decrypt_v5(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < 1 + 24 {
         return Err("v5 ciphertext too short".into());
     }
@@ -310,7 +311,7 @@ mod tests {
         let plaintext = b"hello epoch-based encryption";
         let epoch = 42u32;
 
-        let ciphertext = encrypt_v4(&master_key, epoch, plaintext);
+        let ciphertext = encrypt_v4(&master_key, epoch, plaintext).unwrap();
 
         // Version byte should be 0x04
         assert_eq!(ciphertext[0], 0x04);
@@ -324,8 +325,8 @@ mod tests {
         let master_key = generate_key();
         let plaintext = b"same plaintext, different epochs";
 
-        let ct_epoch0 = encrypt_v4(&master_key, 0, plaintext);
-        let ct_epoch1 = encrypt_v4(&master_key, 1, plaintext);
+        let ct_epoch0 = encrypt_v4(&master_key, 0, plaintext).unwrap();
+        let ct_epoch1 = encrypt_v4(&master_key, 1, plaintext).unwrap();
 
         // Ciphertext should differ (different derived keys + random nonces)
         assert_ne!(ct_epoch0, ct_epoch1);
@@ -342,7 +343,7 @@ mod tests {
         let master_key = generate_key();
         let plaintext = b"secret data";
 
-        let ciphertext = encrypt_v4(&master_key, 5, plaintext);
+        let ciphertext = encrypt_v4(&master_key, 5, plaintext).unwrap();
 
         // Tamper with the epoch field (bytes 1..5) to a different epoch
         let mut tampered = ciphertext.clone();

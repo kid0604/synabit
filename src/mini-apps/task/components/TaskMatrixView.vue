@@ -160,7 +160,7 @@ const emptyIcons: Record<string, string> = {
                            class="relative flex flex-col justify-between w-[calc(50%-4px)] min-w-[120px] max-w-[180px] h-[100px] p-2.5 rounded-xl cursor-grab active:cursor-grabbing group transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.97] border"
                            :class="colorClasses[quadrant.color].card"
                            :style="{ transform: getRotation(idx, qIdx) }">
-                          <button @click.stop="emit('toggle-status', task)" class="absolute top-1.5 right-1.5 shrink-0 cursor-pointer opacity-40 hover:opacity-100 transition-opacity z-10">
+                          <button @click.stop="emit('toggle-status', task)" class="absolute top-1.5 right-1.5 shrink-0 cursor-pointer opacity-40 hover:opacity-100 transition-opacity z-10" aria-label="More Options">
                               <div class="w-3.5 h-3.5 rounded-full border-[1.5px] transition-colors" :class="colorClasses[quadrant.color].checkbox"></div>
                           </button>
                           <p class="text-[12px] font-semibold leading-[1.35] line-clamp-3 pr-4" :class="colorClasses[quadrant.color].cardText">{{ task.title }}</p>
@@ -174,7 +174,7 @@ const emptyIcons: Record<string, string> = {
                                   <User class="w-2 h-2"/>{{ getTransferredName(task.transferred_to).substring(0, 6) }}
                               </span>
                           </div>
-                          <button @click.stop="emit('delete-task', task)" class="absolute bottom-1.5 right-1.5 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer p-0.5" :class="colorClasses[quadrant.color].delete">
+                          <button @click.stop="emit('delete-task', task)" class="absolute bottom-1.5 right-1.5 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer p-0.5" :class="colorClasses[quadrant.color].delete" aria-label="More Options">
                               <Trash2 class="w-2.5 h-2.5"/>
                           </button>
                       </div>

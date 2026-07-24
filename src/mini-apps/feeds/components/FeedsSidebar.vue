@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Calendar, Star, BookmarkPlus, Inbox, ChevronRight, Rss, Folder, FileText } from 'lucide-vue-next';
+import { Calendar, Star, BookmarkPlus, Inbox, ChevronRight, Rss, FileText } from 'lucide-vue-next';
 import type { FeedSource, FeedCategory } from '../types/feed.types';
 import FeedSourceItem from './FeedSourceItem.vue';
 

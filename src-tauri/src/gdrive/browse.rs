@@ -37,7 +37,7 @@ fn set_credential(
     value: &str,
 ) -> AppResult<()> {
     SecretManager::set_vault_token(Some(app_handle), key, vault_path, value.to_string())
-        .map_err(|e| AppError::General(e))
+        .map_err(AppError::General)
 }
 
 fn get_credential(

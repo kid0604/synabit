@@ -387,7 +387,7 @@ const handleLinkedClick = (item: any) => {
                             <div class="flex items-center gap-1 flex-shrink-0">
                                 <span class="text-xs text-gray-400">{{ formatDate(item.date) }}</span>
                                 <button v-if="item.source === 'interaction'" @click.stop="deleteInteraction(item.id)"
-                                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-all">
+                                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-all" aria-label="Delete Interaction">
                                     <X class="w-3 h-3" />
                                 </button>
                             </div>

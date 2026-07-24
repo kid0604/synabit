@@ -293,8 +293,8 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<V
                 );
 
                 // Sync edges
-                let resolver = crate::commands::nodes::build_resolver(&db);
-                crate::commands::nodes::sync_node_edges(&db, &updated_node, &resolver);
+                let resolver = crate::commands::nodes::build_resolver(db);
+                crate::commands::nodes::sync_node_edges(db, &updated_node, &resolver);
             }
         }
     }
@@ -319,17 +319,17 @@ fn upsert_file_node(
                     // Preserve existing tags and people if new node has empty ones
                     if let Some(props) = updated.properties.as_object_mut() {
                         if let Some(old_tags) = existing.properties.get("tags").and_then(|v| v.as_array()) {
-                            if props.get("tags").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_tags.is_empty() {
+                            if props.get("tags").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_tags.is_empty() {
                                 props.insert("tags".to_string(), serde_json::Value::Array(old_tags.clone()));
                             }
                         }
                         if let Some(old_people) = existing.properties.get("people").and_then(|v| v.as_array()) {
-                            if props.get("people").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_people.is_empty() {
+                            if props.get("people").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_people.is_empty() {
                                 props.insert("people".to_string(), serde_json::Value::Array(old_people.clone()));
                             }
                         }
                         if let Some(old_linked_projects) = existing.properties.get("linked_projects").and_then(|v| v.as_array()) {
-                            if props.get("linked_projects").and_then(|v| v.as_array()).map_or(true, |v| v.is_empty()) && !old_linked_projects.is_empty() {
+                            if props.get("linked_projects").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_linked_projects.is_empty() {
                                 props.insert("linked_projects".to_string(), serde_json::Value::Array(old_linked_projects.clone()));
                             }
                         }

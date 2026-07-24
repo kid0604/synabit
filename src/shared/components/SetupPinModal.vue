@@ -195,7 +195,7 @@ const numPadKeys = [
             <button
               @click="emit('cancel')"
               class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-            >
+             aria-label="More Options">
               <X class="w-4 h-4" />
             </button>
           </div>
@@ -281,7 +281,7 @@ const numPadKeys = [
                     @click="removeDigit"
                     :disabled="isProcessing || pin.length === 0"
                     class="modal-numpad-btn modal-numpad-action"
-                  >
+                   aria-label="Remove Digit">
                     <Delete class="w-4.5 h-4.5" />
                   </button>
 

@@ -473,7 +473,7 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
     if (!selectedPerson.value) return;
     const src = selectedPerson.value;
     const srcProps = { ...(src.properties || {}) };
-    let srcConns: Array<{person_id: string; name: string; relation_type: string}> = [...(srcProps.connections || [])];
+    const srcConns: Array<{person_id: string; name: string; relation_type: string}> = [...(srcProps.connections || [])];
     
     // Update if exists, otherwise push
     const existingIdx = srcConns.findIndex(c => c.person_id === targetPerson.id);
@@ -701,7 +701,7 @@ defineExpose({ openPersonById });
                         </button>
                     </div>
                     <div class="flex items-start gap-3 md:gap-5 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 md:p-5 shadow-sm relative group">
-                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all">
+                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all" aria-label="More Options">
                             <Edit2 class="w-4 h-4" />
                         </button>
 

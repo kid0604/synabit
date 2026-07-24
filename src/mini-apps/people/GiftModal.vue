@@ -45,7 +45,7 @@ onMounted(() => {
                     <Gift class="w-4 h-4 text-pink-500" />
                     Log Gift — {{ person.title }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" aria-label="More Options">
                     <X class="w-4 h-4" />
                 </button>
             </div>

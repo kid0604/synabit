@@ -32,7 +32,7 @@ export function useNoteSave(
         saveTimeouts.delete(tabId);
         suppressWatcherUntil = Date.now() + 3000;
         const content = tabContents.value[tabId] || '';
-        let fullRaw = content;
+        const fullRaw = content;
         try {
             await ns.writeNode(buildNotePayload(note, fullRaw));
             note.summary = content.substring(0, 150).trim();

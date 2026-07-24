@@ -127,7 +127,7 @@ const save = () => {
             <Target class="w-5 h-5 text-blue-500" />
             {{ item ? 'Edit Item' : 'New Budget Item' }}
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
             <X class="w-5 h-5" />
         </button>
       </div>
@@ -189,7 +189,7 @@ const save = () => {
                             <input type="text" inputmode="numeric" :value="ov.amount" @input="handleOverrideAmountInput($event, idx)" class="w-full bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
                             <span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">{{ currencySymbol }}</span>
                         </div>
-                        <button @click="removeOverride(idx)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors shrink-0">
+                        <button @click="removeOverride(idx)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors shrink-0" aria-label="Remove Override">
                             <Trash2 class="w-3.5 h-3.5" />
                         </button>
                     </div>

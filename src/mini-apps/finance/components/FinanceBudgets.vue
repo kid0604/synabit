@@ -260,13 +260,13 @@ const resetNewBudgetForm = () => {
         <div class="flex items-center gap-3">
             <!-- Month Picker (for monthly budgets) -->
             <div v-if="selectedBudget && (selectedBudget.type || 'monthly') === 'monthly'" class="flex items-center gap-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl px-1 py-1 shadow-sm">
-                <button @click="prevMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                <button @click="prevMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="Prev Month">
                     <ChevronLeft class="w-4 h-4" />
                 </button>
                 <span class="text-sm font-bold text-text dark:text-text-dark px-2 min-w-[100px] text-center">
                     {{ MONTH_NAMES[selectedMonthNum - 1] }} {{ selectedYear }}
                 </span>
-                <button @click="nextMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                <button @click="nextMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="Next Month">
                     <ChevronRight class="w-4 h-4" />
                 </button>
             </div>
@@ -285,7 +285,7 @@ const resetNewBudgetForm = () => {
     <div v-if="showNewBudgetForm" class="bg-surface dark:bg-surface-dark border border-blue-200 dark:border-blue-800 rounded-2xl p-5 shadow-sm shrink-0 space-y-4">
         <div class="flex items-center justify-between">
             <h3 class="font-bold text-sm text-text dark:text-text-dark">Create New Budget</h3>
-            <button @click="resetNewBudgetForm" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg"><X class="w-4 h-4" /></button>
+            <button @click="resetNewBudgetForm" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg" aria-label="Reset New Budget Form"><X class="w-4 h-4" /></button>
         </div>
         <div class="flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
             <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-white dark:bg-gray-700 text-blue-500 shadow-sm' : 'text-gray-500']">Monthly</button>
@@ -307,7 +307,7 @@ const resetNewBudgetForm = () => {
     <div v-if="showEditBudgetForm && selectedBudget" class="bg-surface dark:bg-surface-dark border border-blue-200 dark:border-blue-800 rounded-2xl p-5 shadow-sm shrink-0 space-y-4">
         <div class="flex items-center justify-between">
             <h3 class="font-bold text-sm text-text dark:text-text-dark">Edit Budget</h3>
-            <button @click="showEditBudgetForm = false" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg"><X class="w-4 h-4" /></button>
+            <button @click="showEditBudgetForm = false" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg" aria-label="More Options"><X class="w-4 h-4" /></button>
         </div>
         <div class="flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
             <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-white dark:bg-gray-700 text-blue-500 shadow-sm' : 'text-gray-500']">Monthly</button>

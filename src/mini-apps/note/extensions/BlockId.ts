@@ -38,7 +38,7 @@ export const BlockIdExtension = Extension.create({
             return null;
           }
 
-          let tr = newState.tr;
+          const tr = newState.tr;
           let modified = false;
 
           const selection = newState.selection;

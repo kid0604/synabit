@@ -59,7 +59,7 @@ impl SyncMigration {
                 continue;
             }
 
-            match super::identity::get_or_assign_node_id(vault_path, &file_path) {
+            match super::core::identity::get_or_assign_node_id(vault_path, &file_path) {
                 Ok(new_node_id) => {
                     // Update database
                     // 1. Change doc_id in crdt_documents

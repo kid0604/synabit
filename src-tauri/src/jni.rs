@@ -36,18 +36,7 @@ pub extern "system" fn Java_com_synabit_app_SyncWorker_runHeadlessSync(
         .unwrap();
 
     rt.block_on(async move {
-        // Here we would run the sync logic headless
         println!("JNI: Connecting to server {}", server_addr);
-        
-        let mut transport = crate::sync::server::SynabitServerTransport::new();
-        if let Err(e) = transport.connect(&server_addr, &server_id).await {
-            println!("JNI Error: failed to connect: {}", e);
-            return;
-        }
-        
-        println!("JNI: Connected successfully. Headless sync complete.");
-        // TODO: Call engine::p2p_sync_full with a Headless context
-        
-        let _ = transport.disconnect().await;
+        // Headless sync logic to be implemented
     });
 }

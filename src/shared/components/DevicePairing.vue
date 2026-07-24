@@ -151,7 +151,7 @@ const handleClose = () => {
                 <p class="text-[11px] text-gray-400 dark:text-gray-500">Connect another device to sync</p>
               </div>
             </div>
-            <button @click="handleClose" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer">
+            <button @click="handleClose" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer" aria-label="Handle Close">
               <X class="w-4 h-4" />
             </button>
           </div>

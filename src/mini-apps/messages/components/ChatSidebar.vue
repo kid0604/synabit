@@ -2,7 +2,6 @@
 import { ref } from 'vue';
 import { Search, Hash } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
-import synAvatar from '../../../assets/syn-avatar.jpg';
 import NavButtons from '../../../shared/components/NavButtons.vue';
 
 export interface ChatContact {

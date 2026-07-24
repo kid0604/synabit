@@ -39,7 +39,7 @@ const emit = defineEmits<{
                       {{ tasksByStatus[col.id].length }}
                   </span>
               </h3>
-              <button @click="emit('show-quick-add', col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3"><Plus class="w-4 h-4"/></button>
+              <button @click="emit('show-quick-add', col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3" aria-label="More Options"><Plus class="w-4 h-4"/></button>
           </div>
           <div class="flex-1 overflow-y-auto space-y-3 pb-4 column-content">
               <div v-for="task in tasksByStatus[col.id]" :key="task.id"
@@ -55,7 +55,7 @@ const emit = defineEmits<{
                      <div class="flex gap-2 items-center flex-wrap">
                          <TaskCardMeta :task="task" compact @open-person="emit('open-person', $event)" />
                      </div>
-                     <button @click.stop="emit('delete-task', task)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                     <button @click.stop="emit('delete-task', task)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" aria-label="More Options">
                          <Trash2 class="w-3.5 h-3.5" />
                      </button>
                  </div>

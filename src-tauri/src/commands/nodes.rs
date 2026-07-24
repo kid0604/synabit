@@ -124,7 +124,7 @@ pub fn scan_all_nodes(
                             // --- Phase 1: External Edit Bridge ---
                             if let Ok(file_content) = std::fs::read_to_string(path) {
                                 if let Ok(doc) = db.get_crdt_doc(&node.id) {
-                                    match crate::crdt_bridge::apply_text_update(&doc, &file_content) {
+                                    match crate::sync::core::crdt::apply_text_update(&doc, &file_content) {
                                         Ok(delta) => {
                                             if !delta.is_empty() {
                                                 if let Err(e) = db.save_crdt_delta(&node.id, delta) {
@@ -199,7 +199,7 @@ pub fn scan_specific_nodes(
                 let is_json_file = ext == "json" || ext == "canvas";
                 if let Ok(file_content) = std::fs::read_to_string(&abs_path) {
                     let vault_path_obj = Path::new(&vault_path);
-                    if let Ok(node_id) = crate::sync::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
+                    if let Ok(node_id) = crate::sync::core::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
                         // Ensure document_paths is updated in case this was a rename operation
                         let _ = db.upsert_document_path(&node_id, &rel_path);
                         
@@ -669,7 +669,7 @@ pub fn write_node_file(
     std::fs::write(&abs_path, &file_content)?;
     
     let vault_path_obj = std::path::Path::new(&vault_path);
-    let node_id = match crate::sync::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
+    let node_id = match crate::sync::core::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
         Ok(id) => id,
         Err(_) => rel_path.clone(), // Fallback to rel_path if something horribly fails
     };
@@ -1360,7 +1360,7 @@ fn crdt_apply_safe(db: &crate::db::DbBridge, node_id: &str, content: &str) {
             // Use catch_unwind to prevent Loro internal panics from killing the tokio runtime
             let doc_ref = &doc;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::crdt_bridge::apply_text_update(doc_ref, content)
+                crate::sync::core::crdt::apply_text_update(doc_ref, content)
             }));
             
             match result {

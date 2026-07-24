@@ -7,7 +7,7 @@
         contenteditable="false"
         @click="toggleOpen"
       >
-        <button class="toggle-btn" :class="{ 'is-open': isOpen }" contenteditable="false">
+        <button class="toggle-btn" :class="{ 'is-open': isOpen }" contenteditable="false" aria-label="Chevron Right Icon">
           <ChevronRightIcon class="toggle-icon" />
         </button>
         <span

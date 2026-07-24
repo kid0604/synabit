@@ -76,7 +76,7 @@ const cancelRename = () => {
 
     <span v-if="unreadCount > 0 && !isRenaming" class="min-w-[20px] h-5 px-1.5 bg-orange-500 text-white text-[11px] font-bold rounded-full flex items-center justify-center">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
     
-    <button v-if="!isRenaming" @click.stop="showMenu = !showMenu" class="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all">
+    <button v-if="!isRenaming" @click.stop="showMenu = !showMenu" class="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all" aria-label="Show Menu = !show Menu">
       <MoreHorizontal class="w-4 h-4" />
     </button>
 

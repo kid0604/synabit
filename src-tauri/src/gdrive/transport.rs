@@ -80,7 +80,7 @@ impl SyncTransport for GDriveTransport {
         // happens at sync time.
         let _token = super::auth::get_valid_token(&self.app_handle)
             .await
-            .map_err(|e| AppError::AuthFailed(e))?;
+            .map_err(AppError::AuthFailed)?;
         Ok(())
     }
 

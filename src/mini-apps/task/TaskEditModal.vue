@@ -189,7 +189,7 @@ const handleBackgroundClick = () => {
           <!-- Mobile Header -->
           <div class="flex justify-between items-center px-5 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-[#2c2c2c]" style="padding-top: max(env(safe-area-inset-top), 36px);">
               <h3 class="font-semibold text-lg text-[#1c1c1e] dark:text-[#f4f4f5]">{{ props.showActions ? 'New Task' : 'Edit Task' }}</h3>
-              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]">
+              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]" aria-label="Handle Background Click">
                   <X class="w-4 h-4" />
               </button>
           </div>
@@ -198,7 +198,7 @@ const handleBackgroundClick = () => {
               
               <!-- Title & Checkbox -->
               <div class="flex items-start gap-4 mb-3">
-                   <button @click="editingTaskParams.status = (editingTaskParams.status === 'done' ? 'todo' : 'done')" class="shrink-0 mt-0.5 cursor-pointer">
+                   <button @click="editingTaskParams.status = (editingTaskParams.status === 'done' ? 'todo' : 'done')" class="shrink-0 mt-0.5 cursor-pointer" aria-label="More Options">
                        <div v-if="editingTaskParams.status === 'done'" class="w-5 h-5 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-[#2c2c2c] flex items-center justify-center">
                            <div class="w-2.5 h-2.5 bg-gray-400 dark:bg-gray-500 rounded-sm"></div>
                        </div>

@@ -11,7 +11,7 @@
             <LinkIcon class="w-4 h-4 text-emerald-500" />
             <span>{{ step === 'notes' ? 'Embed Content' : selectedNoteTitle }}</span>
           </div>
-          <button @click="$emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors">
+          <button @click="$emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors" aria-label="$emit">
             <X class="w-4 h-4 text-gray-400" />
           </button>
         </div>

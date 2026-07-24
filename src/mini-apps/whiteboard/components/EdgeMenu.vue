@@ -240,7 +240,7 @@ function handleDelete() { emit('delete', props.edgeId); }
       <!-- Animated Toggle -->
       <div class="ep-section ep-toggle-row">
         <span class="ep-label">Animated</span>
-        <button @click="toggleAnimated" :class="['ep-toggle', animated && 'active']">
+        <button @click="toggleAnimated" :class="['ep-toggle', animated && 'active']" aria-label="Toggle Animated">
           <div class="ep-toggle-thumb" />
         </button>
       </div>

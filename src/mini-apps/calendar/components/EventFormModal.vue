@@ -48,7 +48,7 @@ const emit = defineEmits<{
        <div class="bg-white dark:bg-[#1e1e1e] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col max-h-[90vh]">
            <div class="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#e6e6e6] dark:border-[#333] select-none text-black dark:text-white">
                <h3 class="font-bold text-lg">{{ form.isEdit ? 'Edit Event' : 'New Event' }}</h3>
-               <button @click="emit('close')" class="text-gray-400 hover:text-red-500"><X class="w-5 h-5"/></button>
+               <button @click="emit('close')" class="text-gray-400 hover:text-red-500" aria-label="More Options"><X class="w-5 h-5"/></button>
            </div>
            <div class="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
                <div>
@@ -118,7 +118,7 @@ const emit = defineEmits<{
                           <div v-for="(rem, idx) in form.reminders" :key="idx" class="flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-1 rounded-md text-xs font-medium">
                               <Bell class="w-3 h-3" />
                               {{ rem }}
-                              <button @click="emit('remove-reminder', idx)" class="hover:text-purple-900 dark:hover:text-purple-100 ml-1">
+                              <button @click="emit('remove-reminder', idx)" class="hover:text-purple-900 dark:hover:text-purple-100 ml-1" aria-label="More Options">
                                   <X class="w-3 h-3" />
                               </button>
                           </div>
@@ -135,7 +135,7 @@ const emit = defineEmits<{
                           </select>
                           <div v-if="reminderPreset === 'custom'" class="flex items-center gap-2 flex-1">
                               <input :value="customReminder" @input="emit('update:customReminder', ($event.target as HTMLInputElement).value)" @keyup.enter="emit('add-reminder')" type="text" placeholder="e.g. 45m, 2h" class="w-full bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white">
-                              <button @click="emit('add-reminder')" class="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-lg transition-colors">
+                              <button @click="emit('add-reminder')" class="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-lg transition-colors" aria-label="More Options">
                                   <Plus class="w-4 h-4" />
                               </button>
                           </div>
@@ -166,10 +166,10 @@ const emit = defineEmits<{
                   
                   <div v-if="isCreatingNote" class="mb-3 flex items-center gap-2">
                       <input :value="newNoteTitle" @input="emit('update:newNoteTitle', ($event.target as HTMLInputElement).value)" type="text" class="flex-1 bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:border-purple-500 text-black dark:text-white" :placeholder="$t('calendar.note_title_ph')">
-                      <button @click="emit('create-note')" class="p-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
+                      <button @click="emit('create-note')" class="p-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors" aria-label="More Options">
                           <Check class="w-3.5 h-3.5" />
                       </button>
-                      <button @click="emit('update:isCreatingNote', false)" class="p-1.5 bg-gray-200 dark:bg-[#444] text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-[#555] transition-colors">
+                      <button @click="emit('update:isCreatingNote', false)" class="p-1.5 bg-gray-200 dark:bg-[#444] text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-[#555] transition-colors" aria-label="More Options">
                           <X class="w-3.5 h-3.5" />
                       </button>
                   </div>

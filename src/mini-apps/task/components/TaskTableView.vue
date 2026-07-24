@@ -30,7 +30,7 @@ const emit = defineEmits<{
          <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#2c2c2c]">
              <tr v-for="task in tasks" :key="task.id" class="hover:bg-gray-50 dark:hover:bg-[#252525] group cursor-pointer" @click="emit('edit-task', task)">
                  <td class="px-6 py-3">
-                     <button @click.stop="emit('toggle-status', task)" class="transition-colors cursor-pointer block mt-1">
+                     <button @click.stop="emit('toggle-status', task)" class="transition-colors cursor-pointer block mt-1" aria-label="More Options">
                           <CheckCircle2 v-if="task.status === 'done'" class="w-5 h-5 text-green-500" />
                           <Circle v-else class="w-5 h-5 text-gray-300 dark:text-gray-600 hover:text-black dark:hover:text-white" />
                       </button>
@@ -58,7 +58,7 @@ const emit = defineEmits<{
                      </div>
                  </td>
                  <td class="px-6 py-3">
-                     <button @click.stop="emit('delete-task', task)" class="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                     <button @click.stop="emit('delete-task', task)" class="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" aria-label="More Options">
                          <Trash2 class="w-4 h-4" />
                      </button>
                  </td>

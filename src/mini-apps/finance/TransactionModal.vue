@@ -273,7 +273,7 @@ const closePersonDropdown = () => {
         <h3 class="font-bold text-lg text-text dark:text-text-dark">
             {{ transaction ? 'Edit Transaction' : 'New Transaction' }}
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
             <X class="w-5 h-5" />
         </button>
       </div>

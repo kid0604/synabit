@@ -62,7 +62,7 @@ const save = () => {
             <Scale class="w-5 h-5 text-blue-500" />
             Adjust Balance
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
             <X class="w-5 h-5" />
         </button>
       </div>

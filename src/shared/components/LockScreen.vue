@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Shield, Delete } from 'lucide-vue-next';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 
@@ -216,7 +216,7 @@ const numPadKeys = [
                   @click="removeDigit"
                   :disabled="isLockedOut || isVerifying || pin.length === 0"
                   class="numpad-btn numpad-action"
-                >
+                 aria-label="Remove Digit">
                   <Delete class="w-5 h-5" />
                 </button>
 

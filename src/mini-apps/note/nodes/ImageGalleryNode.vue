@@ -101,7 +101,7 @@ const getItemClass = (index: number) => {
   const t = templateStyle.value;
   const len = localImages.value.length;
   
-  let classes = 'relative group/item overflow-hidden rounded-lg bg-surface-hover dark:bg-surface-hover-dark cursor-pointer ';
+  const classes = 'relative group/item overflow-hidden rounded-lg bg-surface-hover dark:bg-surface-hover-dark cursor-pointer ';
   
   if (t === 'masonry') return classes + 'break-inside-avoid w-full mb-2 inline-block h-auto';
   if (t === 'carousel') return classes + 'flex-none w-[85%] sm:w-[60%] md:w-[45%] snap-center h-64 md:h-80';
@@ -328,7 +328,7 @@ const addImage = async () => {
         <button 
           @click.stop="closeLightbox" 
           class="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
-        >
+         aria-label="Close Lightbox">
           <X class="w-6 h-6" />
         </button>
 

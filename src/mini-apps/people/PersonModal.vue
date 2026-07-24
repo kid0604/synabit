@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Clock, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight } from 'lucide-vue-next';
+import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 
 const props = defineProps<{
@@ -254,7 +254,7 @@ const savePerson = async () => {
         if (props.person?.properties?.relations) properties.relations = props.person.properties.relations;
         if (props.person?.properties?.is_owner) properties.is_owner = true;
 
-        let relPath = props.person ? props.person.id : `People/${crypto.randomUUID()}.md`;
+        const relPath = props.person ? props.person.id : `People/${crypto.randomUUID()}.md`;
         await ns.writeNode({
             relPath, title: form.value.title,
             nodeType: 'person', properties, content: props.person?.content || ''
@@ -307,7 +307,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <User class="w-5 h-5 text-blue-500" />
                     {{ props.person ? 'Edit Person' : 'Add New Person' }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" aria-label="More Options">
                     <X class="w-5 h-5" />
                 </button>
             </div>
@@ -370,7 +370,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <div class="flex flex-wrap gap-2 mb-2" v-if="form.relationships.length > 0">
                         <span v-for="(rel, index) in form.relationships" :key="index" class="px-2.5 py-1 text-sm bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50 rounded-md flex items-center gap-1.5">
                             <Heart class="w-3 h-3 opacity-70" /> {{ rel }}
-                            <button @click="removeRelationship(index)" class="ml-1 opacity-50 hover:opacity-100 hover:text-red-500 outline-none"><X class="w-3 h-3" /></button>
+                            <button @click="removeRelationship(index)" class="ml-1 opacity-50 hover:opacity-100 hover:text-red-500 outline-none" aria-label="Remove Relationship"><X class="w-3 h-3" /></button>
                         </span>
                     </div>
 
@@ -419,7 +419,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                             <input v-model="d.value" :type="getDetailInputType(d.type)" :placeholder="getDetailPlaceholder(d)"
                                 class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
-                        <button @click="removeDetail(i)" class="p-1.5 text-gray-400 hover:text-red-500 transition-colors"><X class="w-4 h-4" /></button>
+                        <button @click="removeDetail(i)" class="p-1.5 text-gray-400 hover:text-red-500 transition-colors" aria-label="Remove Detail"><X class="w-4 h-4" /></button>
                     </div>
 
                     <!-- Add detail: presets or custom -->
@@ -460,7 +460,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     </button>
                     <div v-show="showExperiences" class="mt-3">
                     <div v-for="(exp, i) in form.experiences" :key="i" class="mb-3 bg-gray-50 dark:bg-[#1a1a1a] border border-border dark:border-border-dark rounded-xl p-3 relative group">
-                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><X class="w-3.5 h-3.5" /></button>
+                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" aria-label="More Options"><X class="w-3.5 h-3.5" /></button>
                         <div class="grid grid-cols-2 gap-2 mb-2">
                             <div>
                                 <label class="block text-[11px] text-gray-400 mb-0.5">Company</label>
@@ -532,7 +532,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <div v-for="(d, i) in form.important_dates" :key="i" class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                         <input v-model="d.label" type="text" :placeholder="$t('people.label_ph')" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                         <input v-model="d.date" type="date" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                        <button @click="removeImportantDate(i)" class="p-2 text-gray-400 hover:text-red-500 transition-colors"><X class="w-4 h-4" /></button>
+                        <button @click="removeImportantDate(i)" class="p-2 text-gray-400 hover:text-red-500 transition-colors" aria-label="Remove Important Date"><X class="w-4 h-4" /></button>
                     </div>
                     <button @click="addImportantDate" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
                         <Plus class="w-3.5 h-3.5" /> Add Date
@@ -546,7 +546,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <div class="flex flex-wrap gap-2 mb-2">
                         <span v-for="(tag, index) in form.tags" :key="index" class="px-2.5 py-1 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md flex items-center gap-1.5">
                             <Hash class="w-3 h-3 text-gray-400" /> {{ tag }}
-                            <button @click="removeTag(index)" class="ml-1 text-gray-400 hover:text-red-500 outline-none"><X class="w-3 h-3" /></button>
+                            <button @click="removeTag(index)" class="ml-1 text-gray-400 hover:text-red-500 outline-none" aria-label="Remove Tag"><X class="w-3 h-3" /></button>
                         </span>
                     </div>
                     <div class="relative">

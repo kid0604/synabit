@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Plus, Trash2, PenTool, PanelLeftClose, PanelLeft, Search, FileText, GripVertical, ChevronDown, ChevronRight } from 'lucide-vue-next';
+import { Plus, Trash2, PenTool, PanelLeftClose, Search, FileText, GripVertical, ChevronDown, ChevronRight } from 'lucide-vue-next';
 
 const props = defineProps<{
   boards: any[];
@@ -90,7 +90,7 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
   <!-- Sidebar: Board List -->
   <div
     v-if="sidebarOpen"
-    class="wb-sidebar flex flex-col absolute md:relative z-[49] shrink-0"
+    class="wb-sidebar flex flex-col absolute md:relative z-[49] shrink-0 bg-[#fbfbfc] dark:bg-[#191919] border-r border-border dark:border-border-dark"
     :style="{ width: wSidebar + 'px' }"
   >
     <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragSidebar"></div>
@@ -225,13 +225,7 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--color-border, #e6e6e6);
-  background: var(--color-surface-alt, #fbfbfc);
   height: 100%;
-}
-:global(.dark) .wb-sidebar {
-  border-color: var(--color-border-dark, #2c2c2c);
-  background: var(--color-surface-alt-dark, #191919);
 }
 .wb-icon-btn {
   width: 28px;

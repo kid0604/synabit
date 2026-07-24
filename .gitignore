@@ -58,3 +58,5 @@ src-tauri/target/
 target/
 synabit_logcat.txt
 root@*
+*.jks
+keystore.properties

@@ -439,7 +439,7 @@ onUnmounted(() => {
             @click.stop="isPanelOpen = !isPanelOpen" 
             class="absolute top-[100px] right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
             :class="{ 'rotate-90': isPanelOpen }"
-        >
+         aria-label="Is Panel Open = !is Panel Open">
             <Settings2 class="w-5 h-5 text-gray-700 dark:text-gray-300" />
         </button>
 

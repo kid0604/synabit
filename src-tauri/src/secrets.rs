@@ -48,13 +48,71 @@ impl SecretManager {
                 }
             }
         }
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(target_os = "ios")]
         {
             if let Some(handle) = app_handle {
                 let path = Self::get_file_path(handle);
                 if let Ok(content) = std::fs::read_to_string(path) {
                     if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&content) {
                         return secrets;
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "android")]
+        {
+            if let Some(_handle) = app_handle {
+                use jni::objects::JValue;
+                let ctx = ndk_context::android_context();
+                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
+                let mut env = vm.attach_current_thread().unwrap();
+                let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+                
+                let class_loader = env.call_method(
+                    &context,
+                    "getClassLoader",
+                    "()Ljava/lang/ClassLoader;",
+                    &[]
+                ).unwrap().l().unwrap();
+                let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
+                let jclass_obj = env.call_method(
+                    &class_loader,
+                    "loadClass",
+                    "(Ljava/lang/String;)Ljava/lang/Class;",
+                    &[JValue::Object(&class_name)]
+                ).unwrap().l().unwrap();
+                let jclass = jni::objects::JClass::from(jclass_obj);
+
+                let key = env.new_string("app_secrets").unwrap();
+                
+                let result = env.call_static_method(
+                    &jclass,
+                    "getSecret",
+                    "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                    &[JValue::Object(&context), JValue::Object(&key)]
+                ).unwrap().l().unwrap();
+                
+                let jstr = jni::objects::JString::from(result);
+                let content_str: String = env.get_string(&jstr).unwrap().into();
+                
+                if !content_str.is_empty() {
+                    if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&content_str) {
+                        return secrets;
+                    }
+                } else {
+                    let path = Self::get_file_path(_handle);
+                    if let Ok(old_content) = std::fs::read_to_string(&path) {
+                        if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&old_content) {
+                            let val = env.new_string(&old_content).unwrap();
+                            let _ = env.call_static_method(
+                                &jclass,
+                                "saveSecret",
+                                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
+                                &[JValue::Object(&context), JValue::Object(&key), JValue::Object(&val)]
+                            );
+                            let _ = std::fs::remove_file(path);
+                            return secrets;
+                        }
                     }
                 }
             }
@@ -76,7 +134,7 @@ impl SecretManager {
                 .set_password(&content)
                 .map_err(|e| format!("Keyring error: {}", e))
         }
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(target_os = "ios")]
         {
             if let Some(handle) = app_handle {
                 let path = Self::get_file_path(handle);
@@ -84,6 +142,49 @@ impl SecretManager {
                     let _ = std::fs::create_dir_all(p);
                 }
                 std::fs::write(path, content).map_err(|e| format!("FS error: {}", e))
+            } else {
+                Err("AppHandle is required on mobile to save secrets".to_string())
+            }
+        }
+        #[cfg(target_os = "android")]
+        {
+            if let Some(_handle) = app_handle {
+                use jni::objects::JValue;
+                let ctx = ndk_context::android_context();
+                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
+                let mut env = vm.attach_current_thread().unwrap();
+                let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+                
+                let class_loader = env.call_method(
+                    &context,
+                    "getClassLoader",
+                    "()Ljava/lang/ClassLoader;",
+                    &[]
+                ).unwrap().l().unwrap();
+                let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
+                let jclass_obj = env.call_method(
+                    &class_loader,
+                    "loadClass",
+                    "(Ljava/lang/String;)Ljava/lang/Class;",
+                    &[JValue::Object(&class_name)]
+                ).unwrap().l().unwrap();
+                let jclass = jni::objects::JClass::from(jclass_obj);
+
+                let key = env.new_string("app_secrets").unwrap();
+                let val = env.new_string(&content).unwrap();
+                
+                let res = env.call_static_method(
+                    &jclass,
+                    "saveSecret",
+                    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
+                    &[JValue::Object(&context), JValue::Object(&key), JValue::Object(&val)]
+                ).unwrap().z().unwrap();
+                
+                if res {
+                    Ok(())
+                } else {
+                    Err("Android Keystore error".to_string())
+                }
             } else {
                 Err("AppHandle is required on mobile to save secrets".to_string())
             }

@@ -59,8 +59,8 @@ fn occurs_on_date(
             start_date_str.split('-').nth(2) == target_date_str.split('-').nth(2)
         },
         "yearly" => {
-            let s_mmdd = start_date_str.splitn(2, '-').nth(1);
-            let t_mmdd = target_date_str.splitn(2, '-').nth(1);
+            let s_mmdd = start_date_str.split_once('-').map(|x| x.1);
+            let t_mmdd = target_date_str.split_once('-').map(|x| x.1);
             s_mmdd.is_some() && s_mmdd == t_mmdd
         },
         _ => start_date_str == target_date_str,
@@ -115,7 +115,7 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
 
             let now = Local::now();
             let today_str = now.format("%Y-%m-%d").to_string();
-            let tomorrow_str = (now + chrono::Duration::try_days(1).unwrap_or_else(|| chrono::Duration::zero())).format("%Y-%m-%d").to_string();
+            let tomorrow_str = (now + chrono::Duration::try_days(1).unwrap_or_else(chrono::Duration::zero)).format("%Y-%m-%d").to_string();
             
             let active_nodes = db.get_active_tasks_and_events().unwrap_or_default();
             
@@ -250,7 +250,7 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                                         
                                         if let Err(e) = app_handle.notification().builder()
                                             .title("Upcoming Event")
-                                            .body(&format!("{} ({})", event.title, start_time))
+                                            .body(format!("{} ({})", event.title, start_time))
                                             .show() {
                                                 log::error!("Failed to show notification: {}", e);
                                         }

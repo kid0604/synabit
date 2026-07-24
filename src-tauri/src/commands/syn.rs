@@ -225,7 +225,7 @@ pub async fn syn_send_message(
     // 9. Attach RAG sources — but only if the LLM didn't use tool calling.
     //    When tools were used, their results are more precise than RAG context,
     //    so showing RAG sources alongside tool results is just noise.
-    let used_tools = assistant_message.tool_calls_log.as_ref().map_or(false, |l| !l.is_empty());
+    let used_tools = assistant_message.tool_calls_log.as_ref().is_some_and(|l| !l.is_empty());
     if !retrieval.sources.is_empty() && !used_tools {
         assistant_message.sources = Some(retrieval.sources);
     }

@@ -126,7 +126,7 @@ const executeDelete = () => {
             <span class="text-xs font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">
               {{ mode === 'create' ? 'Highlight' : 'Edit Highlight' }}
             </span>
-            <button @click="emit('close')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark cursor-pointer">
+            <button @click="emit('close')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark cursor-pointer" aria-label="More Options">
               <X class="w-3.5 h-3.5" />
             </button>
           </div>

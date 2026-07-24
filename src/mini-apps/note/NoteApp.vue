@@ -56,7 +56,7 @@ const vaultPathRef = toRef(props, 'vaultPath');
 
 // ── Navigation ──────────────────────────────────────────────
 const pushNavigation = inject<(entry?: NavEntry) => void>('pushNavigation');
-let skipNavPush = false;
+const skipNavPush = false;
 
 // ── Note State ──────────────────────────────────────────────
 const notes = ref<NoteItem[]>([]);
@@ -428,7 +428,7 @@ onMounted(async () => {
           <div class="relative w-full">
             <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b8b] dark:text-[#71717a]" />
             <input v-model="search.searchQuery.value" type="text" :placeholder="$t('note.search_placeholder')" class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500">
-            <button v-if="search.searchQuery.value" @click="search.searchQuery.value = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+            <button v-if="search.searchQuery.value" @click="search.searchQuery.value = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" aria-label="Search.search Query.value =">
               <X class="w-3.5 h-3.5" />
             </button>
             <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', search.isCaseSensitiveSearch.value ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" :title="$t('note.match_case')">
@@ -553,7 +553,7 @@ onMounted(async () => {
                       <span v-for="tag in notes.find(n => n.id === tabId)?.tags" :key="tag" class="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 group/tag">
                           <Hash class="w-3 h-3 opacity-50"/>
                           {{ tag }}
-                          <button @click="tags.removeTag(tag)" class="opacity-0 group-hover/tag:opacity-100 hover:text-red-500 transition-opacity ml-1 p-0.5"><X class="w-3 h-3"/></button>
+                          <button @click="tags.removeTag(tag)" class="opacity-0 group-hover/tag:opacity-100 hover:text-red-500 transition-opacity ml-1 p-0.5" aria-label="Tags.remove Tag"><X class="w-3 h-3"/></button>
                        </span>
                        <div class="relative flex items-center">
                           <Plus class="w-3 h-3 absolute left-1.5 text-gray-400" />
@@ -590,7 +590,7 @@ onMounted(async () => {
           <div class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] h-full relative z-0 overflow-y-auto">
              <div class="flex items-center justify-between px-6 h-10 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
                 <div class="flex items-center gap-3">
-                   <button @click="manager.viewMode.value = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500">
+                   <button @click="manager.viewMode.value = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500" aria-label="Manager.view Mode.value =">
                       <ArrowLeft class="w-5 h-5" />
                    </button>
                    <h1 class="text-xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
@@ -606,7 +606,7 @@ onMounted(async () => {
                  <div class="relative w-full mb-8">
                    <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b] dark:text-[#71717a]" />
                    <input v-model="manager.managerSearchQuery.value" type="text" :placeholder="$t('note.search_manager_placeholder')" class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input">
-                   <button v-if="manager.managerSearchQuery.value" @click="manager.managerSearchQuery.value = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                   <button v-if="manager.managerSearchQuery.value" @click="manager.managerSearchQuery.value = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" aria-label="Manager.manager Search Query.value =">
                      <X class="w-4 h-4" />
                    </button>
                    <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', search.isCaseSensitiveSearch.value ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" :title="$t('note.match_case')">
@@ -693,7 +693,7 @@ onMounted(async () => {
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
           <Globe class="w-4 h-4 text-gray-500 mr-2" />
           <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">{{ $t('note.graph_view') }}</span>
-          <button @click="sidebar.showRightSidebar.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors">
+          <button @click="sidebar.showRightSidebar.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors" aria-label="Sidebar.show Right Sidebar.value = false">
              <X class="w-3.5 h-3.5" />
           </button>
       </div>

@@ -121,7 +121,7 @@ watch(() => props.article?.id, async (newId) => {
       <!-- Toolbar -->
       <div class="shrink-0 border-b border-border dark:border-border-dark">
         <div class="flex items-center gap-2 px-4 py-2">
-          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1">
+          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1" aria-label="More Options">
             <ArrowLeft class="w-5 h-5" />
           </button>
           <ReaderToolbar

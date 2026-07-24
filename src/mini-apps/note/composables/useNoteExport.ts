@@ -26,7 +26,7 @@ export function useNoteExport(params: {
     const doc = parser.parseFromString(html, 'text/html');
     const imgs = doc.querySelectorAll('img');
     
-    for (let img of imgs) {
+    for (const img of imgs) {
         const src = img.getAttribute('src');
         if (src && src.startsWith('assets/')) {
             try {
@@ -60,7 +60,7 @@ export function useNoteExport(params: {
     if (!note) return;
 
     try {
-        let defaultFileName = note.title ? note.title.replace(/[/\\?%*:|"<>]/g, '-') : 'Untitled';
+        const defaultFileName = note.title ? note.title.replace(/[/\\?%*:|"<>]/g, '-') : 'Untitled';
         if (options.format === 'md') {
             const filePath = await save({ defaultPath: `${defaultFileName}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
             if (!filePath) return;

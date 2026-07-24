@@ -77,7 +77,7 @@ onUnmounted(() => {
           <span class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
             {{ totalMerged }} file{{ totalMerged !== 1 ? 's' : '' }} merged automatically
           </span>
-          <button @click="dismiss" class="ml-auto p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-400 dark:text-gray-500">
+          <button @click="dismiss" class="ml-auto p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-400 dark:text-gray-500" aria-label="Dismiss">
             <X class="w-3.5 h-3.5" />
           </button>
         </div>

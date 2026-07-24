@@ -11,9 +11,17 @@ use std::path::Path;
 ///
 /// Returns an empty string if the file cannot be read.
 pub fn file_sha256(path: &Path) -> String {
-    if let Ok(bytes) = fs::read(path) {
+    use std::io::Read;
+    if let Ok(mut file) = fs::File::open(path) {
         let mut hasher = Sha256::new();
-        hasher.update(&bytes);
+        let mut buffer = [0; 8192];
+        loop {
+            match file.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => hasher.update(&buffer[..n]),
+                Err(_) => return String::new(),
+            }
+        }
         format!("{:x}", hasher.finalize())
     } else {
         String::new()

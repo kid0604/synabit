@@ -190,7 +190,8 @@ function selectDrawSub(sub: DrawSubTool) {
               @click.stop="$emit('update:drawColor', c)"
               :class="['wb-draw-color-btn', drawColor === c && 'wb-draw-color-btn--active']"
               :style="{ background: c }"
-            />
+              aria-label="Select Color"
+            ></button>
           </div>
         </template>
       </div>

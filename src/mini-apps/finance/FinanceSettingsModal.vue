@@ -132,7 +132,7 @@ const save = () => {
       <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark shrink-0">
         <h3 class="font-bold text-lg text-text dark:text-text-dark">Finance Settings</h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
             <X class="w-5 h-5" />
         </button>
       </div>
@@ -165,14 +165,14 @@ const save = () => {
             <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Income Categories</h4>
             <div class="flex gap-2 mb-3">
                 <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_income_cat')" />
-                <button @click="addIncomeCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
+                <button @click="addIncomeCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors" aria-label="Add Income Category">
                     <Plus class="w-5 h-5" />
                 </button>
             </div>
             <div class="flex flex-wrap gap-2">
                 <div v-for="(cat, idx) in incomeCategories" :key="cat" class="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg text-sm text-green-700 dark:text-green-400">
                     <span>{{ cat }}</span>
-                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat)" @click="removeIncomeCategory(idx)" class="text-green-500/50 hover:text-red-500 transition-colors">
+                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat)" @click="removeIncomeCategory(idx)" class="text-green-500/50 hover:text-red-500 transition-colors" aria-label="Remove Income Category">
                         <X class="w-3.5 h-3.5" />
                     </button>
                     <div v-else class="text-green-500/30 ml-1">
@@ -190,14 +190,14 @@ const save = () => {
             <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">Expense Categories</h4>
             <div class="flex gap-2 mb-3">
                 <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_expense_cat')" />
-                <button @click="addExpenseCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
+                <button @click="addExpenseCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors" aria-label="More Options">
                     <Plus class="w-5 h-5" />
                 </button>
             </div>
             <div class="flex flex-wrap gap-2">
                 <div v-for="(cat, idx) in expenseCategories" :key="cat" class="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg text-sm text-red-700 dark:text-red-400">
                     <span>{{ cat }}</span>
-                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat)" @click="removeExpenseCategory(idx)" class="text-red-500/50 hover:text-red-500 transition-colors">
+                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat)" @click="removeExpenseCategory(idx)" class="text-red-500/50 hover:text-red-500 transition-colors" aria-label="More Options">
                         <X class="w-3.5 h-3.5" />
                     </button>
                     <div v-else class="text-red-500/30 ml-1">
@@ -235,10 +235,10 @@ const save = () => {
                             <span class="text-xs text-gray-500">Current Balance: <span class="font-semibold text-gray-700 dark:text-gray-300">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
                         </div>
                         <div class="flex items-center gap-1 shrink-0">
-                            <button @click="editingAccountId = acc.id" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">
+                            <button @click="editingAccountId = acc.id" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" aria-label="More Options">
                                 <Edit2 class="w-4 h-4" />
                             </button>
-                            <button @click="removeAccount(idx)" class="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">
+                            <button @click="removeAccount(idx)" class="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" aria-label="Remove Account">
                                 <Trash2 class="w-4 h-4" />
                             </button>
                         </div>
@@ -248,7 +248,7 @@ const save = () => {
                         <input type="text" v-model="acc.name" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Account Name" />
                         <div class="flex items-center justify-between text-xs text-gray-500">
                             <span>Current Balance: <span class="font-semibold">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
-                            <button @click="editingAccountId = null" class="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center">
+                            <button @click="editingAccountId = null" class="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center" aria-label="More Options">
                                 <Check class="w-4 h-4" />
                             </button>
                         </div>

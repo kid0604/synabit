@@ -2,14 +2,13 @@ use std::path::Path;
 use crate::error::{AppError, AppResult};
 use serde_json::Value;
 
-/// Extracts `node_id` from a file, or generates a new one and injects it.
 pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<String> {
-    let content = std::fs::read_to_string(file_path)
-        .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
-    
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     
     if ext == "md" {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
+            
         // Simple regex to extract node_id from frontmatter
         let re = regex::Regex::new(r"(?m)^node_id:\s*([a-zA-Z0-9\-]+)\s*$").unwrap();
         if let Some(caps) = re.captures(&content) {
@@ -35,6 +34,8 @@ pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<S
         Ok(new_id)
         
     } else if ext == "json" || ext == "canvas" {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
         let mut json_val: Value = serde_json::from_str(&content)
             .map_err(|e| AppError::General(format!("Failed to parse JSON for identity: {}", e)))?;
             

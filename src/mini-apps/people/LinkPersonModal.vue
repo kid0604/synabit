@@ -114,7 +114,7 @@ onMounted(() => {
                         <p class="text-[11px] text-gray-500 dark:text-gray-400">to <strong>{{ person.title }}</strong></p>
                     </div>
                 </div>
-                <button @click="emit('close')" class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                <button @click="emit('close')" class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="More Options">
                     <X class="w-4 h-4" />
                 </button>
             </div>

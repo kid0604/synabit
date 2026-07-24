@@ -28,7 +28,7 @@ const emit = defineEmits<{
           <!-- Header -->
           <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
             <h3 class="text-base font-semibold text-text dark:text-text-dark">{{ title }}</h3>
-            <button @click="emit('cancel')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark transition-colors cursor-pointer">
+            <button @click="emit('cancel')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark transition-colors cursor-pointer" aria-label="More Options">
               <X class="w-4 h-4" />
             </button>
           </div>

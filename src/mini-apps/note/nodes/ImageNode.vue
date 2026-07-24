@@ -303,7 +303,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
         <button 
           @click.stop="closeLightbox" 
           class="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
-        >
+         aria-label="Close Lightbox">
           <X class="w-6 h-6" />
         </button>
 

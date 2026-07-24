@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { FileText, Trash2, FileDown } from 'lucide-vue-next';
+import { FileText, Trash2 } from 'lucide-vue-next';
 import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 import type { PdfAnnotation } from '../composables/usePdfAnnotations';
 

@@ -4,7 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualList, useWindowSize } from '@vueuse/core';
 import { Search, LayoutGrid, List, FolderSync, Menu, ArrowLeft, FileText, ImageIcon, Video, Music, Code, FileArchive, FileType, Info, Copy, X } from 'lucide-vue-next';
 import { useFileStore, type FileMetadata, type FileReference } from './composables/useFileStore';
-import { getViewer, getViewerType } from './composables/useViewerRegistry';
+import { getViewer } from './composables/useViewerRegistry';
 import FilesSidebar from './components/FilesSidebar.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import FilesTabs, { type FileTab } from './components/FilesTabs.vue';
@@ -322,17 +322,17 @@ onUnmounted(() => { if (unlisten) unlisten(); });
         <!-- Header -->
         <div class="h-14 px-4 md:px-8 flex items-center gap-3 justify-between border-b border-gray-200/50 dark:border-white/5 bg-white/30 dark:bg-black/20 backdrop-blur-md">
           <NavButtons />
-          <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 cursor-pointer"><Menu class="w-5 h-5" /></button>
+          <button @click="isSidebarOpen = true" class="md:hidden p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Is Sidebar Open = true"><Menu class="w-5 h-5" /></button>
           <div class="flex-1 max-w-xl relative group">
             <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500" />
             <input v-model="store.searchQuery.value" :placeholder="$t('file.search_placeholder')" class="w-full pl-9 pr-10 py-2 bg-white/50 dark:bg-white/5 border border-gray-200/50 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-gray-800 dark:text-gray-200 placeholder:text-gray-400" />
-            <button v-if="store.searchQuery.value" @click="store.searchQuery.value = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer transition-colors">
+            <button v-if="store.searchQuery.value" @click="store.searchQuery.value = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer transition-colors" aria-label="Store.search Query.value =">
               <X class="w-3.5 h-3.5" />
             </button>
           </div>
           <div class="flex items-center gap-1 bg-white/50 dark:bg-white/5 p-1 rounded-lg border border-gray-200/50 dark:border-white/10 flex-shrink-0">
-            <button @click="viewMode = 'grid'" class="p-1.5 rounded-md transition-colors cursor-pointer" :class="viewMode === 'grid' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600'"><LayoutGrid class="w-4 h-4" /></button>
-            <button @click="viewMode = 'list'" class="p-1.5 rounded-md transition-colors cursor-pointer" :class="viewMode === 'list' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600'"><List class="w-4 h-4" /></button>
+            <button @click="viewMode = 'grid'" class="p-1.5 rounded-md transition-colors cursor-pointer" :class="viewMode === 'grid' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600'" aria-label="View Mode ="><LayoutGrid class="w-4 h-4" /></button>
+            <button @click="viewMode = 'list'" class="p-1.5 rounded-md transition-colors cursor-pointer" :class="viewMode === 'list' ? 'bg-white dark:bg-white/10 shadow-sm text-indigo-500' : 'text-gray-400 hover:text-gray-600'" aria-label="View Mode ="><List class="w-4 h-4" /></button>
           </div>
         </div>
 
@@ -401,7 +401,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
       <div v-if="selectedFile" class="absolute md:relative inset-0 md:inset-auto z-40 md:z-20 w-full md:w-80 xl:w-96 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-2xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col">
         <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
           <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.details') }}</h2>
-          <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+          <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer" aria-label="Selected File = null"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
         <div class="flex-1 overflow-y-auto p-5 space-y-5">
           <!-- Preview -->
@@ -426,7 +426,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <div class="flex flex-wrap items-center gap-1.5">
               <span v-for="tag in selectedFile.tags" :key="tag" class="group relative px-2.5 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-medium border border-indigo-100 dark:border-indigo-500/20 flex items-center gap-1">
                 #{{ tag }}
-                <button @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer">
+                <button @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" aria-label="Handle Remove Tag">
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </span>
@@ -444,7 +444,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <div class="flex flex-wrap items-center gap-1.5 mb-2">
               <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
                 @{{ getPersonName(link) }}
-                <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer">
+                <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" aria-label="Handle Remove Person">
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </span>
@@ -636,7 +636,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
             <div v-if="selectedFile" class="absolute md:relative inset-0 md:inset-auto z-40 w-full md:w-80 xl:w-96 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-2xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col">
               <div class="h-14 px-5 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5">
                 <h2 class="font-bold text-sm text-gray-900 dark:text-white">{{ $t('file.preview') }}</h2>
-                <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+                <button @click="selectedFile = null" class="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500 cursor-pointer" aria-label="Selected File = null"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>
               <div class="flex-1 overflow-y-auto p-5 space-y-5">
                 <!-- Preview -->
@@ -665,7 +665,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                   <div class="flex flex-wrap items-center gap-1.5 mb-2">
                     <span v-for="link in (selectedFile.people || [])" :key="link" class="group relative px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
                       @{{ getPersonName(link) }}
-                      <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer">
+                      <button @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" aria-label="Handle Remove Person">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                       </button>
                     </span>

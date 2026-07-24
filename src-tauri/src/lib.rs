@@ -11,9 +11,7 @@ pub mod utils;
 
 pub mod chat_engine;
 pub mod watcher;
-pub mod crdt_bridge;
 pub mod sync;
-pub mod p2p;
 pub mod secrets;
 pub mod feed_engine;
 pub mod syn;
@@ -22,7 +20,7 @@ pub mod hwid;
 pub mod signing;
 pub mod license;
 
-use commands::{chat, feeds, files, nexus, nodes, p2p_sync, syn as syn_commands, whiteboards, license_cmds};
+use commands::{chat, feeds, files, nexus, nodes, sync as sync_cmds, syn as syn_commands, whiteboards, license_cmds};
 use db::DbBridge;
 
 #[tauri::command]
@@ -55,6 +53,12 @@ fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[ctor::ctor]
+fn init_rustls() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -123,12 +127,7 @@ pub fn run() {
             app.manage(commands::app_lock::AppLockState::default());
 
             // P2P Sync
-            app.manage(p2p_sync::P2pSyncState::default());
-            app.manage(p2p_sync::PairingState::default());
-            
-            if let Err(e) = crate::p2p::init(app) {
-                log::error!("Failed to init P2P module: {}", e);
-            }
+            app.manage(sync_cmds::P2pSyncState::default());
 
             #[cfg(feature = "official-build")]
             {
@@ -276,22 +275,16 @@ pub fn run() {
             syn_commands::syn_pin_conversation,
             syn_commands::syn_export_conversation,
             // P2P Sync
-            p2p_sync::p2p_sync_connect,
-            p2p_sync::p2p_sync_full,
-            p2p_sync::p2p_sync_disconnect,
-                        p2p_sync::p2p_sync_status,
-            p2p_sync::p2p_sync_metrics,
-            p2p_sync::p2p_sync_update_worker_config,
-            // P2P Device Pairing
-            p2p_sync::p2p_pair_initiate,
-            p2p_sync::p2p_pair_cancel,
-            p2p_sync::p2p_pair_accept,
-            p2p_sync::p2p_list_devices,
-            p2p_sync::p2p_remove_device,
+            sync_cmds::sync_connect,
+            sync_cmds::sync_full,
+            sync_cmds::sync_disconnect,
+            sync_cmds::sync_status,
+            sync_cmds::sync_metrics,
+            sync_cmds::sync_update_worker_config,
 
             // Key Rotation
-            p2p_sync::p2p_current_epoch,
-            p2p_sync::p2p_revoke_device,
+            sync_cmds::sync_current_epoch,
+            sync_cmds::sync_revoke_device,
 
             // License
             license_cmds::get_license_state,
