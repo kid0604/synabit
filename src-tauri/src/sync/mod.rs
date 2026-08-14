@@ -11,6 +11,11 @@ pub mod utils;
 pub mod adapter;
 pub mod core;
 
+#[cfg(test)]
+pub mod harness;
+#[cfg(test)]
+mod scenarios;
+
 // Re-export common types
 pub use core::types::{SyncOperation, SyncResult, SyncRunContext};
 

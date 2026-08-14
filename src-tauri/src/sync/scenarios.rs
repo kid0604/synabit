@@ -1,0 +1,218 @@
+//! End-to-end sync scenarios.
+//!
+//! Each test drives two real devices through the real coordinator and asserts
+//! on files that actually exist on disk. A scenario marked `#[ignore]` is a
+//! *known defect*, not a flaky test: the assertion states the behaviour we
+//! want, and the ignore reason names the bug. Run them with
+//! `cargo test --lib scenarios -- --ignored` to see the current gap.
+
+use crate::sync::harness::{vault_with_devices, HarnessDevice, InMemoryMailbox};
+use synabit_protocol::SyncEntryKind;
+
+const NOTE: &str = "Notes/plan.md";
+
+// ---------------------------------------------------------------------------
+// Baseline: does anything work at all?
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn new_file_reaches_the_other_device() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nFirst draft.\n");
+    a.sync_ok().await;
+
+    assert!(
+        !b.exists(NOTE),
+        "B must not have the file before it syncs — otherwise the harness is \
+         sharing a filesystem and proves nothing"
+    );
+
+    b.sync_ok().await;
+
+    assert!(b.exists(NOTE), "B should have received the file");
+    assert!(
+        b.body(NOTE).unwrap().contains("First draft."),
+        "B got the file but not its content: {:?}",
+        b.body(NOTE)
+    );
+}
+
+#[tokio::test]
+#[ignore = "S1-06: the pushed snapshot predates node_id injection, so each peer \
+            mints its own id for the same file and upsert_document_path then \
+            violates UNIQUE(vault_id, rel_path)"]
+async fn edit_propagates_back_to_the_origin_device() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nFirst draft.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let received = b.read(NOTE).expect("B has the note");
+    b.write(NOTE, &received.replace("First draft.", "Second draft."));
+    b.sync_ok().await;
+    a.sync_ok().await;
+
+    let a_body = a.body(NOTE).expect("A still has the note");
+    assert!(
+        a_body.contains("Second draft."),
+        "A should have B's edit, got: {:?}",
+        a_body
+    );
+}
+
+#[tokio::test]
+#[ignore = "S2-04: source_hash is taken before node_id injection rewrites the \
+            file, so every file looks changed on every sync — an unbounded \
+            re-push loop"]
+async fn own_operations_are_not_reapplied() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let a = &devices[0];
+
+    a.write(NOTE, "# Plan\n\nOnly A.\n");
+    a.sync_ok().await;
+    let after_first = mailbox.len();
+
+    // Syncing again with no local change must not push a duplicate.
+    let result = a.sync_ok().await;
+
+    assert_eq!(
+        mailbox.len(),
+        after_first,
+        "a no-op sync pushed extra entries"
+    );
+    assert_eq!(result.pulled, 0, "A re-applied its own operation");
+    let _ = &devices[1];
+}
+
+// ---------------------------------------------------------------------------
+// Deletes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "S1-05: process_staged_inbox_page has no apply arm for \
+            SyncPayload::Delete — tombstones fall into the catch-all and fail"]
+async fn delete_propagates_to_the_other_device() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nTo be deleted.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(b.exists(NOTE), "precondition: B has the file");
+
+    a.delete(NOTE);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(
+        !b.exists(NOTE),
+        "B should have removed the file after A deleted it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Known defects — each of these should pass once the named bug is fixed
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "S1-02: identical device_id makes every peer operation look like our own"]
+async fn devices_sharing_a_device_id_still_exchange_changes() {
+    // Reproduces the GDrive path, which derives device_id from the app bundle
+    // identifier — the same value on every install.
+    let mailbox = InMemoryMailbox::new();
+    let a = HarnessDevice::new_with_device_id("a", &mailbox, "net.synabit.app");
+    let b = HarnessDevice::new_with_device_id("b", &mailbox, "net.synabit.app");
+
+    a.write(NOTE, "# Plan\n\nFrom A.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(
+        b.exists(NOTE),
+        "B ignored A's operation because both report the same device_id"
+    );
+}
+
+#[tokio::test]
+#[ignore = "S2-06: rename emits delete+upsert on two doc_hashes with no ordering guarantee"]
+async fn rename_arrives_as_a_rename_not_a_deletion() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nSurvives a rename.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.rename(NOTE, "Notes/roadmap.md");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(
+        b.exists("Notes/roadmap.md"),
+        "B should have the renamed file; mailbox emitted {:?}",
+        mailbox.kinds()
+    );
+    assert!(
+        b.body("Notes/roadmap.md")
+            .unwrap()
+            .contains("Survives a rename."),
+        "renamed file lost its content"
+    );
+    assert!(
+        !mailbox.kinds().contains(&SyncEntryKind::Delete),
+        "a rename should not emit a tombstone"
+    );
+}
+
+#[tokio::test]
+#[ignore = "S2-01: one unreadable entry blocks every later entry in the page"]
+async fn a_corrupt_entry_does_not_block_healthy_ones() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/first.md", "# First\n\nBefore the bad entry.\n");
+    a.sync_ok().await;
+    let bad_seq = mailbox.head_seq();
+
+    a.write("Notes/second.md", "# Second\n\nAfter the bad entry.\n");
+    a.sync_ok().await;
+
+    // Corrupt the first entry only. The second must still get through.
+    mailbox.corrupt_entry_at(bad_seq);
+
+    let _ = b.sync().await; // expected to report an error
+    assert!(
+        b.exists("Notes/second.md"),
+        "a single corrupt entry stopped every healthy entry behind it"
+    );
+}
+
+#[tokio::test]
+#[ignore = "S2-05: a vault that disappears is read as a mass user deletion"]
+async fn an_unreachable_vault_does_not_emit_tombstones() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/one.md", "# One\n");
+    a.write("Notes/two.md", "# Two\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // Simulate an unmounted drive: the vault root is emptied but the database
+    // still knows about both documents.
+    std::fs::remove_dir_all(a.vault_path().join("Notes")).expect("empty the vault");
+
+    let before = mailbox.len();
+    let _ = a.sync().await;
+
+    assert_eq!(
+        mailbox.len(),
+        before,
+        "A pushed {} tombstone(s) for a vault that merely went missing",
+        mailbox.len() - before
+    );
+}

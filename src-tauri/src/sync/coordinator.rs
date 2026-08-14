@@ -30,14 +30,14 @@ pub trait InboxEntryApplier<R: tauri::Runtime = tauri::Wry>: Send + Sync {
     ) -> AppResult<()>;
 }
 
-pub struct ProductionInboxEntryApplier {
-    pub app_handle: tauri::AppHandle,
+pub struct ProductionInboxEntryApplier<R: tauri::Runtime = tauri::Wry> {
+    pub app_handle: tauri::AppHandle<R>,
 }
 
-impl InboxEntryApplier<tauri::Wry> for ProductionInboxEntryApplier {
+impl<R: tauri::Runtime> InboxEntryApplier<R> for ProductionInboxEntryApplier<R> {
     fn apply(
         &self,
-        _app_handle: &tauri::AppHandle,
+        _app_handle: &tauri::AppHandle<R>,
         vault_path_obj: &Path,
         vault_path: &str,
         payload: &DocSyncPayload,
@@ -1018,13 +1018,13 @@ impl SyncCoordinator {
         Ok(())
     }
 
-    pub async fn sync(
+    pub async fn sync<R: tauri::Runtime>(
         &self,
         vault_identity: &VaultIdentity,
         device_id: &str,
         e2ee_key: &[u8; 32],
         _ctx: &SyncRunContext,
-        app_handle: &tauri::AppHandle,
+        app_handle: &tauri::AppHandle<R>,
     ) -> AppResult<SyncResult> {
         let db_state = app_handle.state::<DbState>();
         let adapter = self

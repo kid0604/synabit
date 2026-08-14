@@ -17,8 +17,21 @@ impl DbBridge {
         Ok(DbBridge { conn })
     }
 
+    /// Create an in-memory database with the *full* schema (main tables + sync
+    /// migrations), matching what `init` produces at app startup.
+    ///
+    /// `new_in_memory` only builds the sync tables, which is enough for unit
+    /// tests that touch the outbox/inbox in isolation. Anything exercising the
+    /// real sync path also needs `nodes`, `crdt_documents`, `document_paths`
+    /// and `kv_store`, so integration tests use this instead.
+    pub fn new_in_memory_full() -> AppResult<Self> {
+        let conn = Connection::open_in_memory()
+            .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
+        Self::init_with_conn(conn)
+    }
+
     /// Initialize the database once at app startup. Runs all migrations.
-    pub fn init(app_handle: &tauri::AppHandle) -> AppResult<Self> {
+    pub fn init<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> AppResult<Self> {
         use tauri::Manager;
         let app_data_dir = app_handle
             .path()
@@ -29,9 +42,17 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("Failed to create app data dir: {}", e)))?;
 
         let db_path = app_data_dir.join("vault_cache.db");
-        let mut conn = Connection::open(db_path)
+        let conn = Connection::open(db_path)
             .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
 
+        Self::init_with_conn(conn)
+    }
+
+    /// Build the full schema on an already-open connection.
+    ///
+    /// Split out from `init` so tests can run the exact production schema
+    /// against an in-memory connection instead of a real app data directory.
+    pub fn init_with_conn(mut conn: Connection) -> AppResult<Self> {
         // Enable WAL mode for better concurrent read performance and enable foreign keys
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .ok();

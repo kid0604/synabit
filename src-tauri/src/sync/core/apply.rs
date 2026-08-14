@@ -91,8 +91,8 @@ fn read_text_or_empty_if_missing(path: &Path) -> AppResult<String> {
 }
 
 /// Update the DB node + search index after writing a file.
-fn update_db_for_file(
-    app_handle: &tauri::AppHandle,
+fn update_db_for_file<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     vault_path: &str,
     local_path: &Path,
     doc_id: &str,
@@ -133,8 +133,8 @@ fn update_db_for_file(
     Ok(())
 }
 
-pub fn apply_doc_payload(
-    app_handle: &tauri::AppHandle,
+pub fn apply_doc_payload<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     vault_path: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
@@ -175,7 +175,7 @@ pub fn apply_doc_payload(
     }
 
     if payload.is_json {
-        pull_json(
+        pull_json_impl(
             app_handle,
             vault_path,
             &local_path,
@@ -218,25 +218,6 @@ pub fn apply_doc_payload(
 // ---------------------------------------------------------------------------
 
 /// Pull a JSON/canvas file using LWW (last-write-wins on `metadata.updated_at`).
-fn pull_json(
-    app_handle: &tauri::AppHandle,
-    vault_path: &str,
-    local_path: &Path,
-    node_id: &str,
-    payload: &crate::sync::core::types::DocSyncPayload,
-    vault_id: &str,
-) -> AppResult<()> {
-    let final_text = "";
-    let local_text = "";
-    if final_text != local_text {
-        // Atomic write placeholder
-    }
-    // replace_crdt_snapshot placeholder
-    pull_json_impl(
-        app_handle, vault_path, local_path, node_id, payload, vault_id,
-    )
-}
-
 fn pull_json_impl<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     _vault_path: &str,
@@ -309,8 +290,8 @@ fn pull_json_impl<R: tauri::Runtime>(
 }
 
 /// Pull a Markdown file using CRDT merge (conflict-free character-level).
-fn pull_markdown(
-    app_handle: &tauri::AppHandle,
+fn pull_markdown<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     _vault_path: &str,
     local_path: &Path,
     node_id: &str,
@@ -377,8 +358,8 @@ fn pull_markdown(
 }
 
 /// Fallback: reset CRDT doc and write remote content directly.
-fn pull_markdown_reset(
-    app_handle: &tauri::AppHandle,
+fn pull_markdown_reset<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     local_path: &Path,
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,

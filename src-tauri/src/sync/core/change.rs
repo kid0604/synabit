@@ -13,8 +13,8 @@ pub struct LocalChange {
     pub new_hash: String,
 }
 
-pub fn detect_local_changes(
-    app_handle: &tauri::AppHandle,
+pub fn detect_local_changes<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     vault_id: &str,
     provider_id: &str,
@@ -45,8 +45,8 @@ pub fn detect_local_changes(
     Ok(changes)
 }
 
-pub fn detect_deletions(
-    app_handle: &tauri::AppHandle,
+pub fn detect_deletions<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     vault_id: &str,
 ) -> AppResult<Vec<LocalChange>> {
