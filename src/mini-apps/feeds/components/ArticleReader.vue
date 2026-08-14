@@ -78,14 +78,14 @@ const handleContentClick = (e: MouseEvent) => {
 
 
 
-watch(() => props.article?.id, async (newId) => {
+watch(() => props.article?.id, async () => {
   readingProgress.value = 0;
   nextTick(() => {
     if (contentRef.value) contentRef.value.scrollTop = 0;
   });
 
   // Lazy-load content for scrape-type articles
-  if (props.article && !props.article.content && props.article.contentType === 'scrape') {
+  if (props.article && !props.article.content && (props.article.contentType as string) === 'scrape') {
     loadingContent.value = true;
     try {
       const updated = await feedService.fetchArticleContent(props.article.id);

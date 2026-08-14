@@ -84,7 +84,7 @@ export const WhiteboardExtension = Node.create<WhiteboardEmbedOptions>({
   },
 
   addNodeView() {
-    return VueNodeViewRenderer(WhiteboardNodeView);
+    return VueNodeViewRenderer(WhiteboardNodeView as any);
   },
 
   addCommands() {

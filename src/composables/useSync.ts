@@ -1,4 +1,4 @@
-import { ref, watch, onUnmounted, type Ref } from 'vue';
+import { ref, watch, onUnmounted, computed, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { SyncResult } from '../types/ipc';
@@ -6,31 +6,37 @@ import { useAppStore } from '../stores/useAppStore';
 import { logger } from '../utils/logger';
 import { usePlatform } from './usePlatform';
 
-export type SyncAdapterId = 'local' | 'gdrive';
+export type SyncAdapterId = 'none' | 'local' | 'gdrive' | 'server';
 export type SyncTriggerReason = 'manual' | 'server_push' | 'periodic_timer' | 'app_foreground' | 'initial_connect' | 'watcher_create_delete' | 'watcher_modified' | 'queued_retry';
 
+export type SyncPhase = 'checking' | 'pulling' | 'applying' | 'pushing' | 'assets' | 'complete' | 'error';
+export type SyncStatus = 'idle' | 'checking' | 'pulling' | 'applying' | 'pushing' | 'waiting_for_assets' | 'partial' | 'success' | 'offline' | 'error' | 'upgrade_required';
+
 export interface SyncProgressEvent {
-  phase: 'pull' | 'push' | 'done' | 'error';
-  current: number;
-  total: number;
-  current_file: string;
-  errors: string[];
+  runId: string;
+  vaultId: string;
+  provider: string;
+  phase: SyncPhase;
+  completedItems: number;
+  totalItems?: number;
+  bytesTransferred: number;
+  totalBytes?: number;
+  currentFile?: string;
 }
 
 export interface SyncConflictInfo {
-  merged_files: string[];
-  total: number;
+  fileName: string;
+  resolution: string;
 }
 
 export interface QuotaInfo {
-  used_bytes: number;
-  total_bytes: number;
-  message: string;
+  currentBytes: number;
+  limitBytes: number;
 }
 
 
 // --- Shared Singleton State ---
-const isSyncing = ref(false);
+const syncStatus = ref<SyncStatus>('idle');
 const syncError = ref('');
 const syncProgress = ref<SyncProgressEvent | null>(null);
 const syncErrors = ref<string[]>([]);
@@ -45,7 +51,7 @@ let fgTimer: number | null = null;
 let queuedTimer: number | null = null;
 let unlistenFns: UnlistenFn[] = [];
 
-let syncQueued = false;
+let syncAgain = false;
 let syncQueuedReason: SyncTriggerReason = 'queued_retry';
 
 // References for global callbacks
@@ -56,10 +62,10 @@ async function setupEventListeners() {
   try {
     const unlistenPush = await listen('sync-server-push', () => {
       logger.info('[Sync] Received push notification. Triggering sync...');
-      if (!isSyncing.value) {
+      if (syncStatus.value === 'idle' || syncStatus.value === 'success' || syncStatus.value === 'partial' || syncStatus.value === 'error') {
         doSync('server_push');
       } else {
-        syncQueued = true;
+        syncAgain = true;
         syncQueuedReason = 'server_push';
       }
     });
@@ -67,11 +73,25 @@ async function setupEventListeners() {
 
     const unlistenProgress = await listen<SyncProgressEvent>('sync-progress', (event) => {
       syncProgress.value = event.payload;
-      if (event.payload.errors && event.payload.errors.length > 0) {
-        syncErrors.value = event.payload.errors;
+      
+      // Map progress phase to UI syncStatus
+      const phase = event.payload.phase;
+      if (phase === 'checking') syncStatus.value = 'checking';
+      else if (phase === 'pulling') syncStatus.value = 'pulling';
+      else if (phase === 'applying') syncStatus.value = 'applying';
+      else if (phase === 'pushing') syncStatus.value = 'pushing';
+      else if (phase === 'assets') syncStatus.value = 'waiting_for_assets';
+      
+      if (phase === 'error' && event.payload.currentFile) {
+        syncErrors.value = [event.payload.currentFile];
       }
-      if (event.payload.phase === 'done') {
-        syncProgress.value = null;
+      
+      if (phase === 'complete' || phase === 'error') {
+        setTimeout(() => {
+          if (syncProgress.value?.runId === event.payload.runId) {
+            syncProgress.value = null;
+          }
+        }, 2000);
       }
     });
     unlistenFns.push(unlistenProgress);
@@ -112,21 +132,13 @@ function setupAutoSync() {
   }
 
   const appStore = useAppStore();
-  let enabled = false;
-  let interval = 5;
-  const vType = activeVaultType?.value;
-
-  if (vType === 'gdrive') {
-    enabled = appStore.gdriveAutoSyncEnabled;
-    interval = Math.max(1, Math.min(60, appStore.gdriveAutoSyncInterval));
-  } else {
-    enabled = appStore.p2pAutoSyncEnabled;
-    interval = Math.max(1, Math.min(60, appStore.p2pAutoSyncInterval));
-  }
+  const enabled = appStore.syncAutoEnabled;
+  const interval = Math.max(1, Math.min(60, appStore.syncAutoInterval));
 
   if (enabled && document.visibilityState === 'visible') {
     autoSyncTimer = window.setInterval(() => {
-      if (!isSyncing.value && document.visibilityState === 'visible') {
+      const isIdle = syncStatus.value === 'idle' || syncStatus.value === 'success' || syncStatus.value === 'partial' || syncStatus.value === 'error';
+      if (isIdle && document.visibilityState === 'visible') {
         doSync('periodic_timer');
       }
     }, interval * 60 * 1000);
@@ -149,52 +161,87 @@ function onVisibilityChange() {
   }
 }
 
+let currentSyncAbortController: AbortController | null = null;
+
 async function doSync(triggerReason: SyncTriggerReason = 'manual') {
-  if (isSyncing.value || !activeVaultPath?.value) return;
+  const isSyncing = !['idle', 'success', 'partial', 'error', 'offline'].includes(syncStatus.value);
+  if (isSyncing || !activeVaultPath?.value) return;
 
   const appStore = useAppStore();
   const vType = activeVaultType?.value;
   const vPath = activeVaultPath.value;
 
   // Check network policy using Tauri command if available, else fallback safely
-  // (Ignoring navigator.connection which is unreliable on iOS Safari)
   let isCellular = false;
   try {
-    // If backend implements it, otherwise default to false
     isCellular = await invoke<boolean>('is_cellular_connection').catch(() => false);
   } catch (e) {
     // Fallback
   }
   
-  if (isCellular && appStore.p2pCellularPolicy === 'off') {
+  if (isCellular && appStore.syncCellularPolicy === 'off') {
     logger.info('Skipping sync: Cellular data is restricted.');
+    syncStatus.value = 'offline';
     return;
   }
 
-  isSyncing.value = true;
+  syncStatus.value = 'checking';
   syncError.value = '';
+  appStore.syncLastAttempted = new Date().toISOString();
   
   try {
     let result: SyncResult;
     const tStart = Date.now();
 
-    if (vType === 'gdrive') {
-      result = await invoke<SyncResult>('gdrive_sync_full', { vaultPath: vPath });
-      appStore.gdriveLastSyncTime = new Date().toLocaleTimeString();
-    } else {
-      result = await invoke<SyncResult>('sync_full', {
-        vaultPath: vPath,
-        isCellular,
-        triggerReason,
-      });
-      appStore.p2pLastSyncTime = new Date().toLocaleTimeString();
+    if (vType === 'none' || vType === 'local') {
+      logger.info('Skipping sync: No cloud provider configured.');
+      syncStatus.value = 'idle';
+      return;
+    }
+
+    currentSyncAbortController = new AbortController();
+    const abortSignal = currentSyncAbortController.signal;
+
+    // Timeout logic: reject if takes longer than 60 seconds
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Sync operation timed out'));
+      }, 60000);
+    });
+
+    const syncPromise = invoke<SyncResult>('sync_run', {
+      vaultPath: vPath,
+      provider: vType,
+      isCellular,
+      cellularPolicy: appStore.syncCellularPolicy,
+      triggerReason,
+    });
+
+    result = await Promise.race([syncPromise, timeoutPromise]);
+    
+    if (abortSignal.aborted) {
+       throw new Error("Cancelled by user");
     }
     
-    logger.info(`[${vType}] Sync done in ${Date.now() - tStart}ms: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted}`);
+    logger.info(`[${vType}] Sync done in ${Date.now() - tStart}ms: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted} | Assets: pushed=${result.assets_pushed || 0} pulled=${result.assets_pulled || 0} pending=${result.assets_pending || 0} rx=${result.asset_bytes_rx || 0}B tx=${result.asset_bytes_tx || 0}B`);
     
+    let isPartial = false;
+
     if (result.errors.length > 0) {
       syncError.value = `${result.errors.length} error(s)`;
       logger.warn('Sync errors:', result.errors);
+      isPartial = true;
+    }
+    
+    if ((result.assets_pending || 0) > 0) {
+      isPartial = true;
+    }
+    
+    if (isPartial) {
+       syncStatus.value = 'partial';
+    } else {
+       syncStatus.value = 'success';
+       appStore.syncLastSuccessful = new Date().toISOString();
     }
     
     if (result.pulled > 0) {
@@ -204,12 +251,18 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       });
     }
   } catch (e: any) {
+    if (e?.toString().includes('offline') || e?.toString().includes('network')) {
+       syncStatus.value = 'offline';
+    } else {
+       syncStatus.value = 'error';
+    }
     syncError.value = e?.toString() || 'Sync failed';
     logger.error(`[${vType}] Sync failed:`, e);
   } finally {
-    isSyncing.value = false;
-    if (syncQueued) {
-      syncQueued = false;
+    currentSyncAbortController = null;
+    
+    if (syncAgain) {
+      syncAgain = false;
       const queuedReason = syncQueuedReason;
       syncQueuedReason = 'queued_retry';
       if (queuedTimer !== null) window.clearTimeout(queuedTimer);
@@ -219,6 +272,14 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       }, 1000);
     }
   }
+}
+
+function cancelSync() {
+    if (currentSyncAbortController) {
+       currentSyncAbortController.abort();
+    }
+    syncStatus.value = 'error';
+    syncError.value = 'Sync cancelled by user';
 }
 
 export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
@@ -238,10 +299,9 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
 
   // Watchers for settings change
   watch(() => [
-    appStore.p2pAutoSyncEnabled,
-    appStore.p2pAutoSyncInterval,
-    appStore.gdriveAutoSyncEnabled,
-    appStore.gdriveAutoSyncInterval,
+    appStore.syncAutoEnabled,
+    appStore.syncAutoInterval,
+    appStore.activeSyncProvider,
     vaultType.value
   ], () => {
     setupAutoSync();
@@ -260,14 +320,18 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
     }
   });
 
+  const isSyncing = computed(() => ['checking', 'pulling', 'applying', 'pushing', 'waiting_for_assets'].includes(syncStatus.value));
+
   return {
     isSyncing,
+    syncStatus,
     syncError,
     syncProgress,
     syncErrors,
     syncConflicts,
     quotaWarning,
     sync: doSync,
+    cancelSync,
     setupAutoSync,
   };
 }

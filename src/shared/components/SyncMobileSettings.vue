@@ -70,7 +70,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores/useAppStore';
 
 const appStore = useAppStore();
-const policy = ref(appStore.p2pCellularPolicy);
+const policy = ref(appStore.syncCellularPolicy);
 
 const metrics = ref({
   cellular_bytes_tx: 0,
@@ -89,10 +89,10 @@ function formatBytes(bytes: number, decimals = 2) {
 }
 
 async function updatePolicy() {
-  appStore.p2pCellularPolicy = policy.value;
+  appStore.syncCellularPolicy = policy.value;
   const store = appStore.getStoreInstance();
   if (store) {
-    await store.set('p2pCellularPolicy', policy.value);
+    await store.set('syncCellularPolicy', policy.value);
     await store.save();
   }
 }
@@ -100,14 +100,11 @@ async function updatePolicy() {
 onMounted(async () => {
   try {
     // Format YYYY-MM-DD
-    const date = new Date();
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const today = `${yyyy}-${mm}-${dd}`;
-    
-    const data = await invoke<any>('p2p_sync_metrics', { date: today });
-    metrics.value = data;
+    const today = new Date().toISOString().split('T')[0];
+    const data = await invoke<any>('sync_metrics', { date: today });
+    if (data && data.metrics) {
+      metrics.value = data.metrics;
+    }
   } catch (e) {
     console.error('Failed to load sync metrics:', e);
   }

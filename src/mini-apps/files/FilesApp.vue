@@ -197,6 +197,8 @@ const handleAddTag = async () => {
   isAddingTag.value = false;
 };
 
+const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdown.value = false, 150);
+
 const handleRemoveTag = async (tag: string) => {
   if (!selectedFile.value) return;
   await store.removeTag(selectedFile.value, tag);
@@ -457,7 +459,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                 type="text" 
                 :placeholder="$t('file.search_person_placeholder')"
                 class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
-                @blur="setTimeout(() => showPeopleDropdown = false, 150)"
+                @blur="handlePeopleDropdownBlur"
               />
               <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-500 hover:border-emerald-300 cursor-pointer transition-colors">
                 + Link Person
@@ -678,7 +680,7 @@ onUnmounted(() => { if (unlisten) unlisten(); });
                       type="text" 
                       :placeholder="$t('file.search_person_placeholder')"
                       class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-lg text-xs font-medium focus:outline-none"
-                      @blur="setTimeout(() => showPeopleDropdown = false, 150)"
+                      @blur="handlePeopleDropdownBlur"
                     />
                     <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2.5 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-500 hover:border-emerald-300 cursor-pointer transition-colors">
                       + Link Person

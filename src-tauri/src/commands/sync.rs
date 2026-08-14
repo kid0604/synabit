@@ -6,8 +6,8 @@
 //! ## State model
 //!
 //! We store only the lightweight `P2pSyncConfig` (server address + server ID hex)
-//! in Tauri managed state. The actual `SynabitServerTransport` is created on
-//! demand for each sync operation because the QUIC transport is connection-
+//! in Tauri managed state. The actual `SynabitServerAdapter` is created on
+//! demand for each sync operation because the QUIC connection is connection-
 //! oriented and should not be held across idle periods.
 
 use std::sync::Mutex;
@@ -30,7 +30,12 @@ pub struct P2pSyncConfig {
 }
 
 /// Tauri managed state — `None` means disconnected.
-pub type P2pSyncState = Mutex<Option<(P2pSyncConfig, std::sync::Arc<crate::sync::adapter::server::SynabitServerAdapter>)>>;
+pub type P2pSyncState = Mutex<
+    Option<(
+        P2pSyncConfig,
+        std::sync::Arc<crate::sync::adapter::server::SynabitServerAdapter>,
+    )>,
+>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,16 +49,13 @@ fn parse_server_id(hex_str: &str) -> Result<iroh::EndpointId, String> {
         .try_into()
         .map_err(|_| "server ID must be exactly 32 bytes (64 hex chars)".to_string())?;
 
-    iroh::PublicKey::try_from(&bytes[..])
-        .map_err(|e| format!("invalid server public key: {}", e))
+    iroh::PublicKey::try_from(&bytes[..]).map_err(|e| format!("invalid server public key: {}", e))
 }
 
 /// Get (or generate + persist) the stable device ID from the KV store.
 fn ensure_device_id(app_handle: &tauri::AppHandle) -> Result<String, String> {
     let db_state = app_handle.state::<crate::db::DbState>();
-    let db = db_state
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
     match db.get_kv("device_id") {
         Ok(Some(id)) if !id.is_empty() => Ok(id),
@@ -66,8 +68,8 @@ fn ensure_device_id(app_handle: &tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-/// Build a `SynabitServerTransport` from the current config + secrets.
-async fn build_transport(
+/// Build a `SynabitServerAdapter` from the current config + secrets.
+async fn build_adapter(
     app_handle: &tauri::AppHandle,
     config: &P2pSyncConfig,
 ) -> Result<std::sync::Arc<crate::sync::adapter::server::SynabitServerAdapter>, String> {
@@ -94,21 +96,14 @@ async fn build_transport(
     Ok(std::sync::Arc::new(adapter))
 }
 
-/// Get the local hostname from environment variables (no external crate).
-fn local_device_name() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .unwrap_or_else(|_| "Desktop".to_string())
-}
-
 // ---------------------------------------------------------------------------
 // Sync commands
 // ---------------------------------------------------------------------------
 
 /// Connect to a Synabit Sync Server.
 ///
-/// Validates the server ID, ensures E2EE + device ID are available, creates a
-/// transport, authenticates, and stores the config in managed state.
+/// Validates the server ID, ensures E2EE + device ID are available, creates an
+/// adapter, authenticates, and stores the config in managed state.
 ///
 /// Returns `"connected"` on success.
 #[tauri::command]
@@ -125,7 +120,7 @@ pub async fn sync_connect(
         return Err("server_id_hex must not be empty".to_string());
     }
 
-    // Validate hex parse before creating transport
+    // Validate hex parse before creating adapter
     let _ = parse_server_id(&server_id_hex)?;
 
     let config = P2pSyncConfig {
@@ -133,11 +128,11 @@ pub async fn sync_connect(
         server_id_hex: server_id_hex.clone(),
     };
 
-    // Create transport and test connection
-    let transport = build_transport(&app_handle, &config).await?;
+    // Create adapter and test connection
+    let adapter = build_adapter(&app_handle, &config).await?;
 
     use crate::sync::adapter::SyncAdapter;
-    transport
+    adapter
         .connect()
         .await
         .map_err(|e| format!("connection failed: {}", e))?;
@@ -145,10 +140,8 @@ pub async fn sync_connect(
     // Store config in managed state
     {
         let state = app_handle.state::<P2pSyncState>();
-        let mut guard = state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *guard = Some((config, transport.clone()));
+        let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some((config, adapter.clone()));
     }
 
     // The connection is now persistent and stored in state.
@@ -199,19 +192,35 @@ pub async fn sync_full(
     let e2ee_key = e2ee_key_opt.unwrap();
 
     // 2. Read Server config from managed state
-    let server_transport_arc = {
+    let server_adapter_arc = {
         let state = app_handle.state::<P2pSyncState>();
         let guard = state.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|(_, t)| t.clone())
     };
 
+    let vault_identity =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)
+            .map_err(|e| e.to_string())?;
+
     let mut coordinator = crate::sync::coordinator::SyncCoordinator::new();
-    if let Some(transport) = server_transport_arc {
-        coordinator.set_adapter(transport.clone()).await.map_err(|e| e.to_string())?;
+    if let Some(adapter) = server_adapter_arc {
+        coordinator
+            .set_adapter(adapter.clone())
+            .await
+            .map_err(|e| e.to_string())?;
     }
-    
+
     // 3. Run sync
-    let result = match coordinator.sync(&vault_path, &device_id, &e2ee_key, &run_context, &app_handle).await {
+    let result = match coordinator
+        .sync(
+            &vault_identity,
+            &device_id,
+            &e2ee_key,
+            &run_context,
+            &app_handle,
+        )
+        .await
+    {
         Ok(result) => {
             log::info!(
                 "sync_run run_id={} trigger={} vault_tag={} scope=command state=success pulled={} pushed={} deleted={}",
@@ -242,15 +251,10 @@ pub async fn sync_full(
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let now = chrono::Utc::now();
         let _ = db.set_kv("p2p_last_sync_time", &now.to_rfc3339());
-        
+
         // Record data usage metrics
         let today = now.format("%Y-%m-%d").to_string();
-        let _ = db.record_sync_metric(
-            &today,
-            is_cellular,
-            result.tx_bytes,
-            result.rx_bytes,
-        );
+        let _ = db.record_sync_metric(&today, is_cellular, result.tx_bytes, result.rx_bytes);
     }
 
     log::info!(
@@ -271,9 +275,7 @@ pub async fn sync_full(
 
 /// Disconnect from the Sync Server by clearing the stored config.
 #[tauri::command]
-pub async fn sync_disconnect(
-    app_handle: tauri::AppHandle,
-) -> Result<(), String> {
+pub async fn sync_disconnect(app_handle: tauri::AppHandle) -> Result<(), String> {
     let transport = {
         let state = app_handle.state::<P2pSyncState>();
         let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -296,9 +298,7 @@ pub async fn sync_disconnect(
 /// - `server_addr`: the server address (if connected)
 /// - `last_sync_time`: ISO-8601 timestamp of the last successful sync (if any)
 #[tauri::command]
-pub async fn sync_status(
-    app_handle: tauri::AppHandle,
-) -> Result<serde_json::Value, String> {
+pub async fn sync_status(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let state = app_handle.state::<P2pSyncState>();
     let guard = state.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -330,7 +330,7 @@ pub async fn sync_metrics(
 ) -> Result<crate::db::metrics::SyncMetrics, String> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-    
+
     db.get_sync_metrics(&date)
         .map_err(|e| format!("failed to fetch metrics: {}", e))
 }
@@ -347,43 +347,71 @@ pub async fn sync_update_worker_config(
     #[cfg(target_os = "android")]
     {
         use jni::objects::JValue;
-        
+
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
         let mut env = vm.attach_current_thread().unwrap();
-        
+
         let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-        
+
         let prefs_name = env.new_string("SynabitPrefs").unwrap();
-        
-        let shared_prefs = env.call_method(
-            &context,
-            "getSharedPreferences",
-            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-            &[JValue::Object(&prefs_name), JValue::Int(0)]
-        ).unwrap().l().unwrap();
-        
-        let editor = env.call_method(&shared_prefs, "edit", "()Landroid/content/SharedPreferences$Editor;", &[]).unwrap().l().unwrap();
-        
+
+        let shared_prefs = env
+            .call_method(
+                &context,
+                "getSharedPreferences",
+                "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
+                &[JValue::Object(&prefs_name), JValue::Int(0)],
+            )
+            .unwrap()
+            .l()
+            .unwrap();
+
+        let editor = env
+            .call_method(
+                &shared_prefs,
+                "edit",
+                "()Landroid/content/SharedPreferences$Editor;",
+                &[],
+            )
+            .unwrap()
+            .l()
+            .unwrap();
+
         let k_vault = env.new_string("vaultPath").unwrap();
         let v_vault = env.new_string(&vault_path).unwrap();
-        env.call_method(&editor, "putString", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;", &[JValue::Object(&k_vault), JValue::Object(&v_vault)]).unwrap();
-        
+        env.call_method(
+            &editor,
+            "putString",
+            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
+            &[JValue::Object(&k_vault), JValue::Object(&v_vault)],
+        )
+        .unwrap();
+
         let k_addr = env.new_string("p2pServerAddr").unwrap();
         let v_addr = env.new_string(&server_addr).unwrap();
-        env.call_method(&editor, "putString", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;", &[JValue::Object(&k_addr), JValue::Object(&v_addr)]).unwrap();
-        
+        env.call_method(
+            &editor,
+            "putString",
+            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
+            &[JValue::Object(&k_addr), JValue::Object(&v_addr)],
+        )
+        .unwrap();
+
         let k_id = env.new_string("p2pServerIdHex").unwrap();
         let v_id = env.new_string(&server_id_hex).unwrap();
-        env.call_method(&editor, "putString", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;", &[JValue::Object(&k_id), JValue::Object(&v_id)]).unwrap();
-        
+        env.call_method(
+            &editor,
+            "putString",
+            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
+            &[JValue::Object(&k_id), JValue::Object(&v_id)],
+        )
+        .unwrap();
+
         env.call_method(&editor, "apply", "()V", &[]).unwrap();
     }
     Ok(())
 }
-
-
-
 
 // ---------------------------------------------------------------------------
 // Key rotation commands
@@ -405,11 +433,8 @@ pub async fn sync_revoke_device(
     app_handle: tauri::AppHandle,
     node_id_hex: String,
 ) -> Result<u32, String> {
-    crate::sync::key_rotation::KeyRotationManager::revoke_device_local(
-        &app_handle,
-        &node_id_hex,
-    )
-    .map_err(|e| e.to_string())
+    crate::sync::key_rotation::KeyRotationManager::revoke_device_local(&app_handle, &node_id_hex)
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ const LicenseModal = defineAsyncComponent(() => import('./LicenseModal.vue'));
 const showLicenseModal = ref(false);
 
 const {
-  showSettingsModal, settingsTab,
+  showSettingsModal, settingsTab, showE2eeOnboarding,
   themeMode, appLanguage, defaultApp,
   taskArchiveDays,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
@@ -87,75 +87,69 @@ const openLogFolder = async () => {
   }
 };
 
+type TabType = 'general' | 'notes' | 'tasks' | 'security' | 'devices' | 'about' | 'license';
+
 const props = defineProps<{
+  initialTab?: TabType;
   vaultPath: string;
   vaultType: 'local' | 'gdrive';
+  activeSyncProvider: 'none' | 'local' | 'gdrive' | 'server';
   gdriveConnected: boolean;
-  gdriveSyncing: boolean;
-  gdriveSyncError: string;
+  gdriveAuthLoading: boolean;
+  syncing: boolean;
+  syncError: string;
   lastSyncTime: string;
-  gdriveAutoSyncEnabled: boolean;
-  gdriveAutoSyncInterval: number;
-  // P2P Sync
-  p2pConnected: boolean;
-  p2pSyncing: boolean;
-  p2pSyncError: string;
-  p2pConnecting: boolean;
-  p2pLastSyncTime: string;
-  p2pAutoSyncEnabled: boolean;
-  p2pAutoSyncInterval: number;
-  p2pServerAddr: string;
-  p2pServerIdHex: string;
+  autoSyncEnabled: boolean;
+  autoSyncInterval: number;
+  syncServerAddr: string;
+  syncServerIdHex: string;
 }>();
 
 const emit = defineEmits<{
   (e: 'clear-vault'): void;
-  (e: 'sync-gdrive'): void;
+  (e: 'sync-now'): void;
   (e: 'disconnect-gdrive'): void;
   (e: 'connect-gdrive'): void;
-  (e: 'update:gdriveAutoSyncEnabled', val: boolean): void;
-  (e: 'update:gdriveAutoSyncInterval', val: number): void;
+  (e: 'update:auto-sync-enabled', val: boolean): void;
+  (e: 'update:auto-sync-interval', val: number): void;
   (e: 'show-setup-pin', mode: 'setup' | 'change'): void;
-  // P2P Sync
-  (e: 'p2p-connect', serverAddr: string, serverIdHex: string): void;
-  (e: 'p2p-disconnect'): void;
-  (e: 'p2p-sync'): void;
-  (e: 'update:p2pAutoSyncEnabled', val: boolean): void;
-  (e: 'update:p2pAutoSyncInterval', val: number): void;
+  (e: 'connect-server', serverAddr: string, serverIdHex: string): void;
+  (e: 'disconnect-server'): void;
 }>();
 
-// P2P Sync form state
+// Server Sync form state
 const p2pFormAddr = ref('');
 const p2pFormId = ref('');
 const p2pServerMode = ref<'none' | 'official' | 'custom'>('none');
+const serverConnecting = ref(false);
 
-const activeSettingsProvider = ref<'gdrive' | 'p2p' | 'none'>(
-  props.p2pConnected ? 'p2p' : props.gdriveConnected ? 'gdrive' : 'none'
-);
+const activeTab = ref<TabType>(props.initialTab || 'general');
 
-watch(() => [props.p2pConnected, props.gdriveConnected], ([p2p, gdrive]) => {
-  if (p2p) activeSettingsProvider.value = 'p2p';
-  else if (gdrive) activeSettingsProvider.value = 'gdrive';
-  else activeSettingsProvider.value = 'none';
-}, { immediate: true });
+const activeSettingsProvider = ref<'none' | 'local' | 'gdrive' | 'server'>(props.activeSyncProvider);
+
+watch(() => props.activeSyncProvider, (val) => {
+  activeSettingsProvider.value = val;
+});
 
 const showConfirmDisconnectGDrive = ref(false);
 const showConfirmDisconnectP2P = ref(false);
 const showConfirmDisconnectAll = ref(false);
 
 const handleConnectGDrive = () => {
-  if (props.p2pConnected) emit('p2p-disconnect');
+  if (props.activeSyncProvider === 'server') emit('disconnect-server');
   emit('connect-gdrive');
 };
 
 const handleConnectP2P = (addr: string, id: string) => {
+  serverConnecting.value = true;
   if (props.gdriveConnected) emit('disconnect-gdrive');
-  emit('p2p-connect', addr, id);
+  emit('connect-server', addr, id);
+  setTimeout(() => { serverConnecting.value = false; }, 2000);
 };
 
 const handleDisconnectAll = () => {
   if (props.gdriveConnected) emit('disconnect-gdrive');
-  if (props.p2pConnected) emit('p2p-disconnect');
+  if (props.activeSyncProvider === 'server') emit('disconnect-server');
   activeSettingsProvider.value = 'none';
 };
 
@@ -253,19 +247,9 @@ const checkE2eeStatus = async () => {
   }
 };
 
-const setupE2ee = async () => {
-  e2eeError.value = '';
-  e2eeLoading.value = true;
-  try {
-    await invoke<SetupResult>('setup_e2ee');
-    e2eeStatus.value.key_available = true;
-    e2eeStatus.value.needs_setup = false;
-    e2eeSuccess.value = 'Encryption is active.';
-  } catch (err) {
-    e2eeError.value = String(err);
-  } finally {
-    e2eeLoading.value = false;
-  }
+const setupE2ee = () => {
+  showSettingsModal.value = false;
+  showE2eeOnboarding.value = true;
 };
 
 const restoreFromPhrase = async () => {
@@ -392,13 +376,13 @@ const restoreFromPhrase = async () => {
                         <div class="flex-1 min-w-0">
                           <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Local Storage Only</p>
                         </div>
-                        <span v-if="!gdriveConnected && !p2pConnected" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                        <span v-if="activeSyncProvider === 'none' || activeSyncProvider === 'local'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
                           <Check class="w-3 h-3" /> Active
                         </span>
                       </button>
                       <div v-if="activeSettingsProvider === 'none'" class="px-10 pb-4 pt-1 ml-4 border-t border-[#f0f0f0] dark:border-[#333] mt-1">
                         <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-3 mt-3">Your data will only be saved locally on this device. Synabit will not sync with any cloud providers.</p>
-                        <button v-if="gdriveConnected || p2pConnected" @click="showConfirmDisconnectAll = true" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white dark:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm">
+                        <button v-if="gdriveConnected || activeSyncProvider === 'server'" @click="showConfirmDisconnectAll = true" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white dark:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm">
                           Disconnect active providers
                         </button>
                       </div>
@@ -428,9 +412,9 @@ const restoreFromPhrase = async () => {
                             <div :class="['w-2 h-2 rounded-full', gdriveConnected ? 'bg-green-500' : 'bg-red-500']"></div>
                             <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ gdriveConnected ? $t('settings.general.connected') : $t('settings.general.disconnected') }}</p>
                           </div>
-                          <button v-if="gdriveConnected" @click="emit('sync-gdrive')" :disabled="gdriveSyncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-60">
-                            <RefreshCw class="w-3.5 h-3.5" :class="gdriveSyncing ? 'animate-spin' : ''" />
-                            {{ gdriveSyncing ? $t('settings.general.syncing') : $t('settings.general.sync_now') }}
+                          <button v-if="gdriveConnected" @click="emit('sync-now')" :disabled="syncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-60">
+                            <RefreshCw class="w-3.5 h-3.5" :class="syncing ? 'animate-spin' : ''" />
+                            {{ syncing ? $t('settings.general.syncing') : $t('settings.general.sync_now') }}
                           </button>
                           <button v-else @click="handleConnectGDrive" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white">
                             <Cloud class="w-3.5 h-3.5" />
@@ -442,20 +426,20 @@ const restoreFromPhrase = async () => {
                           <div v-if="lastSyncTime" class="flex items-center gap-2 text-[11px] text-gray-400">
                             <span>{{ $t('settings.general.last_synced') }}: {{ lastSyncTime }}</span>
                           </div>
-                          <div v-if="gdriveSyncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
-                            ⚠️ {{ gdriveSyncError }}
+                          <div v-if="syncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
+                            ⚠️ {{ syncError }}
                           </div>
                           <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4">
                             <div class="flex items-center justify-between mb-3">
                               <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.periodic_auto_sync') }}</p>
                               <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" :checked="gdriveAutoSyncEnabled" @change="emit('update:gdriveAutoSyncEnabled', ($event.target as HTMLInputElement).checked)" class="sr-only peer">
+                                <input type="checkbox" :checked="autoSyncEnabled" @change="emit('update:auto-sync-enabled', ($event.target as HTMLInputElement).checked)" class="sr-only peer">
                                 <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-500"></div>
                               </label>
                             </div>
-                            <div v-if="gdriveAutoSyncEnabled" class="flex items-center justify-between">
+                            <div v-if="autoSyncEnabled" class="flex items-center justify-between">
                               <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ $t('settings.general.sync_interval') }}</p>
-                              <input type="number" :value="gdriveAutoSyncInterval" @input="emit('update:gdriveAutoSyncInterval', Number(($event.target as HTMLInputElement).value))" min="1" max="60" class="w-16 px-2 py-1 bg-white dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a] rounded text-[12px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:border-blue-500" />
+                              <input type="number" :value="autoSyncInterval" @input="emit('update:auto-sync-interval', Number(($event.target as HTMLInputElement).value))" min="1" max="60" class="w-16 px-2 py-1 bg-white dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a] rounded text-[12px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:border-blue-500" />
                             </div>
                           </div>
                           <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4">
@@ -468,10 +452,10 @@ const restoreFromPhrase = async () => {
                     </div>
 
                     <!-- SYNABIT SERVER (P2P) -->
-                    <div class="rounded-lg overflow-hidden border border-transparent transition-colors" :class="activeSettingsProvider === 'p2p' ? 'border-emerald-400 dark:border-emerald-600 bg-white dark:bg-[#2a2a2a] shadow-sm' : ''">
-                      <button @click="activeSettingsProvider = 'p2p'" class="w-full px-3 py-2.5 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                        <div class="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors" :class="activeSettingsProvider === 'p2p' ? 'border-emerald-500' : 'border-gray-300 dark:border-gray-600'">
-                          <div v-if="activeSettingsProvider === 'p2p'" class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                    <div class="rounded-lg overflow-hidden border border-transparent transition-colors" :class="activeSettingsProvider === 'server' ? 'border-emerald-400 dark:border-emerald-600 bg-white dark:bg-[#2a2a2a] shadow-sm' : ''">
+                      <button @click="activeSettingsProvider = 'server'" class="w-full px-3 py-2.5 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                        <div class="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors" :class="activeSettingsProvider === 'server' ? 'border-emerald-500' : 'border-gray-300 dark:border-gray-600'">
+                          <div v-if="activeSettingsProvider === 'server'" class="w-2 h-2 rounded-full bg-emerald-500"></div>
                         </div>
                         <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-emerald-100 dark:bg-emerald-900/20">
                           <Server class="w-4 h-4 text-emerald-500" />
@@ -479,49 +463,49 @@ const restoreFromPhrase = async () => {
                         <div class="flex-1 min-w-0">
                           <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.p2p_sync', 'Sync Server') }}</p>
                         </div>
-                        <span v-if="p2pConnected" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400">
+                        <span v-if="activeSyncProvider === 'server'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400">
                           <Check class="w-3 h-3" /> Connected
                         </span>
                       </button>
 
                       <!-- P2P Details Accordion -->
-                      <div v-if="activeSettingsProvider === 'p2p'" class="px-3 md:px-10 pb-4 pt-1 ml-0 md:ml-4 border-t border-[#f0f0f0] dark:border-[#333] mt-1 space-y-4">
+                      <div v-if="activeSettingsProvider === 'server'" class="px-3 md:px-10 pb-4 pt-1 ml-0 md:ml-4 border-t border-[#f0f0f0] dark:border-[#333] mt-1 space-y-4">
                         <!-- Connected state -->
-                        <template v-if="p2pConnected">
+                        <template v-if="activeSyncProvider === 'server'">
                           <div class="flex items-center justify-between mt-3">
                             <div class="flex items-center gap-2">
                               <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                               <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.connected', 'Connected') }}</p>
                             </div>
-                            <button @click="emit('p2p-sync')" :disabled="p2pSyncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-60">
-                              <RefreshCw class="w-3.5 h-3.5" :class="p2pSyncing ? 'animate-spin' : ''" />
-                              {{ p2pSyncing ? $t('settings.general.syncing', 'Syncing...') : $t('settings.general.sync_now', 'Sync Now') }}
+                            <button @click="emit('sync-now')" :disabled="syncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-60">
+                              <RefreshCw class="w-3.5 h-3.5" :class="syncing ? 'animate-spin' : ''" />
+                              {{ syncing ? $t('settings.general.syncing', 'Syncing...') : $t('settings.general.sync_now', 'Sync Now') }}
                             </button>
                           </div>
                           <div class="flex items-center gap-2 text-[11px] text-gray-400">
                             <Server class="w-3 h-3" />
-                            <span class="font-mono">{{ p2pServerAddr }}</span>
-                            <span v-if="p2pServerAddr === OFFICIAL_SERVER.addr" class="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">Official</span>
+                            <span class="font-mono">{{ syncServerAddr }}</span>
+                            <span v-if="syncServerAddr === OFFICIAL_SERVER.addr" class="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">Official</span>
                             <span v-else class="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Self-hosted</span>
                           </div>
-                          <div v-if="p2pLastSyncTime" class="flex items-center gap-2 text-[11px] text-gray-400">
-                            <span>{{ $t('settings.general.last_synced', 'Last synced') }}: {{ p2pLastSyncTime }}</span>
+                          <div v-if="lastSyncTime" class="flex items-center gap-2 text-[11px] text-gray-400">
+                            <span>{{ $t('settings.general.last_synced', 'Last synced') }}: {{ lastSyncTime }}</span>
                           </div>
-                          <div v-if="p2pSyncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
-                            ⚠️ {{ p2pSyncError }}
+                          <div v-if="syncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
+                            ⚠️ {{ syncError }}
                           </div>
                           <!-- Auto-sync -->
                           <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4">
                             <div class="flex items-center justify-between mb-3">
                               <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.periodic_auto_sync', 'Periodic auto-sync') }}</p>
                               <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" :checked="p2pAutoSyncEnabled" @change="emit('update:p2pAutoSyncEnabled', ($event.target as HTMLInputElement).checked)" class="sr-only peer">
+                                <input type="checkbox" :checked="autoSyncEnabled" @change="emit('update:auto-sync-enabled', ($event.target as HTMLInputElement).checked)" class="sr-only peer">
                                 <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
                               </label>
                             </div>
-                            <div v-if="p2pAutoSyncEnabled" class="flex items-center justify-between">
+                            <div v-if="autoSyncEnabled" class="flex items-center justify-between">
                               <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ $t('settings.general.sync_interval', 'Interval (minutes)') }}</p>
-                              <input type="number" :value="p2pAutoSyncInterval" @input="emit('update:p2pAutoSyncInterval', Number(($event.target as HTMLInputElement).value))" min="1" max="60" class="w-16 px-2 py-1 bg-white dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a] rounded text-[12px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:border-emerald-500" />
+                              <input type="number" :value="autoSyncInterval" @input="emit('update:auto-sync-interval', Number(($event.target as HTMLInputElement).value))" min="1" max="60" class="w-16 px-2 py-1 bg-white dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a] rounded text-[12px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:border-emerald-500" />
                             </div>
                           </div>
                           <!-- Disconnect -->
@@ -542,9 +526,10 @@ const restoreFromPhrase = async () => {
                           <!-- Option cards -->
                           <div v-if="p2pServerMode === 'none'" class="space-y-2 mt-3">
                             <!-- Synabit Cloud (Official) -->
-                            <button @click="OFFICIAL_SERVER.available ? handleConnectP2P(OFFICIAL_SERVER.addr, OFFICIAL_SERVER.id) : undefined" :disabled="!OFFICIAL_SERVER.available || p2pConnecting" class="w-full p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 group" :class="OFFICIAL_SERVER.available ? 'border-[#e6e6e6] dark:border-[#2c2c2c] hover:border-emerald-400 dark:hover:border-emerald-600 cursor-pointer' : 'border-[#e6e6e6] dark:border-[#2c2c2c] opacity-60 cursor-not-allowed'">
+                            <button @click="OFFICIAL_SERVER.available ? handleConnectP2P(OFFICIAL_SERVER.addr, OFFICIAL_SERVER.id) : undefined" :disabled="!OFFICIAL_SERVER.available || serverConnecting" class="w-full p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 group" :class="OFFICIAL_SERVER.available ? 'border-[#e6e6e6] dark:border-[#2c2c2c] hover:border-emerald-400 dark:hover:border-emerald-600 cursor-pointer' : 'border-[#e6e6e6] dark:border-[#2c2c2c] opacity-60 cursor-not-allowed'">
                               <div class="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0 mt-0.5">
-                                <Cloud class="w-4.5 h-4.5 text-emerald-500" />
+                                <RefreshCw v-if="serverConnecting" class="w-4.5 h-4.5 text-emerald-500 animate-spin" />
+                                <Cloud v-else class="w-4.5 h-4.5 text-emerald-500" />
                               </div>
                               <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2">
@@ -579,17 +564,17 @@ const restoreFromPhrase = async () => {
                               <input v-model="p2pFormId" type="text" :placeholder="$t('settings.general.server_id_hint', '64-character hex string')" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono" />
                             </div>
                             <div class="flex gap-2">
-                              <button @click="handleConnectP2P(p2pFormAddr, p2pFormId)" :disabled="p2pConnecting || !p2pFormAddr || !p2pFormId" class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-60">
-                                <RefreshCw v-if="p2pConnecting" class="w-3.5 h-3.5 animate-spin" />
+                              <button @click="handleConnectP2P(p2pFormAddr, p2pFormId)" :disabled="serverConnecting || !p2pFormAddr || !p2pFormId" class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-60">
+                                <RefreshCw v-if="serverConnecting" class="w-3.5 h-3.5 animate-spin" />
                                 <Server v-else class="w-3.5 h-3.5" />
-                                {{ p2pConnecting ? $t('settings.general.connecting', 'Connecting...') : $t('settings.general.connect', 'Connect') }}
+                                {{ serverConnecting ? $t('settings.general.connecting', 'Connecting...') : $t('settings.general.connect', 'Connect') }}
                               </button>
                               <button @click="p2pServerMode = 'none'" class="px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] rounded-lg text-[13px] font-medium transition-all">
                                 {{ $t('settings.security.cancel', 'Cancel') }}
                               </button>
                             </div>
-                            <div v-if="p2pSyncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
-                              ⚠️ {{ p2pSyncError }}
+                            <div v-if="syncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
+                              ⚠️ {{ syncError }}
                             </div>
                           </div>
                         </template>
@@ -887,30 +872,11 @@ const restoreFromPhrase = async () => {
 
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">{{ $t('settings.security.e2ee_desc') }}</p>
 
-                    <!-- First time setup -->
-                    <div v-if="e2eeStatus.needs_setup && !showRestoreForm" class="space-y-4">
-                      <button @click="setupE2ee" :disabled="e2eeLoading" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2 disabled:opacity-60">
-                        <Lock class="w-4 h-4" /> {{ e2eeLoading ? $t('settings.security.setting_up') : $t('settings.security.setup_encryption') }}
+                    <!-- E2EE Setup (Generate or Restore) -->
+                    <div v-if="e2eeStatus.needs_setup" class="space-y-4">
+                      <button @click="setupE2ee" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm w-full flex items-center justify-center gap-2">
+                        <Lock class="w-4 h-4" /> {{ $t('settings.security.setup_encryption') }}
                       </button>
-                      <button @click="showRestoreForm = true" class="px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] rounded-lg text-[13px] font-medium transition-all w-full">
-                        {{ $t('settings.security.existing_vault') }}
-                      </button>
-                    </div>
-
-                    <!-- Restore from phrase -->
-                    <div v-else-if="showRestoreForm && !e2eeStatus.key_available" class="space-y-4">
-                      <div class="space-y-1">
-                        <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.security.recovery_phrase') }}</label>
-                        <textarea v-model="restorePhrase" rows="3" placeholder="word1 word2 word3 ... word12" class="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#2a2a2a] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none font-mono"></textarea>
-                      </div>
-                      <div class="flex gap-2">
-                        <button @click="restoreFromPhrase" :disabled="e2eeLoading" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[13px] font-medium transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-60">
-                          {{ e2eeLoading ? $t('settings.security.restoring') : $t('settings.security.restore') }}
-                        </button>
-                        <button @click="showRestoreForm = false; restorePhrase = ''" class="px-4 py-2 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] rounded-lg text-[13px] font-medium transition-all">
-                          {{ $t('settings.security.cancel') }}
-                        </button>
-                      </div>
                     </div>
 
                     <!-- Key available: just show status -->
@@ -956,6 +922,10 @@ const restoreFromPhrase = async () => {
                     <h3 class="text-[18px] font-bold text-[#1c1c1e] dark:text-[#f4f4f5]">Synabit</h3>
                     <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">{{ $t('settings.about.version') }} {{ appVersion || '...' }}</p>
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mt-4 max-w-xs mx-auto leading-relaxed">{{ $t('settings.about.desc') }}</p>
+                    
+                    <a href="https://github.com/synabit/synabit/blob/main/legal/PRIVACY_POLICY.md" target="_blank" class="text-[12px] text-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline mt-4 block font-medium">
+                      Privacy Policy
+                    </a>
                     
                     <div v-if="isDesktop" class="mt-8 flex flex-col items-center gap-3">
                       <!-- Check for Updates -->
@@ -1027,15 +997,17 @@ const restoreFromPhrase = async () => {
       @confirm="showConfirmDisconnectGDrive = false; emit('disconnect-gdrive')"
       @cancel="showConfirmDisconnectGDrive = false"
     />
-    <ConfirmModal
-      :show="showConfirmDisconnectP2P"
-      title="Disconnect P2P Sync?"
-      message="Other devices will no longer sync with this device until reconnected."
-      confirm-text="Disconnect"
-      @confirm="showConfirmDisconnectP2P = false; emit('p2p-disconnect')"
-      @cancel="showConfirmDisconnectP2P = false"
-    />
-    <ConfirmModal v-if="showConfirmDisconnectAll" :title="'Disconnect Providers'" :message="'Are you sure you want to disconnect all cloud sync providers? Your data will only remain local.'" confirmText="Disconnect All" @confirm="() => { handleDisconnectAll(); showConfirmDisconnectAll = false; }" @cancel="showConfirmDisconnectAll = false" />
+      <ConfirmModal
+        :show="showConfirmDisconnectP2P"
+        title="Disconnect Sync Server?"
+        message="Are you sure you want to disconnect? Your local data will be safe."
+        confirm-text="Disconnect"
+        cancel-text="Cancel"
+        type="danger"
+        @confirm="showConfirmDisconnectP2P = false; emit('disconnect-server')"
+        @cancel="showConfirmDisconnectP2P = false"
+      />
+    <ConfirmModal v-if="showConfirmDisconnectAll" :show="true" :title="'Disconnect Providers'" :message="'Are you sure you want to disconnect all cloud sync providers? Your data will only remain local.'" confirmText="Disconnect All" @confirm="() => { handleDisconnectAll(); showConfirmDisconnectAll = false; }" @cancel="showConfirmDisconnectAll = false" />
 
     <LicenseModal :is-open="showLicenseModal" @close="showLicenseModal = false" />
   </Teleport>

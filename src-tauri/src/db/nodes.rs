@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 impl DbBridge {
     pub fn upsert_node(&self, node: &crate::models::node::NodeMetadata) -> AppResult<()> {
@@ -86,9 +86,7 @@ impl DbBridge {
         Ok(results)
     }
 
-    pub fn get_active_tasks_and_events(
-        &self,
-    ) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+    pub fn get_active_tasks_and_events(&self) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp 
              FROM nodes 
@@ -117,7 +115,9 @@ impl DbBridge {
                     blocks: None,
                 })
             })
-            .map_err(|e| AppError::General(format!("DB Map Error (get_active_tasks_and_events): {}", e)))?;
+            .map_err(|e| {
+                AppError::General(format!("DB Map Error (get_active_tasks_and_events): {}", e))
+            })?;
 
         let mut results = Vec::new();
         for node in rows.flatten() {
@@ -209,18 +209,23 @@ impl DbBridge {
     }
 
     pub fn get_all_tags_with_counts(&self) -> AppResult<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT json_each.value, COUNT(*) 
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT json_each.value, COUNT(*) 
              FROM nodes, json_each(nodes.properties, '$.tags') 
              GROUP BY json_each.value 
-             ORDER BY COUNT(*) DESC, json_each.value ASC"
-        ).map_err(|e| AppError::General(format!("DB Query Error (get_all_tags): {}", e)))?;
+             ORDER BY COUNT(*) DESC, json_each.value ASC",
+            )
+            .map_err(|e| AppError::General(format!("DB Query Error (get_all_tags): {}", e)))?;
 
-        let rows = stmt.query_map([], |row| {
-            let tag: String = row.get(0)?;
-            let count: i64 = row.get(1)?;
-            Ok((tag, count))
-        }).map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let tag: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((tag, count))
+            })
+            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?;
 
         let mut results = Vec::new();
         for row in rows.flatten() {
@@ -229,7 +234,10 @@ impl DbBridge {
         Ok(results)
     }
 
-    pub fn get_nodes_by_tag(&self, target_tag: &str) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
+    pub fn get_nodes_by_tag(
+        &self,
+        target_tag: &str,
+    ) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp 
              FROM nodes 

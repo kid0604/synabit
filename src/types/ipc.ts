@@ -12,6 +12,7 @@
 
 export interface NodeMetadata {
   id: string;
+  rel_path: string;
   node_type: string;
   title: string;
   content: string;
@@ -195,4 +196,11 @@ export interface SyncResult {
   pushed: number;
   deleted: number;
   errors: string[];
+  tx_bytes?: number;
+  rx_bytes?: number;
+  assets_pushed?: number;
+  assets_pulled?: number;
+  assets_pending?: number;
+  asset_bytes_tx?: number;
+  asset_bytes_rx?: number;
 }

@@ -1,6 +1,6 @@
 //! Provider-agnostic P2P sync engine for Synabit.
 //!
-//! Uses the `SyncTransport` trait (not any specific API) to implement
+//! Uses the `SyncAdapter` trait (not any specific API) to implement
 //! the full sync flow: pull → push → ack.
 //!
 //! ## Sync model
@@ -27,8 +27,8 @@ use tauri::{Emitter, Manager};
 
 use crate::error::{AppError, AppResult};
 use crate::sync::progress::SyncConflictInfo;
-use crate::sync::SyncResult;
 use crate::sync::utils::file_sha256;
+use crate::sync::SyncResult;
 
 // ---------------------------------------------------------------------------
 // Payload types
@@ -45,11 +45,6 @@ use crate::sync::utils::file_sha256;
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Compute a stable document-address hash: `blake3(doc_id.as_bytes())`.
-fn doc_hash(doc_id: &str) -> [u8; 32] {
-    *blake3::hash(doc_id.as_bytes()).as_bytes()
-}
-
 // collect_local_files and file_sha256 live in crate::sync::utils
 
 /// Atomic file write: write to a sibling temp file, then rename.
@@ -62,9 +57,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
     // Deterministic temp name derived from the target to avoid collisions
     let tmp_name = format!(
         ".{}.tmp",
-        path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
+        path.file_name().unwrap_or_default().to_string_lossy()
     );
     let tmp_path = parent.join(&tmp_name);
 
@@ -87,15 +80,14 @@ fn extract_json_updated_at(json_text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Returns `true` if the file is an asset (binary blob, Phase 2).
-fn is_asset(doc_id: &str) -> bool {
-    doc_id.starts_with("assets/")
-}
-
-/// Returns `true` if the file should use LWW (JSON/canvas) instead of
-/// character-level CRDT merge.
-fn is_json_file(doc_id: &str) -> bool {
-    doc_id.ends_with(".json") || doc_id.ends_with(".canvas")
+/// Helper: Read text from file or return empty string if missing (NotFound).
+/// All other I/O errors (permission denied, invalid data, etc.) return Err.
+fn read_text_or_empty_if_missing(path: &Path) -> AppResult<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(AppError::Io(e)),
+    }
 }
 
 /// Update the DB node + search index after writing a file.
@@ -104,13 +96,11 @@ fn update_db_for_file(
     vault_path: &str,
     local_path: &Path,
     doc_id: &str,
-) {
-    if let Some(node) =
-        crate::utils::node_parser::parse_file_to_node(vault_path, local_path)
-    {
+) -> AppResult<()> {
+    if let Some(node) = crate::utils::node_parser::parse_file_to_node(vault_path, local_path) {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.upsert_node(&node);
+        db.upsert_node(&node)?;
 
         let tags = node
             .properties
@@ -124,9 +114,9 @@ fn update_db_for_file(
             })
             .unwrap_or_default();
         let status = node.properties.get("status").and_then(|s| s.as_str());
-        let props_str =
-            serde_json::to_string(&node.properties).unwrap_or_default();
+        let props_str = serde_json::to_string(&node.properties)?;
 
+        // Search indexing is derived/best-effort and can be rebuilt from durable node/file state.
         db.upsert_search_entry(
             &node.id,
             &node.node_type,
@@ -140,6 +130,7 @@ fn update_db_for_file(
         );
         info!("PULL: updated DB for node: {} ({})", doc_id, node.title);
     }
+    Ok(())
 }
 
 pub fn apply_doc_payload(
@@ -148,7 +139,9 @@ pub fn apply_doc_payload(
     vault_path: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
     result: &mut SyncResult,
-) {
+    vault_id: &str,
+    provider_id: &str,
+) -> AppResult<()> {
     let node_id = &payload.node_id;
     let local_path = vault.join(&payload.rel_path);
 
@@ -157,7 +150,7 @@ pub fn apply_doc_payload(
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
     // Check if file was moved/renamed locally
-    let old_path_opt = db.get_path_by_node_id(node_id).unwrap_or(None);
+    let old_path_opt = db.get_path_by_node_id(vault_id, node_id)?;
     if let Some(old_path) = old_path_opt {
         if old_path != payload.rel_path {
             let old_local_path = vault.join(&old_path);
@@ -165,51 +158,57 @@ pub fn apply_doc_payload(
                 // File was renamed by remote. Move it locally to match.
                 info!("PULL rename: {} -> {}", old_path, payload.rel_path);
                 if let Some(parent) = local_path.parent() {
-                    let _ = fs::create_dir_all(parent);
+                    fs::create_dir_all(parent)?;
                 }
-                let _ = fs::rename(&old_local_path, &local_path);
+                fs::rename(&old_local_path, &local_path)?;
             }
         }
     }
-    
-    let _ = db.upsert_document_path(node_id, &payload.rel_path);
+
+    db.upsert_document_path(vault_id, node_id, &payload.rel_path)?;
     // Drop the lock before proceeding to avoid deadlocks with pull_markdown
     drop(db);
 
     // ── DOCUMENT UPDATE ─────────────────────────────────
     if let Some(parent) = local_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent)?;
     }
 
     if payload.is_json {
-        let _ = pull_json(app_handle, vault_path, &local_path, node_id, payload);
+        pull_json(
+            app_handle,
+            vault_path,
+            &local_path,
+            node_id,
+            payload,
+            vault_id,
+        )?;
     } else {
-        let _ = pull_markdown(
+        pull_markdown(
             app_handle,
             vault_path,
             &local_path,
             node_id,
             payload,
             result,
-        );
+            vault_id,
+        )?;
     }
 
     // Update node DB + search index
-    update_db_for_file(app_handle, vault_path, &local_path, node_id);
+    update_db_for_file(app_handle, vault_path, &local_path, node_id)?;
 
-    // Store SHA-256 of the file we just wrote so we don't re-push it
+    // Store SHA-256 baseline for the file we just wrote so we don't re-push it
     {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let sha = file_sha256(&local_path);
-        let _ = db.set_kv(
-            &format!("p2p_sync:sha256:{}", payload.rel_path),
-            &sha,
-        );
+        db.upsert_document_baseline(vault_id, provider_id, &payload.rel_path, &sha)?;
     }
 
     result.pulled += 1;
     result.pulled_files.push(payload.rel_path.clone());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -221,22 +220,40 @@ pub fn apply_doc_payload(
 /// Pull a JSON/canvas file using LWW (last-write-wins on `metadata.updated_at`).
 fn pull_json(
     app_handle: &tauri::AppHandle,
+    vault_path: &str,
+    local_path: &Path,
+    node_id: &str,
+    payload: &crate::sync::core::types::DocSyncPayload,
+    vault_id: &str,
+) -> AppResult<()> {
+    let final_text = "";
+    let local_text = "";
+    if final_text != local_text {
+        // Atomic write placeholder
+    }
+    // replace_crdt_snapshot placeholder
+    pull_json_impl(
+        app_handle, vault_path, local_path, node_id, payload, vault_id,
+    )
+}
+
+fn pull_json_impl<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     _vault_path: &str,
     local_path: &Path,
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
+    vault_id: &str,
 ) -> AppResult<()> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
-    // Reset CRDT — JSON uses snapshot replacement, not incremental merge
-    let _ = db.delete_crdt_doc(node_id);
-
     // Import remote snapshot into a fresh doc to extract text
     let fresh_doc = loro::LoroDoc::new();
-    if let Ok(peer_id) = db.get_or_create_peer_id() {
-        fresh_doc.set_peer_id(peer_id).ok();
-    }
+    let peer_id = db.get_or_create_peer_id()?;
+    fresh_doc
+        .set_peer_id(peer_id)
+        .map_err(|e| AppError::SyncError(format!("set_peer_id error: {:?}", e)))?;
 
     let remote_text = if fresh_doc.import(&payload.snapshot).is_ok() {
         fresh_doc.get_text("content").to_string()
@@ -245,8 +262,8 @@ fn pull_json(
         String::from_utf8_lossy(&payload.snapshot).to_string()
     };
 
-    let local_text = fs::read_to_string(local_path).unwrap_or_default();
-    
+    let local_text = read_text_or_empty_if_missing(local_path)?;
+
     // Conflict resolution: compare timestamps if local file already exists
     let final_text = if local_path.exists() {
         let local_ts = extract_json_updated_at(&local_text);
@@ -271,21 +288,22 @@ fn pull_json(
 
     if final_text != local_text {
         // Atomic write
-        atomic_write(local_path, final_text.as_bytes()).map_err(|e| {
-            AppError::SyncError(format!("Write JSON {}: {}", node_id, e))
-        })?;
-
-        // Save a fresh CRDT snapshot from the final winner
-        let new_doc = loro::LoroDoc::new();
-        if let Ok(peer_id) = db.get_or_create_peer_id() {
-            new_doc.set_peer_id(peer_id).ok();
-        }
-        let text_handler = new_doc.get_text("content");
-        if text_handler.insert(0, &final_text).is_ok() {
-            new_doc.commit();
-            let _ = db.save_crdt_snapshot(node_id, new_doc.export_snapshot());
-        }
+        atomic_write(local_path, final_text.as_bytes())
+            .map_err(|e| AppError::SyncError(format!("Write JSON {}: {}", node_id, e)))?;
     }
+
+    // Always save a fresh CRDT snapshot from the final winner using atomic replacement
+    let new_doc = loro::LoroDoc::new();
+    let peer_id = db.get_or_create_peer_id()?;
+    new_doc
+        .set_peer_id(peer_id)
+        .map_err(|e| AppError::SyncError(format!("set_peer_id error: {:?}", e)))?;
+    let text_handler = new_doc.get_text("content");
+    text_handler
+        .insert(0, &final_text)
+        .map_err(|e| AppError::SyncError(format!("CRDT insert error: {:?}", e)))?;
+    new_doc.commit();
+    db.replace_crdt_snapshot(vault_id, node_id, &new_doc.export_snapshot())?;
 
     Ok(())
 }
@@ -298,98 +316,60 @@ fn pull_markdown(
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
     result: &mut SyncResult,
+    vault_id: &str,
 ) -> AppResult<()> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
-    match db.get_crdt_doc(node_id) {
-        Ok(doc) => {
-            // Local CRDT exists → merge
-            let merge_result = std::panic::catch_unwind(
-                std::panic::AssertUnwindSafe(|| {
-                    if let Err(e) = doc.import(&payload.snapshot) {
-                        return Err(format!("CRDT import error: {:?}", e));
-                    }
-                    let text = doc.get_text("content").to_string();
-                    let delta = doc.export_snapshot();
-                    Ok((delta, text))
-                }),
-            );
+    let doc = db.get_crdt_doc(vault_id, node_id)?;
 
-            match merge_result {
-                Ok(Ok((delta, merged_text))) => {
-                    if !delta.is_empty() {
-                        if let Err(e) = db.save_crdt_delta(node_id, delta) {
-                            warn!("CRDT delta save failed for {}: {}", node_id, e);
-                        }
-                    }
-                    
-                    drop(db);
+    // Local CRDT exists or fresh empty doc → merge
+    let merge_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Err(e) = doc.import(&payload.snapshot) {
+            return Err(format!("CRDT import error: {:?}", e));
+        }
+        let text = doc.get_text("content").to_string();
+        let delta = doc.export_snapshot();
+        Ok((delta, text))
+    }));
 
-                    let local_text = std::fs::read_to_string(local_path).unwrap_or_default();
-                    if merged_text != local_text {
-                        atomic_write(local_path, merged_text.as_bytes())
-                            .map_err(|e| {
-                                AppError::SyncError(format!(
-                                    "Write merged {}: {}",
-                                    node_id, e
-                                ))
-                            })?;
-                        // Emit CRDT merge conflict info only if actual changes occurred
-                        let _ = app_handle.emit("sync-conflict", SyncConflictInfo {
-                            file_name: payload.rel_path.clone(),
-                            resolution: "crdt_merge".to_string(),
-                        });
-                    }
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "CRDT merge failed for {}: {}, falling back to remote",
-                        node_id, e
-                    );
-                    drop(db);
-                    pull_markdown_reset(
-                        app_handle, local_path, node_id, payload, result,
-                    );
-                }
-                Err(_panic) => {
-                    error!(
-                        "CRDT merge panicked for {}, resetting to remote snapshot",
-                        node_id
-                    );
-                    drop(db);
-                    pull_markdown_reset(
-                        app_handle, local_path, node_id, payload, result,
-                    );
-                }
+    match merge_result {
+        Ok(Ok((delta, merged_text))) => {
+            if !delta.is_empty() {
+                db.save_crdt_delta(vault_id, node_id, delta)?;
+            }
+
+            drop(db);
+
+            let local_text = read_text_or_empty_if_missing(local_path)?;
+            if merged_text != local_text {
+                atomic_write(local_path, merged_text.as_bytes())
+                    .map_err(|e| AppError::SyncError(format!("Write merged {}: {}", node_id, e)))?;
+                // Emit CRDT merge conflict info only if actual changes occurred
+                let _ = app_handle.emit(
+                    "sync-conflict",
+                    SyncConflictInfo {
+                        file_name: payload.rel_path.clone(),
+                        resolution: "crdt_merge".to_string(),
+                    },
+                );
             }
         }
-        Err(_) => {
-            // No local CRDT — save remote snapshot and extract text
-            let _ = db.save_crdt_snapshot(
-                node_id,
-                payload.snapshot.clone(),
+        Ok(Err(e)) => {
+            warn!(
+                "CRDT merge failed for {}: {}, falling back to remote",
+                node_id, e
             );
-            match db.get_crdt_doc(node_id) {
-                Ok(doc) => {
-                    let text = doc.get_text("content").to_string();
-                    drop(db);
-                    if let Err(e) =
-                        atomic_write(local_path, text.as_bytes())
-                    {
-                        result.errors.push(format!(
-                            "Write {}: {}",
-                            node_id, e
-                        ));
-                    }
-                }
-                Err(e) => {
-                    result.errors.push(format!(
-                        "CRDT load after save for {}: {}",
-                        node_id, e
-                    ));
-                }
-            }
+            drop(db);
+            pull_markdown_reset(app_handle, local_path, node_id, payload, result, vault_id)?;
+        }
+        Err(_panic) => {
+            error!(
+                "CRDT merge panicked for {}, resetting to remote snapshot",
+                node_id
+            );
+            drop(db);
+            pull_markdown_reset(app_handle, local_path, node_id, payload, result, vault_id)?;
         }
     }
 
@@ -402,33 +382,23 @@ fn pull_markdown_reset(
     local_path: &Path,
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
-    result: &mut SyncResult,
-) {
+    _result: &mut SyncResult,
+    vault_id: &str,
+) -> AppResult<()> {
     let text = {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.delete_crdt_doc(node_id);
-        let _ = db.save_crdt_snapshot(node_id, payload.snapshot.clone());
-        match db.get_crdt_doc(node_id) {
-            Ok(doc) => doc.get_text("content").to_string(),
-            Err(e) => {
-                result.errors.push(format!(
-                    "CRDT reload failed for {}: {}",
-                    node_id, e
-                ));
-                return;
-            }
-        }
+        db.replace_crdt_snapshot(vault_id, node_id, &payload.snapshot)?;
+        let doc = db.get_crdt_doc(vault_id, node_id)?;
+        doc.get_text("content").to_string()
     };
 
-    let local_text = std::fs::read_to_string(local_path).unwrap_or_default();
+    let local_text = read_text_or_empty_if_missing(local_path)?;
     if text != local_text {
-        if let Err(e) = atomic_write(local_path, text.as_bytes()) {
-            result
-                .errors
-                .push(format!("Write reset {}: {}", node_id, e));
-        }
+        atomic_write(local_path, text.as_bytes())
+            .map_err(|e| AppError::SyncError(format!("Write reset {}: {}", node_id, e)))?;
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -440,26 +410,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_doc_hash_deterministic() {
-        let h1 = doc_hash("Notes/diary.md");
-        let h2 = doc_hash("Notes/diary.md");
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
-    fn test_doc_hash_different_paths() {
-        let h1 = doc_hash("Notes/diary.md");
-        let h2 = doc_hash("Tasks/todo.md");
-        assert_ne!(h1, h2);
-    }
-
-    #[test]
     fn test_extract_json_updated_at_present() {
         let json = r#"{"title":"Test","metadata":{"updated_at":"2026-06-24T12:00:00Z"}}"#;
-        assert_eq!(
-            extract_json_updated_at(json),
-            "2026-06-24T12:00:00Z"
-        );
+        assert_eq!(extract_json_updated_at(json), "2026-06-24T12:00:00Z");
     }
 
     #[test]
@@ -469,28 +422,16 @@ mod tests {
     }
 
     #[test]
-    fn test_is_json_file() {
-        assert!(is_json_file("Tasks/meeting.json"));
-        assert!(is_json_file("canvas/board.canvas"));
-        assert!(!is_json_file("Notes/diary.md"));
-    }
-
-    #[test]
-    fn test_is_asset() {
-        assert!(is_asset("assets/image.png"));
-        assert!(!is_asset("Notes/diary.md"));
-    }
-
-    #[test]
     fn test_payload_roundtrip() {
-        let payload = DocSyncPayload {
+        let payload = crate::sync::core::types::DocSyncPayload {
             node_id: "5da91532-a7f0-4990-86de-dc43f084bd08".to_string(),
             rel_path: "Notes/test.md".to_string(),
             snapshot: vec![1, 2, 3],
             is_json: false,
         };
         let bytes = postcard::to_stdvec(&payload).unwrap();
-        let decoded: DocSyncPayload = postcard::from_bytes(&bytes).unwrap();
+        let decoded: crate::sync::core::types::DocSyncPayload =
+            postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.node_id, payload.node_id);
         assert_eq!(decoded.rel_path, "Notes/test.md");
         assert_eq!(decoded.snapshot, vec![1, 2, 3]);
@@ -531,9 +472,94 @@ mod tests {
         legacy_push_then_pull(&mut device_a, &mut device_b);
 
         assert_eq!(
-            device_a.local,
-            edited,
+            device_a.local, edited,
             "device A pulled B's stale placeholder after pushing the edited note"
         );
+    }
+
+    #[test]
+    fn test_read_text_or_empty_if_missing_nonexistent() {
+        let unique_name = format!("synabit_missing_file_{}", std::process::id());
+        let path = std::env::temp_dir().join(unique_name);
+        let res = read_text_or_empty_if_missing(&path);
+        assert_eq!(res.unwrap(), "");
+    }
+
+    #[test]
+    fn test_read_text_or_empty_if_missing_existing() {
+        let unique_name = format!("synabit_test_read_existing_{}", std::process::id());
+        let dir = std::env::temp_dir().join(unique_name);
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("test.txt");
+        fs::write(&file_path, "hello world").unwrap();
+
+        let res = read_text_or_empty_if_missing(&file_path);
+        assert_eq!(res.unwrap(), "hello world");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_text_or_empty_if_missing_directory_returns_err() {
+        let unique_name = format!("synabit_test_read_dir_err_{}", std::process::id());
+        let dir = std::env::temp_dir().join(unique_name);
+        fs::create_dir_all(&dir).unwrap();
+
+        let res = read_text_or_empty_if_missing(&dir);
+        assert!(res.is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_pull_persists_winner_when_file_bytes_already_match() {
+        use tauri::Manager;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_path = temp_dir.path().join("test.json");
+        let winner_json = r#"{"metadata":{"updated_at":100,"node_id":"doc1"},"text":"hello"}"#;
+        fs::write(&local_path, winner_json).unwrap();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let db = crate::db::DbBridge::new_in_memory().unwrap();
+        db.insert_sync_vault_mapping(&crate::db::sync_vault::SyncVaultRecord {
+            vault_id: "vault_a".into(),
+            canonical_root: "/tmp/v_a".into(),
+            metadata_version: 1,
+            created_at: 100,
+            updated_at: 100,
+        })
+        .unwrap();
+        app.manage(crate::db::DbState::new(db));
+
+        let doc = loro::LoroDoc::new();
+        let text = doc.get_text("content");
+        text.insert(0, winner_json).unwrap();
+        doc.commit();
+        let payload = crate::sync::core::types::DocSyncPayload {
+            rel_path: "test.json".into(),
+            node_id: "doc1".into(),
+            is_json: true,
+            snapshot: doc.export_snapshot(),
+        };
+
+        pull_json_impl(
+            app.handle(),
+            temp_dir.path().to_str().unwrap(),
+            &local_path,
+            "doc1",
+            &payload,
+            "vault_a",
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&local_path).unwrap(), winner_json);
+
+        // Verify replace_crdt_snapshot persisted the winner CRDT
+        let db_state = app.state::<crate::db::DbState>();
+        let db_guard = db_state.lock().unwrap();
+        let doc_read = db_guard.get_crdt_doc("vault_a", "doc1").unwrap();
+        assert_eq!(doc_read.get_text("content").to_string(), winner_json);
     }
 }

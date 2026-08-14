@@ -106,7 +106,7 @@ watch(() => props.vaultPath, () => {
 <template>
   <Teleport to="body">
     <!-- Backdrop -->
-    <Transition
+    <Transition appear
       enter-active-class="transition-opacity duration-200 ease-out"
       enter-from-class="opacity-0"
       enter-to-class="opacity-100"
@@ -114,14 +114,14 @@ watch(() => props.vaultPath, () => {
       leave-from-class="opacity-100"
       leave-to-class="opacity-0"
     >
-      <div
+      <div v-show="true"
         class="fixed inset-0 z-[998] bg-black/40 backdrop-blur-sm"
         @click="emit('close')"
       />
     </Transition>
 
     <!-- Panel -->
-    <Transition
+    <Transition appear
       enter-active-class="transition-transform duration-250 ease-out"
       enter-from-class="translate-x-full"
       enter-to-class="translate-x-0"
@@ -129,7 +129,7 @@ watch(() => props.vaultPath, () => {
       leave-from-class="translate-x-0"
       leave-to-class="translate-x-full"
     >
-      <div
+      <div v-show="true"
         class="fixed right-0 top-0 bottom-0 z-[999] w-[420px] max-w-full flex flex-col
                bg-white dark:bg-[#13141a] border-l border-gray-200 dark:border-gray-800/60
                shadow-2xl shadow-black/20"

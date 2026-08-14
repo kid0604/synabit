@@ -2,6 +2,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Check, X, GitMerge } from 'lucide-vue-next';
+import { usePlatform } from '../../composables/usePlatform';
+
+const { isMobileOS } = usePlatform();
 
 // ─── Types ────────────────────────────────────────────────
 interface SyncConflictEvent {
@@ -50,10 +53,19 @@ const scheduleAutoDismiss = () => {
 
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
-  unlistenConflict = await listen<SyncConflictEvent>('sync-conflict', (event) => {
+  unlistenConflict = await listen<any>('sync-conflict', (event) => {
     const payload = event.payload;
-    mergedFiles.value = payload.merged_files || [];
-    totalMerged.value = payload.total || mergedFiles.value.length;
+    if (payload.fileName) {
+      if (!mergedFiles.value.includes(payload.fileName)) {
+        mergedFiles.value.push(payload.fileName);
+        totalMerged.value++;
+      }
+    }
+    
+    if (isMobileOS.value) {
+      return;
+    }
+
     visible.value = true;
     scheduleAutoDismiss();
   });

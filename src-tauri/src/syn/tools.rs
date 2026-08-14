@@ -742,10 +742,7 @@ fn tool_get_linked_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".to_string()))?;
 
-    let node_id = args
-        .get("node_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let node_id = args.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
 
     let nodes = db.get_linked_nodes(title, node_id)?;
 
@@ -883,11 +880,31 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
     let results: Vec<Value> = nodes
         .iter()
         .map(|n| {
-            let ext = n.properties.get("extension").and_then(|v| v.as_str()).unwrap_or("");
-            let size = n.properties.get("size").and_then(|v| v.as_i64()).unwrap_or(0);
-            let path = n.properties.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let tags = n.properties.get("tags").cloned().unwrap_or(serde_json::json!([]));
-            let people = n.properties.get("people").cloned().unwrap_or(serde_json::json!([]));
+            let ext = n
+                .properties
+                .get("extension")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let size = n
+                .properties
+                .get("size")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let path = n
+                .properties
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let tags = n
+                .properties
+                .get("tags")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            let people = n
+                .properties
+                .get("people")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
 
             serde_json::json!({
                 "id": n.id,
@@ -936,7 +953,22 @@ fn write_tool_node(
     // Sanitize title for filename: remove unsafe characters
     let safe_title: String = title
         .chars()
-        .map(|c| if c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' { '_' } else { c })
+        .map(|c| {
+            if c == '/'
+                || c == '\\'
+                || c == ':'
+                || c == '*'
+                || c == '?'
+                || c == '"'
+                || c == '<'
+                || c == '>'
+                || c == '|'
+            {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let safe_title = safe_title.trim().to_string();
     let rel_path = format!("{}/{}.md", subdir, safe_title);
@@ -999,35 +1031,58 @@ fn write_tool_node(
     ctx.db.upsert_node(&node)?;
 
     // Update search index
-    let tags_str = properties.get("tags")
+    let tags_str = properties
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .unwrap_or_default();
     let status = properties.get("status").and_then(|v| v.as_str());
     let props_json = serde_json::to_string(&properties).unwrap_or_default();
     ctx.db.upsert_search_entry(
-        &rel_path, node_type, title, &tags_str, content,
-        &props_json, status, &timestamp_str, &rel_path,
+        &rel_path,
+        node_type,
+        title,
+        &tags_str,
+        content,
+        &props_json,
+        status,
+        &timestamp_str,
+        &rel_path,
     );
 
     // Emit event for UI sync
-    let _ = ctx.app.emit("node:created", serde_json::json!({
-        "id": rel_path,
-        "node_type": node_type,
-        "title": title,
-    }));
+    let _ = ctx.app.emit(
+        "node:created",
+        serde_json::json!({
+            "id": rel_path,
+            "node_type": node_type,
+            "title": title,
+        }),
+    );
 
     Ok((rel_path, title.to_string()))
 }
 
 /// 12. create_note
 fn tool_create_note(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let title = args.get("title").and_then(|v| v.as_str())
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args.get("tags")
+    let tags: Vec<String> = args
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let properties = serde_json::json!({ "tags": tags });
@@ -1038,20 +1093,31 @@ fn tool_create_note(ctx: &ToolContext, args: &Value) -> AppResult<String> {
         "id": id,
         "title": created_title,
         "message": format!("Note '{}' created successfully", created_title),
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// 13. create_task
 fn tool_create_task(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let title = args.get("title").and_then(|v| v.as_str())
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let start_date = args.get("start_date").and_then(|v| v.as_str()).unwrap_or("");
+    let start_date = args
+        .get("start_date")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let due_date = args.get("due_date").and_then(|v| v.as_str()).unwrap_or("");
     let priority = args.get("priority").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args.get("tags")
+    let tags: Vec<String> = args
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let properties = serde_json::json!({
@@ -1064,8 +1130,12 @@ fn tool_create_task(ctx: &ToolContext, args: &Value) -> AppResult<String> {
     let (id, created_title) = write_tool_node(ctx, "task", title, content, properties)?;
 
     let mut msg = format!("Task '{}' created (status: todo", created_title);
-    if !priority.is_empty() { msg.push_str(&format!(", priority: {}", priority)); }
-    if !due_date.is_empty() { msg.push_str(&format!(", due: {}", due_date)); }
+    if !priority.is_empty() {
+        msg.push_str(&format!(", priority: {}", priority));
+    }
+    if !due_date.is_empty() {
+        msg.push_str(&format!(", due: {}", due_date));
+    }
     msg.push(')');
 
     Ok(serde_json::json!({
@@ -1073,14 +1143,19 @@ fn tool_create_task(ctx: &ToolContext, args: &Value) -> AppResult<String> {
         "id": id,
         "title": created_title,
         "message": msg,
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// 14. update_task_status
 fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let node_id = args.get("node_id").and_then(|v| v.as_str())
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
-    let new_status = args.get("status").and_then(|v| v.as_str())
+    let new_status = args
+        .get("status")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: status".into()))?;
 
     let valid_statuses = ["todo", "in_progress", "done", "canceled", "backlog"];
@@ -1096,7 +1171,10 @@ fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String>
     };
 
     if node.node_type != "task" {
-        return Ok(serde_json::json!({"error": "Node is not a task", "node_type": node.node_type}).to_string());
+        return Ok(
+            serde_json::json!({"error": "Node is not a task", "node_type": node.node_type})
+                .to_string(),
+        );
     }
 
     // Update properties
@@ -1163,23 +1241,40 @@ fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String>
     }
 
     // Update search index
-    let tags_str = node.properties.get("tags")
+    let tags_str = node
+        .properties
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .unwrap_or_default();
     let props_json = serde_json::to_string(&node.properties).unwrap_or_default();
     ctx.db.upsert_search_entry(
-        &node.id, "task", &node.title, &tags_str, &node.content,
-        &props_json, Some(new_status), &node.updated_at, &node.id,
+        &node.id,
+        "task",
+        &node.title,
+        &tags_str,
+        &node.content,
+        &props_json,
+        Some(new_status),
+        &node.updated_at,
+        &node.id,
     );
 
     // Emit event
-    let _ = ctx.app.emit("node:updated", serde_json::json!({
-        "id": node.id,
-        "node_type": "task",
-        "title": node.title,
-        "status": new_status,
-    }));
+    let _ = ctx.app.emit(
+        "node:updated",
+        serde_json::json!({
+            "id": node.id,
+            "node_type": "task",
+            "title": node.title,
+            "status": new_status,
+        }),
+    );
 
     Ok(serde_json::json!({
         "success": true,
@@ -1187,18 +1282,27 @@ fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String>
         "title": node.title,
         "new_status": new_status,
         "message": format!("Task '{}' status updated to '{}'", node.title, new_status),
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// 15. create_event
 fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let title = args.get("title").and_then(|v| v.as_str())
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
-    let is_all_day = args.get("is_all_day").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_all_day = args
+        .get("is_all_day")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // Default start_at to today if not provided
     let default_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start_at = args.get("start_at").and_then(|v| v.as_str()).unwrap_or(&default_date);
+    let start_at = args
+        .get("start_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&default_date);
 
     // For all-day events, strip time part and auto-set end_at = start_at
     let start_at = if is_all_day {
@@ -1208,7 +1312,8 @@ fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
     };
 
     let end_at = if is_all_day {
-        args.get("end_at").and_then(|v| v.as_str())
+        args.get("end_at")
+            .and_then(|v| v.as_str())
             .map(|s| s.split('T').next().unwrap_or(s))
             .unwrap_or(start_at)
     } else {
@@ -1216,15 +1321,28 @@ fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
     };
 
     let location = args.get("location").and_then(|v| v.as_str()).unwrap_or("");
-    let recurrence = args.get("recurrence").and_then(|v| v.as_str()).unwrap_or("none");
-    let reminders: Vec<String> = args.get("reminders")
+    let recurrence = args
+        .get("recurrence")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    let reminders: Vec<String> = args
+        .get("reminders")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args.get("tags")
+    let tags: Vec<String> = args
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let properties = serde_json::json!({
@@ -1251,7 +1369,8 @@ fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
         "start_at": start_at,
         "is_all_day": is_all_day,
         "message": format!("Event '{}' created for {}", created_title, time_desc),
-    }).to_string())
+    })
+    .to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1281,18 +1400,30 @@ fn tool_get_finance_summary(db: &DbBridge) -> AppResult<String> {
     let (accounts, income_categories, expense_categories, currency) = match &config_node {
         Some(node) => {
             let meta = &node.properties;
-            let accounts = meta.get("accounts")
+            let accounts = meta
+                .get("accounts")
                 .cloned()
                 .unwrap_or(serde_json::json!([]));
-            let income_cats = meta.get("incomeCategories")
+            let income_cats = meta
+                .get("incomeCategories")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
-            let expense_cats = meta.get("expenseCategories")
+            let expense_cats = meta
+                .get("expenseCategories")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
-            let currency = meta.get("currency")
+            let currency = meta
+                .get("currency")
                 .and_then(|v| v.as_str())
                 .unwrap_or("VND")
                 .to_string();
@@ -1302,7 +1433,8 @@ fn tool_get_finance_summary(db: &DbBridge) -> AppResult<String> {
             return Ok(serde_json::json!({
                 "error": "Finance not set up. The user has not configured Finance yet.",
                 "hint": "Ask the user to open the Finance app and set up their accounts first."
-            }).to_string());
+            })
+            .to_string());
         }
     };
 
@@ -1314,7 +1446,9 @@ fn tool_get_finance_summary(db: &DbBridge) -> AppResult<String> {
 
     let (total_income, total_expense, tx_count) = match &month_node {
         Some(node) => {
-            let txs = node.properties.get("transactions")
+            let txs = node
+                .properties
+                .get("transactions")
                 .and_then(|v| v.as_array());
             match txs {
                 Some(arr) => {
@@ -1330,10 +1464,10 @@ fn tool_get_finance_summary(db: &DbBridge) -> AppResult<String> {
                     }
                     (income, expense, arr.len())
                 }
-                None => (0.0, 0.0, 0)
+                None => (0.0, 0.0, 0),
             }
         }
-        None => (0.0, 0.0, 0)
+        None => (0.0, 0.0, 0),
     };
 
     // Calculate current balances per account
@@ -1371,7 +1505,11 @@ fn compute_account_balances(db: &DbBridge, accounts_val: &Value) -> Value {
     let mut deltas: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
     for node in &month_nodes {
-        if let Some(txs) = node.properties.get("transactions").and_then(|v| v.as_array()) {
+        if let Some(txs) = node
+            .properties
+            .get("transactions")
+            .and_then(|v| v.as_array())
+        {
             for tx in txs {
                 let amount = tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let acc_id = tx.get("accountId").and_then(|v| v.as_str()).unwrap_or("");
@@ -1397,40 +1535,55 @@ fn compute_account_balances(db: &DbBridge, accounts_val: &Value) -> Value {
     }
 
     // Build result with initial + delta
-    let results: Vec<Value> = accounts_arr.iter().map(|acc| {
-        let id = acc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let name = acc.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let initial = acc.get("initialBalance").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let delta = deltas.get(id).copied().unwrap_or(0.0);
-        serde_json::json!({
-            "id": id,
-            "name": name,
-            "balance": initial + delta
+    let results: Vec<Value> = accounts_arr
+        .iter()
+        .map(|acc| {
+            let id = acc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let name = acc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let initial = acc
+                .get("initialBalance")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let delta = deltas.get(id).copied().unwrap_or(0.0);
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "balance": initial + delta
+            })
         })
-    }).collect();
+        .collect();
 
     serde_json::json!(results)
 }
 
 /// 17. create_transaction — Create a financial transaction
 fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let amount = args.get("amount").and_then(|v| v.as_f64())
+    let amount = args
+        .get("amount")
+        .and_then(|v| v.as_f64())
         .ok_or_else(|| AppError::General("Missing required parameter: amount".into()))?;
-    let category = args.get("category").and_then(|v| v.as_str())
+    let category = args
+        .get("category")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: category".into()))?;
 
     if amount <= 0.0 {
         return Ok(serde_json::json!({"error": "Amount must be a positive number"}).to_string());
     }
 
-    let tx_type = args.get("type").and_then(|v| v.as_str()).unwrap_or("expense");
+    let tx_type = args
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("expense");
     if tx_type != "income" && tx_type != "expense" {
         return Ok(serde_json::json!({"error": format!("Invalid type '{}'. Must be 'income' or 'expense'.", tx_type)}).to_string());
     }
 
     let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("");
     let now = chrono::Local::now();
-    let date_str = args.get("date").and_then(|v| v.as_str())
+    let date_str = args
+        .get("date")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
@@ -1441,16 +1594,20 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
         None => {
             return Ok(serde_json::json!({
                 "error": "Finance not set up. Ask user to open Finance app first."
-            }).to_string());
+            })
+            .to_string());
         }
     };
 
     // Determine account_id
-    let account_id = args.get("account_id").and_then(|v| v.as_str())
+    let account_id = args
+        .get("account_id")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
             // Default to first account
-            config_meta.get("accounts")
+            config_meta
+                .get("accounts")
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|acc| acc.get("id"))
@@ -1460,15 +1617,23 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
         });
 
     // Get account name for confirmation message
-    let account_name = config_meta.get("accounts")
+    let account_name = config_meta
+        .get("accounts")
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.iter().find(|a| a.get("id").and_then(|v| v.as_str()) == Some(&account_id)))
+        .and_then(|arr| {
+            arr.iter()
+                .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(&account_id))
+        })
         .and_then(|a| a.get("name"))
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown");
 
     // Generate transaction ID
-    let tx_id = format!("tx-{}-{}", chrono::Utc::now().timestamp_millis(), rand_u16());
+    let tx_id = format!(
+        "tx-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        rand_u16()
+    );
 
     // Build the transaction object (matches frontend Transaction interface exactly)
     let transaction = serde_json::json!({
@@ -1482,19 +1647,23 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
     });
 
     // Determine month key from date
-    let month_key = if date_str.len() >= 7 { &date_str[..7] } else { &date_str };
+    let month_key = if date_str.len() >= 7 {
+        &date_str[..7]
+    } else {
+        &date_str
+    };
     let month_node_id = format!("Finance/{}.json", month_key);
 
     // Read or create the month node
     let existing_month = ctx.db.get_node(&month_node_id)?;
     let mut transactions: Vec<Value> = match &existing_month {
-        Some(node) => {
-            node.properties.get("transactions")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default()
-        }
-        None => Vec::new()
+        Some(node) => node
+            .properties
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        None => Vec::new(),
     };
 
     // Add the new transaction
@@ -1514,10 +1683,17 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
     };
 
     // Write JSON file to disk (matches write_node_file JSON format)
-    write_json_node(ctx, &month_node_id, "finance_month", &month_title, &month_props)?;
+    write_json_node(
+        ctx,
+        &month_node_id,
+        "finance_month",
+        &month_title,
+        &month_props,
+    )?;
 
     // Get currency for display
-    let currency = config_meta.get("currency")
+    let currency = config_meta
+        .get("currency")
         .and_then(|v| v.as_str())
         .unwrap_or("VND");
 
@@ -1531,7 +1707,7 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
         "date": date_str,
         "note": note,
         "currency": currency,
-        "message": format!("{} {} {} — {} ({})", 
+        "message": format!("{} {} {} — {} ({})",
             if tx_type == "expense" { "💸" } else { "💰" },
             format_amount(amount, currency),
             category, note, account_name
@@ -1544,7 +1720,9 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
 /// 18. get_transactions — List transactions for a specific month
 fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
     let now = chrono::Local::now();
-    let month = args.get("month").and_then(|v| v.as_str())
+    let month = args
+        .get("month")
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| now.format("%Y-%m").to_string());
     let type_filter = args.get("type").and_then(|v| v.as_str());
@@ -1554,17 +1732,18 @@ fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
     let month_node = db.get_node(&month_node_id)?;
 
     let transactions = match &month_node {
-        Some(node) => {
-            node.properties.get("transactions")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default()
-        }
-        None => Vec::new()
+        Some(node) => node
+            .properties
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        None => Vec::new(),
     };
 
     // Filter by type if specified
-    let filtered: Vec<&Value> = transactions.iter()
+    let filtered: Vec<&Value> = transactions
+        .iter()
         .filter(|tx| {
             if let Some(filter) = type_filter {
                 tx.get("type").and_then(|v| v.as_str()) == Some(filter)
@@ -1583,32 +1762,39 @@ fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
     });
 
     // Apply limit
-    let limited: Vec<Value> = sorted.into_iter().take(limit).map(|v| {
-        // Slim down for LLM — only essential fields
-        serde_json::json!({
-            "id": v.get("id"),
-            "type": v.get("type"),
-            "amount": v.get("amount"),
-            "category": v.get("category"),
-            "accountId": v.get("accountId"),
-            "date": v.get("date"),
-            "note": v.get("note")
+    let limited: Vec<Value> = sorted
+        .into_iter()
+        .take(limit)
+        .map(|v| {
+            // Slim down for LLM — only essential fields
+            serde_json::json!({
+                "id": v.get("id"),
+                "type": v.get("type"),
+                "amount": v.get("amount"),
+                "category": v.get("category"),
+                "accountId": v.get("accountId"),
+                "date": v.get("date"),
+                "note": v.get("note")
+            })
         })
-    }).collect();
+        .collect();
 
     // Read config for currency
     let config_node = db.get_node("Finance/Config.json")?;
-    let currency = config_node.as_ref()
+    let currency = config_node
+        .as_ref()
         .and_then(|n| n.properties.get("currency"))
         .and_then(|v| v.as_str())
         .unwrap_or("VND");
 
     // Calculate totals
-    let total_income: f64 = transactions.iter()
+    let total_income: f64 = transactions
+        .iter()
         .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("income"))
         .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
         .sum();
-    let total_expense: f64 = transactions.iter()
+    let total_expense: f64 = transactions
+        .iter()
         .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("expense"))
         .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
         .sum();
@@ -1644,10 +1830,15 @@ fn write_json_node(
         if !map.contains_key("created_at") {
             // Check if node already exists to preserve created_at
             if let Ok(Some(existing)) = ctx.db.get_node(rel_path) {
-                let existing_created = existing.properties.get("created_at")
+                let existing_created = existing
+                    .properties
+                    .get("created_at")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&now);
-                map.insert("created_at".to_string(), Value::String(existing_created.to_string()));
+                map.insert(
+                    "created_at".to_string(),
+                    Value::String(existing_created.to_string()),
+                );
             } else {
                 map.insert("created_at".to_string(), Value::String(now.clone()));
             }
@@ -1673,7 +1864,8 @@ fn write_json_node(
 
     // Upsert into DB
     let timestamp = chrono::Utc::now().timestamp_millis();
-    let created_at = props.get("created_at")
+    let created_at = props
+        .get("created_at")
         .and_then(|v| v.as_str())
         .unwrap_or(&now)
         .to_string();
@@ -1694,16 +1886,18 @@ fn write_json_node(
     // Update search index
     let props_str = serde_json::to_string(&props).unwrap_or_default();
     ctx.db.upsert_search_entry(
-        rel_path, node_type, title, "", "",
-        &props_str, None, &now, rel_path,
+        rel_path, node_type, title, "", "", &props_str, None, &now, rel_path,
     );
 
     // Emit event for UI sync
-    let _ = ctx.app.emit("node:changed", serde_json::json!({
-        "id": rel_path,
-        "node_type": node_type,
-        "title": title,
-    }));
+    let _ = ctx.app.emit(
+        "node:changed",
+        serde_json::json!({
+            "id": rel_path,
+            "node_type": node_type,
+            "title": title,
+        }),
+    );
 
     Ok(())
 }

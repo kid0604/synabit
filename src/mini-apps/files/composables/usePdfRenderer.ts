@@ -8,7 +8,9 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 // Polyfill for ReadableStream async iteration (required by pdf.js TextLayer on older WebKit/Tauri)
+// @ts-expect-error - TS doesn't know about asyncIterator polyfill on ReadableStream
 if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
+  // @ts-expect-error
   ReadableStream.prototype[Symbol.asyncIterator] = async function* () {
     const reader = this.getReader();
     try {

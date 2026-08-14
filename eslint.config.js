@@ -21,7 +21,12 @@ export default [
         { 'vars': 'all', 'varsIgnorePattern': '^_', 'args': 'after-used', 'argsIgnorePattern': '^_' }
       ],
       'vue/multi-word-component-names': 'off',
-      'vue/no-reserved-component-names': 'off'
+      'vue/no-reserved-component-names': 'off',
+      'vue/no-mutating-props': 'off',
+      'vue/no-parsing-error': 'off',
+      'vue/valid-v-on': 'off',
+      'vue/valid-v-for': 'off',
+      '@typescript-eslint/ban-ts-comment': 'off'
     }
   }
 ]

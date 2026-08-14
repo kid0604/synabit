@@ -1,7 +1,7 @@
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::time::Duration;
-use tauri::{AppHandle, command};
+use tauri::{command, AppHandle};
 
 use crate::hwid::{generate_hwid, get_device_name};
 use crate::license::{check_license_status, save_license, LicenseStatus};
@@ -19,13 +19,6 @@ struct ActivateRequest {
 struct RefreshRequest {
     hwid: String,
     license_key: String,
-}
-
-#[derive(Deserialize)]
-struct ServerResponse {
-    success: bool,
-    error: Option<String>,
-    license_data: Option<String>, // Raw signed JSON string from server
 }
 
 fn get_http_client() -> Client {
@@ -58,7 +51,8 @@ pub async fn activate_trial(app: AppHandle) -> Result<LicenseStatus, String> {
 
     let url = format!("{}/trial", LICENSE_SERVER_URL);
     let client = get_http_client();
-    let res = client.post(&url)
+    let res = client
+        .post(&url)
         .json(&req)
         .send()
         .await
@@ -70,7 +64,7 @@ pub async fn activate_trial(app: AppHandle) -> Result<LicenseStatus, String> {
     }
 
     let raw_json = res.text().await.map_err(|e| e.to_string())?;
-    
+
     save_license(&app, &raw_json)?;
 
     Ok(check_license_status(&app))
@@ -89,7 +83,8 @@ pub async fn activate_license_key(app: AppHandle, key: String) -> Result<License
 
     let url = format!("{}/activate", LICENSE_SERVER_URL);
     let client = get_http_client();
-    let res = client.post(&url)
+    let res = client
+        .post(&url)
         .json(&req)
         .send()
         .await
@@ -110,7 +105,7 @@ pub async fn activate_license_key(app: AppHandle, key: String) -> Result<License
     }
 
     let raw_json = res.text().await.map_err(|e| e.to_string())?;
-    
+
     save_license(&app, &raw_json)?;
 
     Ok(check_license_status(&app))
@@ -128,11 +123,8 @@ pub async fn deactivate_license(app: AppHandle) -> Result<(), String> {
 
         let url = format!("{}/deactivate", LICENSE_SERVER_URL);
         let client = get_http_client();
-        let _ = client.post(&url)
-            .json(&req)
-            .send()
-            .await;
-        
+        let _ = client.post(&url).json(&req).send().await;
+
         // Remove local license file
         let path = crate::license::get_license_path(&app);
         let _ = std::fs::remove_file(path);
@@ -152,7 +144,8 @@ pub async fn refresh_license(app: AppHandle) -> Result<LicenseStatus, String> {
 
         let url = format!("{}/refresh", LICENSE_SERVER_URL);
         let client = get_http_client();
-        let res = client.post(&url)
+        let res = client
+            .post(&url)
             .json(&req)
             .send()
             .await
@@ -181,7 +174,8 @@ pub async fn heartbeat_license(app: AppHandle) -> Result<LicenseStatus, String> 
 
         let url = format!("{}/heartbeat", LICENSE_SERVER_URL);
         let client = get_http_client();
-        let res = client.post(&url)
+        let res = client
+            .post(&url)
             .json(&req)
             .send()
             .await
@@ -190,7 +184,7 @@ pub async fn heartbeat_license(app: AppHandle) -> Result<LicenseStatus, String> 
         if !res.status().is_success() {
             let status_code = res.status();
             let text = res.text().await.unwrap_or_default();
-            
+
             // If the server says revoked, we should update our local state
             if status_code == reqwest::StatusCode::FORBIDDEN || text.contains("revoked") {
                 // Delete local file to force revoked state

@@ -40,11 +40,7 @@ fn set_credential(
         .map_err(AppError::General)
 }
 
-fn get_credential(
-    app_handle: &tauri::AppHandle,
-    key: &str,
-    vault_path: &str,
-) -> AppResult<String> {
+fn get_credential(app_handle: &tauri::AppHandle, key: &str, vault_path: &str) -> AppResult<String> {
     SecretManager::get_vault_token(Some(app_handle), key, vault_path)
         .ok_or_else(|| AppError::AuthFailed("No token found".to_string()))
 }

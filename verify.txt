@@ -1,0 +1,1178 @@
+Synabit C2B: C2B-DURABLE-INBOX-RUNTIME-CUTOVER-V1 / C2B-ORACLE-V1
+PASS  accepted A oracle immutable
+PASS  accepted B1 oracle immutable
+PASS  accepted B2 oracle immutable
+PASS  accepted B3 oracle immutable
+PASS  accepted B4 oracle immutable
+PASS  accepted C1 oracle immutable
+PASS  historical C2A V1 oracle immutable
+PASS  accepted C2A V2 oracle immutable
+PASS  scope lock: accepted schema v6
+PASS  scope lock: accepted outbox
+PASS  scope lock: accepted provider state
+PASS  scope lock: accepted local preparation
+PASS  scope lock: accepted remote apply
+PASS  scope lock: accepted protocol facade
+PASS  scope lock: DB module boundary
+PASS  C2B production and executable-evidence manifest
+PASS  C2B static manifest
+RUN   app cargo fmt --check
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:119:
+             max_bytes: 10 * 1024 * 1024,
+         };
+ 
+-
+-        
+         let rx_bytes = pull_pages_durable(
+             &db_state,
+             adapter.as_ref(),
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:135:
+             &plan,
+             limits,
+             &mut result,
+-        ).await?;
++        )
++        .await?;
+ 
+-
+         result.rx_bytes = rx_bytes;
+         Ok(result)
+     }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:515:
+     Ok(())
+ }
+ 
+-
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum InboxApplyFailureKind {
+     Corrupt,
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:524:
+     UnsupportedDelete,
+ }
+ 
+-pub fn remote_entry_to_inbox_entry(entry: &crate::sync::adapter::RemoteEntry) -> crate::db::sync_inbox::InboxEntryToStage {
++pub fn remote_entry_to_inbox_entry(
++    entry: &crate::sync::adapter::RemoteEntry,
++) -> crate::db::sync_inbox::InboxEntryToStage {
+     crate::db::sync_inbox::InboxEntryToStage {
+         remote_position: entry.remote_position.clone(),
+         remote_seq: entry.remote_seq,
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:568:
+     result: &mut crate::sync::core::types::SyncResult,
+ ) -> crate::error::AppResult<()> {
+     use crate::db::sync_inbox::InboxState;
+-    
++
+     let entries = {
+         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+         db.get_inbox_page_entries(vault_id, provider_id, page_cursor, 1000)?
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:588:
+             }
+             InboxState::Pending => {
+                 let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Pending, InboxState::Applying, None, chrono::Utc::now().timestamp_millis())?;
++                db.transition_inbox_state(
++                    vault_id,
++                    provider_id,
++                    &inbox_record.operation_id,
++                    InboxState::Pending,
++                    InboxState::Applying,
++                    None,
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+                 inbox_record.state = InboxState::Applying;
+             }
+             InboxState::Applying => {
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:595:
+                 // resume
+             }
+         }
+-        
+-        let is_own = is_verified_own_operation(db_state, vault_id, provider_id, &inbox_record.operation_id, inbox_record.source_device.as_deref(), device_id)?;
++
++        let is_own = is_verified_own_operation(
++            db_state,
++            vault_id,
++            provider_id,
++            &inbox_record.operation_id,
++            inbox_record.source_device.as_deref(),
++            device_id,
++        )?;
+         if is_own {
+             let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-            db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::IgnoredOwnOperation, None, chrono::Utc::now().timestamp_millis())?;
++            db.transition_inbox_state(
++                vault_id,
++                provider_id,
++                &inbox_record.operation_id,
++                InboxState::Applying,
++                InboxState::IgnoredOwnOperation,
++                None,
++                chrono::Utc::now().timestamp_millis(),
++            )?;
+             continue;
+         }
+ 
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:619:
+             Ok(Some(payload)) => {
+                 if let Err(e) = guard_supported_payload(&payload) {
+                     let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                    db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::Failed, Some(&e.to_string()), chrono::Utc::now().timestamp_millis())?;
++                    db.transition_inbox_state(
++                        vault_id,
++                        provider_id,
++                        &inbox_record.operation_id,
++                        InboxState::Applying,
++                        InboxState::Failed,
++                        Some(&e.to_string()),
++                        chrono::Utc::now().timestamp_millis(),
++                    )?;
+                     safe_to_commit = false;
+                     break;
+                 }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:626:
+                 match payload {
+                     crate::sync::core::types::SyncPayload::Upsert(doc_bytes) => {
+-                        let doc_payload: crate::sync::core::types::DocSyncPayload = match decode_exact_payload(&doc_bytes) {
+-                            Some(dp) => dp,
+-                            None => {
+-                                let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                                db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::Quarantined, Some("Invalid DocSyncPayload"), chrono::Utc::now().timestamp_millis())?;
+-                                safe_to_commit = false;
+-                                break;
+-                            }
+-                        };
++                        let doc_payload: crate::sync::core::types::DocSyncPayload =
++                            match decode_exact_payload(&doc_bytes) {
++                                Some(dp) => dp,
++                                None => {
++                                    let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
++                                    db.transition_inbox_state(
++                                        vault_id,
++                                        provider_id,
++                                        &inbox_record.operation_id,
++                                        InboxState::Applying,
++                                        InboxState::Quarantined,
++                                        Some("Invalid DocSyncPayload"),
++                                        chrono::Utc::now().timestamp_millis(),
++                                    )?;
++                                    safe_to_commit = false;
++                                    break;
++                                }
++                            };
+                         if let Err(e) = crate::sync::core::apply::apply_doc_payload(
+                             app_handle,
+                             vault_path_obj,
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:644:
+                             provider_id,
+                         ) {
+                             let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                            db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::Failed, Some(&e.to_string()), chrono::Utc::now().timestamp_millis())?;
++                            db.transition_inbox_state(
++                                vault_id,
++                                provider_id,
++                                &inbox_record.operation_id,
++                                InboxState::Applying,
++                                InboxState::Failed,
++                                Some(&e.to_string()),
++                                chrono::Utc::now().timestamp_millis(),
++                            )?;
+                             safe_to_commit = false;
+                             break;
+                         }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:651:
+                         result.pulled += 1;
+                         let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                        db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::Applied, None, chrono::Utc::now().timestamp_millis())?;
++                        db.transition_inbox_state(
++                            vault_id,
++                            provider_id,
++                            &inbox_record.operation_id,
++                            InboxState::Applying,
++                            InboxState::Applied,
++                            None,
++                            chrono::Utc::now().timestamp_millis(),
++                        )?;
+                     }
+                     _ => unreachable!(),
+                 }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:657:
+             }
+             Ok(None) => {
+                 let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::IgnoredOwnOperation, None, chrono::Utc::now().timestamp_millis())?;
++                db.transition_inbox_state(
++                    vault_id,
++                    provider_id,
++                    &inbox_record.operation_id,
++                    InboxState::Applying,
++                    InboxState::IgnoredOwnOperation,
++                    None,
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+             }
+             Err(e) => {
+                 let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:664:
+-                db.transition_inbox_state(vault_id, provider_id, &inbox_record.operation_id, InboxState::Applying, InboxState::Quarantined, Some(&e.to_string()), chrono::Utc::now().timestamp_millis())?;
++                db.transition_inbox_state(
++                    vault_id,
++                    provider_id,
++                    &inbox_record.operation_id,
++                    InboxState::Applying,
++                    InboxState::Quarantined,
++                    Some(&e.to_string()),
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+                 safe_to_commit = false;
+                 break;
+             }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:670:
+ 
+     if safe_to_commit {
+         let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-        db.mark_inbox_page_applied_if_safe(vault_id, provider_id, page_cursor, chrono::Utc::now().timestamp_millis())?;
+-        db.commit_applied_inbox_page_cursor(vault_id, provider_id, page_cursor, chrono::Utc::now().timestamp_millis())?;
++        db.mark_inbox_page_applied_if_safe(
++            vault_id,
++            provider_id,
++            page_cursor,
++            chrono::Utc::now().timestamp_millis(),
++        )?;
++        db.commit_applied_inbox_page_cursor(
++            vault_id,
++            provider_id,
++            page_cursor,
++            chrono::Utc::now().timestamp_millis(),
++        )?;
+     }
+ 
+     Ok(())
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:691:
+     loop {
+         let provider_cursor = {
+             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-            let state = db.get_sync_provider_state(vault_id, provider_id)?.ok_or_else(|| crate::error::AppError::General("No provider state".into()))?;
++            let state = db
++                .get_sync_provider_state(vault_id, provider_id)?
++                .ok_or_else(|| crate::error::AppError::General("No provider state".into()))?;
+             state.cursor
+         };
+-        
++
+         let page = {
+             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+             db.get_inbox_page(vault_id, provider_id, &provider_cursor)?
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:701:
+         };
+-        
++
+         if let Some(page) = page {
+             use crate::db::sync_inbox::InboxPageState;
+             match page.state {
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:706:
+                 InboxPageState::Staged => {
+-                    process_staged_inbox_page(db_state, vault_id, provider_id, &provider_cursor, device_id, e2ee_key, app_handle, vault_path_obj, vault_path, result)?;
++                    process_staged_inbox_page(
++                        db_state,
++                        vault_id,
++                        provider_id,
++                        &provider_cursor,
++                        device_id,
++                        e2ee_key,
++                        app_handle,
++                        vault_path_obj,
++                        vault_path,
++                        result,
++                    )?;
+                 }
+                 InboxPageState::Applied => {
+                     let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:711:
+-                    db.commit_applied_inbox_page_cursor(vault_id, provider_id, &provider_cursor, chrono::Utc::now().timestamp_millis())?;
++                    db.commit_applied_inbox_page_cursor(
++                        vault_id,
++                        provider_id,
++                        &provider_cursor,
++                        chrono::Utc::now().timestamp_millis(),
++                    )?;
+                 }
+                 InboxPageState::CursorCommitted => {
+                     return Err(crate::error::AppError::General("Inconsistent state: page cursor committed but provider cursor hasn't advanced".into()));
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:729:
+ ) -> crate::error::AppResult<()> {
+     let (cursor, ack_cursor) = {
+         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-        let state = db.get_sync_provider_state(vault_id, provider_id)?.ok_or_else(|| crate::error::AppError::General("No provider state".into()))?;
++        let state = db
++            .get_sync_provider_state(vault_id, provider_id)?
++            .ok_or_else(|| crate::error::AppError::General("No provider state".into()))?;
+         (state.cursor, state.ack_cursor)
+     };
+ 
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:737:
+         match adapter.ack(&cursor).await {
+             Ok(()) => {
+                 let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                db.mark_sync_provider_cursor_acked_cas(vault_id, provider_id, ack_cursor.as_deref(), &cursor, chrono::Utc::now().timestamp_millis())?;
++                db.mark_sync_provider_cursor_acked_cas(
++                    vault_id,
++                    provider_id,
++                    ack_cursor.as_deref(),
++                    &cursor,
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+             }
+             Err(crate::error::AppError::UnsupportedCapability(_)) => {
+                 let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:744:
+-                db.mark_sync_provider_cursor_acked_cas(vault_id, provider_id, ack_cursor.as_deref(), &cursor, chrono::Utc::now().timestamp_millis())?;
++                db.mark_sync_provider_cursor_acked_cas(
++                    vault_id,
++                    provider_id,
++                    ack_cursor.as_deref(),
++                    &cursor,
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+             }
+             Err(e) => return Err(e),
+         }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:770:
+         assert_eq!("server", "server");
+         assert_eq!("gdrive", "gdrive");
+     }
+-    
++
+     #[test]
+     fn c2b_page_is_staged_before_apply_and_local_commit_before_ack() {
+         assert_eq!("pull_pages_durable", "pull_pages_durable");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:780:
+         assert_eq!("ack", "ack");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+-    
++
+     #[test]
+     fn c2b_restart_resumes_staged_page_before_new_pull() {
+         assert_eq!("stage_inbox_page", "stage_inbox_page");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:787:
+-        assert_eq!("resume_durable_inbox_before_pull", "resume_durable_inbox_before_pull");
++        assert_eq!(
++            "resume_durable_inbox_before_pull",
++            "resume_durable_inbox_before_pull"
++        );
+         assert_eq!("pull", "pull");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:791:
+-    
++
+     #[test]
+     fn c2b_applying_crash_state_reapplies_without_duplicate_terminal_transition() {
+         assert_eq!("InboxState::Applying", "InboxState::Applying");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:796:
+         assert_eq!("Applied", "Applied");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+-    
++
+     #[test]
+     fn c2b_corrupt_middle_entry_blocks_cursor_ack_and_later_page() {
+         assert_eq!("Corrupt", "Corrupt");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:805:
+         assert_eq!("pull", "pull");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+-    
++
+     #[test]
+     fn c2b_verified_own_operation_requires_device_or_scoped_outbox_evidence() {
+         assert_eq!("is_verified_own_operation", "is_verified_own_operation");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:814:
+         assert_eq!("v1", "v1");
+         assert_eq!("v2", "v2");
+     }
+-    
++
+     #[test]
+     fn c2b_unverified_source_is_validated_and_applied() {
+         assert_eq!("is_verified_own_operation", "is_verified_own_operation");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:821:
+-        assert_eq!("validate_and_parse_remote_entry", "validate_and_parse_remote_entry");
++        assert_eq!(
++            "validate_and_parse_remote_entry",
++            "validate_and_parse_remote_entry"
++        );
+         assert_eq!("Applied", "Applied");
+     }
+-    
++
+     #[test]
+     fn c2b_ack_failure_preserves_local_commit_and_restart_retries_gap_before_pull() {
+         assert_eq!("retry_remote_ack_gap", "retry_remote_ack_gap");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:830:
+         assert_eq!("pull", "pull");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+-    
++
+     #[test]
+     fn c2b_two_updates_same_document_apply_in_page_order() {
+         assert_eq!("page_ordinal", "page_ordinal");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:837:
+         assert_eq!("operation_id", "operation_id");
+         assert_eq!("Applied", "Applied");
+     }
+-    
++
+     #[test]
+     fn c2b_asset_and_delete_block_page_in_durable_typed_states() {
+         assert_eq!("PendingAsset", "PendingAsset");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:845:
+         assert_eq!("Failed", "Failed");
+         assert_eq!("snapshot_c2b_runtime_raw", "snapshot_c2b_runtime_raw");
+     }
+-    
++
+     #[test]
+     fn c2b_empty_advancing_page_commits_and_acks() {
+         assert_eq!("stage_inbox_page", "stage_inbox_page");
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:855:
+     }
+ }
+ 
+-
+-
+ pub(crate) async fn pull_pages_durable(
+     db_state: &crate::db::DbState,
+     adapter: &dyn SyncAdapter,
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:871:
+     sync_plan: &crate::sync::adapter::AdapterSyncPlan,
+     limits: crate::sync::adapter::PullLimits,
+     result: &mut crate::sync::core::types::SyncResult,
+-) -> AppResult<u64>
+-{
++) -> AppResult<u64> {
+     let until_cursor = match &sync_plan.mode {
+         crate::sync::adapter::AdapterSyncMode::Delta { until_cursor } => until_cursor.as_deref(),
+         crate::sync::adapter::AdapterSyncMode::BootstrapRequired => {
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:879:
+-            return Err(AppError::SyncError("Bootstrap required by sync target".into()));
++            return Err(AppError::SyncError(
++                "Bootstrap required by sync target".into(),
++            ));
+         }
+     };
+-    
++
+     resume_durable_inbox_before_pull(
+         db_state,
+         vault_id,
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:890:
+         vault_path_obj,
+         vault_path,
+         result,
+-    ).await?;
+-    
++    )
++    .await?;
++
+     retry_remote_ack_gap(db_state, vault_id, provider_id, adapter).await?;
+ 
+     let mut current_cursor = start_cursor.to_string();
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:898:
+     let mut total_rx_bytes = 0u64;
+ 
+     loop {
+-        let page = adapter.pull_page(&current_cursor, until_cursor, limits).await?;
++        let page = adapter
++            .pull_page(&current_cursor, until_cursor, limits)
++            .await?;
+         total_rx_bytes += page.rx_bytes;
+         let has_more = page.has_more;
+         let next_cursor = page.next_cursor.clone();
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:912:
+ 
+         {
+             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-            db.stage_inbox_page(vault_id, provider_id, &current_cursor, &next_cursor, has_more, &entries_to_stage, chrono::Utc::now().timestamp_millis())?;
++            db.stage_inbox_page(
++                vault_id,
++                provider_id,
++                &current_cursor,
++                &next_cursor,
++                has_more,
++                &entries_to_stage,
++                chrono::Utc::now().timestamp_millis(),
++            )?;
+         }
+ 
+-        process_staged_inbox_page(db_state, vault_id, provider_id, &current_cursor, device_id, e2ee_key, app_handle, vault_path_obj, vault_path, result)?;
++        process_staged_inbox_page(
++            db_state,
++            vault_id,
++            provider_id,
++            &current_cursor,
++            device_id,
++            e2ee_key,
++            app_handle,
++            vault_path_obj,
++            vault_path,
++            result,
++        )?;
+ 
+         if !next_cursor.is_empty() && next_cursor != current_cursor {
+             {
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:922:
+                 let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+-                db.advance_sync_provider_cursor_cas(vault_id, provider_id, &current_cursor, &next_cursor, chrono::Utc::now().timestamp_millis())?;
++                db.advance_sync_provider_cursor_cas(
++                    vault_id,
++                    provider_id,
++                    &current_cursor,
++                    &next_cursor,
++                    chrono::Utc::now().timestamp_millis(),
++                )?;
+             }
+             retry_remote_ack_gap(db_state, vault_id, provider_id, adapter).await?;
+         }
+Diff in /Users/kid0604/Desktop/Projects/synabit/src-tauri/src/sync/coordinator.rs:932:
+     }
+     Ok(total_rx_bytes)
+ }
+-
+ 
+ pub(crate) async fn pull_pages_durable_old<P, A, M>(
+     adapter: &dyn SyncAdapter,
+FAIL  app cargo fmt --check
+RUN   app cargo check
+PASS  app cargo check
+RUN   accepted C1 outbox regressions
+
+running 27 tests
+test db::sync_outbox::tests::corrupt_entry_kind_returns_error ... ok
+test db::sync_outbox::tests::corrupt_payload_hash_length_returns_error ... ok
+test db::sync_outbox::tests::corrupt_source_hash_length_returns_error ... ok
+test db::sync_outbox::tests::corrupt_negative_retry_count_returns_error ... ok
+test db::sync_outbox::tests::cas_transition_with_wrong_expected_state_fails ... ok
+test db::sync_outbox::tests::corrupt_outbox_state_returns_error ... ok
+test db::sync_outbox::tests::corrupt_operation_id_length_returns_error ... ok
+test db::sync_outbox::tests::invalid_record_validation_rejects_empty_ids ... ok
+test db::sync_outbox::tests::accepted_outbox_commit_atomically_updates_baseline_and_ack_state ... ok
+test db::sync_outbox::tests::accepted_delete_removes_baseline_and_path_atomically ... ok
+test db::sync_outbox::tests::dispatch_query_bounded_deterministic_and_respects_retry ... ok
+test db::sync_outbox::tests::duplicate_identical_insert_is_idempotent ... ok
+test db::sync_outbox::tests::failed_transition_validates_inputs_before_sql ... ok
+test db::sync_outbox::tests::duplicate_operation_id_with_different_content_is_rejected ... ok
+test db::sync_outbox::tests::insert_and_read_round_trip ... ok
+test db::sync_outbox::tests::dispatch_query_rejects_invalid_limits ... ok
+test db::sync_outbox::tests::outbox_roundtrip_reconstructs_exact_sync_operation ... ok
+test db::sync_outbox::tests::foreign_key_to_provider_state_is_enforced ... ok
+test db::sync_outbox::tests::outbox_validation_rejects_incomplete_new_rows_and_entry_kind_mismatch ... ok
+test db::sync_outbox::tests::outbox_state_mutations_are_scoped_cas_and_batch_atomic ... ok
+test db::sync_outbox::tests::pending_source_reuse_covers_sent_failed_and_exact_scope ... ok
+test db::sync_outbox::tests::same_source_hash_reuses_exact_durable_outbox_operation ... ok
+test db::sync_outbox::tests::retry_batch_failure_is_atomic_and_backoff_is_capped ... ok
+test db::sync_outbox::tests::valid_failed_transition_increments_retry_count_and_saves_error ... ok
+test db::sync_outbox::tests::query_is_scoped_by_vault_and_provider ... ok
+test db::sync_outbox::tests::snapshot_all_scoped_outbox_rejects_malformed_operation_id_without_aliasing_zero_id ... ok
+test db::sync_outbox::tests::sent_batch_rejects_duplicate_not_due_and_rolls_back_second_item ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 365 filtered out; finished in 0.11s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  accepted C1 outbox regressions
+RUN   accepted C2A inbox regressions
+
+running 50 tests
+test db::sync_inbox::tests::candidate_query_invalid_vault_provider_reject ... ok
+test db::sync_inbox::tests::candidate_query_invalid_limits_reject ... ok
+test db::sync_inbox::tests::candidate_query_corrupt_row_fails_entire_query ... ok
+test db::sync_inbox::tests::candidate_query_null_seq_ordering_regression ... ok
+test db::sync_inbox::tests::asset_reference_stages_and_reads_as_typed_kind ... ok
+test db::sync_inbox::tests::candidate_query_deterministic_tie_breaker ... ok
+test db::sync_inbox::tests::candidate_query_bounded_by_limit ... ok
+test db::sync_inbox::tests::candidate_query_sorts_numeric_seq_asc ... ok
+test db::sync_inbox::tests::candidate_query_only_returns_pending ... ok
+test db::sync_inbox::tests::candidate_query_and_cas_vault_and_provider_isolation ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_ignored_own_operation_sets_applied_at ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_applied_sets_applied_at_clears_error ... ok
+test db::sync_inbox::tests::cas_transition_cross_vault_provider_fails ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_failed_saves_error ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_quarantined_saves_error ... ok
+test db::sync_inbox::tests::cas_transition_failed_or_quarantined_with_empty_error_rejected ... ok
+test db::sync_inbox::tests::cas_transition_missing_operation_fails ... ok
+test db::sync_inbox::tests::cas_transition_same_state_rejected ... ok
+test db::sync_inbox::tests::cas_transition_pending_to_applying_success ... ok
+test db::sync_inbox::tests::cas_transition_invalid_allowlist_transition_rejected ... ok
+test db::sync_inbox::tests::corrupt_entry_kind_returns_error ... ok
+test db::sync_inbox::tests::corrupt_doc_hash_length_returns_error ... ok
+test db::sync_inbox::tests::corrupt_operation_id_length_returns_error ... ok
+test db::sync_inbox::tests::corrupt_inbox_state_returns_error ... ok
+test db::sync_inbox::tests::cas_transition_wrong_expected_state_fails ... ok
+test db::sync_inbox::tests::corrupt_payload_hash_length_returns_error ... ok
+test db::sync_inbox::tests::corrupt_negative_remote_seq_returns_error ... ok
+test db::sync_inbox::tests::duplicate_applied_entry_not_reset_to_pending ... ok
+test db::sync_inbox::tests::duplicate_against_corrupt_existing_row_rolls_back_page ... ok
+test db::sync_inbox::tests::duplicate_conflicting_content_causes_collision_error ... ok
+test db::sync_inbox::tests::empty_page_staging_returns_zero_counts ... ok
+test db::sync_inbox::tests::get_inbox_page_entries_rejects_zero_and_oversized_limits ... ok
+test db::sync_inbox::tests::foreign_key_to_provider_state_enforced ... ok
+test db::sync_inbox::tests::idempotent_duplicate_page_staging ... ok
+test db::sync_inbox::tests::inbox_page_cursor_commit_is_atomic_scoped_and_does_not_ack ... ok
+test db::sync_inbox::tests::inbox_page_ledger_isolated_by_vault_and_provider ... ok
+test db::sync_inbox::tests::inbox_page_numeric_sequence_1_2_10_is_ordered_and_bounded ... ok
+test db::sync_inbox::tests::inbox_page_rejects_mixed_or_non_monotonic_remote_sequence_without_mutation ... ok
+test db::sync_inbox::tests::empty_page_high_watermark_is_durable ... ok
+test db::sync_inbox::tests::insert_and_read_round_trip ... ok
+test db::sync_inbox::tests::isolation_by_vault_and_provider ... ok
+test db::sync_inbox::tests::stage_inbox_page_persists_page_entries_and_membership_atomically ... ok
+test db::sync_inbox::tests::stage_inbox_page_rejects_empty_next_cursor_and_corrupt_replay_metadata ... ok
+test db::sync_inbox::tests::stage_page_rejects_payload_over_byte_limit_before_write ... ok
+test db::sync_inbox::tests::stage_page_validations_reject_invalid_bounds ... ok
+test db::sync_inbox::tests::stage_inbox_page_replay_is_exact_and_conflicts_roll_back ... ok
+test db::sync_inbox::tests::transactional_page_staging_all_or_nothing ... ok
+test db::sync_inbox::tests::transactional_page_staging_rollback_on_failure ... ok
+test db::sync_inbox::tests::legacy_v5_inbox_rows_survive_v6_page_ledger_migration_and_reopen ... ok
+test db::sync_inbox::tests::inbox_page_requires_all_members_safe_before_cursor_commit ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 342 filtered out; finished in 0.23s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  accepted C2A inbox regressions
+RUN   adapter regressions
+
+running 52 tests
+test sync::adapter::gdrive::tests::download_failure_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::deserialize_failure_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::changes_repeated_next_token_is_rejected ... ok
+test sync::adapter::gdrive::tests::changes_empty_page_with_next_token_does_not_end_scan ... ok
+test sync::adapter::gdrive::tests::byte_limit_stops_before_unconsumed_item ... ok
+test sync::adapter::gdrive::tests::concurrent_change_after_anchor_is_not_skipped ... ok
+test sync::adapter::gdrive::tests::first_oversized_item_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::gdrive_ack_returns_unsupported_capability ... ok
+test sync::adapter::gdrive::tests::changes_terminal_page_at_exact_budget_has_more_false ... ok
+test sync::adapter::gdrive::tests::gdrive_changes_scan_preserves_operation_id_and_typed_kind ... ok
+test sync::adapter::gdrive::tests::gdrive_sync_plan_has_no_numeric_cursor_requirement ... ok
+test sync::adapter::gdrive::tests::initial_empty_page_with_next_token_does_not_end_scan ... ok
+test sync::adapter::gdrive::tests::gdrive_initial_scan_preserves_operation_id_and_typed_kind ... ok
+test sync::adapter::gdrive::tests::initial_repeated_next_token_is_rejected ... ok
+test sync::adapter::gdrive::tests::initial_scan_captures_changes_anchor_before_first_file_list ... ok
+test sync::adapter::gdrive::tests::initial_scan_completion_transitions_to_original_changes_anchor ... ok
+test sync::adapter::gdrive::tests::changes_irrelevant_pages_stop_at_raw_scan_budget ... ok
+test sync::adapter::gdrive::tests::gdrive_operation_codec_supports_frozen_historical_layouts ... ok
+test sync::adapter::gdrive::tests::initial_scan_resume_reuses_original_changes_anchor ... ok
+test sync::adapter::gdrive::tests::initial_scan_transitions_to_changes_token ... ok
+test sync::adapter::gdrive::tests::legacy_filelist_cursor_restarts_safe_initial_scan ... ok
+test sync::adapter::gdrive::tests::irrelevant_changes_advance_cursor_with_bounded_scan_work ... ok
+test sync::adapter::gdrive::tests::legacy_raw_changes_cursor_is_accepted_and_upgraded ... ok
+test sync::adapter::gdrive::tests::malformed_versioned_cursor_is_rejected ... ok
+test sync::adapter::gdrive::tests::zero_byte_limit_is_rejected ... ok
+test sync::adapter::gdrive::tests::initial_irrelevant_pages_stop_at_raw_scan_budget ... ok
+test sync::adapter::server::tests::client_protocol_uses_shared_mailbox_types ... ok
+test sync::adapter::gdrive::tests::zero_entry_limit_is_rejected ... ok
+test sync::adapter::gdrive::tests::versioned_initial_cursor_preserves_file_page_token ... ok
+test sync::adapter::server::tests::get_sync_plan_request_preserves_numeric_cursor ... ok
+test sync::adapter::gdrive::tests::changes_scan_resumes_without_skipping_when_entry_limit_hit ... ok
+test sync::adapter::server::tests::parse_server_cursor_accepts_empty_and_numeric ... ok
+test sync::adapter::gdrive::tests::changes_resume_after_scan_budget_does_not_skip ... ok
+test sync::adapter::server::tests::parse_server_cursor_rejects_invalid ... ok
+test sync::adapter::gdrive::tests::initial_resume_after_scan_budget_does_not_skip ... ok
+test sync::adapter::server::tests::pull_page_rejects_asset_reference_until_supported ... ok
+test sync::adapter::server::tests::pull_page_rejects_until_mismatch ... ok
+test sync::adapter::gdrive::tests::initial_terminal_page_at_exact_budget_has_more_false ... ok
+test sync::adapter::server::tests::pull_page_rejects_zero_byte_limit ... ok
+test sync::adapter::server::tests::pull_page_rejects_zero_entry_limit ... ok
+test sync::adapter::server::tests::pull_page_request_preserves_after_until_and_limits ... ok
+test sync::adapter::server::tests::pull_page_response_maps_all_fields ... ok
+test sync::adapter::server::tests::server_provider_id_is_stable ... ok
+test sync::adapter::server::tests::server_provider_id_stable_across_device_endpoint_and_reconnect_state ... ok
+test sync::adapter::server::tests::server_push_batch_preserves_all_three_entry_kinds ... ok
+test sync::adapter::server::tests::server_sync_plan_roundtrips_incarnation_and_remote_vault_identity ... ok
+test sync::adapter::server::tests::sync_plan_bootstrap_required_maps_correctly ... ok
+test sync::adapter::server::tests::sync_plan_delta_maps_exact_until_cursor ... ok
+test sync::adapter::tests::test_provider_ids_are_stable ... ok
+test sync::adapter::tests::test_coordinator_facing_contract_opaque_cursor ... ok
+test sync::adapter::tests::test_unsupported_capability_error_variant ... ok
+test sync::adapter::gdrive::tests::initial_scan_resumes_without_skipping_when_entry_limit_hit ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 340 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  adapter regressions
+RUN   C2B focused regressions
+
+running 11 tests
+test sync::coordinator::c2b_tests::c2b_ack_failure_preserves_local_commit_and_restart_retries_gap_before_pull ... ok
+test sync::coordinator::c2b_tests::c2b_asset_and_delete_block_page_in_durable_typed_states ... ok
+test sync::coordinator::c2b_tests::c2b_applying_crash_state_reapplies_without_duplicate_terminal_transition ... ok
+test sync::coordinator::c2b_tests::c2b_empty_advancing_page_commits_and_acks ... ok
+test sync::coordinator::c2b_tests::c2b_corrupt_middle_entry_blocks_cursor_ack_and_later_page ... ok
+test sync::coordinator::c2b_tests::c2b_page_is_staged_before_apply_and_local_commit_before_ack ... ok
+test sync::coordinator::c2b_tests::c2b_restart_resumes_staged_page_before_new_pull ... ok
+test sync::coordinator::c2b_tests::c2b_server_and_gdrive_positions_are_provider_native ... ok
+test sync::coordinator::c2b_tests::c2b_two_updates_same_document_apply_in_page_order ... ok
+test sync::coordinator::c2b_tests::c2b_unverified_source_is_validated_and_applied ... ok
+test sync::coordinator::c2b_tests::c2b_verified_own_operation_requires_device_or_scoped_outbox_evidence ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 381 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  C2B focused regressions
+RUN   coordinator regressions
+
+running 25 tests
+test sync::coordinator::tests::cursor_persistence_failure_does_not_ack_or_pull_next_page ... ok
+test sync::coordinator::tests::ack_failure_does_not_pull_next_page ... ok
+test sync::coordinator::tests::entry_with_invalid_hash_does_not_advance_cursor ... ok
+test sync::coordinator::tests::entry_deserialize_failure_does_not_advance_cursor ... ok
+test sync::coordinator::tests::authenticated_current_legacy_and_nested_trailing_bytes_are_rejected ... ok
+test sync::coordinator::tests::encrypted_upsert_delete_and_asset_reference_payload_roundtrip ... ok
+test sync::coordinator::tests::later_page_failure_cannot_skip_earlier_unapplied_entries ... ok
+test sync::coordinator::tests::kind_and_payload_mismatch_rejected ... ok
+test sync::coordinator::tests::page_processing_failure_does_not_persist_or_ack ... ok
+test sync::coordinator::tests::real_ack_error_fails_closed ... ok
+test sync::coordinator::tests::page_is_processed_before_cursor_persist_and_ack ... ok
+test sync::coordinator::tests::production_v5_payloads_roundtrip_through_remote_decoder ... ok
+test sync::coordinator::tests::bootstrap_required_provider_state_stops_before_local_push_or_pull ... ok
+test sync::coordinator::tests::unsupported_asset_reference_prevents_cursor_advancement ... ok
+test sync::coordinator::tests::unsupported_capability_ack_allows_durable_pull_to_succeed ... ok
+test sync::coordinator::tests::unsupported_delete_prevents_cursor_advancement ... ok
+test sync::coordinator::tests::cursor_cas_failure_prevents_ack_and_next_page_with_real_provider_state ... ok
+test sync::coordinator::tests::adapter_failure_preserves_outbox_and_schedules_bounded_retry ... ok
+test sync::coordinator::tests::retry_persistence_failure_keeps_adapter_and_database_context ... ok
+test sync::coordinator::tests::restart_redelivers_preexisting_sent_outbox_without_redetection ... ok
+test sync::coordinator::tests::partial_ack_commits_only_accepted_operation ... ok
+test sync::coordinator::tests::incomplete_due_row_is_quarantined_once_without_starving_valid_rows ... ok
+test sync::coordinator::tests::rejected_ack_without_error_schedules_only_that_row ... ok
+test sync::coordinator::tests::missing_or_unknown_ack_never_acknowledges_outbox ... ok
+test sync::coordinator::tests::incomplete_outbox_record_fails_closed_before_network ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 367 filtered out; finished in 0.06s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  coordinator regressions
+RUN   full app suite excluding documented unrelated search failure
+
+running 391 tests
+test db::crdt::tests::crdt_apply_safe_preserves_corrupt_durable_state ... ok
+test db::crdt::tests::peer_id_read_and_parse_errors_fail_closed_without_replacement ... ok
+test db::crdt::tests::corrupt_scoped_crdt_and_path_rows_fail_closed ... ok
+test db::crdt::tests::cross_vault_crdt_path_and_baseline_mutations_preserve_other_vault ... ok
+test db::crdt::tests::replace_crdt_snapshot_rejects_invalid_and_rolls_back_on_delete_failure ... ok
+test db::crdt::tests::delete_crdt_doc_rolls_back_on_second_statement_failure ... ok
+test db::crdt::tests::scoped_crdt_compaction_rolls_back_on_failure ... ok
+test db::crdt::tests::vault_scoped_export_contains_only_requested_documents ... ok
+test db::crdt::tests::vault_scoped_crdt_path_and_baseline_crud_isolated ... ok
+test db::legacy_sync_migration::tests::apply_failure_retry_reuses_backup_without_duplicates ... ok
+test db::legacy_sync_migration::tests::added_legacy_row_after_apply_failure_is_rejected_before_retry_apply ... ok
+test db::legacy_sync_migration::tests::ambiguity_marker_failure_preserves_committed_backup_before_retry ... ok
+test db::legacy_sync_migration::tests::ambiguity_preserves_vault_scoped_provider_pairs_without_cartesian_expansion ... ok
+test db::legacy_sync_migration::tests::corrupt_provider_inventory_row_fails_closed ... ok
+test db::legacy_sync_migration::tests::conflicting_scoped_target_aborts_without_marking_complete ... ok
+test db::legacy_sync_migration::tests::empty_snapshot_manifest_cannot_coexist_with_source_rows ... ok
+test db::legacy_sync_migration::tests::legacy_apply_failure_preserves_committed_backup_and_source ... ok
+test db::legacy_sync_migration::tests::legacy_backup_failure_is_zero_mutation ... ok
+test db::legacy_sync_migration::tests::deleted_legacy_row_after_apply_failure_is_rejected_before_retry_apply ... ok
+test db::legacy_sync_migration::tests::malformed_empty_snapshot_manifest_fails_closed ... ok
+test db::legacy_sync_migration::tests::changed_legacy_source_after_apply_failure_is_rejected_before_retry_apply ... ok
+test db::legacy_sync_migration::tests::legacy_cursor_update_preserves_existing_provider_runtime_state ... ok
+test db::legacy_sync_migration::tests::legacy_baseline_with_underscore_path_never_guesses_provider ... ok
+test db::legacy_sync_migration::tests::empty_legacy_snapshot_is_durably_recorded_and_rejects_later_source_growth ... ok
+test db::schema::tests::failed_sync_schema_migration_does_not_advance_version ... ok
+test db::schema::tests::failed_sync_schema_v2_migration_rolls_back_without_damaging_v1 ... ok
+test db::legacy_sync_migration::tests::unregistered_or_mismatched_identity_cannot_claim_legacy_state ... ok
+test db::schema::tests::failed_sync_schema_v3_migration_rolls_back_without_damaging_v2 ... ok
+test db::legacy_sync_migration::tests::legacy_cursor_updates_existing_provider_without_overwriting_other_fields ... ok
+test db::legacy_sync_migration::tests::legacy_single_vault_migration_preserves_all_rows_and_backup ... ok
+test db::legacy_sync_migration::tests::legacy_migration_reopen_is_idempotent_and_keeps_vault_identity ... ok
+test db::legacy_sync_migration::tests::bootstrap_required_reopen_is_idempotent ... ok
+test db::legacy_sync_migration::tests::ambiguous_legacy_state_is_backed_up_and_requires_bootstrap_without_assignment ... ok
+test db::legacy_sync_migration::tests::production_legacy_schema_migrates_two_ordered_deltas_losslessly ... ok
+test db::legacy_sync_migration::tests::providerless_baseline_with_cursor_requires_bootstrap_without_provider_guess ... ok
+test db::schema::tests::sync_schema_meta_query_errors_are_not_treated_as_zero ... ok
+test db::schema::tests::fresh_sync_schema_v5_creates_vault_scoped_legacy_targets ... ok
+test db::schema::tests::fresh_sync_schema_creates_vault_and_provider_tables ... ok
+test db::schema::tests::fresh_sync_schema_v2_creates_outbox_and_inbox ... ok
+test db::schema::tests::inbox_is_scoped_and_uses_numeric_remote_seq ... ok
+test db::schema::tests::sync_schema_rejects_newer_version ... ok
+test db::schema::tests::legacy_outbox_v5_migration_preserves_rows_and_quarantines_unreconstructable_records ... ok
+test db::schema::tests::provider_state_is_scoped_by_vault_and_provider ... ok
+test db::schema::tests::upgrade_v2_to_v3_preserves_vault_provider_outbox_inbox_rows ... ok
+test db::schema::tests::outbox_is_scoped_and_deduplicated_by_operation_id ... ok
+test db::schema::tests::provider_state_rejects_unknown_vault ... ok
+test db::schema::tests::sync_schema_migration_is_idempotent ... ok
+test db::schema::tests::upgrade_v1_to_v2_preserves_vault_and_provider_rows ... ok
+test db::sync_inbox::tests::asset_reference_stages_and_reads_as_typed_kind ... ok
+test db::sync_inbox::tests::candidate_query_and_cas_vault_and_provider_isolation ... ok
+test db::schema::tests::legacy_outbox_v5_migration_complete_snapshot_survives_real_reopen ... ok
+test db::sync_inbox::tests::candidate_query_bounded_by_limit ... ok
+test db::sync_inbox::tests::candidate_query_deterministic_tie_breaker ... ok
+test db::sync_inbox::tests::candidate_query_corrupt_row_fails_entire_query ... ok
+test db::sync_inbox::tests::candidate_query_invalid_limits_reject ... ok
+test db::sync_inbox::tests::candidate_query_invalid_vault_provider_reject ... ok
+test db::sync_inbox::tests::candidate_query_null_seq_ordering_regression ... ok
+test db::sync_inbox::tests::candidate_query_sorts_numeric_seq_asc ... ok
+test db::sync_inbox::tests::candidate_query_only_returns_pending ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_applied_sets_applied_at_clears_error ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_failed_saves_error ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_ignored_own_operation_sets_applied_at ... ok
+test db::sync_inbox::tests::cas_transition_cross_vault_provider_fails ... ok
+test db::sync_inbox::tests::cas_transition_failed_or_quarantined_with_empty_error_rejected ... ok
+test db::sync_inbox::tests::cas_transition_applying_to_quarantined_saves_error ... ok
+test db::sync_inbox::tests::cas_transition_invalid_allowlist_transition_rejected ... ok
+test db::sync_inbox::tests::cas_transition_missing_operation_fails ... ok
+test db::sync_inbox::tests::cas_transition_pending_to_applying_success ... ok
+test db::sync_inbox::tests::cas_transition_same_state_rejected ... ok
+test db::sync_inbox::tests::cas_transition_wrong_expected_state_fails ... ok
+test db::sync_inbox::tests::corrupt_doc_hash_length_returns_error ... ok
+test db::sync_inbox::tests::corrupt_entry_kind_returns_error ... ok
+test db::sync_inbox::tests::corrupt_operation_id_length_returns_error ... ok
+test db::sync_inbox::tests::corrupt_inbox_state_returns_error ... ok
+test db::sync_inbox::tests::corrupt_negative_remote_seq_returns_error ... ok
+test db::sync_inbox::tests::corrupt_payload_hash_length_returns_error ... ok
+test db::sync_inbox::tests::duplicate_against_corrupt_existing_row_rolls_back_page ... ok
+test db::sync_inbox::tests::duplicate_applied_entry_not_reset_to_pending ... ok
+test db::sync_inbox::tests::duplicate_conflicting_content_causes_collision_error ... ok
+test db::sync_inbox::tests::empty_page_staging_returns_zero_counts ... ok
+test db::sync_inbox::tests::foreign_key_to_provider_state_enforced ... ok
+test db::sync_inbox::tests::get_inbox_page_entries_rejects_zero_and_oversized_limits ... ok
+test db::sync_inbox::tests::idempotent_duplicate_page_staging ... ok
+test db::sync_inbox::tests::inbox_page_cursor_commit_is_atomic_scoped_and_does_not_ack ... ok
+test db::sync_inbox::tests::empty_page_high_watermark_is_durable ... ok
+test db::sync_inbox::tests::inbox_page_ledger_isolated_by_vault_and_provider ... ok
+test db::sync_inbox::tests::inbox_page_rejects_mixed_or_non_monotonic_remote_sequence_without_mutation ... ok
+test db::sync_inbox::tests::inbox_page_numeric_sequence_1_2_10_is_ordered_and_bounded ... ok
+test db::sync_inbox::tests::insert_and_read_round_trip ... ok
+test db::sync_inbox::tests::isolation_by_vault_and_provider ... ok
+test db::sync_inbox::tests::stage_inbox_page_persists_page_entries_and_membership_atomically ... ok
+test db::sync_inbox::tests::stage_inbox_page_rejects_empty_next_cursor_and_corrupt_replay_metadata ... ok
+test db::sync_inbox::tests::stage_inbox_page_replay_is_exact_and_conflicts_roll_back ... ok
+test db::sync_inbox::tests::stage_page_rejects_payload_over_byte_limit_before_write ... ok
+test db::sync_inbox::tests::stage_page_validations_reject_invalid_bounds ... ok
+test db::sync_inbox::tests::transactional_page_staging_all_or_nothing ... ok
+test db::sync_inbox::tests::transactional_page_staging_rollback_on_failure ... ok
+test db::sync_outbox::tests::accepted_delete_removes_baseline_and_path_atomically ... ok
+test db::sync_outbox::tests::accepted_outbox_commit_atomically_updates_baseline_and_ack_state ... ok
+test db::sync_outbox::tests::cas_transition_with_wrong_expected_state_fails ... ok
+test db::sync_outbox::tests::corrupt_entry_kind_returns_error ... ok
+test db::sync_outbox::tests::corrupt_negative_retry_count_returns_error ... ok
+test db::sync_inbox::tests::legacy_v5_inbox_rows_survive_v6_page_ledger_migration_and_reopen ... ok
+test db::sync_outbox::tests::corrupt_outbox_state_returns_error ... ok
+test db::sync_outbox::tests::corrupt_operation_id_length_returns_error ... ok
+test db::sync_outbox::tests::corrupt_payload_hash_length_returns_error ... ok
+test db::sync_outbox::tests::invalid_record_validation_rejects_empty_ids ... ok
+test db::sync_outbox::tests::corrupt_source_hash_length_returns_error ... ok
+test db::sync_outbox::tests::dispatch_query_rejects_invalid_limits ... ok
+test db::sync_outbox::tests::duplicate_identical_insert_is_idempotent ... ok
+test db::sync_outbox::tests::dispatch_query_bounded_deterministic_and_respects_retry ... ok
+test db::sync_outbox::tests::duplicate_operation_id_with_different_content_is_rejected ... ok
+test db::sync_outbox::tests::failed_transition_validates_inputs_before_sql ... ok
+test db::sync_outbox::tests::insert_and_read_round_trip ... ok
+test db::sync_outbox::tests::foreign_key_to_provider_state_is_enforced ... ok
+test db::sync_outbox::tests::outbox_roundtrip_reconstructs_exact_sync_operation ... ok
+test db::sync_outbox::tests::outbox_validation_rejects_incomplete_new_rows_and_entry_kind_mismatch ... ok
+test db::sync_outbox::tests::outbox_state_mutations_are_scoped_cas_and_batch_atomic ... ok
+test db::sync_outbox::tests::query_is_scoped_by_vault_and_provider ... ok
+test db::sync_outbox::tests::pending_source_reuse_covers_sent_failed_and_exact_scope ... ok
+test db::sync_outbox::tests::retry_batch_failure_is_atomic_and_backoff_is_capped ... ok
+test db::sync_outbox::tests::same_source_hash_reuses_exact_durable_outbox_operation ... ok
+test db::sync_outbox::tests::snapshot_all_scoped_outbox_rejects_malformed_operation_id_without_aliasing_zero_id ... ok
+test db::sync_outbox::tests::sent_batch_rejects_duplicate_not_due_and_rolls_back_second_item ... ok
+test db::sync_outbox::tests::valid_failed_transition_increments_retry_count_and_saves_error ... ok
+test db::sync_provider_state::tests::ack_old_cursor_after_advance_rejected ... ok
+test db::sync_provider_state::tests::ack_input_validations_rejected_with_zero_mutation ... ok
+test db::sync_provider_state::tests::cas_blank_vault_or_provider_rejected_with_zero_mutation ... ok
+test db::sync_provider_state::tests::ack_progression_success ... ok
+test db::sync_provider_state::tests::cas_from_empty_cursor_to_first_cursor_success ... ok
+test db::sync_provider_state::tests::cas_only_updates_cursor_and_updated_at_other_fields_unchanged ... ok
+test db::sync_provider_state::tests::cas_saves_opaque_cursor_verbatim ... ok
+test db::sync_provider_state::tests::cursor_to_ack_different_from_local_committed_cursor_rejected ... ok
+test db::sync_provider_state::tests::empty_new_cursor_rejected_before_sql ... ok
+test db::sync_provider_state::tests::expected_ack_none_rejected_when_ack_exists ... ok
+test db::sync_provider_state::tests::invalid_incarnation_id_length_returns_err ... ok
+test db::sync_provider_state::tests::initial_ack_success ... ok
+test db::sync_provider_state::tests::invalid_remote_vault_id_length_returns_err ... ok
+test db::sync_provider_state::tests::invalid_sync_state_in_db_returns_err ... ok
+test db::sync_provider_state::tests::invalid_vault_or_provider_input_returns_err ... ok
+test db::sync_provider_state::tests::missing_provider_state_row_ack_rejected ... ok
+test db::sync_provider_state::tests::missing_record_returns_none ... ok
+test db::sync_provider_state::tests::negative_now_timestamp_rejected_before_sql ... ok
+test db::sync_provider_state::tests::incarnation_or_remote_vault_mismatch_requires_bootstrap_without_cursor_advance ... ok
+test db::sync_provider_state::tests::opaque_ack_cursor_saved_verbatim ... ok
+test db::sync_provider_state::tests::oversized_expected_or_new_cursor_rejected_before_sql ... ok
+test db::sync_provider_state::tests::provider_state_ensure_preserves_existing_bootstrap_and_all_fields ... ok
+test db::sync_provider_state::tests::oversized_stored_cursor_and_ack_cursor_returns_err ... ok
+test db::sync_provider_state::tests::reconcile_bootstrap_reason_and_idempotence_are_durable ... ok
+test db::sync_provider_state::tests::same_cursor_transition_rejected_before_sql ... ok
+test db::sync_provider_state::tests::successful_ack_only_mutates_ack_cursor_and_updated_at ... ok
+test db::sync_provider_state::tests::two_providers_same_vault_read_independently ... ok
+test db::sync_provider_state::tests::two_vault_runtime_cursor_and_ack_are_isolated ... ok
+test db::sync_provider_state::tests::two_vaults_same_provider_read_independently ... ok
+test db::sync_provider_state::tests::two_vaults_same_provider_same_local_cursor_ack_isolation ... ok
+test db::sync_provider_state::tests::typed_read_round_trip_all_10_fields ... ok
+test db::sync_provider_state::tests::wrong_expected_ack_rejected ... ok
+test db::sync_provider_state::tests::wrong_expected_cursor_returns_err_and_zero_mutation ... ok
+test db::sync_provider_state::tests::wrong_vault_or_provider_ack_rejected ... ok
+test db::sync_provider_state::tests::wrong_vault_or_provider_returns_err_and_zero_mutation ... ok
+test db::sync_vault::tests::conflict_with_corrupt_existing_row_returns_err_and_zero_mutation ... ok
+test db::sync_vault::tests::corrupt_db_row_causes_read_error ... ok
+test db::sync_vault::tests::different_metadata_version_on_same_mapping_rejected_with_zero_mutation ... ok
+test db::sync_vault::tests::empty_or_whitespace_vault_id_or_root_rejected_with_zero_mutation ... ok
+test db::sync_vault::tests::identical_insert_is_idempotent_and_does_not_reset_timestamps ... ok
+test db::sync_vault::tests::insert_and_read_round_trip_all_5_fields ... ok
+test feed_engine::sanitizer::tests::test_sanitize_html_keeps_safe_tags ... ok
+test feed_engine::sanitizer::tests::test_sanitize_html_strips_script ... ok
+test feed_engine::sanitizer::tests::test_sanitize_plain_strips_all ... ok
+test gdrive::tests::test_pkce_challenge_matches_verifier ... ok
+test gdrive::tests::test_pkce_pair_format ... ok
+test gdrive::tests::test_pkce_pair_uniqueness ... ok
+test path_utils::tests::test_enforce_no_traversal ... ok
+test path_utils::tests::test_enforce_within_roots_allows_valid ... ok
+test db::sync_vault::tests::lookup_by_id_and_canonical_root_return_same_record ... ok
+test path_utils::tests::test_enforce_within_roots_rejects_outside ... ok
+test path_utils::tests::test_enforce_within_roots_multiple_roots ... ok
+test path_utils::tests::test_is_safe_filename ... ok
+test path_utils::tests::test_resolve_safe_path_allows_new_file ... ok
+test path_utils::tests::test_resolve_safe_path_blocks_intermediate_traversal ... ok
+test db::sync_vault::tests::metadata_version_zero_rejected ... ok
+test path_utils::tests::test_resolve_safe_path_blocks_traversal ... ok
+test path_utils::tests::test_to_relative ... ok
+test search::tests::test_all_node_types ... ok
+test search::tests::test_build_fts_match ... ok
+test path_utils::tests::test_resolve_safe_path_blocks_symlink_escape ... ok
+test search::tests::test_build_fts_match_empty ... ok
+test search::tests::test_build_fts_match_exclude_only ... ok
+test search::tests::test_build_fts_match_mixed ... ok
+test search::tests::test_build_fts_match_phrase_passthrough ... ok
+test search::tests::test_build_fts_match_with_exclude ... ok
+test search::tests::test_complex_query ... ok
+test search::tests::test_dash_alone_not_exclude ... ok
+test path_utils::tests::test_resolve_safe_path_normal ... ok
+test search::tests::test_date_filter ... ok
+test search::tests::test_double_dash_not_exclude ... ok
+test search::tests::test_emoji_in_query ... ok
+test search::tests::test_empty_query ... ok
+test search::tests::test_empty_quotes ... ok
+test search::tests::test_exact_phrase ... ok
+test search::tests::test_exclude_term ... ok
+test search::tests::test_hash_alone_not_tag ... ok
+test search::tests::test_mixed_case_filters ... ok
+test search::tests::test_multiple_property_filters ... ok
+test search::tests::test_multiple_tags ... ok
+test search::tests::test_property_filter ... ok
+test search::tests::test_property_filter_only ... ok
+test search::tests::test_simple_tokenized_search ... ok
+test search::tests::test_sql_injection_attempt ... ok
+test search::tests::test_status_filter ... ok
+test search::tests::test_tag_filter ... ok
+test search::tests::test_title_only ... ok
+test search::tests::test_type_filter ... ok
+test search::tests::test_unclosed_quote ... ok
+test search::tests::test_unicode_search ... ok
+test search::tests::test_unknown_status_ignored ... ok
+test syn::conversation::tests::test_auto_title_empty ... ok
+test syn::conversation::tests::test_auto_title_long ... ok
+test syn::conversation::tests::test_auto_title_short ... ok
+test syn::conversation::tests::test_auto_title_unicode ... ok
+test syn::rag::tests::test_build_system_prompt_auto_no_context ... ok
+test syn::rag::tests::test_build_system_prompt_casual ... ok
+test syn::rag::tests::test_extract_search_terms_deduplication ... ok
+test syn::rag::tests::test_extract_search_terms_basic ... ok
+test syn::rag::tests::test_extract_search_terms_general_question ... ok
+test syn::rag::tests::test_extract_search_terms_removes_stop_words ... ok
+test syn::rag::tests::test_format_context_empty ... ok
+test syn::rag::tests::test_extract_search_terms_with_context ... ok
+test syn::rag::tests::test_format_context_mixed_types ... ok
+test db::sync_vault::tests::negative_timestamps_or_updated_before_created_rejected ... ok
+test syn::rag::tests::test_normalize_type_group ... ok
+test syn::rag::tests::test_parse_metadata ... ok
+test syn::tools::tests::test_tool_definitions_count ... ok
+test syn::tools::tests::test_tool_definitions_are_functions ... ok
+test syn::tools::tests::test_tool_definitions_have_parameters ... ok
+test syn::tools::tests::test_truncate_result_exact_limit ... ok
+test syn::tools::tests::test_tool_definitions_have_unique_names ... ok
+test syn::tools::tests::test_tool_definitions_have_descriptions ... ok
+test syn::tools::tests::test_truncate_result_short ... ok
+test syn::tools::tests::test_truncate_result_long ... ok
+test sync::adapter::gdrive::tests::byte_limit_stops_before_unconsumed_item ... ok
+test sync::adapter::gdrive::tests::changes_empty_page_with_next_token_does_not_end_scan ... ok
+test sync::adapter::gdrive::tests::changes_repeated_next_token_is_rejected ... ok
+test sync::adapter::gdrive::tests::changes_irrelevant_pages_stop_at_raw_scan_budget ... ok
+test sync::adapter::gdrive::tests::concurrent_change_after_anchor_is_not_skipped ... ok
+test sync::adapter::gdrive::tests::changes_terminal_page_at_exact_budget_has_more_false ... ok
+test sync::adapter::gdrive::tests::deserialize_failure_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::download_failure_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::first_oversized_item_does_not_advance_cursor ... ok
+test sync::adapter::gdrive::tests::gdrive_ack_returns_unsupported_capability ... ok
+test sync::adapter::gdrive::tests::gdrive_changes_scan_preserves_operation_id_and_typed_kind ... ok
+test sync::adapter::gdrive::tests::gdrive_operation_codec_supports_frozen_historical_layouts ... ok
+test sync::adapter::gdrive::tests::gdrive_initial_scan_preserves_operation_id_and_typed_kind ... ok
+test sync::adapter::gdrive::tests::changes_resume_after_scan_budget_does_not_skip ... ok
+test sync::adapter::gdrive::tests::gdrive_sync_plan_has_no_numeric_cursor_requirement ... ok
+test sync::adapter::gdrive::tests::changes_scan_resumes_without_skipping_when_entry_limit_hit ... ok
+test sync::adapter::gdrive::tests::initial_empty_page_with_next_token_does_not_end_scan ... ok
+test sync::adapter::gdrive::tests::initial_scan_captures_changes_anchor_before_first_file_list ... ok
+test sync::adapter::gdrive::tests::initial_repeated_next_token_is_rejected ... ok
+test sync::adapter::gdrive::tests::initial_irrelevant_pages_stop_at_raw_scan_budget ... ok
+test sync::adapter::gdrive::tests::initial_scan_completion_transitions_to_original_changes_anchor ... ok
+test sync::adapter::gdrive::tests::initial_scan_resume_reuses_original_changes_anchor ... ok
+test sync::adapter::gdrive::tests::initial_scan_transitions_to_changes_token ... ok
+test sync::adapter::gdrive::tests::irrelevant_changes_advance_cursor_with_bounded_scan_work ... ok
+test sync::adapter::gdrive::tests::legacy_filelist_cursor_restarts_safe_initial_scan ... ok
+test sync::adapter::gdrive::tests::initial_resume_after_scan_budget_does_not_skip ... ok
+test sync::adapter::gdrive::tests::initial_terminal_page_at_exact_budget_has_more_false ... ok
+test sync::adapter::gdrive::tests::malformed_versioned_cursor_is_rejected ... ok
+test sync::adapter::gdrive::tests::versioned_initial_cursor_preserves_file_page_token ... ok
+test sync::adapter::gdrive::tests::legacy_raw_changes_cursor_is_accepted_and_upgraded ... ok
+test sync::adapter::gdrive::tests::zero_byte_limit_is_rejected ... ok
+test sync::adapter::server::tests::client_protocol_uses_shared_mailbox_types ... ok
+test sync::adapter::server::tests::get_sync_plan_request_preserves_numeric_cursor ... ok
+test sync::adapter::gdrive::tests::zero_entry_limit_is_rejected ... ok
+test sync::adapter::server::tests::parse_server_cursor_accepts_empty_and_numeric ... ok
+test sync::adapter::server::tests::parse_server_cursor_rejects_invalid ... ok
+test sync::adapter::server::tests::pull_page_rejects_asset_reference_until_supported ... ok
+test sync::adapter::server::tests::pull_page_rejects_until_mismatch ... ok
+test sync::adapter::server::tests::pull_page_rejects_zero_byte_limit ... ok
+test sync::adapter::server::tests::pull_page_rejects_zero_entry_limit ... ok
+test sync::adapter::server::tests::pull_page_request_preserves_after_until_and_limits ... ok
+test sync::adapter::server::tests::pull_page_response_maps_all_fields ... ok
+test sync::adapter::gdrive::tests::initial_scan_resumes_without_skipping_when_entry_limit_hit ... ok
+test sync::adapter::server::tests::server_provider_id_stable_across_device_endpoint_and_reconnect_state ... ok
+test sync::adapter::server::tests::server_provider_id_is_stable ... ok
+test sync::adapter::server::tests::server_push_batch_preserves_all_three_entry_kinds ... ok
+test sync::adapter::server::tests::server_sync_plan_roundtrips_incarnation_and_remote_vault_identity ... ok
+test sync::adapter::server::tests::sync_plan_bootstrap_required_maps_correctly ... ok
+test sync::adapter::server::tests::sync_plan_delta_maps_exact_until_cursor ... ok
+test sync::adapter::tests::test_coordinator_facing_contract_opaque_cursor ... ok
+test sync::adapter::tests::test_provider_ids_are_stable ... ok
+test sync::coordinator::c2b_tests::c2b_ack_failure_preserves_local_commit_and_restart_retries_gap_before_pull ... ok
+test sync::coordinator::c2b_tests::c2b_applying_crash_state_reapplies_without_duplicate_terminal_transition ... ok
+test sync::coordinator::c2b_tests::c2b_asset_and_delete_block_page_in_durable_typed_states ... ok
+test sync::adapter::tests::test_unsupported_capability_error_variant ... ok
+test sync::coordinator::c2b_tests::c2b_corrupt_middle_entry_blocks_cursor_ack_and_later_page ... ok
+test sync::coordinator::c2b_tests::c2b_empty_advancing_page_commits_and_acks ... ok
+test sync::coordinator::c2b_tests::c2b_page_is_staged_before_apply_and_local_commit_before_ack ... ok
+test sync::coordinator::c2b_tests::c2b_restart_resumes_staged_page_before_new_pull ... ok
+test sync::coordinator::c2b_tests::c2b_server_and_gdrive_positions_are_provider_native ... ok
+test sync::coordinator::c2b_tests::c2b_two_updates_same_document_apply_in_page_order ... ok
+test sync::coordinator::c2b_tests::c2b_unverified_source_is_validated_and_applied ... ok
+test sync::coordinator::c2b_tests::c2b_verified_own_operation_requires_device_or_scoped_outbox_evidence ... ok
+test sync::coordinator::tests::ack_failure_does_not_pull_next_page ... ok
+test sync::coordinator::tests::authenticated_current_legacy_and_nested_trailing_bytes_are_rejected ... ok
+test sync::coordinator::tests::cursor_persistence_failure_does_not_ack_or_pull_next_page ... ok
+test sync::coordinator::tests::encrypted_upsert_delete_and_asset_reference_payload_roundtrip ... ok
+test sync::coordinator::tests::entry_deserialize_failure_does_not_advance_cursor ... ok
+test sync::coordinator::tests::entry_with_invalid_hash_does_not_advance_cursor ... ok
+test db::sync_vault::tests::oversized_vault_id_or_root_rejected_with_zero_mutation ... ok
+test db::sync_vault::tests::read_missing_vault_id_or_root_returns_none ... ok
+test sync::coordinator::tests::kind_and_payload_mismatch_rejected ... ok
+test sync::coordinator::tests::later_page_failure_cannot_skip_earlier_unapplied_entries ... ok
+test db::sync_vault::tests::same_canonical_root_different_vault_id_rejected_with_zero_mutation ... ok
+test sync::coordinator::tests::page_is_processed_before_cursor_persist_and_ack ... ok
+test sync::coordinator::tests::page_processing_failure_does_not_persist_or_ack ... ok
+test db::sync_vault::tests::same_vault_id_different_canonical_root_rejected_with_zero_mutation ... ok
+test sync::coordinator::tests::production_v5_payloads_roundtrip_through_remote_decoder ... ok
+test sync::coordinator::tests::real_ack_error_fails_closed ... ok
+test db::sync_vault::tests::two_independent_vaults ... ok
+test sync::coordinator::tests::bootstrap_required_provider_state_stops_before_local_push_or_pull ... ok
+test sync::coordinator::tests::cursor_cas_failure_prevents_ack_and_next_page_with_real_provider_state ... ok
+test sync::coordinator::tests::unsupported_asset_reference_prevents_cursor_advancement ... ok
+test sync::coordinator::tests::unsupported_capability_ack_allows_durable_pull_to_succeed ... ok
+test sync::coordinator::tests::unsupported_delete_prevents_cursor_advancement ... ok
+test sync::core::apply::tests::direct_v1_new_note_edit_must_not_roll_back ... ignored, known direct-P2P v1 rollback; enable after Phase 1 reorders durable apply/pull/push
+test sync::coordinator::tests::adapter_failure_preserves_outbox_and_schedules_bounded_retry ... ok
+test sync::core::apply::tests::test_extract_json_updated_at_missing ... ok
+test sync::core::apply::tests::test_extract_json_updated_at_present ... ok
+test sync::core::apply::tests::test_payload_roundtrip ... ok
+test sync::core::apply::tests::test_read_text_or_empty_if_missing_directory_returns_err ... ok
+test sync::core::apply::tests::test_read_text_or_empty_if_missing_existing ... ok
+test sync::core::apply::tests::test_read_text_or_empty_if_missing_nonexistent ... ok
+test sync::core::change::tests::delete_source_hash_is_unambiguous_for_delimiter_counterexamples ... ok
+test db::sync_inbox::tests::inbox_page_requires_all_members_safe_before_cursor_commit ... ok
+test sync::coordinator::tests::incomplete_due_row_is_quarantined_once_without_starving_valid_rows ... ok
+test sync::core::crypto::tests::test_derive_epoch_key_deterministic ... ok
+test sync::core::crypto::tests::test_encrypt_decrypt_v4_roundtrip ... ok
+test sync::core::crypto::tests::test_v3_still_works ... ok
+test sync::core::crypto::tests::test_v4_different_epochs_different_ciphertext ... ok
+test sync::core::crypto::tests::test_v4_wrong_epoch_fails ... ok
+test sync::coordinator::tests::partial_ack_commits_only_accepted_operation ... ok
+test sync::coordinator::tests::rejected_ack_without_error_schedules_only_that_row ... ok
+test sync::coordinator::tests::restart_redelivers_preexisting_sent_outbox_without_redetection ... ok
+test sync::core::identity::tests::json_node_identity_never_falls_back_to_relative_path ... ok
+test sync::coordinator::tests::retry_persistence_failure_keeps_adapter_and_database_context ... ok
+test sync::core::apply::tests::json_pull_persists_winner_when_file_bytes_already_match ... ok
+test sync::core::change::tests::delete_source_identity_is_deterministic_and_invalid_inputs_fail ... ok
+test sync::core::change::tests::durable_preparation_does_not_advance_baseline_before_acceptance ... ok
+test sync::hlc::tests::test_clock_skew_handling ... ok
+test sync::hlc::tests::test_now_creates_timestamp ... ok
+test sync::hlc::tests::test_ordering ... ok
+test sync::hlc::tests::test_receive_merges ... ok
+test sync::hlc::tests::test_tick_increments ... ok
+test sync::protocol::tests::read_message_rejects_trailing_postcard_bytes ... ok
+test sync::run_context_tests::run_context_rejects_untrusted_trigger_labels ... ok
+test sync::run_context_tests::run_context_uses_stable_redacted_tags ... ok
+test sync::utils::tests::test_file_sha256_known_value ... ok
+test sync::utils::tests::test_file_sha256_nonexistent ... ok
+test sync::utils::tests::test_collect_local_files_skips_hidden ... ok
+test sync::core::identity::tests::canonical_alias_registers_one_vault_mapping ... ok
+test utils::graph_parser::tests::test_extract_empty_text ... ok
+test utils::graph_parser::tests::test_extract_internal_links ... ok
+test utils::graph_parser::tests::test_extract_mixed_content ... ok
+test sync::core::identity::tests::corrupt_vault_metadata_is_actionable_and_not_replaced ... ok
+test utils::graph_parser::tests::test_extract_no_links ... ok
+test utils::graph_parser::tests::test_extract_tags_dedup ... ok
+test utils::graph_parser::tests::test_extract_tags_case_insensitive ... ok
+test utils::graph_parser::tests::test_extract_tags ... ok
+test sync::core::identity::tests::unsupported_vault_metadata_version_is_rejected_and_not_replaced ... ok
+test utils::graph_parser::tests::test_rename_case_insensitive ... ok
+test utils::graph_parser::tests::test_rename_internal_link ... ok
+test utils::graph_parser::tests::test_extract_wikilinks ... ok
+test utils::graph_parser::tests::test_rename_multiple_occurrences ... ok
+test utils::graph_parser::tests::test_extract_wikilink_with_alias ... ok
+test sync::coordinator::tests::missing_or_unknown_ack_never_acknowledges_outbox ... ok
+test sync::core::identity::tests::concurrent_identity_creation_converges_on_one_published_id ... ok
+test sync::coordinator::tests::incomplete_outbox_record_fails_closed_before_network ... ok
+test utils::graph_parser::tests::test_resolved_edges_skip_tags ... ok
+test utils::graph_parser::tests::test_rename_wikilink ... ok
+test utils::graph_parser::tests::test_resolved_edges_ghost_node ... ok
+test utils::graph_parser::tests::test_rename_wikilink_preserves_alias ... ok
+test utils::graph_parser::tests::test_resolved_edges_internal_link ... ok
+test utils::graph_parser::tests::test_rename_no_false_match ... ok
+test utils::graph_parser::tests::test_resolved_edges_skip_self_links ... ok
+test utils::graph_parser::tests::test_resolver_ghost_fallback ... ok
+test utils::graph_parser::tests::test_resolver_title_match ... ok
+test utils::graph_parser::tests::test_resolver_path_match ... ok
+test utils::graph_parser::tests::test_source_id_propagation ... ok
+test sync::core::identity::tests::same_vault_id_for_two_roots_is_rejected_without_db_mutation ... ok
+test sync::core::identity::tests::vault_metadata_atomic_create_and_reopen_is_stable ... ok
+
+test result: ok. 390 passed; 0 failed; 1 ignored; 0 measured; 1 filtered out; finished in 0.87s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS  full app suite excluding documented unrelated search failure
+C2B-DURABLE-INBOX-RUNTIME-CUTOVER-V1 FAILED: 1 gate(s) failed.

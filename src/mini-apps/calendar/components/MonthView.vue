@@ -54,7 +54,7 @@ const emit = defineEmits<{
                         <div v-for="tk in getTasksForDate(formatDateString(dayObj.date))" :key="'tsk-dot-'+tk.id" class="w-1.5 h-1.5 rounded-full" :class="tk.status === 'done' ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-500'"></div>
                     </div>
                     <!-- Desktop Text -->
-                    <div class="hidden md:flex flex-col gap-1 w-full" v-for="dayData in [getMonthViewItems(formatDateString(dayObj.date))]" :key="'ddata-'+dayObj.date.getTime()">
+                    <div class="hidden md:flex flex-col gap-1 w-full" v-for="(dayData, idx) in [getMonthViewItems(formatDateString(dayObj.date))]" :key="'ddata-'+dayObj.date.getTime()+'-'+idx">
                         <template v-for="item in dayData.display" :key="item.type + '-' + item.id">
                             <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95 cursor-pointer" @click.stop="emit('edit-event', item.event, formatDateString(dayObj.date))">
                                 <span v-if="item.event_time" class="opacity-70 mr-0.5">{{ item.event_time }}</span> {{ item.title }}

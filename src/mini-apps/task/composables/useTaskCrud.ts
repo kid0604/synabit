@@ -286,7 +286,7 @@ export function useTaskCrud(
 
     return {
       id: node.id,
-      path: node.id, // ID is the relative path in the node system
+      path: node.rel_path, // ID is the relative path in the node system
       title: node.title,
       content: node.content,
       created_at: node.created_at,
@@ -318,7 +318,7 @@ export function useTaskCrud(
       const projNodes = await ns.getNodes('project');
       projects.value = projNodes.map((node: any) => ({
         id: node.id,
-        path: node.id,
+        path: node.rel_path,
         title: node.title,
         status: node.properties.status || 'active',
         start_date: node.properties.start_date || '',

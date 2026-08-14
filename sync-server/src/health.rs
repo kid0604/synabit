@@ -59,16 +59,11 @@ pub async fn serve_health(
 
 /// `GET /` — simple banner so humans know they've reached the right server.
 async fn root_handler() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        "synabit-sync-server is running\n",
-    )
+    (StatusCode::OK, "synabit-sync-server is running\n")
 }
 
 /// `GET /health` — JSON health/stats response.
-async fn health_handler(
-    State(handler): State<Arc<MailboxHandler>>,
-) -> impl IntoResponse {
+async fn health_handler(State(handler): State<Arc<MailboxHandler>>) -> impl IntoResponse {
     let db = handler.db();
 
     // If any DB query fails, return a 503 with the error.

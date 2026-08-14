@@ -19,11 +19,12 @@ const LockScreen = defineAsyncComponent(() => import('./shared/components/LockSc
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
 const GDriveMigrationModal = defineAsyncComponent(() => import('./shared/components/GDriveMigrationModal.vue'));
+const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
 import { useGDrive } from './composables/useGDrive';
-import { useP2PSync } from './composables/useP2PSync';
+import { useSync } from './composables/useSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 import { useAppUpdate } from './composables/useAppUpdate';
@@ -57,7 +58,7 @@ const {
 
 // ─── Settings ─────────────────────────────────────────────
 const {
-  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, showE2eeOnboarding
+  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, showE2eeOnboarding, showRecoveryModal
 } = useSettings();
 
 const ALL_APPS = [
@@ -109,7 +110,7 @@ const setupPinMode = ref<'setup' | 'change'>('setup');
 const showHiddenAppsMenu = ref(false);
 
 const appStore = useAppStore();
-const { vaultPath, vaultType } = storeToRefs(appStore);
+const { vaultPath, vaultType, activeSyncProvider } = storeToRefs(appStore);
 
 const { useMobileLayout, isMobileOS } = usePlatform();
 
@@ -230,12 +231,12 @@ const handleGDriveMigrated = async (newPath: string) => {
     await appStore.setVaultPath(newPath, 'local');
 
     invoke('start_vault_watcher', { vaultPath: newPath }).catch(logger.error);
-    gdrive.syncGDrive();
+    syncState.sync();
 };
 
-// ─── P2P Sync ────────────────────────────────────────────────
-const p2p = useP2PSync(vaultPath);
-let lastP2PAutoSyncTime = 0;
+// ─── Sync ────────────────────────────────────────────────
+const syncState = useSync(vaultPath, activeSyncProvider);
+let lastAutoSyncTriggerTime = 0;
 
 import { appDataDir } from '@tauri-apps/api/path';
 
@@ -268,7 +269,7 @@ const clearVault = () => {
     vaultPath.value = '';
     vaultType.value = 'local';
     activeTool.value = 'nexus';
-    gdrive.setupAutoSync();
+    syncState.setupAutoSync();
 };
 
 // ─── Navigation History (Back/Forward) — continued ───────
@@ -463,6 +464,12 @@ onMounted(async () => {
       activeTool.value = defaultApp.value;
   }
 
+  if (!vaultPath.value && isMobileOS.value) {
+      const dataDir = await appDataDir();
+      const vaultDir = `${dataDir}/vault`;
+      await appStore.setVaultPath(vaultDir, 'local');
+  }
+
   if (vaultPath.value) {
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
@@ -482,8 +489,11 @@ onMounted(async () => {
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
 
-  gdrive.checkGDriveAuth().then(() => { gdrive.setupAutoSync(); });
-  p2p.autoReconnect();
+  gdrive.checkGDriveAuth();
+  
+  if (activeSyncProvider.value === 'server' && appStore.syncServerAddr) {
+      invoke('sync_connect', { serverAddr: appStore.syncServerAddr, serverIdHex: appStore.syncServerIdHex }).catch(logger.error);
+  }
 
   if (vaultType.value === 'gdrive') {
       showGDriveMigrationModal.value = true;
@@ -507,14 +517,11 @@ onMounted(async () => {
       
       setTimeout(() => checkUnreadNotifications(), 500);
       
-      if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
-          gdrive.syncGDrive();
-      }
-      if (appStore.p2pAutoSyncEnabled && !p2p.p2pSyncing.value) {
+      if (appStore.syncAutoEnabled && !syncState.isSyncing.value) {
           const now = Date.now();
-          if (now - lastP2PAutoSyncTime > 5000) {
-              lastP2PAutoSyncTime = now;
-              p2p.syncP2P('watcher_create_delete');
+          if (now - lastAutoSyncTriggerTime > 5000) {
+              lastAutoSyncTriggerTime = now;
+              syncState.sync('watcher_create_delete');
           }
       }
   });
@@ -537,14 +544,11 @@ onMounted(async () => {
       
       setTimeout(() => checkUnreadNotifications(), 500);
 
-      if (gdrive.gdriveConnected.value && !gdrive.gdriveSyncing.value) {
-          gdrive.syncGDrive();
-      }
-      if (appStore.p2pAutoSyncEnabled && !p2p.p2pSyncing.value) {
+      if (appStore.syncAutoEnabled && !syncState.isSyncing.value) {
           const now = Date.now();
-          if (now - lastP2PAutoSyncTime > 5000) {
-              lastP2PAutoSyncTime = now;
-              p2p.syncP2P('watcher_modified');
+          if (now - lastAutoSyncTriggerTime > 5000) {
+              lastAutoSyncTriggerTime = now;
+              syncState.sync('watcher_modified');
           }
       }
   });
@@ -702,7 +706,7 @@ onUnmounted(() => {
       <component :is="useMobileLayout ? MobileLayout : DesktopLayout" :activeTool="activeTool" @update:activeTool="activeTool = $event">
         
         <!-- SIDEBAR / BOTTOMBAR -->
-        <template v-if="!isFloatingView" #[useMobileLayout?'bottombar':'sidebar']>
+        <template v-if="!isFloatingView" #[useMobileLayout?`bottombar`:`sidebar`]>
           <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-20 h-full'" data-tauri-drag-region>
               <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
                 <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
@@ -781,16 +785,16 @@ onUnmounted(() => {
              
              <!-- Settings & Sync bottom icons for desktop -->
              <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
-                <button v-if="gdrive.gdriveConnected.value" @click="gdrive.syncGDrive()" :disabled="gdrive.gdriveSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', gdrive.gdriveSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="gdrive.gdriveSyncing.value ? 'Syncing...' : gdrive.lastSyncTime.value ? `Last sync: ${gdrive.lastSyncTime.value}` : 'Sync with Google Drive'">
-                   <RefreshCw v-if="gdrive.gdriveSyncing.value" class="w-5 h-5 animate-spin" />
-                   <CloudOff v-else-if="gdrive.gdriveSyncError.value" class="w-5 h-5" />
+                <button v-if="activeSyncProvider === 'gdrive'" @click="syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `Last sync: ${appStore.syncLastSuccessful}` : 'Sync with Google Drive'">
+                   <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
+                   <CloudOff v-else-if="syncState.syncError.value" class="w-5 h-5" />
                    <Cloud v-else class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ gdrive.gdriveSyncing.value ? 'Syncing…' : gdrive.gdriveSyncError.value ? 'Sync Error' : gdrive.lastSyncTime.value ? `Synced ${gdrive.lastSyncTime.value}` : 'Sync Now' }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
                 </button>
-                <button @click="p2p.syncP2P()" :disabled="p2p.p2pSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', p2p.p2pSyncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="p2p.p2pSyncing.value ? 'Syncing...' : p2p.lastSyncTime.value ? `P2P synced ${p2p.lastSyncTime.value}` : 'P2P Sync'">
-                   <RefreshCw v-if="p2p.p2pSyncing.value" class="w-5 h-5 animate-spin" />
+                <button v-if="activeSyncProvider === 'server'" @click="syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
+                   <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ p2p.p2pSyncing.value ? 'P2P Syncing…' : p2p.p2pSyncError.value ? 'P2P Error' : p2p.lastSyncTime.value ? `P2P ${p2p.lastSyncTime.value}` : 'P2P Sync' }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
                 </button>
 
                  <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
@@ -841,32 +845,24 @@ onUnmounted(() => {
           <SettingsModal
             :vault-path="vaultPath"
             :vault-type="vaultType"
+            :active-sync-provider="activeSyncProvider"
             :gdrive-connected="gdrive.gdriveConnected.value"
-            :gdrive-syncing="gdrive.gdriveSyncing.value"
-            :gdrive-sync-error="gdrive.gdriveSyncError.value"
-            :last-sync-time="gdrive.lastSyncTime.value"
-            :gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value"
-            :gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value"
-            :p2p-connected="p2p.p2pConnected.value"
-            :p2p-syncing="p2p.p2pSyncing.value"
-            :p2p-sync-error="p2p.p2pSyncError.value"
-            :p2p-connecting="p2p.p2pConnecting.value"
-            :p2p-last-sync-time="p2p.lastSyncTime.value"
-            :p2p-auto-sync-enabled="p2p.p2pAutoSyncEnabled.value"
-            :p2p-auto-sync-interval="p2p.p2pAutoSyncInterval.value"
-            :p2p-server-addr="appStore.p2pServerAddr"
-            :p2p-server-id-hex="appStore.p2pServerIdHex"
+            :gdrive-auth-loading="gdrive.gdriveAuthLoading.value"
+            :syncing="syncState.isSyncing.value"
+            :sync-error="syncState.syncError.value"
+            :last-sync-time="appStore.syncLastSuccessful"
+            :auto-sync-enabled="appStore.syncAutoEnabled"
+            :auto-sync-interval="appStore.syncAutoInterval"
+            :sync-server-addr="appStore.syncServerAddr"
+            :sync-server-id-hex="appStore.syncServerIdHex"
             @clear-vault="clearVault"
-            @sync-gdrive="gdrive.syncGDrive()"
+            @sync-now="syncState.sync()"
             @connect-gdrive="gdrive.connectGDrive()"
             @disconnect-gdrive="gdrive.disconnectGDrive()"
-            @update:gdrive-auto-sync-enabled="gdrive.gdriveAutoSyncEnabled.value = $event"
-            @update:gdrive-auto-sync-interval="gdrive.gdriveAutoSyncInterval.value = $event"
-            @p2p-connect="(addr: string, id: string) => p2p.connectP2P(addr, id)"
-            @p2p-disconnect="p2p.disconnectP2P()"
-            @p2p-sync="p2p.syncP2P()"
-            @update:p2p-auto-sync-enabled="p2p.p2pAutoSyncEnabled.value = $event"
-            @update:p2p-auto-sync-interval="p2p.p2pAutoSyncInterval.value = $event"
+            @connect-server="(addr: string, id: string) => { appStore.syncServerAddr = addr; appStore.syncServerIdHex = id; invoke('sync_connect', { serverAddr: addr, serverIdHex: id }).then(() => appStore.activeSyncProvider = 'server').catch(logger.error); }"
+            @disconnect-server="() => { invoke('sync_disconnect').then(() => appStore.activeSyncProvider = 'none').catch(logger.error); }"
+            @update:auto-sync-enabled="appStore.syncAutoEnabled = $event"
+            @update:auto-sync-interval="appStore.syncAutoInterval = $event"
             @show-setup-pin="(mode: 'setup' | 'change') => { setupPinMode = mode; showSetupPinModal = true; }"
           />
         </template>
@@ -878,6 +874,12 @@ onUnmounted(() => {
 
     <!-- E2EE Onboarding Modal -->
     <E2eeOnboarding v-if="showE2eeOnboarding" @done="showE2eeOnboarding = false" />
+    
+    <RecoveryModal
+      :is-open="showRecoveryModal"
+      @update:is-open="showRecoveryModal = $event"
+    />
+
     <LicenseModal :isOpen="showLicenseModal" @close="showLicenseModal = false" />
 
     <!-- Tier 1: App Lock Screen -->

@@ -7,12 +7,13 @@ const emit = defineEmits<{
   (e: 'done'): void;
 }>();
 
-type Step = 'choose' | 'generate' | 'restore' | 'show-phrase';
+type Step = 'choose' | 'generate' | 'restore' | 'show-phrase' | 'verify-phrase';
 const step = ref<Step>('choose');
 const loading = ref(false);
 const error = ref('');
 const recoveryPhrase = ref('');
 const restoreInput = ref('');
+const verifyInput = ref('');
 const copied = ref(false);
 
 const generateNew = async () => {
@@ -52,7 +53,17 @@ const copyPhrase = () => {
   setTimeout(() => { copied.value = false; }, 2000);
 };
 
+const startVerify = () => {
+  step.value = 'verify-phrase';
+  error.value = '';
+  verifyInput.value = '';
+};
+
 const finishSetup = () => {
+  if (verifyInput.value.trim().toLowerCase() !== recoveryPhrase.value.trim().toLowerCase()) {
+    error.value = 'Recovery phrase does not match. Please check and try again.';
+    return;
+  }
   emit('done');
 };
 </script>
@@ -81,6 +92,9 @@ const finishSetup = () => {
           </template>
           <template v-else-if="step === 'show-phrase'">
             This is your Recovery Phrase. <strong class="text-red-500">Save it somewhere safe!</strong> You'll need it to restore data on a new device. This is the only time it will be shown.
+          </template>
+          <template v-else-if="step === 'verify-phrase'">
+            Please confirm you have saved your Recovery Phrase by typing it below.
           </template>
         </p>
       </div>
@@ -168,9 +182,31 @@ const finishSetup = () => {
             {{ copied ? 'Copied!' : 'Copy Recovery Phrase' }}
           </button>
           
-          <button @click="finishSetup" class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[14px] font-semibold transition-all shadow-sm">
+          <button @click="startVerify" class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[14px] font-semibold transition-all shadow-sm">
             I've saved it → Continue
           </button>
+        </div>
+
+        <!-- Step: Verify Phrase -->
+        <div v-else-if="step === 'verify-phrase'" class="space-y-4">
+          <div class="space-y-1.5">
+            <label class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">Verify Recovery Phrase</label>
+            <textarea 
+              v-model="verifyInput" 
+              rows="3" 
+              placeholder="Paste or type your 12-word phrase here" 
+              class="w-full px-3 py-2.5 rounded-xl bg-[#f8f8f8] dark:bg-[#252525] border border-[#e0e0e0] dark:border-[#3a3a3a] text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none font-mono"
+            ></textarea>
+          </div>
+          
+          <div class="flex gap-3">
+            <button @click="step = 'show-phrase'; error = ''" class="flex-1 px-4 py-3 border border-[#e0e0e0] dark:border-[#3a3a3a] text-[#52525b] dark:text-[#a1a1aa] hover:bg-gray-100 dark:hover:bg-[#333] rounded-xl text-[14px] font-semibold transition-all">
+              Back
+            </button>
+            <button @click="finishSetup" class="flex-[2] px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[14px] font-semibold transition-all shadow-sm">
+              Confirm & Finish
+            </button>
+          </div>
         </div>
 
         <!-- Error -->

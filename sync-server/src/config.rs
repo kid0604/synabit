@@ -153,10 +153,7 @@ impl AppConfig {
             quic_port: cli.quic_port.unwrap_or(file_config.server.quic_port),
             health_port: cli.health_port.unwrap_or(file_config.server.health_port),
             bind_addr: file_config.server.bind_addr,
-            data_dir: cli
-                .data_dir
-                .clone()
-                .unwrap_or(file_config.storage.data_dir),
+            data_dir: cli.data_dir.clone().unwrap_or(file_config.storage.data_dir),
             default_max_vault_bytes: file_config.storage.default_max_vault_bytes,
             cleanup_interval_secs: file_config.retention.cleanup_interval_secs,
             max_entry_age_secs: file_config.retention.max_entry_age_secs,

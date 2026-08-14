@@ -32,7 +32,11 @@ pub fn import_opml(content: &str) -> Result<Vec<ImportedFeed>, String> {
 }
 
 /// Recursively collect feeds from OPML outlines.
-fn collect_outlines(outlines: &[opml::Outline], parent_category: &str, feeds: &mut Vec<ImportedFeed>) {
+fn collect_outlines(
+    outlines: &[opml::Outline],
+    parent_category: &str,
+    feeds: &mut Vec<ImportedFeed>,
+) {
     for outline in outlines {
         if let Some(ref xml_url) = outline.xml_url {
             // This is a feed entry
@@ -42,10 +46,7 @@ fn collect_outlines(outlines: &[opml::Outline], parent_category: &str, feeds: &m
                     .clone()
                     .unwrap_or_else(|| outline.text.clone());
 
-                let feed_type = outline
-                    .r#type
-                    .clone()
-                    .unwrap_or_else(|| "rss".to_string());
+                let feed_type = outline.r#type.clone().unwrap_or_else(|| "rss".to_string());
 
                 feeds.push(ImportedFeed {
                     url: xml_url.clone(),

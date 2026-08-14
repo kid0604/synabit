@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Sync error: {0}")]
     SyncError(String),
 
+    #[error("Unsupported capability: {0}")]
+    UnsupportedCapability(String),
+
     #[error("General application error: {0}")]
     General(String),
 }
@@ -43,6 +46,9 @@ impl Serialize for AppError {
             AppError::InvalidPath(msg) => ("INVALID_PATH".to_string(), msg.clone()),
             AppError::AuthFailed(msg) => ("AUTH_FAILED".to_string(), msg.clone()),
             AppError::SyncError(msg) => ("SYNC_ERROR".to_string(), msg.clone()),
+            AppError::UnsupportedCapability(msg) => {
+                ("UNSUPPORTED_CAPABILITY".to_string(), msg.clone())
+            }
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
         };
 

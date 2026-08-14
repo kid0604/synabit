@@ -21,6 +21,10 @@ export interface SynSettings {
   // Personality
   personality: string;
   custom_system_prompt: string | null;
+
+  // Context limits
+  num_ctx: number;
+  max_history_messages: number;
 }
 
 const DEFAULT_SETTINGS: SynSettings = {
@@ -35,6 +39,8 @@ const DEFAULT_SETTINGS: SynSettings = {
   graph_expansion_depth: 1,
   personality: 'auto',
   custom_system_prompt: null,
+  num_ctx: 4096,
+  max_history_messages: 20,
 };
 
 export function useSynSettings(vaultPath: string) {

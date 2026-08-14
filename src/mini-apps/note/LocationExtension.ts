@@ -104,7 +104,7 @@ export const LocationExtension = Node.create<LocationOptions>({
   },
 
   addNodeView() {
-    return VueNodeViewRenderer(LocationNodeView);
+    return VueNodeViewRenderer(LocationNodeView as any);
   },
 
   addCommands() {

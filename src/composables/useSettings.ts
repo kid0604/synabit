@@ -8,8 +8,9 @@ import { i18n } from '../i18n';
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
-const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security' | 'devices'>('general');
+const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security' | 'devices' | 'license'>('general');
 const showE2eeOnboarding = ref(false);
+const showRecoveryModal = ref(false);
 
 let isInitialized = false;
 
@@ -49,7 +50,9 @@ export function useSettings() {
         showE2eeOnboarding.value = true;
       }
     } catch (e) {
-      // E2EE check may fail if DB not ready yet — will be caught on first sync
+      if (typeof e === 'string' && (e.includes('SecureStore') || e.includes('Keystore'))) {
+        showRecoveryModal.value = true;
+      }
     }
     
     isInitialized = true;
@@ -123,5 +126,6 @@ export function useSettings() {
     isValidDailyFormat,
     openSettings,
     showE2eeOnboarding,
+    showRecoveryModal,
   };
 }

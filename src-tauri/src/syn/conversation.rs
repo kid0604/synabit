@@ -36,9 +36,8 @@ struct SynIndex {
 /// Ensure the `Syn/` directory exists inside the vault.
 fn ensure_syn_dir(vault_path: &str) -> AppResult<PathBuf> {
     let syn_dir = Path::new(vault_path).join("Syn");
-    std::fs::create_dir_all(&syn_dir).map_err(|e| {
-        AppError::General(format!("Failed to create Syn directory: {}", e))
-    })?;
+    std::fs::create_dir_all(&syn_dir)
+        .map_err(|e| AppError::General(format!("Failed to create Syn directory: {}", e)))?;
     Ok(syn_dir)
 }
 
@@ -141,7 +140,11 @@ fn rebuild_index(syn_dir: &Path) -> AppResult<SynIndex> {
                     index.conversations.insert(meta.id.clone(), meta);
                 }
                 Err(e) => {
-                    log::warn!("[Syn] Skipping corrupt conversation file {:?}: {}", path.file_name(), e);
+                    log::warn!(
+                        "[Syn] Skipping corrupt conversation file {:?}: {}",
+                        path.file_name(),
+                        e
+                    );
                 }
             }
         }
@@ -173,10 +176,7 @@ pub fn get_conversation(vault_path: &str, id: &str) -> AppResult<SynConversation
     let path = conversation_path(&syn_dir, id);
 
     if !path.exists() {
-        return Err(AppError::General(format!(
-            "Conversation not found: {}",
-            id
-        )));
+        return Err(AppError::General(format!("Conversation not found: {}", id)));
     }
 
     let conv = read_conversation_file(&path)?;
@@ -184,10 +184,7 @@ pub fn get_conversation(vault_path: &str, id: &str) -> AppResult<SynConversation
 }
 
 /// Create a new empty conversation. Returns the metadata.
-pub fn create_conversation(
-    vault_path: &str,
-    title: Option<String>,
-) -> AppResult<SynConversation> {
+pub fn create_conversation(vault_path: &str, title: Option<String>) -> AppResult<SynConversation> {
     let syn_dir = ensure_syn_dir(vault_path)?;
     let now = chrono::Utc::now().to_rfc3339();
     let id = uuid::Uuid::new_v4().to_string();
@@ -206,7 +203,8 @@ pub fn create_conversation(
     write_conversation_file(&path, &conv)?;
 
     let meta = to_metadata(&conv);
-    let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
+    let mut index =
+        read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
     index.conversations.insert(meta.id.clone(), meta.clone());
     if let Err(e) = write_index(&syn_dir, &index) {
         log::warn!("[Syn] Failed to update conversation index: {}", e);
@@ -217,10 +215,7 @@ pub fn create_conversation(
 }
 
 /// Save a full conversation (overwrites the existing file).
-pub fn save_conversation(
-    vault_path: &str,
-    conversation: &SynConversationFull,
-) -> AppResult<()> {
+pub fn save_conversation(vault_path: &str, conversation: &SynConversationFull) -> AppResult<()> {
     let syn_dir = ensure_syn_dir(vault_path)?;
     let path = conversation_path(&syn_dir, &conversation.meta.id);
 
@@ -236,8 +231,11 @@ pub fn save_conversation(
 
     write_conversation_file(&path, &conv)?;
 
-    let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
-    index.conversations.insert(conv.id.clone(), to_metadata(&conv));
+    let mut index =
+        read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
+    index
+        .conversations
+        .insert(conv.id.clone(), to_metadata(&conv));
     if let Err(e) = write_index(&syn_dir, &index) {
         log::warn!("[Syn] Failed to update conversation index: {}", e);
     }
@@ -256,7 +254,8 @@ pub fn delete_conversation(vault_path: &str, id: &str) -> AppResult<()> {
     }
 
     // Always clean up the conversation index entry
-    let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
+    let mut index =
+        read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
     index.conversations.remove(id);
     if let Err(e) = write_index(&syn_dir, &index) {
         log::warn!("[Syn] Failed to update conversation index: {}", e);
@@ -267,19 +266,12 @@ pub fn delete_conversation(vault_path: &str, id: &str) -> AppResult<()> {
 }
 
 /// Rename a conversation (update its title).
-pub fn rename_conversation(
-    vault_path: &str,
-    id: &str,
-    new_title: &str,
-) -> AppResult<()> {
+pub fn rename_conversation(vault_path: &str, id: &str, new_title: &str) -> AppResult<()> {
     let syn_dir = ensure_syn_dir(vault_path)?;
     let path = conversation_path(&syn_dir, id);
 
     if !path.exists() {
-        return Err(AppError::General(format!(
-            "Conversation not found: {}",
-            id
-        )));
+        return Err(AppError::General(format!("Conversation not found: {}", id)));
     }
 
     let mut conv = read_conversation_file(&path)?;
@@ -287,8 +279,11 @@ pub fn rename_conversation(
     conv.updated_at = chrono::Utc::now().to_rfc3339();
     write_conversation_file(&path, &conv)?;
 
-    let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
-    index.conversations.insert(conv.id.clone(), to_metadata(&conv));
+    let mut index =
+        read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
+    index
+        .conversations
+        .insert(conv.id.clone(), to_metadata(&conv));
     if let Err(e) = write_index(&syn_dir, &index) {
         log::warn!("[Syn] Failed to update conversation index: {}", e);
     }
@@ -334,8 +329,11 @@ pub fn pin_conversation(vault_path: &str, id: &str, pinned: bool) -> AppResult<(
     conv.updated_at = chrono::Utc::now().to_rfc3339();
     write_conversation_file(&path, &conv)?;
 
-    let mut index = read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
-    index.conversations.insert(conv.id.clone(), to_metadata(&conv));
+    let mut index =
+        read_index(&syn_dir).unwrap_or_else(|| rebuild_index(&syn_dir).unwrap_or_default());
+    index
+        .conversations
+        .insert(conv.id.clone(), to_metadata(&conv));
     if let Err(e) = write_index(&syn_dir, &index) {
         log::warn!("[Syn] Failed to update conversation index: {}", e);
     }
@@ -354,7 +352,10 @@ pub fn export_conversation_markdown(vault_path: &str, id: &str) -> AppResult<Str
     let conv = read_conversation_file(&path)?;
 
     let mut md = format!("# {}\n\n", conv.title);
-    md.push_str(&format!("*Model: {}*\n", conv.model.as_deref().unwrap_or("unknown")));
+    md.push_str(&format!(
+        "*Model: {}*\n",
+        conv.model.as_deref().unwrap_or("unknown")
+    ));
     md.push_str(&format!("*Created: {}*\n\n", conv.created_at));
     md.push_str("---\n\n");
 
@@ -385,7 +386,8 @@ mod tests {
 
     #[test]
     fn test_auto_title_long() {
-        let long_msg = "This is a very long message that should be truncated to about fifty characters";
+        let long_msg =
+            "This is a very long message that should be truncated to about fifty characters";
         let title = auto_title(long_msg);
         assert!(title.len() <= 55); // 50 + possible "…" character
         assert!(title.ends_with('…'));
@@ -400,7 +402,8 @@ mod tests {
     #[test]
     fn test_auto_title_unicode() {
         // Vietnamese with diacritics
-        let vn = "Đây là một tin nhắn rất dài bằng tiếng Việt với nhiều ký tự đặc biệt và dấu thanh";
+        let vn =
+            "Đây là một tin nhắn rất dài bằng tiếng Việt với nhiều ký tự đặc biệt và dấu thanh";
         let title = auto_title(vn);
         assert!(title.ends_with('…'));
         assert!(title.chars().count() <= 55);

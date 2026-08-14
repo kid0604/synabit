@@ -5,9 +5,9 @@ use sysinfo::System;
 pub fn generate_hwid() -> String {
     let mut sys = System::new_all();
     sys.refresh_all();
-    
+
     let mut hasher = Hasher::new();
-    
+
     // CPU Information
     if let Some(cpu) = sys.cpus().first() {
         hasher.update(cpu.brand().as_bytes());
@@ -22,16 +22,23 @@ pub fn generate_hwid() -> String {
     if let Some(os_name) = System::name() {
         hasher.update(os_name.as_bytes());
     }
-    
+
     // Memory size can change, but MAC address is better.
     // However, sysinfo v0.30+ doesn't easily expose MAC addresses without a separate crate like `mac_address`.
     // Let's rely on machine_uid + blake3 hash
-    
+
     let hash = hasher.finalize();
     let hwid_hex = hash.to_hex();
-    
+
     // Return first 16 chars as a compact identifier
-    format!("HWID-{}-{}", System::os_version().unwrap_or_else(|| "UNK".into()).replace(".", ""), &hwid_hex[..16]).to_uppercase()
+    format!(
+        "HWID-{}-{}",
+        System::os_version()
+            .unwrap_or_else(|| "UNK".into())
+            .replace(".", ""),
+        &hwid_hex[..16]
+    )
+    .to_uppercase()
 }
 
 #[cfg(target_os = "android")]

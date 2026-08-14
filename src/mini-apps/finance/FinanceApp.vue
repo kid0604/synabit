@@ -338,7 +338,7 @@ const loadData = async () => {
             if (nodeModified) {
                 // Save migrated node back to disk
                 ns.writeNode({
-                    relPath: node.id,
+                    relPath: node.rel_path,
                     title: node.title,
                     nodeType: 'finance_month',
                     properties: node.properties,
@@ -348,7 +348,7 @@ const loadData = async () => {
             }
             
             // Extract YYYY-MM from title or id
-            const match = node.id.match(/(\d{4})-(\d{2})\.json/);
+            const match = node.rel_path.match(/(\d{4})-(\d{2})\.json/);
             let date = new Date();
             if (match) {
                 date = new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1);

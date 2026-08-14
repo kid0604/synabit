@@ -86,7 +86,10 @@ mod tests {
         fs::write(&path, b"hello").unwrap();
         let hash = file_sha256(&path);
         // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
-        assert_eq!(hash, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -106,4 +109,3 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
-

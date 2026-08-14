@@ -1,18 +1,23 @@
-mod schema;
-mod kv;
 mod blocks;
-mod whiteboards;
-mod files;
-mod nexus;
-mod edges;
-mod search;
-mod nodes;
 mod crdt;
-mod rag;
+mod edges;
+mod files;
+mod kv;
+pub mod legacy_sync_migration;
 pub mod metrics;
+mod nexus;
+mod nodes;
+mod rag;
+mod schema;
+mod search;
+pub mod sync_inbox;
+pub mod sync_outbox;
+pub mod sync_provider_state;
+pub mod sync_vault;
+mod whiteboards;
 
-use std::sync::Mutex;
 use rusqlite::Connection;
+use std::sync::Mutex;
 
 pub struct DbBridge {
     conn: Connection,
@@ -27,8 +32,15 @@ impl DbBridge {
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
+
+    pub(crate) fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
 }
 
 // Re-exports (Option A — consumers keep using crate::db::NodeEdge, etc.)
 pub use edges::NodeEdge;
 pub use nexus::NexusRow;
+
+#[cfg(test)]
+pub(crate) use schema::run_sync_schema_migrations as run_sync_schema_migrations_for_test;

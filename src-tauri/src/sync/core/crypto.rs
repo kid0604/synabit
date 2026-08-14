@@ -49,14 +49,14 @@ pub fn key_to_mnemonic(key: &[u8; 32]) -> Result<String, String> {
 /// The mnemonic encodes 16 bytes; we derive the remaining 16 bytes
 /// using BLAKE3 hash of the first 16 bytes for deterministic expansion.
 pub fn mnemonic_to_key(phrase: &str) -> Result<[u8; 32], String> {
-    let mnemonic = bip39::Mnemonic::parse(phrase)
-        .map_err(|e| format!("Invalid recovery phrase: {}", e))?;
+    let mnemonic =
+        bip39::Mnemonic::parse(phrase).map_err(|e| format!("Invalid recovery phrase: {}", e))?;
     let mut entropy = mnemonic.to_entropy();
     if entropy.len() != 16 {
         entropy.zeroize();
         return Err("Recovery phrase must be 12 words".to_string());
     }
-    
+
     let mut key = [0u8; 32];
     key[..16].copy_from_slice(&entropy);
     // Deterministically derive second half from first half
@@ -114,7 +114,8 @@ pub fn encrypt_v4(master_key: &[u8; 32], epoch: u32, plaintext: &[u8]) -> Result
     let mut nonce_bytes = [0u8; 24];
     rand::rng().fill_bytes(&mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext)
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
         .map_err(|e| format!("v4 encryption failed: {}", e))?;
 
     let mut out = Vec::with_capacity(1 + 4 + 24 + ciphertext.len());
@@ -193,7 +194,6 @@ pub fn decrypt_v5(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-
 // ─── Unified Decrypt (v3 + v4) ───────────────────────────
 
 /// Decrypt payload — auto-detects wire format version.
@@ -232,7 +232,10 @@ pub fn decrypt(key: &[u8; 32], encrypted_payload: &[u8]) -> Result<Vec<u8>, Stri
 /// Decrypt payload that was encrypted with the old password-based system.
 /// Supports both v2 (random salt + Argon2 strong) and v1 (hardcoded salt + Argon2 default).
 /// This function is SLOW (calls Argon2) and only used during migration.
-pub fn decrypt_legacy_password(password: &str, encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
+pub fn decrypt_legacy_password(
+    password: &str,
+    encrypted_payload: &[u8],
+) -> Result<Vec<u8>, String> {
     if encrypted_payload.is_empty() {
         return Err("Payload is empty".to_string());
     }

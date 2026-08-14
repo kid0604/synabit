@@ -131,7 +131,7 @@ const save = () => {
     });
 };
 
-const close = () => {
+const _close = () => {
     emit('close');
 };
 

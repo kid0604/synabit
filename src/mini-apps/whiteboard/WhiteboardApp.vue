@@ -544,9 +544,9 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           @dragover.prevent="handleDragOver"
           @drop.prevent="handleDrop"
         >
-          <template #edge-default="edgeProps"><WaypointEdge v-bind="edgeProps" edge-type="default" /></template>
-          <template #edge-straight="edgeProps"><WaypointEdge v-bind="edgeProps" edge-type="straight" /></template>
-          <template #edge-step="edgeProps"><WaypointEdge v-bind="edgeProps" edge-type="step" /></template>
+          <template #edge-default="edgeProps"><WaypointEdge v-bind="(edgeProps as any)" edge-type="default" /></template>
+          <template #edge-straight="edgeProps"><WaypointEdge v-bind="(edgeProps as any)" edge-type="straight" /></template>
+          <template #edge-step="edgeProps"><WaypointEdge v-bind="(edgeProps as any)" edge-type="step" /></template>
           <template #node-shape="nodeProps"><ShapeNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" /></template>
           <template #node-stroke="nodeProps"><StrokeNode v-bind="nodeProps" /></template>
           <template #node-mindmap="nodeProps">

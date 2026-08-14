@@ -65,7 +65,10 @@ pub fn rename_tag(
 
                         let new_content = format!("---\n{}---\n{}", new_fm, rest_of_content);
                         if std::fs::write(&full_path, new_content).is_ok() {
-                            if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path) {
+                            if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(
+                                &vault_path,
+                                &full_path,
+                            ) {
                                 let _ = db.upsert_node(&parsed_node);
                             }
                         }
@@ -94,11 +97,18 @@ pub fn rename_tag(
             }
 
             if changed
-                && std::fs::write(&full_path, serde_json::to_string_pretty(&json_val).unwrap_or_default()).is_ok() {
-                    if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path) {
-                        let _ = db.upsert_node(&parsed_node);
-                    }
+                && std::fs::write(
+                    &full_path,
+                    serde_json::to_string_pretty(&json_val).unwrap_or_default(),
+                )
+                .is_ok()
+            {
+                if let Some(parsed_node) =
+                    crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path)
+                {
+                    let _ = db.upsert_node(&parsed_node);
                 }
+            }
         }
     }
 
@@ -158,7 +168,10 @@ pub fn delete_tag(
 
                         let new_content = format!("---\n{}---\n{}", new_fm, rest_of_content);
                         if std::fs::write(&full_path, new_content).is_ok() {
-                            if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path) {
+                            if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(
+                                &vault_path,
+                                &full_path,
+                            ) {
                                 let _ = db.upsert_node(&parsed_node);
                             }
                         }
@@ -186,11 +199,18 @@ pub fn delete_tag(
             }
 
             if changed
-                && std::fs::write(&full_path, serde_json::to_string_pretty(&json_val).unwrap_or_default()).is_ok() {
-                    if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path) {
-                        let _ = db.upsert_node(&parsed_node);
-                    }
+                && std::fs::write(
+                    &full_path,
+                    serde_json::to_string_pretty(&json_val).unwrap_or_default(),
+                )
+                .is_ok()
+            {
+                if let Some(parsed_node) =
+                    crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path)
+                {
+                    let _ = db.upsert_node(&parsed_node);
                 }
+            }
         }
     }
 

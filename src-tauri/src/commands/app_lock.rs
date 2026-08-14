@@ -108,16 +108,14 @@ pub fn verify_app_lock(
         }
     }
 
-    let hash =
-        SecretManager::get_app_lock_hash(Some(&app)).ok_or("App lock is not set up")?;
+    let hash = SecretManager::get_app_lock_hash(Some(&app)).ok_or("App lock is not set up")?;
 
     use argon2::{
         password_hash::{PasswordHash, PasswordVerifier},
         Argon2,
     };
 
-    let parsed_hash =
-        PasswordHash::new(&hash).map_err(|e| format!("Hash parse error: {}", e))?;
+    let parsed_hash = PasswordHash::new(&hash).map_err(|e| format!("Hash parse error: {}", e))?;
     let is_valid = Argon2::default()
         .verify_password(pin.as_bytes(), &parsed_hash)
         .is_ok();

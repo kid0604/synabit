@@ -9,7 +9,11 @@ use crate::path_utils;
 use crate::utils::graph_parser::{extract_resolved_node_edges, NodeResolver};
 use crate::utils::node_parser::parse_file_to_node;
 /// Helper: extract and sync node_edges for a node.
-pub(crate) fn sync_node_edges(db: &crate::db::DbBridge, node: &NodeMetadata, resolver: &NodeResolver) {
+pub(crate) fn sync_node_edges(
+    db: &crate::db::DbBridge,
+    node: &NodeMetadata,
+    resolver: &NodeResolver,
+) {
     let _ = db.delete_node_edges_by_source(&node.id);
     let edges = extract_resolved_node_edges(node, resolver);
     for edge in edges {
@@ -65,7 +69,7 @@ fn sync_node_to_search(db: &crate::db::DbBridge, node: &NodeMetadata) {
 
 #[tauri::command]
 pub fn scan_all_nodes(
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
 ) -> AppResult<()> {
@@ -73,6 +77,10 @@ pub fn scan_all_nodes(
     if !base_dir.exists() {
         return Ok(());
     }
+
+    let identity =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
+    let vault_id = identity.vault_id.to_string();
 
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -94,7 +102,10 @@ pub fn scan_all_nodes(
         // Skip hidden folders like .git, .Trash, and the assets folder
         if path.components().any(|c| {
             let name = c.as_os_str().to_string_lossy();
-            name.starts_with('.') && name != "." || name == "assets" || name == "Files" || name == "Syn"
+            name.starts_with('.') && name != "."
+                || name == "assets"
+                || name == "Files"
+                || name == "Syn"
         }) {
             continue;
         }
@@ -122,20 +133,22 @@ pub fn scan_all_nodes(
                     if needs_update {
                         if let Some(node) = parse_file_to_node(&vault_path, path) {
                             // --- Phase 1: External Edit Bridge ---
+                            let is_json_file = ext == "json" || ext == "canvas";
                             if let Ok(file_content) = std::fs::read_to_string(path) {
-                                if let Ok(doc) = db.get_crdt_doc(&node.id) {
-                                    match crate::sync::core::crdt::apply_text_update(&doc, &file_content) {
-                                        Ok(delta) => {
-                                            if !delta.is_empty() {
-                                                if let Err(e) = db.save_crdt_delta(&node.id, delta) {
-                                                    log::warn!("CRDT delta save failed for {}: {}", node.id, e);
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::warn!("CRDT update failed for {}: {}", node.id, e);
-                                        }
-                                    }
+                                let node_id = crate::sync::core::identity::get_or_assign_node_id(
+                                    base_dir, path,
+                                )?;
+                                db.upsert_document_path(&vault_id, &node_id, &rel_path)?;
+
+                                if is_json_file {
+                                    sync_crdt_snapshot_replace(
+                                        &db,
+                                        &vault_id,
+                                        &node_id,
+                                        &file_content,
+                                    )?;
+                                } else {
+                                    crdt_apply_safe(&db, &vault_id, &node_id, &file_content)?;
                                 }
                             }
                             // -------------------------------------
@@ -157,13 +170,14 @@ pub fn scan_all_nodes(
     for n in &existing_nodes {
         // Always remove Syn/ entries — they should never have been indexed
         let is_syn = n.id.starts_with("Syn/") || n.id.starts_with("Syn\\");
-        if is_syn || (disk_backed_types.contains(&n.node_type.as_str()) && !current_disk_files.contains(&n.id))
+        if is_syn
+            || (disk_backed_types.contains(&n.node_type.as_str())
+                && !current_disk_files.contains(&n.id))
         {
             let _ = db.delete_node(&n.id);
             delete_node_edges_for(&db, &n.id);
             let _ = db.delete_node_blocks(&n.id);
             db.delete_search_entry(&n.id);
-            let _ = db.delete_crdt_doc(&n.id);
         }
     }
 
@@ -172,7 +186,7 @@ pub fn scan_all_nodes(
 
 #[tauri::command]
 pub fn scan_specific_nodes(
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
     paths: Vec<String>,
@@ -181,6 +195,10 @@ pub fn scan_specific_nodes(
     if !base_dir.exists() {
         return Ok(());
     }
+
+    let identity =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
+    let vault_id = identity.vault_id.to_string();
 
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let resolver = build_resolver(&db);
@@ -199,25 +217,16 @@ pub fn scan_specific_nodes(
                 let is_json_file = ext == "json" || ext == "canvas";
                 if let Ok(file_content) = std::fs::read_to_string(&abs_path) {
                     let vault_path_obj = Path::new(&vault_path);
-                    if let Ok(node_id) = crate::sync::core::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
-                        // Ensure document_paths is updated in case this was a rename operation
-                        let _ = db.upsert_document_path(&node_id, &rel_path);
-                        
-                        let current_sha = crate::sync::utils::file_sha256(&abs_path);
-                        let stored_sha = db.get_kv(&format!("p2p_sync:sha256:{}", rel_path)).unwrap_or(None);
-                        
-                        if !current_sha.is_empty() && stored_sha.as_deref() == Some(current_sha.as_str()) {
-                            log::debug!("scan_specific_nodes: skipping CRDT update for {} (unchanged since sync)", rel_path);
-                        } else {
-                            if is_json_file {
-                                // JSON files: use snapshot replacement (last-write-wins)
-                                // Character-level CRDT merge is unsuitable for structured JSON data
-                                sync_crdt_snapshot_replace(&db, &node_id, &file_content);
-                            } else {
-                                // Markdown files: use character-level CRDT merge with panic recovery
-                                crdt_apply_safe(&db, &node_id, &file_content);
-                            }
-                        }
+                    let node_id = crate::sync::core::identity::get_or_assign_node_id(
+                        vault_path_obj,
+                        &abs_path,
+                    )?;
+                    db.upsert_document_path(&vault_id, &node_id, &rel_path)?;
+
+                    if is_json_file {
+                        sync_crdt_snapshot_replace(&db, &vault_id, &node_id, &file_content)?;
+                    } else {
+                        crdt_apply_safe(&db, &vault_id, &node_id, &file_content)?;
                     }
                 }
                 // -------------------------------------
@@ -518,13 +527,13 @@ pub fn update_node_properties(
     let mut node = db
         .get_node(&id)?
         .ok_or_else(|| crate::error::AppError::General("Node not found".to_string()))?;
-    
+
     node.properties = properties.clone();
     db.upsert_node(&node)?;
-    
+
     let resolver = build_resolver(&db);
     sync_node_edges(&db, &node, &resolver);
-    
+
     let tags = node
         .properties
         .get("tags")
@@ -550,12 +559,13 @@ pub fn update_node_properties(
         &node.updated_at,
         &node.id,
     );
-    
+
     Ok(())
 }
 
 #[tauri::command]
 pub fn write_node_file(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
     rel_path: String,
@@ -570,10 +580,16 @@ pub fn write_node_file(
             if let Some(val) = map.get(*key) {
                 if let Some(s) = val.as_str() {
                     if !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                        return Err(crate::error::AppError::General(format!("Invalid number format for {}", key)));
+                        return Err(crate::error::AppError::General(format!(
+                            "Invalid number format for {}",
+                            key
+                        )));
                     }
                 } else if !val.is_number() && !val.is_null() {
-                    return Err(crate::error::AppError::General(format!("Invalid number format for {}", key)));
+                    return Err(crate::error::AppError::General(format!(
+                        "Invalid number format for {}",
+                        key
+                    )));
                 }
             }
         }
@@ -662,19 +678,20 @@ pub fn write_node_file(
         format!("---\n{}---\n{}", yaml_str, content)
     };
 
+    let identity =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
+    let vault_id = identity.vault_id.to_string();
+
     // Before saving CRDT, we must determine the node_id
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    
+
     // We write to disk first so that get_or_assign_node_id can work
     std::fs::write(&abs_path, &file_content)?;
-    
+
     let vault_path_obj = std::path::Path::new(&vault_path);
-    let node_id = match crate::sync::core::identity::get_or_assign_node_id(vault_path_obj, &abs_path) {
-        Ok(id) => id,
-        Err(_) => rel_path.clone(), // Fallback to rel_path if something horribly fails
-    };
-    
-    let _ = db.upsert_document_path(&node_id, &rel_path);
+    let node_id = crate::sync::core::identity::get_or_assign_node_id(vault_path_obj, &abs_path)?;
+
+    db.upsert_document_path(&vault_id, &node_id, &rel_path)?;
 
     // Now that get_or_assign_node_id has potentially injected a UUID, read the injected content
     let final_file_content = std::fs::read_to_string(&abs_path).unwrap_or(file_content);
@@ -682,10 +699,10 @@ pub fn write_node_file(
     // --- Phase 1: CRDT Bridge ---
     if ext == "json" || ext == "canvas" {
         // JSON files: snapshot replacement (last-write-wins)
-        sync_crdt_snapshot_replace(&db, &node_id, &final_file_content);
+        sync_crdt_snapshot_replace(&db, &vault_id, &node_id, &final_file_content)?;
     } else {
         // Markdown files: character-level CRDT merge with panic recovery
-        crdt_apply_safe(&db, &node_id, &final_file_content);
+        crdt_apply_safe(&db, &vault_id, &node_id, &final_file_content)?;
     }
     // ----------------------------
 
@@ -812,6 +829,7 @@ fn update_node_mentions(
 
 #[tauri::command]
 pub fn delete_node_file(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
     rel_path: String,
@@ -822,13 +840,15 @@ pub fn delete_node_file(
         std::fs::remove_file(abs_path)?;
     }
 
+    let identity =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
+    let vault_id = identity.vault_id.to_string();
+
     // Update DB immediately
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let _ = db.delete_node(&rel_path);
     delete_node_edges_for(&db, &rel_path);
     db.delete_search_entry(&rel_path);
-    // Cleanup CRDT data for deleted document
-    let _ = db.delete_crdt_doc(&rel_path);
 
     Ok(())
 }
@@ -1334,56 +1354,54 @@ pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
 /// individual characters of `{"amount":123}` between two devices produces garbage.
 /// Instead, we replace the entire CRDT document with a fresh snapshot each time.
 /// Public so sync module can use it as a fallback when CRDT merge panics.
-pub fn sync_crdt_snapshot_replace(db: &crate::db::DbBridge, node_id: &str, content: &str) {
-    // 1. Reset CRDT (clear history)
-    let _ = db.delete_crdt_doc(node_id);
-
-    // 2. Create fresh CRDT and write full content
+pub fn sync_crdt_snapshot_replace(
+    db: &crate::db::DbBridge,
+    vault_id: &str,
+    node_id: &str,
+    content: &str,
+) -> AppResult<()> {
     let doc = loro::LoroDoc::new();
-    if let Ok(peer_id) = db.get_or_create_peer_id() {
-        doc.set_peer_id(peer_id).ok();
-    }
+    let peer_id = db.get_or_create_peer_id()?;
+    doc.set_peer_id(peer_id)
+        .map_err(|e| crate::error::AppError::General(format!("set_peer_id error: {:?}", e)))?;
     let text = doc.get_text("content");
-    if text.insert(0, content).is_ok() {
-        doc.commit();
-        let snapshot = doc.export_snapshot();
-        let _ = db.save_crdt_snapshot(node_id, snapshot);
-    }
+    text.insert(0, content)
+        .map_err(|e| crate::error::AppError::General(format!("CRDT insert error: {:?}", e)))?;
+    doc.commit();
+    let snapshot = doc.export_snapshot();
+    db.replace_crdt_snapshot(vault_id, node_id, &snapshot)?;
+    Ok(())
 }
 
 /// Apply CRDT update for Markdown files using character-level diff merge.
 /// Wrapped in catch_unwind to prevent Loro panics from crashing the entire app.
 /// If the CRDT document is corrupted, it falls back to snapshot replacement.
-fn crdt_apply_safe(db: &crate::db::DbBridge, node_id: &str, content: &str) {
-    match db.get_crdt_doc(node_id) {
-        Ok(doc) => {
-            // Use catch_unwind to prevent Loro internal panics from killing the tokio runtime
-            let doc_ref = &doc;
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::sync::core::crdt::apply_text_update(doc_ref, content)
-            }));
-            
-            match result {
-                Ok(Ok(delta)) => {
-                    if !delta.is_empty() {
-                        if let Err(e) = db.save_crdt_delta(node_id, delta) {
-                            log::warn!("CRDT delta save failed for {}: {}", node_id, e);
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    log::warn!("CRDT update error for {}: {}, falling back to snapshot replacement", node_id, e);
-                    sync_crdt_snapshot_replace(db, node_id, content);
-                }
-                Err(_panic) => {
-                    log::error!("CRDT panic caught for {}, resetting CRDT document to clean state", node_id);
-                    sync_crdt_snapshot_replace(db, node_id, content);
-                }
+pub(crate) fn crdt_apply_safe(
+    db: &crate::db::DbBridge,
+    vault_id: &str,
+    node_id: &str,
+    content: &str,
+) -> AppResult<()> {
+    let doc = db.get_crdt_doc(vault_id, node_id)?;
+    let doc_ref = &doc;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::sync::core::crdt::apply_text_update(doc_ref, content)
+    }));
+
+    match result {
+        Ok(Ok(delta)) => {
+            if !delta.is_empty() {
+                db.save_crdt_delta(vault_id, node_id, delta)?;
             }
+            Ok(())
         }
-        Err(e) => {
-            log::warn!("Failed to load CRDT doc for {}: {}, creating fresh", node_id, e);
-            sync_crdt_snapshot_replace(db, node_id, content);
-        }
+        Ok(Err(e)) => Err(crate::error::AppError::General(format!(
+            "CRDT update error for {}: {}",
+            node_id, e
+        ))),
+        Err(_panic) => Err(crate::error::AppError::General(format!(
+            "CRDT panic caught for {}",
+            node_id
+        ))),
     }
 }

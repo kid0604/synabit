@@ -16,12 +16,12 @@ pub extern "system" fn Java_com_synabit_app_SyncWorker_runHeadlessSync(
         .get_string(&vault_path_jstring)
         .expect("Couldn't get java string!")
         .into();
-        
+
     let server_addr: String = env
         .get_string(&server_addr_jstring)
         .expect("Couldn't get java string!")
         .into();
-        
+
     let server_id: String = env
         .get_string(&server_id_jstring)
         .expect("Couldn't get java string!")

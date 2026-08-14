@@ -13,7 +13,7 @@ export function useCalendarData(ns: any, bus: any, vaultPath: Ref<string>) {
 
         return {
             id: node.id,
-            path: node.id,
+            path: node.rel_path,
             title: node.title,
             content: node.content,
             created_at: node.created_at,

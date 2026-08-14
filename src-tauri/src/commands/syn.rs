@@ -59,10 +59,7 @@ pub async fn syn_get_settings(vault_path: String) -> Result<SynSettings, AppErro
 
 /// Save Syn settings for the vault.
 #[tauri::command]
-pub async fn syn_save_settings(
-    vault_path: String,
-    settings: SynSettings,
-) -> Result<(), AppError> {
+pub async fn syn_save_settings(vault_path: String, settings: SynSettings) -> Result<(), AppError> {
     crate::syn::settings::save_settings(&vault_path, &settings)
 }
 
@@ -143,12 +140,8 @@ pub async fn syn_send_message(
                 .lock()
                 .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
 
-            let retrieval_result = rag::retrieve_context(
-                &db,
-                &request.message,
-                &conv.messages,
-                &config,
-            )?;
+            let retrieval_result =
+                rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
 
             let context_str = rag::format_context(&retrieval_result);
             let sys_prompt = rag::build_system_prompt(&context_str, &config.personality);
@@ -225,7 +218,10 @@ pub async fn syn_send_message(
     // 9. Attach RAG sources — but only if the LLM didn't use tool calling.
     //    When tools were used, their results are more precise than RAG context,
     //    so showing RAG sources alongside tool results is just noise.
-    let used_tools = assistant_message.tool_calls_log.as_ref().is_some_and(|l| !l.is_empty());
+    let used_tools = assistant_message
+        .tool_calls_log
+        .as_ref()
+        .is_some_and(|l| !l.is_empty());
     if !retrieval.sources.is_empty() && !used_tools {
         assistant_message.sources = Some(retrieval.sources);
     }
@@ -274,9 +270,7 @@ pub fn syn_cancel_pull() {
 
 /// List all conversations in the vault (metadata only, sorted by recency).
 #[tauri::command]
-pub async fn syn_list_conversations(
-    vault_path: String,
-) -> Result<Vec<SynConversation>, AppError> {
+pub async fn syn_list_conversations(vault_path: String) -> Result<Vec<SynConversation>, AppError> {
     conversation::list_conversations(&vault_path)
 }
 

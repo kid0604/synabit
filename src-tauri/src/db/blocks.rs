@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 impl DbBridge {
     pub fn upsert_node_blocks(

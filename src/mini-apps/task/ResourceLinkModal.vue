@@ -89,7 +89,7 @@ const props = defineProps<{
   availableNodes: NodeItem[];
 }>();
 
-const emit = defineEmits<{
+const _emit = defineEmits<{
   (e: 'close'): void;
   (e: 'select', node: NodeItem): void;
 }>();

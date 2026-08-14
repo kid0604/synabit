@@ -10,7 +10,9 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbState;
-use crate::feed_engine::{cleanup, discovery, fetcher, opml as feed_opml, parser, scrape, readability};
+use crate::feed_engine::{
+    cleanup, discovery, fetcher, opml as feed_opml, parser, readability, scrape,
+};
 
 // ═══════════════════════════════════════════════════════════════
 //  DATA TYPES
@@ -134,16 +136,14 @@ fn read_json_file<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Resu
     }
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
 }
 
 /// Serialize and write a JSON file.
 fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), String> {
     let json = serde_json::to_string_pretty(data)
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
-    std::fs::write(path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
     Ok(())
 }
 
@@ -202,7 +202,11 @@ pub async fn feed_add_source(
                     Ok(feed) => {
                         let t = feed.title.map(|t| t.content).unwrap_or_default();
                         let d = feed.description.map(|d| d.content).unwrap_or_default();
-                        let s = feed.links.first().map(|l| l.href.clone()).unwrap_or_default();
+                        let s = feed
+                            .links
+                            .first()
+                            .map(|l| l.href.clone())
+                            .unwrap_or_default();
                         (t, d, s)
                     }
                     Err(_) => (String::new(), String::new(), String::new()),
@@ -254,9 +258,14 @@ pub async fn feed_add_source(
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    let response = client.get(&url).send().await
+    let response = client
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
-    let html = response.text().await
+    let html = response
+        .text()
+        .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
     let scraped = scrape::scrape_articles(&html, &url);
@@ -267,14 +276,16 @@ pub async fn feed_add_source(
     // Extract site title from HTML
     let doc = scraper::Html::parse_document(&html);
     let title = if let Ok(sel) = scraper::Selector::parse("title") {
-        doc.select(&sel).next()
+        doc.select(&sel)
+            .next()
             .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_else(|| url.clone())
     } else {
         url.clone()
     };
     let description = if let Ok(sel) = scraper::Selector::parse("meta[name=\"description\"]") {
-        doc.select(&sel).next()
+        doc.select(&sel)
+            .next()
             .and_then(|el| el.value().attr("content"))
             .map(|s| s.to_string())
             .unwrap_or_default()
@@ -474,15 +485,20 @@ pub fn feed_get_articles(
          {}
          ORDER BY published_at DESC
          LIMIT ?{} OFFSET ?{}",
-        where_clause, param_idx, param_idx + 1
+        where_clause,
+        param_idx,
+        param_idx + 1
     );
 
     param_values.push(Box::new(limit));
     param_values.push(Box::new(offset));
 
-    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
-    let mut stmt = conn.prepare(&sql).map_err(|e| format!("Query error: {}", e))?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Query error: {}", e))?;
     let articles = stmt
         .query_map(params_ref.as_slice(), row_to_article)
         .map_err(|e| format!("Query map error: {}", e))?
@@ -511,7 +527,9 @@ pub fn feed_search_articles(
                ORDER BY rank
                LIMIT 50";
 
-    let mut stmt = conn.prepare(sql).map_err(|e| format!("FTS query error: {}", e))?;
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("FTS query error: {}", e))?;
     let articles = stmt
         .query_map(params![query], row_to_article)
         .map_err(|e| format!("FTS query map error: {}", e))?
@@ -606,10 +624,7 @@ pub fn feed_mark_all_read(
 }
 
 #[tauri::command]
-pub fn feed_toggle_star(
-    db: tauri::State<'_, DbState>,
-    article_id: String,
-) -> Result<bool, String> {
+pub fn feed_toggle_star(db: tauri::State<'_, DbState>, article_id: String) -> Result<bool, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let conn = db.conn();
 
@@ -676,13 +691,7 @@ pub async fn feed_refresh(
     let source_ids_to_refresh: Vec<(String, String, Option<String>, Option<String>, bool, String)> =
         all_sources
             .iter()
-            .filter(|s| {
-                !s.is_paused
-                    && source_id
-                        .as_ref()
-                        .map(|sid| s.id == *sid)
-                        .unwrap_or(true)
-            })
+            .filter(|s| !s.is_paused && source_id.as_ref().map(|sid| s.id == *sid).unwrap_or(true))
             .map(|s| {
                 (
                     s.id.clone(),
@@ -725,12 +734,7 @@ pub async fn feed_refresh(
         }
 
         // Existing RSS/Atom refresh code below...
-        let fetch = fetcher::fetch_feed(
-            url,
-            etag.as_deref(),
-            last_mod.as_deref(),
-        )
-        .await;
+        let fetch = fetcher::fetch_feed(url, etag.as_deref(), last_mod.as_deref()).await;
 
         match fetch {
             fetcher::FetchResult::NotModified => {
@@ -760,14 +764,7 @@ pub async fn feed_refresh(
                         // Log the fetch
                         {
                             let db = db.lock().map_err(|e| e.to_string())?;
-                            log_fetch(
-                                db.conn(),
-                                sid,
-                                "ok",
-                                articles_found,
-                                new_count,
-                                None,
-                            )?;
+                            log_fetch(db.conn(), sid, "ok", articles_found, new_count, None)?;
                         }
 
                         // Update source metadata
@@ -829,9 +826,14 @@ async fn scrape_refresh(
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    let response = client.get(url).send().await
+    let response = client
+        .get(url)
+        .send()
+        .await
         .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
-    let html = response.text().await
+    let html = response
+        .text()
+        .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
     let scraped = scrape::scrape_articles(&html, url);
@@ -866,16 +868,20 @@ async fn scrape_refresh(
             .execute(params![
                 article_id,
                 source_id,
-                article.url,        // guid = url for scrape articles
+                article.url, // guid = url for scrape articles
                 article.title,
                 article.url,
-                "",                  // author (extracted later on read)
-                "",                  // content (lazy-loaded on read)
+                "", // author (extracted later on read)
+                "", // content (lazy-loaded on read)
                 article.summary,
-                if article.published_at.is_empty() { &now } else { &article.published_at },
+                if article.published_at.is_empty() {
+                    &now
+                } else {
+                    &article.published_at
+                },
                 now,
                 article.thumbnail_url,
-                "scrape",            // content_type
+                "scrape", // content_type
             ])
             .map_err(|e| format!("Insert error: {}", e))?;
 
@@ -999,14 +1005,16 @@ pub async fn feed_fetch_article_content(
     if !current_content.is_empty() {
         let db = db.lock().map_err(|e| e.to_string())?;
         let conn = db.conn();
-        let article = conn.query_row(
-            "SELECT id, feed_source_id, guid, title, url, author, content, summary,
+        let article = conn
+            .query_row(
+                "SELECT id, feed_source_id, guid, title, url, author, content, summary,
                     published_at, fetched_at, thumbnail_url, word_count, read_time_minutes,
                     content_type, is_read, is_starred, is_read_later
              FROM feed_articles WHERE id = ?1",
-            params![article_id],
-            row_to_article,
-        ).map_err(|e| format!("Query error: {}", e))?;
+                params![article_id],
+                row_to_article,
+            )
+            .map_err(|e| format!("Query error: {}", e))?;
         return Ok(article);
     }
 
@@ -1023,9 +1031,14 @@ pub async fn feed_fetch_article_content(
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    let response = client.get(&url).send().await
+    let response = client
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Failed to fetch article: {}", e))?;
-    let html = response.text().await
+    let html = response
+        .text()
+        .await
         .map_err(|e| format!("Failed to read article: {}", e))?;
 
     // 4. Extract content using readability
@@ -1073,7 +1086,8 @@ pub async fn feed_fetch_article_content(
          FROM feed_articles WHERE id = ?1",
         params![article_id],
         row_to_article,
-    ).map_err(|e| format!("Query error: {}", e))
+    )
+    .map_err(|e| format!("Query error: {}", e))
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1122,10 +1136,7 @@ pub fn feed_export_opml(vault_path: String) -> Result<String, String> {
             site_url: s.site_url.clone(),
             title: s.title.clone(),
             description: s.description.clone(),
-            category_name: cat_map
-                .get(&s.category_id)
-                .cloned()
-                .unwrap_or_default(),
+            category_name: cat_map.get(&s.category_id).cloned().unwrap_or_default(),
         })
         .collect();
 

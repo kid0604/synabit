@@ -50,7 +50,7 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
-const props = defineProps<{
+const _props = defineProps<{
   show: boolean
 }>();
 

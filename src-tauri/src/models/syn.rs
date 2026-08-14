@@ -170,8 +170,12 @@ impl Default for RagConfig {
 //  SETTINGS & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
 
-fn default_num_ctx() -> u32 { 8192 }
-fn default_max_history() -> usize { 50 }
+fn default_num_ctx() -> u32 {
+    8192
+}
+fn default_max_history() -> usize {
+    50
+}
 
 /// User-configurable settings for Syn, persisted in `{vault}/Syn/settings.json`.
 #[derive(Serialize, Deserialize, Debug, Clone)]

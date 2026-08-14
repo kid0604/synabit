@@ -11,9 +11,9 @@
 //! across async tasks safely (rusqlite::Connection is !Send without Mutex).
 
 use anyhow::{Context, Result};
-use rusqlite::{params, OptionalExtension};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{params, OptionalExtension};
 use std::path::Path;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,15 +32,28 @@ impl std::fmt::Debug for Database {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum IdempotencyResult {
+    Existing { seq: u64 },
+    Conflict,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    Created(u64),
+    Existing(u64),
+    Conflict,
+}
+
 impl Database {
     /// Open (or create) the SQLite database at `path` and apply migrations.
     pub fn open(path: &Path) -> Result<Self> {
-        let manager = SqliteConnectionManager::file(path)
-            .with_init(|c| {
-                c.execute_batch("PRAGMA journal_mode = WAL;")?;
-                c.execute_batch("PRAGMA busy_timeout = 5000;")?;
-                c.execute_batch("PRAGMA foreign_keys = ON;")
-            });
+        let manager = SqliteConnectionManager::file(path).with_init(|c| {
+            c.execute_batch("PRAGMA journal_mode = WAL;")?;
+            c.execute_batch("PRAGMA busy_timeout = 5000;")?;
+            c.execute_batch("PRAGMA foreign_keys = ON;")
+        });
         let pool = Pool::new(manager).context("failed to create connection pool")?;
 
         let db = Self { pool };
@@ -58,28 +71,37 @@ impl Database {
                 vault_hash    TEXT PRIMARY KEY,
                 mailbox_token BLOB NOT NULL,
                 created_at    INTEGER NOT NULL,
-                max_storage_bytes INTEGER NOT NULL DEFAULT 1073741824
+                max_storage_bytes INTEGER NOT NULL DEFAULT 1073741824,
+                used_storage_bytes INTEGER NOT NULL DEFAULT 0,
+                incarnation_id BLOB,
+                bootstrap_state TEXT DEFAULT 'not_ready',
+                committed_bytes INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS mailbox (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 vault_hash    TEXT NOT NULL REFERENCES vaults(vault_hash),
                 doc_hash      TEXT NOT NULL,
+                operation_id  BLOB NOT NULL,
+                entry_kind    TEXT NOT NULL,
                 source_device TEXT NOT NULL,
                 seq           INTEGER NOT NULL,
                 blob_path     TEXT NOT NULL,
                 blob_size     INTEGER NOT NULL,
                 payload_hash  TEXT NOT NULL,
                 created_at    INTEGER NOT NULL,
-                is_delete     INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(vault_hash, seq)
             );
 
-            CREATE TABLE IF NOT EXISTS cursors (
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mailbox_vault_op_id ON mailbox(vault_hash, operation_id);
+
+            CREATE TABLE IF NOT EXISTS devices (
                 vault_hash  TEXT NOT NULL REFERENCES vaults(vault_hash),
                 device_id   TEXT NOT NULL,
                 last_seq    INTEGER NOT NULL DEFAULT 0,
                 last_seen   INTEGER NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'active',
+                bootstrap_required INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(vault_hash, device_id)
             );
 
@@ -108,7 +130,7 @@ impl Database {
             SELECT v.vault_hash, 
                    MAX(
                        COALESCE((SELECT MAX(seq) FROM mailbox m WHERE m.vault_hash = v.vault_hash), 0),
-                       COALESCE((SELECT MAX(last_seq) FROM cursors c WHERE c.vault_hash = v.vault_hash), 0)
+                       COALESCE((SELECT MAX(last_seq) FROM devices c WHERE c.vault_hash = v.vault_hash), 0)
                    )
             FROM vaults v;
 
@@ -150,13 +172,23 @@ impl Database {
         mailbox_token: &[u8],
         max_storage_bytes: u64,
     ) -> Result<()> {
-        let conn = self.pool.get().context("pool get")?;
+        let mut conn = self.pool.get().context("pool get")?;
+        let tx = conn.transaction()?;
         let now = unix_now();
-        conn.execute(
-            "INSERT INTO vaults (vault_hash, mailbox_token, created_at, max_storage_bytes)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![vault_hash, mailbox_token, now, max_storage_bytes as i64],
+        let incarnation_id = uuid::Uuid::new_v4().into_bytes();
+
+        tx.execute(
+            "INSERT INTO vaults (vault_hash, mailbox_token, created_at, max_storage_bytes, incarnation_id, bootstrap_state, committed_bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'not_ready', 0)",
+            rusqlite::params![vault_hash, mailbox_token, now, max_storage_bytes as i64, incarnation_id.as_slice()],
         )?;
+
+        tx.execute(
+            "INSERT INTO vault_sequences (vault_hash, seq) VALUES (?1, 0)",
+            rusqlite::params![vault_hash],
+        )?;
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -165,6 +197,7 @@ impl Database {
     // -----------------------------------------------------------------------
 
     /// Get the current max sequence number for a vault (0 if empty).
+    #[allow(dead_code)]
     pub fn current_seq(&self, vault_hash: &str) -> Result<u64> {
         let conn = self.pool.get().context("pool get")?;
         let seq: Option<i64> = conn
@@ -178,56 +211,386 @@ impl Database {
         Ok(seq.unwrap_or(0) as u64)
     }
 
-    /// Insert a new mailbox entry and return the assigned sequence number.
+    pub fn get_entry_by_operation_id(
+        &self,
+        vault_hash: &str,
+        operation_id: &[u8; 16],
+        doc_hash: &str,
+        entry_kind: synabit_protocol::SyncEntryKind,
+        payload_hash: &str,
+    ) -> Result<IdempotencyResult> {
+        let conn = self.pool.get().context("pool get")?;
+        let row: Option<(i64, String, String, String)> = conn
+            .query_row(
+                "SELECT seq, doc_hash, entry_kind, payload_hash FROM mailbox WHERE vault_hash = ? AND operation_id = ?",
+                rusqlite::params![vault_hash, operation_id.as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+
+        match row {
+            Some((seq, existing_doc, existing_kind, existing_payload)) => {
+                if existing_doc == doc_hash
+                    && existing_kind == entry_kind.to_string()
+                    && existing_payload == payload_hash
+                {
+                    Ok(IdempotencyResult::Existing { seq: seq as u64 })
+                } else {
+                    Ok(IdempotencyResult::Conflict)
+                }
+            }
+            None => Ok(IdempotencyResult::NotFound),
+        }
+    }
+
+    /// Insert a new mailbox entry and return the assigned sequence number or existing idempotency outcome.
+    #[allow(clippy::too_many_arguments)]
     pub fn push_entry(
         &self,
         vault_hash: &str,
         doc_hash: &str,
+        operation_id: &[u8; 16],
+        entry_kind: synabit_protocol::SyncEntryKind,
         source_device: &str,
         blob_path: &str,
         blob_size: u64,
         payload_hash: &str,
-        is_delete: bool,
-    ) -> Result<u64> {
-        let conn = self.pool.get().context("pool get")?;
+    ) -> Result<PushOutcome> {
+        let mut conn = self.pool.get().context("pool get")?;
         let now = unix_now();
+        let tx = conn.transaction()?;
 
         // Ensure vault_sequences exists for this vault
-        conn.execute(
+        tx.execute(
             "INSERT OR IGNORE INTO vault_sequences (vault_hash, seq) VALUES (?1, 0)",
             params![vault_hash],
         )?;
 
-        let next_seq: i64 = conn
-            .query_row(
-                "UPDATE vault_sequences SET seq = seq + 1 WHERE vault_hash = ?1 RETURNING seq",
-                params![vault_hash],
-                |row| row.get(0),
-            )?;
+        let next_seq: i64 = tx.query_row(
+            "UPDATE vault_sequences SET seq = seq + 1 WHERE vault_hash = ?1 RETURNING seq",
+            params![vault_hash],
+            |row| row.get(0),
+        )?;
 
-        conn.execute(
-            "INSERT INTO mailbox (vault_hash, doc_hash, source_device, seq, blob_path, blob_size, payload_hash, created_at, is_delete)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        let insert_res = tx.execute(
+            "INSERT INTO mailbox (vault_hash, doc_hash, operation_id, entry_kind, source_device, seq, blob_path, blob_size, payload_hash, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 vault_hash,
                 doc_hash,
+                operation_id.as_slice(),
+                entry_kind.to_string(),
                 source_device,
                 next_seq,
                 blob_path,
                 blob_size as i64,
                 payload_hash,
                 now,
-                is_delete
             ],
+        );
+
+        if let Err(err) = insert_res {
+            drop(tx);
+            match self.get_entry_by_operation_id(
+                vault_hash,
+                operation_id,
+                doc_hash,
+                entry_kind,
+                payload_hash,
+            )? {
+                IdempotencyResult::Existing { seq } => return Ok(PushOutcome::Existing(seq)),
+                IdempotencyResult::Conflict => return Ok(PushOutcome::Conflict),
+                IdempotencyResult::NotFound => return Err(err.into()),
+            }
+        }
+
+        tx.execute(
+            "UPDATE vaults SET used_storage_bytes = used_storage_bytes + ? WHERE vault_hash = ?",
+            params![blob_size as i64, vault_hash],
         )?;
-        Ok(next_seq as u64)
+
+        tx.commit()?;
+        Ok(PushOutcome::Created(next_seq as u64))
     }
 
     /// Pull all entries for a vault with `seq > since_seq`.
+    pub fn has_more_entries(
+        &self,
+        vault_hash: &str,
+        after_seq: u64,
+        until_seq: u64,
+    ) -> Result<bool> {
+        let conn = self.pool.get()?;
+        let after_i64 = after_seq.min(i64::MAX as u64) as i64;
+        let until_i64 = until_seq.min(i64::MAX as u64) as i64;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM mailbox WHERE vault_hash = ? AND seq > ? AND seq <= ?",
+            rusqlite::params![vault_hash, after_i64, until_i64],
+            |row: &rusqlite::Row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn begin_bootstrap(
+        &self,
+        vault_hash: &str,
+        device_id: &str,
+    ) -> Result<([u8; 16], [u8; 16], u64, u64, u64)> {
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
+
+        let (seq, inc_id_vec): (u64, Vec<u8>) = tx.query_row(
+            "SELECT (SELECT seq FROM vault_sequences WHERE vault_hash = ?1), incarnation_id FROM vaults WHERE vault_hash = ?1",
+            rusqlite::params![vault_hash],
+            |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let mut incarnation_id = [0u8; 16];
+        if inc_id_vec.len() == 16 {
+            incarnation_id.copy_from_slice(&inc_id_vec);
+        }
+
+        let session_id = uuid::Uuid::new_v4().into_bytes();
+        let now = unix_now();
+        let expires_at = now + 3600;
+
+        tx.execute(
+            "INSERT INTO bootstrap_sessions (session_id, vault_hash, device_id, base_seq, incarnation_id, item_count, total_bytes, state, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, 0, 0, 'active', ?, ?)",
+            rusqlite::params![session_id.as_slice(), vault_hash, device_id, seq, incarnation_id.as_slice(), now, expires_at],
+        )?;
+
+        tx.execute(
+            "INSERT INTO bootstrap_items (session_id, position, doc_hash, head_seq, operation_id, entry_kind, blob_id, payload_hash, source_device, updated_at)
+             SELECT ?, ROW_NUMBER() OVER(ORDER BY updated_at ASC), doc_hash, head_seq, operation_id, entry_kind, blob_id, payload_hash, source_device, updated_at
+             FROM document_heads
+             WHERE vault_hash = ?",
+            rusqlite::params![session_id.as_slice(), vault_hash],
+        )?;
+
+        let count: u64 = tx.query_row(
+            "SELECT count(*) FROM bootstrap_items WHERE session_id = ?",
+            rusqlite::params![session_id.as_slice()],
+            |row: &rusqlite::Row| row.get(0),
+        )?;
+        tx.execute(
+            "UPDATE bootstrap_sessions SET item_count = ? WHERE session_id = ?",
+            rusqlite::params![count, session_id.as_slice()],
+        )?;
+
+        tx.commit()?;
+        Ok((session_id, incarnation_id, seq, count, 0))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn pull_bootstrap_page_meta(
+        &self,
+        session_id: &[u8; 16],
+        after_position: u64,
+        max_entries: u16,
+    ) -> Result<
+        Vec<(
+            u64,
+            String,
+            u64,
+            [u8; 16],
+            synabit_protocol::SyncEntryKind,
+            Option<String>,
+            String,
+            String,
+            i64,
+        )>,
+    > {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT position, doc_hash, head_seq, operation_id, entry_kind, blob_id, payload_hash, source_device, updated_at
+             FROM bootstrap_items
+             WHERE session_id = ? AND position > ?
+             ORDER BY position ASC
+             LIMIT ?"
+        )?;
+
+        let mut results = Vec::new();
+        let rows = stmt.query_map(
+            rusqlite::params![session_id.as_slice(), after_position, max_entries],
+            |row: &rusqlite::Row| {
+                let op_id_vec: Vec<u8> = row.get(3)?;
+                let mut op_id = [0u8; 16];
+                if op_id_vec.len() == 16 {
+                    op_id.copy_from_slice(&op_id_vec);
+                }
+                let kind_str: String = row.get(4)?;
+                let entry_kind: synabit_protocol::SyncEntryKind = kind_str
+                    .parse()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    op_id,
+                    entry_kind,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )?;
+
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_blob_path(&self, vault_hash: &str, blob_id: &str) -> Result<Option<String>> {
+        let conn = self.pool.get()?;
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT blob_path FROM blob_objects WHERE vault_hash = ? AND blob_id = ?",
+                rusqlite::params![vault_hash, blob_id],
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .optional()?;
+        Ok(path)
+    }
+
+    pub fn has_more_bootstrap_items(
+        &self,
+        session_id: &[u8; 16],
+        after_position: u64,
+    ) -> Result<bool> {
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM bootstrap_items WHERE session_id = ? AND position > ?",
+            rusqlite::params![session_id.as_slice(), after_position],
+            |row: &rusqlite::Row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn keep_bootstrap_alive(&self, session_id: &[u8; 16]) -> Result<()> {
+        let conn = self.pool.get()?;
+        conn.execute(
+            "UPDATE bootstrap_sessions SET expires_at = ? WHERE session_id = ?",
+            rusqlite::params![unix_now() + 3600, session_id.as_slice()],
+        )?;
+        Ok(())
+    }
+
+    pub fn complete_bootstrap(&self, session_id: &[u8; 16]) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE bootstrap_sessions SET state = 'completed' WHERE session_id = ?",
+            rusqlite::params![session_id.as_slice()],
+        )?;
+        // cleanup items
+        tx.execute(
+            "DELETE FROM bootstrap_items WHERE session_id = ?",
+            rusqlite::params![session_id.as_slice()],
+        )?;
+        tx.execute(
+            "DELETE FROM bootstrap_item_assets WHERE session_id = ?",
+            rusqlite::params![session_id.as_slice()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_sync_plan_info(&self, vault_hash: &str) -> Result<(u64, Option<[u8; 16]>, String)> {
+        let conn = self.pool.get()?;
+        let (seq, inc_id_vec, state): (u64, Option<Vec<u8>>, String) = conn.query_row(
+            "SELECT (SELECT seq FROM vault_sequences WHERE vault_hash = ?1), incarnation_id, bootstrap_state FROM vaults WHERE vault_hash = ?1",
+            rusqlite::params![vault_hash],
+            |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        let mut inc_id = None;
+        if let Some(vec) = inc_id_vec {
+            if vec.len() == 16 {
+                let mut arr = [0u8; 16];
+                arr.copy_from_slice(&vec);
+                inc_id = Some(arr);
+            }
+        }
+
+        Ok((seq, inc_id, state))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn pull_page_metadata(
+        &self,
+        vault_hash: &str,
+        after_seq: u64,
+        until_seq: u64,
+        max_entries: u16,
+    ) -> Result<
+        Vec<(
+            u64,
+            [u8; 16],
+            synabit_protocol::SyncEntryKind,
+            String,
+            String,
+            String,
+            String,
+            i64,
+        )>,
+    > {
+        let conn = self.pool.get()?;
+        let after_i64 = after_seq.min(i64::MAX as u64) as i64;
+        let until_i64 = until_seq.min(i64::MAX as u64) as i64;
+        let mut stmt = conn.prepare(
+            "SELECT m.seq, m.operation_id, m.entry_kind, 
+                    m.doc_hash, m.source_device, m.blob_path, m.payload_hash, m.created_at
+             FROM mailbox m
+             WHERE m.vault_hash = ?1 AND m.seq > ?2 AND m.seq <= ?3
+             ORDER BY m.seq ASC
+             LIMIT ?4",
+        )?;
+
+        let mut results = Vec::new();
+        let rows = stmt.query_map(
+            rusqlite::params![vault_hash, after_i64, until_i64, max_entries],
+            |row: &rusqlite::Row| {
+                let op_id_vec: Vec<u8> = row.get(1)?;
+                let mut op_id = [0u8; 16];
+                if op_id_vec.len() == 16 {
+                    op_id.copy_from_slice(&op_id_vec);
+                } else {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+
+                let entry_kind_str: String = row.get(2)?;
+                let entry_kind = entry_kind_str
+                    .parse()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+                Ok((
+                    row.get(0)?,
+                    op_id,
+                    entry_kind,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )?;
+
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
     pub fn pull_entries(&self, vault_hash: &str, since_seq: u64) -> Result<Vec<MailboxEntry>> {
         let conn = self.pool.get().context("pool get")?;
         let mut stmt = conn.prepare(
-            "SELECT seq, doc_hash, source_device, blob_path, payload_hash, created_at, is_delete, blob_size
+            "SELECT seq, doc_hash, operation_id, entry_kind, source_device, blob_path, payload_hash, created_at
              FROM mailbox
              WHERE vault_hash = ?1 AND seq > ?2
              ORDER BY seq ASC",
@@ -237,46 +600,52 @@ impl Database {
             .query_map(params![vault_hash, since_seq as i64], |row| {
                 let seq: i64 = row.get(0)?;
                 let doc_hash_hex: String = row.get(1)?;
-                let source_device: String = row.get(2)?;
-                let blob_path: String = row.get(3)?;
-                let payload_hash_hex: String = row.get(4)?;
-                let timestamp: i64 = row.get(5)?;
-                let is_delete: bool = row.get(6)?;
-                let _blob_size: i64 = row.get(7)?;
+                let op_id_vec: Vec<u8> = row.get(2)?;
+                let mut operation_id = [0u8; 16];
+                if op_id_vec.len() == 16 {
+                    operation_id.copy_from_slice(&op_id_vec);
+                } else {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+
+                let entry_kind_str: String = row.get(3)?;
+                let entry_kind: synabit_protocol::SyncEntryKind = entry_kind_str
+                    .parse()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let source_device: String = row.get(4)?;
+                let blob_path: String = row.get(5)?;
+                let payload_hash_hex: String = row.get(6)?;
+                let timestamp: i64 = row.get(7)?;
 
                 Ok(PullRow {
                     seq: seq as u64,
                     doc_hash_hex,
+                    operation_id,
+                    entry_kind,
                     source_device,
                     blob_path,
                     payload_hash_hex,
                     timestamp,
-                    is_delete,
                 })
             })?
             .collect::<std::result::Result<Vec<PullRow>, _>>()?;
 
-        // Convert rows to MailboxEntry, loading blob data from disk.
         let mut result = Vec::with_capacity(entries.len());
         for row in entries {
             let doc_hash = hex_to_hash(&row.doc_hash_hex)?;
             let payload_hash = hex_to_hash(&row.payload_hash_hex)?;
-            let encrypted_payload = if row.is_delete {
-                Vec::new()
-            } else {
-                std::fs::read(&row.blob_path).with_context(|| {
-                    format!("failed to read blob at {}", row.blob_path)
-                })?
-            };
+            let encrypted_payload = std::fs::read(&row.blob_path)
+                .with_context(|| format!("failed to read blob at {}", row.blob_path))?;
 
             result.push(MailboxEntry {
                 seq: row.seq,
                 doc_hash,
+                operation_id: row.operation_id,
+                entry_kind: row.entry_kind,
                 source_device: row.source_device,
                 encrypted_payload,
                 payload_hash,
                 timestamp: row.timestamp,
-                is_delete: row.is_delete,
             });
         }
         Ok(result)
@@ -287,12 +656,7 @@ impl Database {
     // -----------------------------------------------------------------------
 
     /// Update (upsert) the ACK cursor for a device.
-    pub fn update_cursor(
-        &self,
-        vault_hash: &str,
-        device_id: &str,
-        last_seq: u64,
-    ) -> Result<()> {
+    pub fn update_cursor(&self, vault_hash: &str, device_id: &str, last_seq: u64) -> Result<()> {
         let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
@@ -357,11 +721,19 @@ impl Database {
     }
 
     /// Look up the blob path for an asset. Returns `None` if not found.
-    pub fn get_asset_path(
-        &self,
-        vault_hash: &str,
-        asset_hash: &str,
-    ) -> Result<Option<String>> {
+    pub fn asset_exists(&self, vault_hash: &str, asset_hash: &str) -> Result<Option<u64>> {
+        let conn = self.pool.get()?;
+        let size: Option<i64> = conn
+            .query_row(
+                "SELECT blob_size FROM assets WHERE vault_hash = ? AND asset_hash = ?",
+                rusqlite::params![vault_hash, asset_hash],
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .optional()?;
+        Ok(size.map(|s| s as u64))
+    }
+
+    pub fn get_asset_path(&self, vault_hash: &str, asset_hash: &str) -> Result<Option<String>> {
         let conn = self.pool.get().context("pool get")?;
         let path: Option<String> = conn
             .query_row(
@@ -417,6 +789,7 @@ impl Database {
     }
 
     /// Mark a trash metadata entry as purged.
+    #[allow(dead_code)]
     pub fn mark_trash_purged(&self, vault_hash: &str, doc_hash: &str) -> Result<()> {
         let conn = self.pool.get().context("pool get")?;
         conn.execute(
@@ -443,40 +816,45 @@ impl Database {
     /// Delete all mailbox entries that have been ACKed by all devices (seq ≤ min_cursor)
     /// and return their blob paths so the caller can delete the files.
     pub fn gc_acked_entries(&self, vault_hash: &str, min_seq: u64) -> Result<Vec<String>> {
-        let conn = self.pool.get().context("pool get")?;
+        let mut conn = self.pool.get().context("pool get")?;
+        let tx = conn.transaction()?;
 
         // Collect blob paths first.
-        let mut stmt = conn.prepare(
-            "SELECT blob_path FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2",
-        )?;
+        let mut stmt =
+            tx.prepare("SELECT blob_path FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2")?;
         let paths: Vec<String> = stmt
             .query_map(params![vault_hash, min_seq as i64], |row| row.get(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
+        drop(stmt);
 
-        // Delete the rows.
-        conn.execute(
+        // Delete the rows and subtract storage quota.
+        let freed_bytes: i64 = tx.query_row(
+            "SELECT COALESCE(SUM(blob_size), 0) FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2",
+            params![vault_hash, min_seq as i64],
+            |row| row.get(0),
+        )?;
+
+        tx.execute(
             "DELETE FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2",
             params![vault_hash, min_seq as i64],
         )?;
 
+        if freed_bytes > 0 {
+            tx.execute(
+                "UPDATE vaults SET used_storage_bytes = MAX(0, used_storage_bytes - ?) WHERE vault_hash = ?",
+                params![freed_bytes, vault_hash],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(paths)
     }
 
     /// Delete mailbox entries older than `max_age_secs`, regardless of ACK state.
     /// Returns blob paths for cleanup.
-    pub fn gc_old_entries(&self, max_age_secs: u64) -> Result<Vec<String>> {
-        let conn = self.pool.get().context("pool get")?;
-        let cutoff = unix_now() - max_age_secs as i64;
-
-        let mut stmt = conn.prepare(
-            "SELECT blob_path FROM mailbox WHERE created_at < ?1",
-        )?;
-        let paths: Vec<String> = stmt
-            .query_map(params![cutoff], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
-
-        conn.execute("DELETE FROM mailbox WHERE created_at < ?1", params![cutoff])?;
-        Ok(paths)
+    pub fn gc_old_entries(&self, _max_age_secs: u64) -> Result<Vec<String>> {
+        // Disabled until reference graph is tested
+        Ok(vec![])
     }
 
     /// List all vault hashes (for cleanup iteration).
@@ -503,16 +881,14 @@ impl Database {
     /// Count total mailbox entries across all vaults.
     pub fn entry_count(&self) -> Result<u64> {
         let conn = self.pool.get().context("pool get")?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM mailbox", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM mailbox", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
     /// Count total assets across all vaults.
     pub fn asset_count(&self) -> Result<u64> {
         let conn = self.pool.get().context("pool get")?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM assets", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -539,17 +915,12 @@ impl Database {
     /// Get total storage used by a specific vault (mailbox + assets) in bytes.
     pub fn total_vault_storage(&self, vault_hash: &str) -> Result<u64> {
         let conn = self.pool.get().context("pool get")?;
-        let mailbox_bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(blob_size), 0) FROM mailbox WHERE vault_hash = ?1",
+        let used_bytes: i64 = conn.query_row(
+            "SELECT used_storage_bytes FROM vaults WHERE vault_hash = ?1",
             params![vault_hash],
             |row| row.get(0),
         )?;
-        let asset_bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(blob_size), 0) FROM assets WHERE vault_hash = ?1",
-            params![vault_hash],
-            |row| row.get(0),
-        )?;
-        Ok((mailbox_bytes + asset_bytes) as u64)
+        Ok(used_bytes as u64)
     }
 
     /// Get the storage limit for a vault.
@@ -567,9 +938,7 @@ impl Database {
     pub fn gc_old_assets(&self, max_age_secs: u64) -> Result<Vec<String>> {
         let conn = self.pool.get().context("pool get")?;
         let cutoff = unix_now() - max_age_secs as i64;
-        let mut stmt = conn.prepare(
-            "SELECT blob_path FROM assets WHERE created_at < ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT blob_path FROM assets WHERE created_at < ?1")?;
         let paths: Vec<String> = stmt
             .query_map(params![cutoff], |row| row.get(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
@@ -611,11 +980,12 @@ impl Database {
 struct PullRow {
     seq: u64,
     doc_hash_hex: String,
+    operation_id: [u8; 16],
+    entry_kind: synabit_protocol::SyncEntryKind,
     source_device: String,
     blob_path: String,
     payload_hash_hex: String,
     timestamp: i64,
-    is_delete: bool,
 }
 
 /// Row type for trash metadata queries.
@@ -628,18 +998,41 @@ pub struct TrashMetaRow {
 
 /// Convert a hex-encoded hash string back to a `[u8; 32]`.
 fn hex_to_hash(hex_str: &str) -> Result<[u8; 32]> {
-    let bytes = hex::decode(hex_str)
-        .with_context(|| format!("invalid hex hash: {hex_str}"))?;
-    let arr: [u8; 32] = bytes
-        .try_into()
-        .map_err(|v: Vec<u8>| anyhow::anyhow!("hash has wrong length: {} (expected 32)", v.len()))?;
+    let bytes = hex::decode(hex_str).with_context(|| format!("invalid hex hash: {hex_str}"))?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
+        anyhow::anyhow!("hash has wrong length: {} (expected 32)", v.len())
+    })?;
     Ok(arr)
 }
 
 /// Current Unix timestamp in seconds.
-fn unix_now() -> i64 {
+pub fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+impl Database {
+    pub fn get_device_status(&self, vault_hash: &str, device_id: &str) -> Result<Option<String>> {
+        let conn = self.pool.get()?;
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM devices WHERE vault_hash = ? AND device_id = ?",
+                rusqlite::params![vault_hash, device_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(status)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_device_status(&self, vault_hash: &str, device_id: &str, status: &str) -> Result<()> {
+        let conn = self.pool.get()?;
+        conn.execute(
+            "UPDATE devices SET status = ? WHERE vault_hash = ? AND device_id = ?",
+            rusqlite::params![status, vault_hash, device_id],
+        )?;
+        Ok(())
+    }
 }

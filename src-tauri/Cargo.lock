@@ -7467,6 +7467,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "similar",
+ "synabit-protocol",
  "sysinfo",
  "tauri",
  "tauri-build",
@@ -7480,6 +7481,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-store",
  "tauri-plugin-updater",
+ "tempfile",
  "text-diff",
  "thiserror 2.0.18",
  "tokio",
@@ -7489,6 +7491,14 @@ dependencies = [
  "walkdir",
  "zeroize",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "synabit-protocol"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
 ]
 
 [[package]]

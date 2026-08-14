@@ -193,7 +193,7 @@ const renderPreview = (content: string) => {
                             <p v-if="node.content" class="text-xs text-gray-600 dark:text-gray-300 line-clamp-3">{{ renderPreview(node.content) }}</p>
                             <!-- Show properties for non-note types if any -->
                             <div v-if="typeName !== 'Notes' && Object.keys(node.properties || {}).length > 0" class="mt-2 flex flex-wrap gap-1">
-                                <span v-for="(val, key) in node.properties" :key="key" v-show="key !== 'status' && key !== 'id' && typeof val !== 'object'" class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded text-[10px]">
+                                <span v-for="(val, key) in node.properties" :key="key" v-show="String(key) !== 'status' && String(key) !== 'id' && typeof val !== 'object'" class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded text-[10px]">
                                     {{ key }}: {{ val }}
                                 </span>
                             </div>

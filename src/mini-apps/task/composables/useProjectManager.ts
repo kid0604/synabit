@@ -273,7 +273,7 @@ export function useProjectManager(
           propsObj.linked_projects = projectsArray;
           
           await ns.writeNode({
-            relPath: node.id,
+            relPath: node.rel_path,
             title: node.title,
             nodeType: 'note',
             properties: propsObj,
@@ -347,10 +347,10 @@ export function useProjectManager(
     try {
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
       
-      if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
+      if (node.node_type === 'whiteboard' && node.rel_path.endsWith('.json')) {
         const rawContent = await invoke<string>('read_whiteboard', {
           vaultPath: vaultPath.value,
-          path: node.id
+          path: node.rel_path
         });
         const data = JSON.parse(rawContent);
         if (data.metadata?.linked_projects && Array.isArray(data.metadata.linked_projects)) {
@@ -358,7 +358,7 @@ export function useProjectManager(
           
           await invoke('update_whiteboard', {
             vaultPath: vaultPath.value,
-            path: node.id,
+            path: node.rel_path,
             title: data.title,
             tags: data.tags || [],
             content: JSON.stringify(data, null, 2)
@@ -407,10 +407,10 @@ export function useProjectManager(
       isLinkingResource.value = true;
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
       
-      if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
+      if (node.node_type === 'whiteboard' && node.rel_path.endsWith('.json')) {
         const rawContent = await invoke<string>('read_whiteboard', {
           vaultPath: vaultPath.value,
-          path: node.id
+          path: node.rel_path
         });
         const data = JSON.parse(rawContent);
         if (!data.metadata) data.metadata = {};
@@ -422,7 +422,7 @@ export function useProjectManager(
           
           await invoke('update_whiteboard', {
             vaultPath: vaultPath.value,
-            path: node.id,
+            path: node.rel_path,
             title: data.title,
             tags: data.tags || [],
             content: JSON.stringify(data, null, 2)
@@ -456,7 +456,7 @@ export function useProjectManager(
             propsObj.linked_projects = projectsArray;
             
             await ns.writeNode({
-              relPath: node.id,
+              relPath: node.rel_path,
               title: fullNode.title,
               nodeType: fullNode.node_type || 'note',
               properties: propsObj,

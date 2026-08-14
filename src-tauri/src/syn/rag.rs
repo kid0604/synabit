@@ -20,40 +20,266 @@ use crate::search;
 /// These are stripped from the user's message before building search queries.
 const STOP_WORDS: &[&str] = &[
     // Vietnamese — pronouns, particles, connectors
-    "tao", "mày", "tôi", "bạn", "là", "của", "có", "không", "được", "cho",
-    "với", "và", "hoặc", "hay", "từ", "đến", "trong", "ngoài", "trên", "dưới",
-    "này", "đó", "kia", "nào", "gì", "sao", "thì", "mà", "nên", "vì",
-    "nếu", "đã", "đang", "sẽ", "rồi", "còn", "cũng", "lại", "ra", "vào",
-    "lên", "xuống", "đi", "về", "ở", "tại", "theo", "bởi", "do", "hãy",
-    "đừng", "chớ", "nhé", "nhỉ", "ạ", "ơi", "vậy", "thế", "rất", "quá",
-    "hơn", "nhất", "hết", "xong", "ừ", "ờ", "uh", "nha", "hen", "nghen",
+    "tao",
+    "mày",
+    "tôi",
+    "bạn",
+    "là",
+    "của",
+    "có",
+    "không",
+    "được",
+    "cho",
+    "với",
+    "và",
+    "hoặc",
+    "hay",
+    "từ",
+    "đến",
+    "trong",
+    "ngoài",
+    "trên",
+    "dưới",
+    "này",
+    "đó",
+    "kia",
+    "nào",
+    "gì",
+    "sao",
+    "thì",
+    "mà",
+    "nên",
+    "vì",
+    "nếu",
+    "đã",
+    "đang",
+    "sẽ",
+    "rồi",
+    "còn",
+    "cũng",
+    "lại",
+    "ra",
+    "vào",
+    "lên",
+    "xuống",
+    "đi",
+    "về",
+    "ở",
+    "tại",
+    "theo",
+    "bởi",
+    "do",
+    "hãy",
+    "đừng",
+    "chớ",
+    "nhé",
+    "nhỉ",
+    "ạ",
+    "ơi",
+    "vậy",
+    "thế",
+    "rất",
+    "quá",
+    "hơn",
+    "nhất",
+    "hết",
+    "xong",
+    "ừ",
+    "ờ",
+    "uh",
+    "nha",
+    "hen",
+    "nghen",
     // Vietnamese — temporal / question words (often too generic for vault search)
-    "hôm", "nay", "ngày", "mấy", "bao", "nhiêu", "bây", "giờ", "lúc",
-    "khi", "sáng", "chiều", "tối", "đêm", "qua", "mai", "hơm",
-    "tuần", "tháng", "năm", "thứ", "mới", "cũ", "trước", "sau",
+    "hôm",
+    "nay",
+    "ngày",
+    "mấy",
+    "bao",
+    "nhiêu",
+    "bây",
+    "giờ",
+    "lúc",
+    "khi",
+    "sáng",
+    "chiều",
+    "tối",
+    "đêm",
+    "qua",
+    "mai",
+    "hơm",
+    "tuần",
+    "tháng",
+    "năm",
+    "thứ",
+    "mới",
+    "cũ",
+    "trước",
+    "sau",
     // Vietnamese — common verbs too generic for search
-    "làm", "biết", "nói", "nghĩ", "muốn", "cần", "phải", "thấy",
-    "viết", "đọc", "xem", "nghe", "hỏi", "trả", "lời", "tìm",
+    "làm",
+    "biết",
+    "nói",
+    "nghĩ",
+    "muốn",
+    "cần",
+    "phải",
+    "thấy",
+    "viết",
+    "đọc",
+    "xem",
+    "nghe",
+    "hỏi",
+    "trả",
+    "lời",
+    "tìm",
     // English
-    "the", "is", "a", "an", "in", "on", "at", "to", "for", "and", "or",
-    "but", "not", "with", "from", "by", "as", "it", "its", "this", "that",
-    "these", "those", "what", "how", "when", "where", "who", "which", "why",
-    "can", "could", "would", "should", "will", "shall", "may", "might",
-    "do", "does", "did", "am", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "having", "i", "you", "he", "she", "we", "they",
-    "me", "him", "her", "us", "them", "my", "your", "his", "our", "their",
-    "of", "about", "up", "down", "out", "off", "over", "under", "again",
-    "then", "once", "here", "there", "all", "any", "both", "each", "few",
-    "more", "most", "some", "such", "no", "nor", "only", "own", "same",
-    "so", "than", "too", "very", "just", "also", "if", "else",
+    "the",
+    "is",
+    "a",
+    "an",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "and",
+    "or",
+    "but",
+    "not",
+    "with",
+    "from",
+    "by",
+    "as",
+    "it",
+    "its",
+    "this",
+    "that",
+    "these",
+    "those",
+    "what",
+    "how",
+    "when",
+    "where",
+    "who",
+    "which",
+    "why",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "shall",
+    "may",
+    "might",
+    "do",
+    "does",
+    "did",
+    "am",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "having",
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "me",
+    "him",
+    "her",
+    "us",
+    "them",
+    "my",
+    "your",
+    "his",
+    "our",
+    "their",
+    "of",
+    "about",
+    "up",
+    "down",
+    "out",
+    "off",
+    "over",
+    "under",
+    "again",
+    "then",
+    "once",
+    "here",
+    "there",
+    "all",
+    "any",
+    "both",
+    "each",
+    "few",
+    "more",
+    "most",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "also",
+    "if",
+    "else",
     // English — temporal
-    "today", "yesterday", "tomorrow", "now", "time", "date", "day",
-    "week", "month", "year", "morning", "afternoon", "evening", "night",
+    "today",
+    "yesterday",
+    "tomorrow",
+    "now",
+    "time",
+    "date",
+    "day",
+    "week",
+    "month",
+    "year",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
     // Common chat filler
-    "hey", "hi", "hello", "ok", "okay", "yeah", "yes", "no", "nope",
-    "please", "thanks", "thank", "sure", "right", "well", "like",
-    "tell", "show", "give", "find", "get", "let", "know", "see",
-    "help", "need", "want",
+    "hey",
+    "hi",
+    "hello",
+    "ok",
+    "okay",
+    "yeah",
+    "yes",
+    "no",
+    "nope",
+    "please",
+    "thanks",
+    "thank",
+    "sure",
+    "right",
+    "well",
+    "like",
+    "tell",
+    "show",
+    "give",
+    "find",
+    "get",
+    "let",
+    "know",
+    "see",
+    "help",
+    "need",
+    "want",
 ];
 
 /// Minimum BM25 relevance score to include a result in RAG context.
@@ -65,9 +291,8 @@ const MIN_RELEVANCE_SCORE: f64 = 1.5;
 // ═══════════════════════════════════════════════════════════════
 
 /// Lazily-initialized stop word set for efficient lookup.
-static STOP_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    STOP_WORDS.iter().copied().collect()
-});
+static STOP_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| STOP_WORDS.iter().copied().collect());
 
 /// Extract meaningful search keywords from the user's message and recent conversation.
 ///
@@ -125,10 +350,28 @@ pub fn extract_search_terms(user_message: &str, recent_messages: &[SynMessage]) 
 /// when searching external content like feed articles or finance records.
 fn filter_vault_terms(terms: &[String]) -> Vec<String> {
     const VAULT_TERMS: &[&str] = &[
-        "note", "notes", "task", "tasks", "event", "events",
-        "person", "people", "contact", "contacts", "quickcap",
-        "vault", "synabit", "node", "nodes", "tag", "tags",
-        "file", "files", "whiteboard", "linked", "backlink",
+        "note",
+        "notes",
+        "task",
+        "tasks",
+        "event",
+        "events",
+        "person",
+        "people",
+        "contact",
+        "contacts",
+        "quickcap",
+        "vault",
+        "synabit",
+        "node",
+        "nodes",
+        "tag",
+        "tags",
+        "file",
+        "files",
+        "whiteboard",
+        "linked",
+        "backlink",
     ];
     terms
         .iter()
@@ -196,7 +439,8 @@ pub fn retrieve_context(
                 if result.score < MIN_RELEVANCE_SCORE {
                     log::debug!(
                         "[RAG] Skipping low-score result: {} (score: {:.2})",
-                        result.title, result.score
+                        result.title,
+                        result.score
                     );
                     continue;
                 }
@@ -212,7 +456,8 @@ pub fn retrieve_context(
                 }
                 seen_ids.insert(result.id.clone());
 
-                let metadata = build_metadata_string(&result.item_type, &result.status, &result.date);
+                let metadata =
+                    build_metadata_string(&result.item_type, &result.status, &result.date);
 
                 all_chunks.push(ContextChunk {
                     source_id: result.id.clone(),
@@ -220,7 +465,11 @@ pub fn retrieve_context(
                     title: result.title.clone(),
                     content: result.snippet.clone(),
                     relevance_score: result.score,
-                    metadata: if metadata.is_empty() { None } else { Some(metadata) },
+                    metadata: if metadata.is_empty() {
+                        None
+                    } else {
+                        Some(metadata)
+                    },
                 });
             }
         }
@@ -239,7 +488,11 @@ pub fn retrieve_context(
         if non_vault_terms.len() >= 2 {
             let feed_query = non_vault_terms.join(" ");
             let feed_results = db.search_feed_articles_for_rag(&feed_query, 3);
-            log::info!("[RAG] Feed articles returned {} results (query: {:?})", feed_results.len(), feed_query);
+            log::info!(
+                "[RAG] Feed articles returned {} results (query: {:?})",
+                feed_results.len(),
+                feed_query
+            );
             for (id, title, summary, published_at) in &feed_results {
                 if seen_ids.contains(id) {
                     continue;
@@ -256,7 +509,10 @@ pub fn retrieve_context(
                 });
             }
         } else {
-            log::info!("[RAG] Skipping feed search — not enough specific terms (got: {:?})", non_vault_terms);
+            log::info!(
+                "[RAG] Skipping feed search — not enough specific terms (got: {:?})",
+                non_vault_terms
+            );
         }
     }
 
@@ -265,7 +521,10 @@ pub fn retrieve_context(
     if config.include_finance {
         if non_vault_terms.len() >= 2 {
             let finance_results = db.search_finance_nodes_for_rag(&non_vault_terms, 3);
-            log::info!("[RAG] Finance nodes returned {} results", finance_results.len());
+            log::info!(
+                "[RAG] Finance nodes returned {} results",
+                finance_results.len()
+            );
             for (id, title, content, properties) in &finance_results {
                 if seen_ids.contains(id) {
                     continue;
@@ -282,7 +541,10 @@ pub fn retrieve_context(
                 });
             }
         } else {
-            log::info!("[RAG] Skipping finance search — not enough specific terms (got: {:?})", non_vault_terms);
+            log::info!(
+                "[RAG] Skipping finance search — not enough specific terms (got: {:?})",
+                non_vault_terms
+            );
         }
     }
 
@@ -308,7 +570,16 @@ pub fn retrieve_context(
                 // Extract additional metadata from node properties
                 if let Some(props) = node.properties.as_object() {
                     let mut meta_parts = Vec::new();
-                    for key in &["status", "priority", "due_date", "start_date", "location", "birthday", "amount", "category"] {
+                    for key in &[
+                        "status",
+                        "priority",
+                        "due_date",
+                        "start_date",
+                        "location",
+                        "birthday",
+                        "amount",
+                        "category",
+                    ] {
                         if let Some(val) = props.get(*key) {
                             if let Some(s) = val.as_str() {
                                 if !s.is_empty() {
@@ -321,10 +592,7 @@ pub fn retrieve_context(
                     }
                     // Extract tags
                     if let Some(tags) = props.get("tags").and_then(|t| t.as_array()) {
-                        let tag_str: Vec<&str> = tags
-                            .iter()
-                            .filter_map(|t| t.as_str())
-                            .collect();
+                        let tag_str: Vec<&str> = tags.iter().filter_map(|t| t.as_str()).collect();
                         if !tag_str.is_empty() {
                             meta_parts.push(format!("tags:{}", tag_str.join(",")));
                         }
@@ -377,13 +645,19 @@ pub fn retrieve_context(
     }
 
     // Step 7: Sort by relevance score (descending) and truncate to max context chars
-    all_chunks.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
+    all_chunks.sort_by(|a, b| {
+        b.relevance_score
+            .partial_cmp(&a.relevance_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut total_chars = 0usize;
     let mut final_chunks: Vec<ContextChunk> = Vec::new();
 
     for chunk in all_chunks {
-        let chunk_size = chunk.title.len() + chunk.content.len() + chunk.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let chunk_size = chunk.title.len()
+            + chunk.content.len()
+            + chunk.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
         if total_chars + chunk_size > config.max_context_chars {
             // Try to fit a truncated version of this chunk
             let remaining = config.max_context_chars.saturating_sub(total_chars);
@@ -764,7 +1038,11 @@ mod tests {
     fn test_extract_search_terms_general_question() {
         // "hôm nay ngày mấy" — all stop words, should return empty
         let terms = extract_search_terms("hôm nay ngày mấy", &[]);
-        assert!(terms.is_empty(), "General questions should produce no search terms, got: {:?}", terms);
+        assert!(
+            terms.is_empty(),
+            "General questions should produce no search terms, got: {:?}",
+            terms
+        );
     }
 
     #[test]
@@ -838,8 +1116,16 @@ mod tests {
             ],
             total_tokens_estimate: 100,
             sources: vec![
-                crate::models::syn::SourceRef { id: "Notes/Meeting Notes.md".to_string(), title: "Meeting Notes".to_string(), node_type: "note".to_string() },
-                crate::models::syn::SourceRef { id: "Tasks/Review PR.md".to_string(), title: "Review PR".to_string(), node_type: "task".to_string() },
+                crate::models::syn::SourceRef {
+                    id: "Notes/Meeting Notes.md".to_string(),
+                    title: "Meeting Notes".to_string(),
+                    node_type: "note".to_string(),
+                },
+                crate::models::syn::SourceRef {
+                    id: "Tasks/Review PR.md".to_string(),
+                    title: "Review PR".to_string(),
+                    node_type: "task".to_string(),
+                },
             ],
         };
         let formatted = format_context(&result);

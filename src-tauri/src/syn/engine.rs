@@ -4,9 +4,9 @@
 //! - Status checks, model listing, model pull/delete
 //! - Streaming chat completions with token-by-token event emission
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
 
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -164,23 +164,34 @@ fn build_pruned_history(history: &[SynMessage], max_msgs: usize) -> Vec<OllamaCh
                 images: history[0].images.clone(),
             });
         }
-        
+
         let skip_count = history.len() - max_msgs;
-        let start_idx = if has_system { std::cmp::max(1, skip_count) } else { skip_count };
-        
-        messages.extend(history[start_idx..].iter().map(|m| OllamaChatRequestMessage {
-            role: m.role.clone(),
-            content: m.content.clone(),
-            tool_calls: None,
-            images: m.images.clone(),
-        }));
+        let start_idx = if has_system {
+            std::cmp::max(1, skip_count)
+        } else {
+            skip_count
+        };
+
+        messages.extend(
+            history[start_idx..]
+                .iter()
+                .map(|m| OllamaChatRequestMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    tool_calls: None,
+                    images: m.images.clone(),
+                }),
+        );
     } else {
-        messages = history.iter().map(|m| OllamaChatRequestMessage {
-            role: m.role.clone(),
-            content: m.content.clone(),
-            tool_calls: None,
-            images: m.images.clone(),
-        }).collect();
+        messages = history
+            .iter()
+            .map(|m| OllamaChatRequestMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+                tool_calls: None,
+                images: m.images.clone(),
+            })
+            .collect();
     }
     messages
 }
@@ -261,9 +272,12 @@ impl SynEngine {
     pub async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
         let url = format!("{}/api/tags", self.base_url);
 
-        let resp = self.client.get(&url).send().await.map_err(|e| {
-            AppError::General(format!("Failed to connect to Ollama: {}", e))
-        })?;
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::General(format!("Failed to connect to Ollama: {}", e)))?;
 
         if !resp.status().is_success() {
             return Err(AppError::General(format!(
@@ -298,11 +312,7 @@ impl SynEngine {
     }
 
     /// Pull (download) a model via POST /api/pull with streaming progress events.
-    pub async fn pull_model(
-        &self,
-        app: &tauri::AppHandle,
-        model_name: &str,
-    ) -> AppResult<()> {
+    pub async fn pull_model(&self, app: &tauri::AppHandle, model_name: &str) -> AppResult<()> {
         let url = format!("{}/api/pull", self.base_url);
 
         log::info!("Pulling model: {}", model_name);
@@ -316,9 +326,7 @@ impl SynEngine {
             }))
             .send()
             .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to start model pull: {}", e))
-            })?;
+            .map_err(|e| AppError::General(format!("Failed to start model pull: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -339,9 +347,8 @@ impl SynEngine {
                 log::info!("Model pull cancelled by user: {}", model_name);
                 return Err(AppError::General("Model pull cancelled".into()));
             }
-            let chunk = chunk_result.map_err(|e| {
-                AppError::General(format!("Stream error during model pull: {}", e))
-            })?;
+            let chunk = chunk_result
+                .map_err(|e| AppError::General(format!("Stream error during model pull: {}", e)))?;
 
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -385,9 +392,7 @@ impl SynEngine {
             .json(&serde_json::json!({ "name": model_name }))
             .send()
             .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to delete model: {}", e))
-            })?;
+            .map_err(|e| AppError::General(format!("Failed to delete model: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -437,7 +442,10 @@ impl SynEngine {
             model: model.to_string(),
             messages,
             stream: true,
-            options: Some(OllamaChatOptions { temperature, num_ctx: Some(num_ctx) }),
+            options: Some(OllamaChatOptions {
+                temperature,
+                num_ctx: Some(num_ctx),
+            }),
             tools: None,
         };
 
@@ -470,7 +478,10 @@ impl SynEngine {
         while let Some(chunk_result) = stream.next().await {
             // Check if generation was cancelled
             if stop_flag.load(Ordering::SeqCst) {
-                log::info!("Generation stopped by user for conversation {}", conversation_id);
+                log::info!(
+                    "Generation stopped by user for conversation {}",
+                    conversation_id
+                );
 
                 // Emit a final "done" event so the frontend knows streaming ended
                 let stop_event = SynStreamToken {
@@ -483,9 +494,8 @@ impl SynEngine {
                 break;
             }
 
-            let chunk = chunk_result.map_err(|e| {
-                AppError::General(format!("Stream error during chat: {}", e))
-            })?;
+            let chunk = chunk_result
+                .map_err(|e| AppError::General(format!("Stream error during chat: {}", e)))?;
 
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -563,7 +573,11 @@ impl SynEngine {
             content: full_response,
             model: Some(model.to_string()),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            tokens: if total_tokens > 0 { Some(total_tokens) } else { None },
+            tokens: if total_tokens > 0 {
+                Some(total_tokens)
+            } else {
+                None
+            },
             duration_ms: Some(duration_ms),
             sources: None,
             tool_calls_log: None,
@@ -803,7 +817,16 @@ impl SynEngine {
             .collect();
 
         let mut final_msg = self
-            .send_message(app, conversation_id, message_id, &syn_messages, model, temperature, num_ctx, max_history)
+            .send_message(
+                app,
+                conversation_id,
+                message_id,
+                &syn_messages,
+                model,
+                temperature,
+                num_ctx,
+                max_history,
+            )
             .await?;
 
         if !tool_call_log.is_empty() {
@@ -831,7 +854,10 @@ impl SynEngine {
             model: model.to_string(),
             messages: messages.to_vec(),
             stream: false,
-            options: Some(OllamaChatOptions { temperature, num_ctx: Some(num_ctx) }),
+            options: Some(OllamaChatOptions {
+                temperature,
+                num_ctx: Some(num_ctx),
+            }),
             tools: tools.map(|t| t.to_vec()),
         };
 
@@ -860,7 +886,10 @@ impl SynEngine {
         }
 
         let chunk: OllamaChatChunk = resp.json().await.map_err(|e| {
-            AppError::General(format!("Failed to parse Ollama non-streaming response: {}", e))
+            AppError::General(format!(
+                "Failed to parse Ollama non-streaming response: {}",
+                e
+            ))
         })?;
 
         Ok(chunk)

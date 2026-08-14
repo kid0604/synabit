@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -13,7 +13,13 @@ pub struct SyncMetrics {
 }
 
 impl DbBridge {
-    pub fn record_sync_metric(&self, date: &str, is_cellular: bool, tx_bytes: u64, rx_bytes: u64) -> AppResult<()> {
+    pub fn record_sync_metric(
+        &self,
+        date: &str,
+        is_cellular: bool,
+        tx_bytes: u64,
+        rx_bytes: u64,
+    ) -> AppResult<()> {
         let query = if is_cellular {
             "INSERT INTO sync_metrics (date, cellular_bytes_tx, cellular_bytes_rx, wifi_bytes_tx, wifi_bytes_rx)
              VALUES (?1, ?2, ?3, 0, 0)

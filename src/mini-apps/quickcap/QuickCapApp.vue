@@ -25,6 +25,7 @@ const props = defineProps<{
 
 export interface NodeMetadata {
     id: string;
+    rel_path: string;
     node_type: string;
     title: string;
     content: string;
@@ -155,7 +156,7 @@ const saveInlineTag = async (cap: NodeMetadata) => {
     const formattedTag = isMultiWord ? `#${rawTag}#` : `#${rawTag}`;
     const updatedContent = `${cap.content}\n\n${formattedTag}`;
     try {
-        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type as any, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
         taggingCapId.value = null;
         tagInputText.value = '';
@@ -189,7 +190,7 @@ const changeCapColor = async (cap: NodeMetadata, colorValue: string) => {
     }
     
     try {
-        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: { ...cap.properties, color: colorValue }, content: rawContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type as any, properties: { ...cap.properties, color: colorValue }, content: rawContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to update color", e);
@@ -203,6 +204,7 @@ const mapNodeToQuickCap = (node: any): NodeMetadata => {
 
     return {
         id: node.id,
+        rel_path: node.rel_path,
         node_type: node.node_type,
         title: node.title,
         content: node.content,
@@ -249,7 +251,7 @@ const saveSelectedCap = async () => {
     if (selectedCap.value.content === finalPayload) return;
     
     try {
-        await ns.writeNode({ relPath: selectedCap.value.id, title: selectedCap.value.title, nodeType: selectedCap.value.node_type, properties: selectedCap.value.properties, content: finalPayload });
+        await ns.writeNode({ relPath: selectedCap.value.id, title: selectedCap.value.title, nodeType: selectedCap.value.node_type as any, properties: selectedCap.value.properties, content: finalPayload });
         selectedCap.value.content = finalPayload;
     } catch(e) {
         logger.error("Failed to update note", e);
@@ -489,7 +491,7 @@ const pickImageForExistingCap = async (cap: NodeMetadata) => {
             });
             const imgMd = `\n\n![Image](${relPath})`;
             const updatedContent = cap.content + imgMd;
-            await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+            await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type as any, properties: cap.properties, content: updatedContent });
             cap.content = updatedContent;
         }
     } catch(e) {
@@ -718,7 +720,7 @@ const removeTag = async (cap: NodeMetadata, tag: string) => {
     updatedContent = updatedContent.replace(/\n{3,}/g, '\n\n').trim();
     
     try {
-        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type, properties: cap.properties, content: updatedContent });
+        await ns.writeNode({ relPath: cap.id, title: cap.title, nodeType: cap.node_type as any, properties: cap.properties, content: updatedContent });
         cap.content = updatedContent;
     } catch(e) {
         logger.error("Failed to remove tag", e);

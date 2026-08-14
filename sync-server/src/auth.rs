@@ -43,6 +43,18 @@ pub fn authenticate(
         Some(stored_token) => {
             // Existing vault — verify token with constant-time comparison.
             if stored_token.ct_eq(mailbox_token).into() {
+                // Check if device is revoked
+                if let Some(status) = db.get_device_status(vault_hash_hex, device_id)? {
+                    if status == "revoked" {
+                        warn!(
+                            vault = vault_hash_hex,
+                            device = device_id,
+                            "authentication failed: device is revoked"
+                        );
+                        return Ok(AuthResult::Rejected("device is revoked".to_string()));
+                    }
+                }
+
                 // Update the device's last-seen timestamp.
                 db.touch_device(vault_hash_hex, device_id)?;
                 info!(

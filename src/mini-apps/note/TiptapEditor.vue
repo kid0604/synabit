@@ -269,7 +269,7 @@ const editor = useEditor({
             
             if (firstChange && dispatch) {
                 tr.insertText(newText, blockStart, blockEnd);
-                tr.setSelection(state.selection.constructor.create(tr.doc, Math.max(blockStart, selection.from - tabSize), Math.max(blockStart, selection.to - tabSize)));
+                tr.setSelection((state.selection.constructor as any).create(tr.doc, Math.max(blockStart, selection.from - tabSize), Math.max(blockStart, selection.to - tabSize)));
                 dispatch(tr);
             }
             return true;

@@ -22,15 +22,18 @@ pub struct ParsedArticle {
 /// Parse raw feed bytes into a list of articles.
 /// Supports RSS 2.0, Atom, and JSON Feed via the `feed-rs` crate.
 pub fn parse_feed(raw: &[u8]) -> Result<Vec<ParsedArticle>, String> {
-    let feed = feed_rs::parser::parse(raw)
-        .map_err(|e| format!("Feed parse error: {}", e))?;
+    let feed = feed_rs::parser::parse(raw).map_err(|e| format!("Feed parse error: {}", e))?;
 
     let mut articles = Vec::new();
 
     for entry in feed.entries {
         // GUID: use entry id, fallback to first link
         let guid = if entry.id.is_empty() {
-            entry.links.first().map(|l| l.href.clone()).unwrap_or_default()
+            entry
+                .links
+                .first()
+                .map(|l| l.href.clone())
+                .unwrap_or_default()
         } else {
             entry.id.clone()
         };
@@ -55,7 +58,9 @@ pub fn parse_feed(raw: &[u8]) -> Result<Vec<ParsedArticle>, String> {
             .first()
             .map(|a| sanitizer::sanitize_plain(&a.name))
             .or_else(|| {
-                feed.authors.first().map(|a| sanitizer::sanitize_plain(&a.name))
+                feed.authors
+                    .first()
+                    .map(|a| sanitizer::sanitize_plain(&a.name))
             })
             .unwrap_or_default();
 

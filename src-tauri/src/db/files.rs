@@ -1,7 +1,7 @@
-use rusqlite::params;
+use super::DbBridge;
 use crate::error::{AppError, AppResult};
 use crate::models::file::{FileMetadata, FileSource};
-use super::DbBridge;
+use rusqlite::params;
 
 impl DbBridge {
     pub fn upsert_file_source(&self, source: &FileSource) -> AppResult<()> {
@@ -57,7 +57,7 @@ impl DbBridge {
                 size=excluded.size,
                 modified_at=excluded.modified_at",
             params![
-                file.id, file.path, file.filename, file.extension, file.size, 
+                file.id, file.path, file.filename, file.extension, file.size,
                 file.created_at, file.modified_at, tags_json, file.source_type
             ],
         ).map_err(|e| AppError::General(format!("DB Upsert File Error: {}", e)))?;

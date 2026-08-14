@@ -175,7 +175,10 @@ fn extract_title_attr(html: &str, href: &str) -> String {
     );
     if let Ok(re) = Regex::new(&pattern) {
         if let Some(cap) = re.captures(html) {
-            return cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            return cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
         }
     }
     String::new()

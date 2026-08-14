@@ -61,7 +61,9 @@ fn load_or_create_secret_key(path: &Path) -> Result<iroh::SecretKey> {
         let bytes: [u8; 32] = hex::decode(hex_str)
             .context("invalid hex in key file")?
             .try_into()
-            .map_err(|_| anyhow::anyhow!("key file must contain exactly 32 bytes (64 hex chars)"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("key file must contain exactly 32 bytes (64 hex chars)")
+            })?;
         let key = iroh::SecretKey::from_bytes(&bytes);
         info!(path = %path.display(), "loaded existing secret key");
         Ok(key)
@@ -121,12 +123,9 @@ async fn main() -> Result<()> {
 
     // --- Bind Iroh endpoint ---
     // We use the N0 preset with relay and discovery for NAT traversal.
-    let bind_addr: SocketAddr = format!(
-        "{}:{}",
-        config.bind_addr, config.quic_port
-    )
-    .parse()
-    .context("invalid QUIC bind address")?;
+    let bind_addr: SocketAddr = format!("{}:{}", config.bind_addr, config.quic_port)
+        .parse()
+        .context("invalid QUIC bind address")?;
 
     // --- Load or create persistent secret key ---
     // This ensures the Endpoint ID stays the same across restarts.
@@ -154,7 +153,7 @@ async fn main() -> Result<()> {
 
     // --- Build the protocol router ---
     let router = Router::builder(endpoint)
-        .accept(MAILBOX_ALPN.to_vec(), handler.clone())
+        .accept(MAILBOX_ALPN, handler.clone())
         .spawn();
 
     info!("mailbox protocol handler registered");
@@ -187,7 +186,10 @@ async fn main() -> Result<()> {
     cancel.cancel();
 
     // Shut down the Iroh router (drains active connections).
-    router.shutdown().await.map_err(|e| anyhow::anyhow!("router shutdown error: {e}"))?;
+    router
+        .shutdown()
+        .await
+        .map_err(|e| anyhow::anyhow!("router shutdown error: {e}"))?;
 
     // Wait for background tasks.
     let _ = tokio::join!(cleanup_handle, health_handle);

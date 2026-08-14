@@ -52,6 +52,9 @@ describe('NoteApp.vue', () => {
           TiptapEditor: true,
           NoteGraph: true,
           'lucide-vue-next': true
+        },
+        mocks: {
+          $t: (key: string) => key
         }
       }
     });

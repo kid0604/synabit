@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 /// Lightweight row struct for Nexus unified queries
 #[derive(Debug)]

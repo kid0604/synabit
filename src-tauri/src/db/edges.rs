@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 /// New ID-based edge for the knowledge graph
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

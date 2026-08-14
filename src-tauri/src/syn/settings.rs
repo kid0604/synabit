@@ -18,7 +18,10 @@ pub fn load_settings(vault_path: &str) -> AppResult<SynSettings> {
     let settings: SynSettings = match serde_json::from_str(&content) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("[Syn] Settings file contains invalid JSON, using defaults: {}", e);
+            log::warn!(
+                "[Syn] Settings file contains invalid JSON, using defaults: {}",
+                e
+            );
             SynSettings::default()
         }
     };
@@ -29,9 +32,8 @@ pub fn load_settings(vault_path: &str) -> AppResult<SynSettings> {
 /// Creates the `Syn/` directory if it doesn't exist.
 pub fn save_settings(vault_path: &str, settings: &SynSettings) -> AppResult<()> {
     let syn_dir = Path::new(vault_path).join("Syn");
-    std::fs::create_dir_all(&syn_dir).map_err(|e| {
-        AppError::General(format!("Failed to create Syn directory: {}", e))
-    })?;
+    std::fs::create_dir_all(&syn_dir)
+        .map_err(|e| AppError::General(format!("Failed to create Syn directory: {}", e)))?;
     let settings_path = syn_dir.join("settings.json");
     let json = serde_json::to_string_pretty(settings)?;
     let tmp_path = settings_path.with_extension("json.tmp");

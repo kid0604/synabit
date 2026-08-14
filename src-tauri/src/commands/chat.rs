@@ -26,8 +26,18 @@ pub fn get_chat_history(vault_path: String) -> Result<Vec<ChatMessage>, String> 
     use std::collections::HashMap;
     let mut dedup_map = HashMap::new();
     for msg in all_msgs {
-        if let Some(target_id) = msg.content.metadata.get("target_id").and_then(|v| v.as_str()) {
-            let reminder = msg.content.metadata.get("reminder").and_then(|v| v.as_str()).unwrap_or("0m");
+        if let Some(target_id) = msg
+            .content
+            .metadata
+            .get("target_id")
+            .and_then(|v| v.as_str())
+        {
+            let reminder = msg
+                .content
+                .metadata
+                .get("reminder")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0m");
             let key = format!("{}_{}_{}", target_id, msg.subtype, reminder);
             dedup_map.insert(key, msg); // Inserts replace existing, keeping the latest because it's sorted
         } else {

@@ -7,127 +7,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// ALPN identifier for the Synabit Mailbox protocol.
-pub const MAILBOX_ALPN: &[u8] = b"synabit/mailbox/1";
-
-/// Maximum framed message size (16 MiB).
-pub const MAX_MESSAGE_SIZE: u32 = 128 * 1024 * 1024;
-
-
-// ---------------------------------------------------------------------------
-// Request types (client → server)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PushBatchItem {
-    pub doc_hash: [u8; 32],
-    pub encrypted_payload: Vec<u8>,
-    pub payload_hash: [u8; 32],
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum MailboxRequest {
-    /// Initial handshake to negotiate protocol version.
-    Hello {
-        version: u32,
-    },
-    Auth {
-        vault_hash: [u8; 32],
-        mailbox_token: [u8; 32],
-        device_id: String,
-    },
-    Push {
-        doc_hash: [u8; 32],
-        encrypted_payload: Vec<u8>,
-        payload_hash: [u8; 32],
-    },
-    /// Batch push multiple documents
-    PushBatch {
-        items: Vec<PushBatchItem>,
-    },
-    Pull {
-        since_seq: u64,
-    },
-    Ack {
-        up_to_seq: u64,
-    },
-    PushAsset {
-        asset_hash: [u8; 32],
-        encrypted_data: Vec<u8>,
-    },
-    PullAsset {
-        asset_hash: [u8; 32],
-    },
-    PushDelete {
-        doc_hash: [u8; 32],
-    },
-
-    /// Revoke a device — server deletes its cursor so it can no longer ACK.
-    RevokeDevice {
-        device_id: String,
-    },
-    /// Rotate the vault's mailbox token after an epoch increment.
-    RotateToken {
-        new_mailbox_token: Vec<u8>,
-    },
-    /// Application-level keepalive ping.
-    Ping,
-}
-
-// ---------------------------------------------------------------------------
-// Response types (server → client)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum MailboxResponse {
-    /// Server push notification: new data is available for this vault.
-    NotifyNewData {
-        /// The sequence number that triggered this notification.
-        trigger_seq: u64,
-    },
-    /// Handshake successful.
-    HelloOk {
-        server_version: u32,
-        max_bytes: u64,
-    },
-    AuthOk,
-    AuthFailed { reason: String },
-    PushOk { seq: u64 },
-    PushBatchOk { max_seq: u64 },
-    PullResult { entries: Vec<MailboxEntry> },
-    AckOk,
-    AssetOk,
-    AssetData { data: Vec<u8> },
-    AssetNotFound,
-    DeleteOk { seq: u64 },
-    Error { message: String },
-    QuotaExceeded {
-        current_bytes: u64,
-        limit_bytes: u64,
-    },
-
-    /// Device revocation recorded.
-    RevokeOk,
-    /// Mailbox token rotated successfully.
-    TokenRotated,
-    /// Application-level keepalive pong.
-    Pong,
-}
-
-// ---------------------------------------------------------------------------
-// Mailbox entry (inside PullResult)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MailboxEntry {
-    pub seq: u64,
-    pub doc_hash: [u8; 32],
-    pub source_device: String,
-    pub encrypted_payload: Vec<u8>,
-    pub payload_hash: [u8; 32],
-    pub timestamp: i64,
-    pub is_delete: bool,
-}
+pub use synabit_protocol::{
+    BatchResultItem, Capability, MailboxEntry, MailboxEntryV3, MailboxRequest, MailboxResponse,
+    PullPageResult, PushBatchItem, ServerHello, SyncEntryKind, SyncMode, SyncPlan, TrashMetaEntry,
+    MAILBOX_ALPN, MAX_MESSAGE_SIZE,
+};
 
 // ---------------------------------------------------------------------------
 // Length-prefixed framing helpers (postcard over QUIC streams)
@@ -141,10 +25,8 @@ where
     W: AsyncWriteExt + Unpin,
     T: Serialize,
 {
-    let payload =
-        postcard::to_stdvec(msg).map_err(|e| format!("serialize error: {}", e))?;
-    let len = u32::try_from(payload.len())
-        .map_err(|_| "message too large".to_string())?;
+    let payload = postcard::to_stdvec(msg).map_err(|e| format!("serialize error: {}", e))?;
+    let len = u32::try_from(payload.len()).map_err(|_| "message too large".to_string())?;
     writer
         .write_all(&len.to_be_bytes())
         .await
@@ -180,5 +62,54 @@ where
         .read_exact(&mut buf)
         .await
         .map_err(|e| format!("read payload error: {}", e))?;
-    postcard::from_bytes(&buf).map(Some).map_err(|e| format!("deserialize error: {}", e))
+
+    match postcard::take_from_bytes::<T>(&buf) {
+        Ok((val, remainder)) => {
+            if !remainder.is_empty() {
+                Err(format!(
+                    "deserialize error: trailing {} unconsumed bytes inside frame",
+                    remainder.len()
+                ))
+            } else {
+                Ok(Some(val))
+            }
+        }
+        Err(e) => Err(format!("deserialize error: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn read_message_rejects_trailing_postcard_bytes() {
+        let msg = synabit_protocol::MailboxRequest::Pull { since_seq: 10 };
+        let mut payload = postcard::to_stdvec(&msg).unwrap();
+
+        // Create valid framed buffer
+        let valid_len = payload.len() as u32;
+        let mut framed_valid = valid_len.to_be_bytes().to_vec();
+        framed_valid.extend_from_slice(&payload);
+
+        let mut cursor_valid = std::io::Cursor::new(framed_valid);
+        let res_valid: Option<synabit_protocol::MailboxRequest> =
+            read_message(&mut cursor_valid).await.unwrap();
+        assert!(res_valid.is_some());
+
+        // Append trailing garbage bytes inside the frame payload
+        payload.extend_from_slice(b"GARBAGE_BYTES_INSIDE_FRAME");
+        let invalid_len = payload.len() as u32;
+        let mut framed_invalid = invalid_len.to_be_bytes().to_vec();
+        framed_invalid.extend_from_slice(&payload);
+
+        let mut cursor_invalid = std::io::Cursor::new(framed_invalid);
+        let res_invalid: Result<Option<synabit_protocol::MailboxRequest>, String> =
+            read_message(&mut cursor_invalid).await;
+        assert!(
+            res_invalid.is_err(),
+            "Frame with trailing bytes must be rejected"
+        );
+        assert!(res_invalid.unwrap_err().contains("trailing"));
+    }
 }

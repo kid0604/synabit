@@ -1,12 +1,16 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 impl DbBridge {
     /// Search feed articles using FTS5 for RAG context.
     /// Returns: (id, title, summary, published_at).
     /// Handles errors gracefully — returns empty vec on failure.
-    pub fn search_feed_articles_for_rag(&self, query: &str, limit: u32) -> Vec<(String, String, String, String)> {
+    pub fn search_feed_articles_for_rag(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Vec<(String, String, String, String)> {
         // Sanitize query for FTS5 MATCH — wrap each term in quotes
         let sanitized: Vec<String> = query
             .split_whitespace()
@@ -26,7 +30,7 @@ impl DbBridge {
              JOIN feed_articles_fts fts ON a.rowid = fts.rowid \
              WHERE feed_articles_fts MATCH ?1 \
              ORDER BY rank \
-             LIMIT ?2"
+             LIMIT ?2",
         );
 
         match result {
@@ -57,7 +61,11 @@ impl DbBridge {
     /// Search finance nodes for RAG context (these are excluded from the main FTS index).
     /// Returns: (id, title, content, properties).
     /// Uses direct SQL LIKE matching on the nodes table.
-    pub fn search_finance_nodes_for_rag(&self, terms: &[String], limit: u32) -> Vec<(String, String, String, String)> {
+    pub fn search_finance_nodes_for_rag(
+        &self,
+        terms: &[String],
+        limit: u32,
+    ) -> Vec<(String, String, String, String)> {
         if terms.is_empty() {
             return Vec::new();
         }
@@ -92,17 +100,14 @@ impl DbBridge {
 
         match self.conn.prepare(&sql) {
             Ok(mut stmt) => {
-                let rows = stmt.query_map(
-                    rusqlite::params_from_iter(params_refs.iter()),
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                );
+                let rows = stmt.query_map(rusqlite::params_from_iter(params_refs.iter()), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                });
                 match rows {
                     Ok(mapped) => mapped.flatten().collect(),
                     Err(e) => {
@@ -120,7 +125,11 @@ impl DbBridge {
 
     /// Get related nodes via node_edges (1-hop graph expansion) for RAG context.
     /// Returns: (id, title, node_type) for connected nodes.
-    pub fn get_related_nodes_for_rag(&self, node_id: &str, limit: u32) -> Vec<(String, String, String)> {
+    pub fn get_related_nodes_for_rag(
+        &self,
+        node_id: &str,
+        limit: u32,
+    ) -> Vec<(String, String, String)> {
         let result = self.conn.prepare(
             "SELECT DISTINCT n.id, n.title, n.node_type \
              FROM node_edges e \
@@ -215,10 +224,9 @@ impl DbBridge {
 
         let params_refs: Vec<&str> = param_values.iter().map(|s| s.as_str()).collect();
 
-        let mut stmt = self
-            .conn
-            .prepare(&sql)
-            .map_err(|e| AppError::General(format!("DB Query Error (search_files_filtered): {}", e)))?;
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| {
+            AppError::General(format!("DB Query Error (search_files_filtered): {}", e))
+        })?;
 
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params_refs.iter()), |row| {
@@ -237,7 +245,9 @@ impl DbBridge {
                     blocks: None,
                 })
             })
-            .map_err(|e| AppError::General(format!("DB Map Error (search_files_filtered): {}", e)))?;
+            .map_err(|e| {
+                AppError::General(format!("DB Map Error (search_files_filtered): {}", e))
+            })?;
 
         let mut results = Vec::new();
         for node in rows.flatten() {

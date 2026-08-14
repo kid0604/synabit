@@ -1,7 +1,7 @@
 # Privacy Policy — Synabit
 
-**Last updated:** May 10, 2026  
-**Effective date:** May 10, 2026
+**Last updated:** July 25, 2026  
+**Effective date:** July 25, 2026
 
 This Privacy Policy describes how Synabit ("we", "us", "our") handles your information when you use the Synabit desktop and mobile application ("the App").
 
@@ -9,99 +9,84 @@ This Privacy Policy describes how Synabit ("we", "us", "our") handles your infor
 
 ## 1. Our Commitment
 
-Synabit is a **local-first** application. Your data is stored on your device, not on our servers. We are committed to protecting your privacy and being transparent about how the App works.
+Synabit is built on a **local-first** architecture. We prioritize your privacy and minimize the data we collect. However, to provide essential features like device synchronization, map routing, and license verification, the App must process certain metadata and communicate with specific external services.
 
-## 2. Information We Collect
+This policy outlines exactly what data leaves your device, where it goes, and how it is protected.
 
-### 2.1 Information We Do NOT Collect
+## 2. Information We Process
 
-- We do **not** collect, transmit, or store your notes, tasks, files, or any content you create in the App.
-- We do **not** track your usage behavior, browsing activity, or feature usage.
-- We do **not** use analytics, telemetry, or tracking cookies.
-- We do **not** have access to your data at any time.
+### 2.1 Your Content (Local & E2EE)
 
-### 2.2 Information Stored Locally on Your Device
+Your actual content—including notes, tasks, files, and Whiteboard drawings—is **stored locally** on your device's filesystem. 
 
-The App stores the following data **exclusively on your device**:
+When you use our **Synabit Sync Relay** (`sync.synabit.net`) to synchronize devices, your content is **End-to-End Encrypted (E2EE)** using AES-256-GCM before it ever leaves your device. 
+- We do **not** have the decryption keys.
+- We do **not** have access to your readable content at any time.
 
-| Data | Storage Location | Purpose |
-|---|---|---|
-| Notes, tasks, events, files | Your chosen vault directory (local filesystem) | Core app functionality |
-| App settings & preferences | OS app data directory | Configuration |
-| Search index (FTS5) | SQLite database in app data directory | Full-text search |
-| OAuth tokens | OS Keychain (macOS) / Credential Manager (Windows) / Android Keystore | Google Drive authentication |
+### 2.2 Metadata & Identifiers Sent to Our Servers
 
-### 2.3 Google Drive Integration (Optional)
+To operate the service and prevent abuse, the App transmits the following metadata to our servers:
 
-If you choose to connect Google Drive:
+| Data Type | Sent To | Purpose | Retention |
+|---|---|---|---|
+| **Sync Payload (E2EE)** | `sync.synabit.net` | Temporarily routing encrypted sync data between your devices. | Deleted immediately after delivery, or discarded after a short expiry if undeliverable. |
+| **Sync Metadata** | `sync.synabit.net` | Routing logic (IP addresses, payload size, connection timestamps). | Ephemeral; stored only in transient memory during the connection. |
+| **Hardware ID (HWID)** | `license.synabit.net` | A cryptographically hashed identifier of your device to enforce device limits on your license. | Retained as long as your license/device is active. |
+| **Device Name** | `license.synabit.net` | Your OS device name (e.g., "John's iPhone") to help you manage your active devices in the license portal. | Retained as long as your license/device is active. |
+| **IP Address** | `license.synabit.net` | Fraud prevention and rate limiting. | Retained in transient access logs for up to 30 days. |
 
-- **What we access**: Files within your Google Drive account, limited to the scopes you authorize (`drive.file` for vault sync, `drive.readonly` for file browsing).
-- **Authentication**: We use Google OAuth 2.0 with PKCE (Proof Key for Code Exchange) for secure authentication. Your Google credentials are never stored by the App — only OAuth tokens are stored in your operating system's secure keychain.
-- **Data transfer**: When you use Drive Sync, your vault files are uploaded to and downloaded from **your own Google Drive account**. Data travels directly between your device and Google's servers. We do not proxy, intercept, or store this data.
-- **Disconnecting**: You can disconnect Google Drive at any time from the App settings. This deletes all stored tokens from your device.
+### 2.3 Third-Party Services
 
-### 2.4 Subscription & Payment
+Depending on the features you use and the platform you are on, the App communicates with the following third-party processors:
 
-If you purchase a subscription:
-
-- Payments are processed by third-party payment providers (e.g., Stripe, Apple App Store, Google Play).
-- We receive confirmation of your subscription status but do **not** store your payment card details.
-- We may store your email address for subscription management and support purposes.
+- **Google APIs (Optional)**: If you voluntarily connect Google Drive for vault sync, OAuth tokens are stored securely on your device. Your data travels directly between your device and Google's servers. We do not proxy or intercept this data.
+- **Mapping Providers (Optional)**: If you use map, geolocation, or routing features, your IP address and requested geographic coordinates are sent to OpenStreetMap (OSM), OSRM, or Nominatim to render map tiles and calculate routes.
+- **GitHub (Desktop Only)**: The desktop application checks GitHub for application updates, which exposes your IP address to GitHub's servers during the check.
+- **Payment Processors**: If you purchase a subscription, payments are processed by third parties (e.g., Stripe, Apple, Google). We do not store your payment details.
 
 ## 3. How We Use Information
 
-Since we do not collect user data, there is minimal information usage:
+We use the metadata and identifiers described above strictly for the following purposes:
+- Delivering your End-to-End Encrypted sync payloads to your other devices.
+- Verifying your license status and enforcing device limits.
+- Providing customer support (using information you voluntarily share).
 
-| Purpose | Data Used |
-|---|---|
-| Subscription management | Email address (if provided during purchase) |
-| Customer support | Information you voluntarily share when contacting us |
+We do **not** sell, rent, or share your data with advertising networks or data brokers. We do **not** track your usage behavior or employ analytics/telemetry within the App.
 
-## 4. Data Sharing & Third-Party Services
+## 4. Data Security
 
-We do **not** sell, rent, or share your personal data with any third party for advertising or tracking purposes.
+- **Encryption**: All sync payloads transmitted through our relay are End-to-End Encrypted.
+- **Local Storage**: OAuth tokens and encryption keys are stored in your operating system's native secure storage (macOS Keychain, Windows Credential Manager, Android Keystore).
+- **Authentication**: The App uses PKCE for OAuth flows to prevent authorization code interception.
 
-The App only connects to essential third-party services to provide core functionality:
-- **Google APIs** — only when you voluntarily connect Google Drive for vault sync.
-- **GitHub** — to check for and download application updates.
-- **OpenStreetMap / OSRM** — to provide map tiles and routing services if you use map-related features.
-- **Payment processors** — only when you purchase a subscription.
+## 5. Data Retention & Deletion
 
-*Note on Licensing:* To prevent abuse and manage your active devices, the App transmits a hashed, anonymous Hardware ID (HWID) and your device name to our secure license server (`license.synabit.net`). This transmission does **not** include any of your personal data or vault content.
+Because Synabit does not require a traditional user account to function, the deletion process depends on the type of data:
 
-## 5. Data Security
+- **Your Local Content**: Stored entirely on your device. Delete your vault folder to remove all content.
+- **App Data & Settings**: Uninstall the App to remove all local cached data, search indices, and settings.
+- **Google Drive Tokens**: Disconnect from the App settings, or revoke access from your [Google Account security page](https://myaccount.google.com/permissions).
+- **License & Device Records**: We retain your hashed Hardware ID, Device Name, and associated license status on our license server to manage your subscription. To request the permanent deletion of your license records, please contact us at **privacy@synabit.net** with your License Key.
 
-- All vault data remains on your local filesystem under your OS user permissions.
-- OAuth tokens are stored in your operating system's native secure storage (macOS Keychain, Windows Credential Manager, Android Keystore).
-- The App uses PKCE for OAuth flows to prevent authorization code interception.
-- Path traversal protections prevent unauthorized filesystem access.
+## 6. Children's Privacy
 
-## 6. Data Retention & Deletion
+Synabit is not directed at children under 13. We do not knowingly collect information from children under 13.
 
-- **Your content**: Stored locally. Delete your vault folder to remove all content.
-- **App data**: Uninstall the App to remove all cached data, search indices, and settings.
-- **Google Drive tokens**: Disconnect from the App settings, or revoke access from your [Google Account security page](https://myaccount.google.com/permissions).
-- **Subscription data**: Contact us at privacy@synabit.app to request deletion of your account information.
+## 7. International Users
 
-## 7. Children's Privacy
+If you use Google Drive sync or Mapping features, your data is subject to those providers' own privacy practices and data processing locations. Metadata processed by our servers (`sync.synabit.net` and `license.synabit.net`) may be transferred to and processed in regions outside your country of residence.
 
-Synabit is not directed at children under 13. We do not knowingly collect information from children under 13. If you believe a child has provided us with personal information, please contact us at privacy@synabit.app.
+## 8. Changes to This Policy
 
-## 8. International Users
+We may update this Privacy Policy from time to time to reflect changes in our data processing practices. We will notify users of material changes through the App or on our website. 
 
-The App processes all data locally on your device. If you use Google Drive sync, your data is subject to Google's own privacy practices and data processing locations.
+## 9. Contact Us
 
-## 9. Changes to This Policy
+If you have questions or deletion requests regarding this Privacy Policy:
 
-We may update this Privacy Policy from time to time. We will notify users of material changes through the App or on our website. Your continued use of the App after changes constitutes acceptance of the updated policy.
-
-## 10. Contact Us
-
-If you have questions about this Privacy Policy:
-
-- **Email**: privacy@synabit.app
+- **Email**: privacy@synabit.net
 - **GitHub**: https://github.com/synabit/synabit/issues
 
 ---
 
-*This Privacy Policy is provided in compliance with Google API Services User Data Policy and applicable data protection regulations.*
+*This Privacy Policy is provided in compliance with the Google API Services User Data Policy, Google Play Developer Policies, and applicable data protection regulations.*

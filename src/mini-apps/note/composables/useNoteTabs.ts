@@ -58,7 +58,7 @@ export function useNoteTabs(
                         title: fetchedNode.title,
                         content: fetchedNode.content,
                         date: fetchedNode.updated_at || fetchedNode.created_at,
-                        path: fetchedNode.id,
+                        path: fetchedNode.rel_path,
                         tags: Array.isArray(fetchedNode.properties?.tags) ? fetchedNode.properties.tags : [],
                         pinned: !!fetchedNode.properties?.pinned,
                         full_width: !!fetchedNode.properties?.full_width,

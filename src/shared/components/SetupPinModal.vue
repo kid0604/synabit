@@ -27,7 +27,7 @@ const isShaking = ref(false);
 const oldPin = ref('');
 const newPin = ref('');
 
-const totalSteps = computed(() => (props.mode === 'change' ? 3 : 2));
+const _totalSteps = computed(() => (props.mode === 'change' ? 3 : 2));
 
 const stepTitle = computed(() => {
   if (props.mode === 'change') {
@@ -169,8 +169,8 @@ const numPadKeys = [
 
 <template>
   <Teleport to="body">
-    <Transition name="pin-modal">
-      <div class="fixed inset-0 z-[9998] flex items-center justify-center">
+    <Transition appear name="pin-modal">
+      <div v-show="true" class="fixed inset-0 z-[9998] flex items-center justify-center">
         <!-- Backdrop -->
         <div
           class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm"

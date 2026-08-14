@@ -1,6 +1,6 @@
-use rusqlite::params;
-use crate::error::{AppError, AppResult};
 use super::DbBridge;
+use crate::error::{AppError, AppResult};
+use rusqlite::params;
 
 impl DbBridge {
     pub fn set_kv(&self, key: &str, value: &str) -> AppResult<()> {
@@ -23,8 +23,14 @@ impl DbBridge {
             .query(params![key])
             .map_err(|e| AppError::General(format!("DB Get KV Query Error: {}", e)))?;
 
-        if let Some(row) = rows.next().unwrap_or(None) {
-            Ok(Some(row.get(0).unwrap_or_default()))
+        if let Some(row) = rows
+            .next()
+            .map_err(|e| AppError::General(format!("DB Get KV Iteration Error: {}", e)))?
+        {
+            let val: String = row
+                .get(0)
+                .map_err(|e| AppError::General(format!("DB Get KV Decode Error: {}", e)))?;
+            Ok(Some(val))
         } else {
             Ok(None)
         }
@@ -42,7 +48,7 @@ impl DbBridge {
             .conn
             .prepare("SELECT key, value FROM kv_store WHERE key LIKE ?1")
             .map_err(|e| AppError::General(format!("DB Get KV Prefix Prepare Error: {}", e)))?;
-        
+
         let pattern = format!("{}%", prefix);
         let rows = stmt
             .query_map(params![pattern], |row| {

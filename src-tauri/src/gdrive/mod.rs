@@ -16,7 +16,6 @@ pub mod api;
 pub mod auth;
 pub mod browse;
 pub mod sync;
-pub mod transport;
 
 // ──────────────────────────────────────────────
 // Shared Constants
@@ -58,8 +57,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ──────────────────────────────────────────────
 // PKCE Helpers (RFC 7636)
@@ -101,23 +99,34 @@ pub struct SyncFileEntry {
     pub local_modified_time: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub(crate) struct DriveFile {
     pub id: Option<String>,
     pub name: Option<String>,
-    #[serde(rename = "mimeType")]
-    pub mime_type: Option<String>,
-    #[serde(rename = "modifiedTime")]
-    pub modified_time: Option<String>,
-    #[serde(rename = "md5Checksum")]
-    pub md5_checksum: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub(crate) struct DriveFileList {
     pub files: Option<Vec<DriveFile>>,
     #[serde(rename = "nextPageToken")]
     pub next_page_token: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub(crate) struct DriveChange {
+    #[serde(rename = "fileId")]
+    pub file_id: Option<String>,
+    pub file: Option<DriveFile>,
+    pub removed: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub(crate) struct DriveChangeList {
+    pub changes: Option<Vec<DriveChange>>,
+    #[serde(rename = "nextPageToken")]
+    pub next_page_token: Option<String>,
+    #[serde(rename = "newStartPageToken")]
+    pub new_start_page_token: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -139,29 +148,8 @@ pub(crate) fn config_dir(app_handle: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-pub(crate) fn manifest_path(vault_path: &str) -> PathBuf {
-    Path::new(vault_path).join(".synabit_sync_manifest.json")
-}
-
 pub fn gdrive_cache_dir(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir(app_handle).join("gdrive-cache")
-}
-
-pub(crate) fn load_manifest(vault_path: &str) -> SyncManifest {
-    let path = manifest_path(vault_path);
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(manifest) = serde_json::from_str(&content) {
-                return manifest;
-            }
-        }
-    }
-    SyncManifest::default()
-}
-
-pub(crate) fn save_manifest(vault_path: &str, manifest: &SyncManifest) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
-    fs::write(manifest_path(vault_path), content).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

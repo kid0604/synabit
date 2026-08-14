@@ -7,9 +7,7 @@ use walkdir::WalkDir;
 
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
-use crate::models::file::{
-    DuplicateGroup, FileMetadata, FileSource,
-};
+use crate::models::file::{DuplicateGroup, FileMetadata, FileSource};
 use crate::path_utils;
 
 #[tauri::command]
@@ -180,7 +178,8 @@ pub fn import_files(
         let node = file_meta.to_node();
         if let Ok(updated_node) = upsert_file_node(&db, &node, &abs_path) {
             // Update search index with the preserved properties
-            let preserved_meta = FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
+            let preserved_meta =
+                FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
             let props = format!("ext:{} source:imported", extension);
             let mut search_tags = preserved_meta.tags.clone();
             for person in &preserved_meta.people {
@@ -198,7 +197,7 @@ pub fn import_files(
                 &preserved_meta.modified_at,
                 &preserved_meta.path,
             );
-            
+
             // Sync edges
             let resolver = crate::commands::nodes::build_resolver(&db);
             crate::commands::nodes::sync_node_edges(&db, &updated_node, &resolver);
@@ -272,9 +271,10 @@ fn do_scan_directory(db: &crate::db::DbBridge, source_path: &str) -> AppResult<V
             let node = file_meta.to_node();
             if let Ok(updated_node) = upsert_file_node(db, &node, &file_meta.path) {
                 // Update search index
-                let preserved_meta = FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
+                let preserved_meta =
+                    FileMetadata::from_node(&updated_node).unwrap_or(file_meta.clone());
                 let props = format!("ext:{} source:local", preserved_meta.extension);
-                
+
                 let mut search_tags = preserved_meta.tags.clone();
                 for person in &preserved_meta.people {
                     search_tags.push(person.clone());
@@ -318,19 +318,51 @@ fn upsert_file_node(
                     // Preserve existing tags if new node has empty tags
                     // Preserve existing tags and people if new node has empty ones
                     if let Some(props) = updated.properties.as_object_mut() {
-                        if let Some(old_tags) = existing.properties.get("tags").and_then(|v| v.as_array()) {
-                            if props.get("tags").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_tags.is_empty() {
-                                props.insert("tags".to_string(), serde_json::Value::Array(old_tags.clone()));
+                        if let Some(old_tags) =
+                            existing.properties.get("tags").and_then(|v| v.as_array())
+                        {
+                            if props
+                                .get("tags")
+                                .and_then(|v| v.as_array())
+                                .is_none_or(|v| v.is_empty())
+                                && !old_tags.is_empty()
+                            {
+                                props.insert(
+                                    "tags".to_string(),
+                                    serde_json::Value::Array(old_tags.clone()),
+                                );
                             }
                         }
-                        if let Some(old_people) = existing.properties.get("people").and_then(|v| v.as_array()) {
-                            if props.get("people").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_people.is_empty() {
-                                props.insert("people".to_string(), serde_json::Value::Array(old_people.clone()));
+                        if let Some(old_people) =
+                            existing.properties.get("people").and_then(|v| v.as_array())
+                        {
+                            if props
+                                .get("people")
+                                .and_then(|v| v.as_array())
+                                .is_none_or(|v| v.is_empty())
+                                && !old_people.is_empty()
+                            {
+                                props.insert(
+                                    "people".to_string(),
+                                    serde_json::Value::Array(old_people.clone()),
+                                );
                             }
                         }
-                        if let Some(old_linked_projects) = existing.properties.get("linked_projects").and_then(|v| v.as_array()) {
-                            if props.get("linked_projects").and_then(|v| v.as_array()).is_none_or(|v| v.is_empty()) && !old_linked_projects.is_empty() {
-                                props.insert("linked_projects".to_string(), serde_json::Value::Array(old_linked_projects.clone()));
+                        if let Some(old_linked_projects) = existing
+                            .properties
+                            .get("linked_projects")
+                            .and_then(|v| v.as_array())
+                        {
+                            if props
+                                .get("linked_projects")
+                                .and_then(|v| v.as_array())
+                                .is_none_or(|v| v.is_empty())
+                                && !old_linked_projects.is_empty()
+                            {
+                                props.insert(
+                                    "linked_projects".to_string(),
+                                    serde_json::Value::Array(old_linked_projects.clone()),
+                                );
                             }
                         }
                     }
@@ -397,7 +429,6 @@ pub fn query_files(
     let nodes = db.get_nodes_by_type("file")?;
     Ok(nodes.iter().filter_map(FileMetadata::from_node).collect())
 }
-
 
 #[cfg(desktop)]
 #[tauri::command]
@@ -532,7 +563,7 @@ pub fn update_file_metadata(
     // Sync search index
     if let Some(f) = FileMetadata::from_node(&updated_node) {
         let props = format!("ext:{} source:{}", f.extension, f.source_type);
-        
+
         // Append people to search index tags so they are searchable
         let mut search_tags = f.tags.clone();
         for person_link in &f.people {
@@ -610,7 +641,10 @@ pub fn reindex_sources(
             }
         }
         if deleted_count > 0 {
-            log::info!("reindex_sources: deleted {} stale file nodes", deleted_count);
+            log::info!(
+                "reindex_sources: deleted {} stale file nodes",
+                deleted_count
+            );
         }
     }
 

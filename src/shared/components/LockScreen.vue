@@ -144,8 +144,8 @@ const numPadKeys = [
 
 <template>
   <Teleport to="body">
-    <Transition name="lockscreen">
-      <div class="fixed inset-0 z-[9999] flex items-center justify-center select-none lock-backdrop">
+    <Transition appear name="lockscreen">
+      <div v-show="true" class="fixed inset-0 z-[9999] flex items-center justify-center select-none lock-backdrop">
         <!-- Gradient background layer -->
         <div class="absolute inset-0 bg-gradient-to-br from-[#fdfdfc] via-[#f0eff5] to-[#e8e6f0] dark:from-[#1a1a2e] dark:via-[#16162a] dark:to-[#0f0f1a]"></div>
 

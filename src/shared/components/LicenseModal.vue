@@ -4,7 +4,7 @@ import { X, Key, Zap, Shield, CheckCircle2, AlertCircle, RefreshCw, TerminalSqua
 import { useLicenseStore } from '../../stores/useLicenseStore';
 import { usePlatform } from '../../composables/usePlatform';
 
-const props = defineProps<{
+const _props = defineProps<{
     isOpen: boolean;
 }>();
 

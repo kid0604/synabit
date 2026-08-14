@@ -148,6 +148,8 @@ onMounted(() => {
   checkReferences();
   fetchAllPeople();
 });
+
+const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdown.value = false, 150);
 </script>
 
 <template>
@@ -220,7 +222,7 @@ onMounted(() => {
             type="text" 
             placeholder="Search person..."
             class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-md text-[11px] font-medium focus:outline-none"
-            @blur="setTimeout(() => showPeopleDropdown = false, 150)"
+            @blur="handlePeopleDropdownBlur"
           />
           <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-md text-[11px] font-medium text-gray-400 hover:text-emerald-500 cursor-pointer">
             <Plus class="w-3 h-3 inline" /> Link Person

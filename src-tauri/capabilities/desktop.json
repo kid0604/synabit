@@ -1,0 +1,10 @@
+{
+  "identifier": "desktop-only",
+  "platforms": ["macOS", "windows", "linux"],
+  "windows": [
+    "*"
+  ],
+  "permissions": [
+    "updater:default"
+  ]
+}

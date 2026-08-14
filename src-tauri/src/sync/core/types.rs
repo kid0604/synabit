@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use synabit_protocol::{AssetChunkRef, AssetRef, SyncEntryKind, SyncPayload};
 
 #[derive(Serialize, Deserialize)]
 pub struct DocSyncPayload {
@@ -8,17 +9,23 @@ pub struct DocSyncPayload {
     pub is_json: bool,
 }
 
-/// A single sync operation representing a document change or deletion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single sync operation representing a document change, deletion, or asset reference
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncOperation {
     pub operation_id: [u8; 16],
     pub doc_hash: [u8; 32],
+    pub entry_kind: SyncEntryKind,
     pub node_id: String,
     pub rel_path: String,
     pub encrypted_payload: Vec<u8>,
     pub payload_hash: [u8; 32],
-    pub is_delete: bool,
     pub timestamp: i64,
+}
+
+impl SyncOperation {
+    pub fn is_delete(&self) -> bool {
+        self.entry_kind == SyncEntryKind::Delete
+    }
 }
 
 /// Result of a sync operation, used by the UI to show what happened.
@@ -47,25 +54,6 @@ impl SyncResult {
     }
 }
 
-/// A remote sync entry returned by the server (or any transport).
-#[derive(Debug, Clone)]
-pub struct RemoteSyncEntry {
-    /// Sequence number (monotonic per vault)
-    pub seq: u64,
-    /// Document identifier hash
-    pub doc_hash: [u8; 32],
-    /// Which device pushed this
-    pub source_device: String,
-    /// Encrypted CRDT payload (opaque, decrypt on client)
-    pub encrypted_payload: Vec<u8>,
-    /// BLAKE3 hash of the encrypted payload (integrity check)
-    pub payload_hash: [u8; 32],
-    /// Server-side timestamp
-    pub timestamp: i64,
-    /// Whether this is a deletion tombstone
-    pub is_delete: bool,
-}
-
 /// Correlates every transport involved in one user-visible sync request.
 #[derive(Debug, Clone)]
 pub struct SyncRunContext {
@@ -87,13 +75,7 @@ impl SyncRunContext {
         Self::short_hash_tag(transport_id)
     }
 
-    pub fn log_phase(
-        &self,
-        provider: &str,
-        transport_tag: &str,
-        phase: &str,
-        result: &SyncResult,
-    ) {
+    pub fn log_phase(&self, provider: &str, transport_tag: &str, phase: &str, result: &SyncResult) {
         log::info!(
             "sync_phase run_id={} trigger={} vault_tag={} provider={} transport_tag={} phase={} pulled={} pushed={} deleted={} errors={} tx_bytes={} rx_bytes={}",
             self.run_id,

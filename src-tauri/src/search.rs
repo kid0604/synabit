@@ -122,7 +122,12 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
         // is: filter
         if let Some(stripped) = lower.strip_prefix("is:") {
             let val = stripped.to_string();
-            pq.type_filter = Some(val);
+            match val.as_str() {
+                "note" | "task" | "event" | "quickcap" | "file" => {
+                    pq.type_filter = Some(val);
+                }
+                _ => {}
+            }
             continue;
         }
         if let Some(stripped) = lower.strip_prefix("status:") {

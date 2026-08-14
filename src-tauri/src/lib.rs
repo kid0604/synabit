@@ -10,17 +10,20 @@ pub mod search;
 pub mod utils;
 
 pub mod chat_engine;
-pub mod watcher;
-pub mod sync;
-pub mod secrets;
 pub mod feed_engine;
+pub mod secrets;
 pub mod syn;
+pub mod sync;
+pub mod watcher;
 
 pub mod hwid;
-pub mod signing;
 pub mod license;
+pub mod signing;
 
-use commands::{chat, feeds, files, nexus, nodes, sync as sync_cmds, syn as syn_commands, whiteboards, license_cmds};
+use commands::{
+    chat, feeds, files, license_cmds, nexus, nodes, syn as syn_commands, sync as sync_cmds,
+    whiteboards,
+};
 use db::DbBridge;
 
 #[tauri::command]
@@ -191,15 +194,11 @@ pub fn run() {
             commands::tags::get_all_tags,
             commands::tags::rename_tag,
             commands::tags::delete_tag,
-            
             // E2EE
             commands::e2ee::check_e2ee_status,
             commands::e2ee::setup_e2ee,
             commands::e2ee::restore_e2ee_from_phrase,
             commands::e2ee::get_recovery_phrase,
-
-
-
             // Google Drive
             gdrive::auth::gdrive_auth_start,
             gdrive::auth::gdrive_auth_complete,
@@ -281,11 +280,9 @@ pub fn run() {
             sync_cmds::sync_status,
             sync_cmds::sync_metrics,
             sync_cmds::sync_update_worker_config,
-
             // Key Rotation
             sync_cmds::sync_current_epoch,
             sync_cmds::sync_revoke_device,
-
             // License
             license_cmds::get_license_state,
             license_cmds::get_hwid,
@@ -294,7 +291,6 @@ pub fn run() {
             license_cmds::deactivate_license,
             license_cmds::refresh_license,
             license_cmds::heartbeat_license,
-
             // System
             open_app_log_folder,
         ])

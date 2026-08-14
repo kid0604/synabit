@@ -1,7 +1,7 @@
+use super::DbBridge;
+use crate::error::{AppError, AppResult};
 use rusqlite::params;
 use std::time::Instant;
-use crate::error::{AppError, AppResult};
-use super::DbBridge;
 
 impl DbBridge {
     /// Rebuild the entire FTS5 search index from all data tables.

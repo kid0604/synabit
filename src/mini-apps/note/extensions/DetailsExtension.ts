@@ -64,7 +64,7 @@ export const DetailsExtension = Node.create<DetailsOptions>({
         tag: 'details',
         contentElement: (node: HTMLElement) => {
           const wrapper = node.querySelector(':scope > div.details-content');
-          return wrapper || node;
+          return (wrapper || node) as HTMLElement;
         },
       },
     ];

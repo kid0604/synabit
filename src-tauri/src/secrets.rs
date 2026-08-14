@@ -3,21 +3,21 @@ use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AppSecrets {
-    pub e2ee_password: Option<String>,          // KEEP for migration
+    pub e2ee_password: Option<String>, // KEEP for migration
     #[serde(default)]
-    pub e2ee_key: Option<String>,               // NEW: base64-encoded 32-byte key
+    pub e2ee_key: Option<String>, // NEW: base64-encoded 32-byte key
     pub global_sync_config: Option<String>,
     pub vault_tokens: HashMap<String, String>,
     #[serde(default)]
-    pub app_lock_hash: Option<String>,           // Argon2id PHC hash string
+    pub app_lock_hash: Option<String>, // Argon2id PHC hash string
     #[serde(default)]
-    pub protected_apps: Option<Vec<String>>,     // ["finance", "people"]
+    pub protected_apps: Option<Vec<String>>, // ["finance", "people"]
     #[serde(default)]
-    pub protected_notes: Option<Vec<String>>,    // ["Notes/diary.md"]
+    pub protected_notes: Option<Vec<String>>, // ["Notes/diary.md"]
     #[serde(default)]
-    pub auto_lock_timeout_secs: Option<u64>,     // Default 300
+    pub auto_lock_timeout_secs: Option<u64>, // Default 300
     #[serde(default)]
-    pub app_lock_active: Option<bool>,           // Tier 1 toggle (independent of PIN)
+    pub app_lock_active: Option<bool>, // Tier 1 toggle (independent of PIN)
 }
 
 pub struct SecretManager;
@@ -67,34 +67,41 @@ impl SecretManager {
                 let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
                 let mut env = vm.attach_current_thread().unwrap();
                 let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-                
-                let class_loader = env.call_method(
-                    &context,
-                    "getClassLoader",
-                    "()Ljava/lang/ClassLoader;",
-                    &[]
-                ).unwrap().l().unwrap();
+
+                let class_loader = env
+                    .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+                    .unwrap()
+                    .l()
+                    .unwrap();
                 let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
-                let jclass_obj = env.call_method(
-                    &class_loader,
-                    "loadClass",
-                    "(Ljava/lang/String;)Ljava/lang/Class;",
-                    &[JValue::Object(&class_name)]
-                ).unwrap().l().unwrap();
+                let jclass_obj = env
+                    .call_method(
+                        &class_loader,
+                        "loadClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[JValue::Object(&class_name)],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
                 let jclass = jni::objects::JClass::from(jclass_obj);
 
                 let key = env.new_string("app_secrets").unwrap();
-                
-                let result = env.call_static_method(
-                    &jclass,
-                    "getSecret",
-                    "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
-                    &[JValue::Object(&context), JValue::Object(&key)]
-                ).unwrap().l().unwrap();
-                
+
+                let result = env
+                    .call_static_method(
+                        &jclass,
+                        "getSecret",
+                        "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                        &[JValue::Object(&context), JValue::Object(&key)],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
+
                 let jstr = jni::objects::JString::from(result);
                 let content_str: String = env.get_string(&jstr).unwrap().into();
-                
+
                 if !content_str.is_empty() {
                     if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&content_str) {
                         return secrets;
@@ -108,7 +115,11 @@ impl SecretManager {
                                 &jclass,
                                 "saveSecret",
                                 "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
-                                &[JValue::Object(&context), JValue::Object(&key), JValue::Object(&val)]
+                                &[
+                                    JValue::Object(&context),
+                                    JValue::Object(&key),
+                                    JValue::Object(&val),
+                                ],
                             );
                             let _ = std::fs::remove_file(path);
                             return secrets;
@@ -154,32 +165,43 @@ impl SecretManager {
                 let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
                 let mut env = vm.attach_current_thread().unwrap();
                 let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-                
-                let class_loader = env.call_method(
-                    &context,
-                    "getClassLoader",
-                    "()Ljava/lang/ClassLoader;",
-                    &[]
-                ).unwrap().l().unwrap();
+
+                let class_loader = env
+                    .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+                    .unwrap()
+                    .l()
+                    .unwrap();
                 let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
-                let jclass_obj = env.call_method(
-                    &class_loader,
-                    "loadClass",
-                    "(Ljava/lang/String;)Ljava/lang/Class;",
-                    &[JValue::Object(&class_name)]
-                ).unwrap().l().unwrap();
+                let jclass_obj = env
+                    .call_method(
+                        &class_loader,
+                        "loadClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[JValue::Object(&class_name)],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
                 let jclass = jni::objects::JClass::from(jclass_obj);
 
                 let key = env.new_string("app_secrets").unwrap();
                 let val = env.new_string(&content).unwrap();
-                
-                let res = env.call_static_method(
-                    &jclass,
-                    "saveSecret",
-                    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
-                    &[JValue::Object(&context), JValue::Object(&key), JValue::Object(&val)]
-                ).unwrap().z().unwrap();
-                
+
+                let res = env
+                    .call_static_method(
+                        &jclass,
+                        "saveSecret",
+                        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
+                        &[
+                            JValue::Object(&context),
+                            JValue::Object(&key),
+                            JValue::Object(&val),
+                        ],
+                    )
+                    .unwrap()
+                    .z()
+                    .unwrap();
+
                 if res {
                     Ok(())
                 } else {
@@ -289,7 +311,10 @@ impl SecretManager {
             key,
             vault_path.replace("/", "_").replace("\\\\", "_")
         );
-        Self::load_secrets(app_handle).vault_tokens.get(&map_key).cloned()
+        Self::load_secrets(app_handle)
+            .vault_tokens
+            .get(&map_key)
+            .cloned()
     }
 
     pub fn set_vault_token(
@@ -351,7 +376,12 @@ impl SecretManager {
 
     pub fn get_app_lock_config(
         app_handle: Option<&tauri::AppHandle>,
-    ) -> (Option<Vec<String>>, Option<Vec<String>>, Option<u64>, Option<bool>) {
+    ) -> (
+        Option<Vec<String>>,
+        Option<Vec<String>>,
+        Option<u64>,
+        Option<bool>,
+    ) {
         let secrets = Self::load_secrets(app_handle);
         (
             secrets.protected_apps,

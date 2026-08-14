@@ -6,10 +6,33 @@ use std::collections::HashSet;
 pub fn sanitize_html(html: &str) -> String {
     let mut allowed_tags = HashSet::new();
     for tag in &[
-        "p", "a", "img", "h1", "h2", "h3", "h4", "h5", "h6",
-        "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong",
-        "br", "hr", "figure", "figcaption",
-        "table", "thead", "tbody", "tr", "th", "td",
+        "p",
+        "a",
+        "img",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "pre",
+        "code",
+        "em",
+        "strong",
+        "br",
+        "hr",
+        "figure",
+        "figcaption",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
     ] {
         allowed_tags.insert(*tag);
     }

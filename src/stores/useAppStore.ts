@@ -29,18 +29,17 @@ export const useAppStore = defineStore('app', () => {
     const themeMode = ref<'light' | 'dark' | 'system'>('system');
     const appLanguage = ref<'en' | 'vi'>('en');
     
-    // GDrive
-    const gdriveAutoSyncEnabled = ref<boolean>(true);
-    const gdriveAutoSyncInterval = ref<number>(5);
-    const gdriveLastSyncTime = ref<string>('');
+    // Unified Sync Settings
+    const activeSyncProvider = ref<'none' | 'local' | 'gdrive' | 'server'>('none');
+    const syncAutoEnabled = ref<boolean>(true);
+    const syncAutoInterval = ref<number>(5);
+    const syncLastAttempted = ref<string>('');
+    const syncLastSuccessful = ref<string>('');
   
-    // P2P Sync
-    const p2pServerAddr = ref<string>('');
-    const p2pServerIdHex = ref<string>('');
-    const p2pAutoSyncEnabled = ref<boolean>(true);
-    const p2pAutoSyncInterval = ref<number>(5);
-    const p2pLastSyncTime = ref<string>('');
-    const p2pCellularPolicy = ref<'all' | 'text_only' | 'off'>('all');
+    // Sync Server specific
+    const syncServerAddr = ref<string>('');
+    const syncServerIdHex = ref<string>('');
+    const syncCellularPolicy = ref<'all' | 'text_only' | 'off'>('all');
   
     let storeInstance: Store | null = null;
     const isReady = ref(false);
@@ -96,28 +95,96 @@ export const useAppStore = defineStore('app', () => {
       const hApps = await storeInstance.get('hiddenSidebarApps');
       if (hApps && Array.isArray(hApps)) hiddenSidebarApps.value = hApps as string[];
       
-      const autoSync = await storeInstance.get('gdriveAutoSyncEnabled');
-      if (autoSync !== null && autoSync !== undefined) gdriveAutoSyncEnabled.value = autoSync as boolean;
+      // Migration script: Check if old settings exist and migrate them to unified settings
+      let didMigrate = false;
       
-      const syncInt = await storeInstance.get('gdriveAutoSyncInterval');
-      if (syncInt) gdriveAutoSyncInterval.value = Number(syncInt);
+      const hasOldProvider = await storeInstance.has('activeSyncProvider');
+      if (!hasOldProvider) {
+        // Assume default provider logic based on old config presence
+        const hasGDrive = await storeInstance.has('gdriveLastSyncTime');
+        const hasP2P = await storeInstance.has('p2pServerAddr');
+        
+        if (hasP2P) {
+          activeSyncProvider.value = 'server';
+          
+          // Migrate P2P settings
+          const p2pAddr = await storeInstance.get('p2pServerAddr');
+          if (p2pAddr) syncServerAddr.value = p2pAddr as string;
+          const p2pId = await storeInstance.get('p2pServerIdHex');
+          if (p2pId) syncServerIdHex.value = p2pId as string;
+          const p2pAutoSync = await storeInstance.get('p2pAutoSyncEnabled');
+          if (p2pAutoSync !== null) syncAutoEnabled.value = p2pAutoSync as boolean;
+          const p2pSyncInt = await storeInstance.get('p2pAutoSyncInterval');
+          if (p2pSyncInt) syncAutoInterval.value = Number(p2pSyncInt);
+          const p2pLastAtt = await storeInstance.get('syncLastAttempted');
+          const p2pLastSucc = await storeInstance.get('syncLastSuccessful');
+          if (p2pLastAtt) syncLastAttempted.value = p2pLastAtt as string;
+          if (p2pLastSucc) syncLastSuccessful.value = p2pLastSucc as string;
+          const p2pCellPolicy = await storeInstance.get('p2pCellularPolicy');
+          if (p2pCellPolicy) syncCellularPolicy.value = p2pCellPolicy as any;
+          
+        } else if (hasGDrive) {
+          activeSyncProvider.value = 'gdrive';
+          
+          // Migrate GDrive settings
+          const autoSync = await storeInstance.get('gdriveAutoSyncEnabled');
+          if (autoSync !== null) syncAutoEnabled.value = autoSync as boolean;
+          const syncInt = await storeInstance.get('gdriveAutoSyncInterval');
+          if (syncInt) syncAutoInterval.value = Number(syncInt);
+          const lastAtt = await storeInstance.get('syncLastAttempted');
+          const lastSucc = await storeInstance.get('syncLastSuccessful');
+          if (lastAtt) syncLastAttempted.value = lastAtt as string;
+          if (lastSucc) syncLastSuccessful.value = lastSucc as string;
+        } else {
+          activeSyncProvider.value = 'none';
+        }
+        didMigrate = true;
+      } else {
+        // Load unified settings normally
+        const provider = await storeInstance.get('activeSyncProvider');
+        if (provider) activeSyncProvider.value = provider as any;
+        
+        const autoSync = await storeInstance.get('syncAutoEnabled');
+        if (autoSync !== null && autoSync !== undefined) syncAutoEnabled.value = autoSync as boolean;
+        const syncInt = await storeInstance.get('syncAutoInterval');
+        if (syncInt) syncAutoInterval.value = Number(syncInt);
+        const lastAtt = await storeInstance.get('syncLastAttempted');
+        const lastSucc = await storeInstance.get('syncLastSuccessful');
+        if (lastAtt) syncLastAttempted.value = lastAtt as string;
+        if (lastSucc) syncLastSuccessful.value = lastSucc as string;
+        
+        const srvAddr = await storeInstance.get('syncServerAddr');
+        if (srvAddr) syncServerAddr.value = srvAddr as string;
+        const srvId = await storeInstance.get('syncServerIdHex');
+        if (srvId) syncServerIdHex.value = srvId as string;
+        const cellPolicy = await storeInstance.get('syncCellularPolicy');
+        if (cellPolicy) syncCellularPolicy.value = cellPolicy as any;
+      }
       
-      const lastTime = await storeInstance.get('gdriveLastSyncTime');
-      if (lastTime) gdriveLastSyncTime.value = lastTime as string;
-  
-      // P2P Sync
-      const p2pAddr = await storeInstance.get('p2pServerAddr');
-      if (p2pAddr) p2pServerAddr.value = p2pAddr as string;
-      const p2pId = await storeInstance.get('p2pServerIdHex');
-      if (p2pId) p2pServerIdHex.value = p2pId as string;
-      const p2pAutoSync = await storeInstance.get('p2pAutoSyncEnabled');
-      if (p2pAutoSync !== null && p2pAutoSync !== undefined) p2pAutoSyncEnabled.value = p2pAutoSync as boolean;
-      const p2pSyncInt = await storeInstance.get('p2pAutoSyncInterval');
-      if (p2pSyncInt) p2pAutoSyncInterval.value = Number(p2pSyncInt);
-      const p2pLast = await storeInstance.get('p2pLastSyncTime');
-      if (p2pLast) p2pLastSyncTime.value = p2pLast as string;
-      const p2pCellPolicy = await storeInstance.get('p2pCellularPolicy');
-      if (p2pCellPolicy) p2pCellularPolicy.value = p2pCellPolicy as any;
+      if (didMigrate) {
+        // Clean up old keys and save
+        await storeInstance.delete('p2pServerAddr');
+        await storeInstance.delete('p2pServerIdHex');
+        await storeInstance.delete('p2pAutoSyncEnabled');
+        await storeInstance.delete('p2pAutoSyncInterval');
+        await storeInstance.delete('p2pLastSyncTime');
+        await storeInstance.delete('p2pCellularPolicy');
+        await storeInstance.delete('gdriveAutoSyncEnabled');
+        await storeInstance.delete('gdriveAutoSyncInterval');
+        await storeInstance.delete('gdriveLastSyncTime');
+        
+        // Save new keys
+        await storeInstance.set('activeSyncProvider', activeSyncProvider.value);
+        await storeInstance.set('syncAutoEnabled', syncAutoEnabled.value);
+        await storeInstance.set('syncAutoInterval', syncAutoInterval.value);
+        await storeInstance.set('syncLastAttempted', syncLastAttempted.value);
+        await storeInstance.set('syncLastSuccessful', syncLastSuccessful.value);
+        await storeInstance.set('syncServerAddr', syncServerAddr.value);
+        await storeInstance.set('syncServerIdHex', syncServerIdHex.value);
+        await storeInstance.set('syncCellularPolicy', syncCellularPolicy.value);
+        
+        await storeInstance.save();
+      }
   
       isReady.value = true;
   
@@ -165,29 +232,31 @@ export const useAppStore = defineStore('app', () => {
     watch(appLanguage, async (v) => {
       if (storeInstance) await storeInstance.set('appLanguage', v);
     });
-    watch(gdriveAutoSyncEnabled, async (v) => {
-      if (storeInstance) await storeInstance.set('gdriveAutoSyncEnabled', v);
+    watch(activeSyncProvider, async (v) => {
+      if (storeInstance) await storeInstance.set('activeSyncProvider', v);
     });
-    watch(gdriveAutoSyncInterval, async (v) => {
-      if (storeInstance) await storeInstance.set('gdriveAutoSyncInterval', v);
+    watch(syncAutoEnabled, async (v) => {
+      if (storeInstance) await storeInstance.set('syncAutoEnabled', v);
     });
-    watch(gdriveLastSyncTime, async (v) => {
-      if (storeInstance) await storeInstance.set('gdriveLastSyncTime', v);
+    watch(syncAutoInterval, async (v) => {
+      if (storeInstance) await storeInstance.set('syncAutoInterval', v);
     });
-    watch(p2pServerAddr, async (v) => {
-      if (storeInstance) await storeInstance.set('p2pServerAddr', v);
+    watch(syncLastAttempted, async (v) => {
+      if (storeInstance) await storeInstance.set('syncLastAttempted', v);
+      await storeInstance?.save();
     });
-    watch(p2pServerIdHex, async (v) => {
-      if (storeInstance) await storeInstance.set('p2pServerIdHex', v);
+    watch(syncLastSuccessful, async (v) => {
+      if (storeInstance) await storeInstance.set('syncLastSuccessful', v);
+      await storeInstance?.save();
     });
-    watch(p2pAutoSyncEnabled, async (v) => {
-      if (storeInstance) await storeInstance.set('p2pAutoSyncEnabled', v);
+    watch(syncServerAddr, async (v) => {
+      if (storeInstance) await storeInstance.set('syncServerAddr', v);
     });
-    watch(p2pAutoSyncInterval, async (v) => {
-      if (storeInstance) await storeInstance.set('p2pAutoSyncInterval', v);
+    watch(syncServerIdHex, async (v) => {
+      if (storeInstance) await storeInstance.set('syncServerIdHex', v);
     });
-    watch(p2pLastSyncTime, async (v) => {
-      if (storeInstance) await storeInstance.set('p2pLastSyncTime', v);
+    watch(syncCellularPolicy, async (v) => {
+      if (storeInstance) await storeInstance.set('syncCellularPolicy', v);
     });
   }
 
@@ -229,15 +298,14 @@ export const useAppStore = defineStore('app', () => {
     hiddenSidebarApps,
     themeMode,
     appLanguage,
-    gdriveAutoSyncEnabled,
-    gdriveAutoSyncInterval,
-    gdriveLastSyncTime,
-    p2pServerAddr,
-    p2pServerIdHex,
-    p2pAutoSyncEnabled,
-    p2pAutoSyncInterval,
-    p2pLastSyncTime,
-    p2pCellularPolicy,
+    activeSyncProvider,
+    syncAutoEnabled,
+    syncAutoInterval,
+    syncLastAttempted,
+    syncLastSuccessful,
+    syncServerAddr,
+    syncServerIdHex,
+    syncCellularPolicy,
     setVaultPath,
     setTheme,
     // Add reference access to the store instance if needed outside

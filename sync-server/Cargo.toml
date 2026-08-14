@@ -6,6 +6,12 @@ description = "Synabit Sync Server — encrypted mailbox + relay for P2P CRDT sy
 license = "MIT"
 publish = false
 
+[workspace]
+members = [
+    ".",
+    "synabit-protocol"
+]
+
 [[bin]]
 name = "synabit-sync-server"
 path = "src/main.rs"
@@ -13,6 +19,9 @@ path = "src/main.rs"
 [dependencies]
 # Networking — Iroh P2P stack (QUIC, NAT traversal)
 iroh = "1.0.0"
+
+# Protocol types
+synabit-protocol = { path = "synabit-protocol" }
 
 # TLS crypto provider — must match iroh's tls-ring feature
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
@@ -56,6 +65,10 @@ hex = "0.4"
 # Async utilities (CancellationToken for graceful shutdown)
 tokio-util = "0.7"
 lz4_flex = "0.13.1"
+uuid = { version = "1.24.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 opt-level = 3

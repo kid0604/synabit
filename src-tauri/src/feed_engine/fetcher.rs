@@ -21,11 +21,7 @@ pub enum FetchResult {
 }
 
 /// Fetch a feed URL with conditional request headers (ETag / If-Modified-Since).
-pub async fn fetch_feed(
-    url: &str,
-    etag: Option<&str>,
-    last_modified: Option<&str>,
-) -> FetchResult {
+pub async fn fetch_feed(url: &str, etag: Option<&str>, last_modified: Option<&str>) -> FetchResult {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -52,7 +48,11 @@ pub async fn fetch_feed(
 
     let response = match req.send().await {
         Ok(r) => r,
-        Err(e) => return FetchResult::Error { message: format!("HTTP request failed: {}", e) },
+        Err(e) => {
+            return FetchResult::Error {
+                message: format!("HTTP request failed: {}", e),
+            }
+        }
     };
 
     // 304 Not Modified
@@ -84,7 +84,10 @@ pub async fn fetch_feed(
     if let Some(len) = response.content_length() {
         if len as usize > MAX_RESPONSE_SIZE {
             return FetchResult::Error {
-                message: format!("Response too large: {} bytes (max {})", len, MAX_RESPONSE_SIZE),
+                message: format!(
+                    "Response too large: {} bytes (max {})",
+                    len, MAX_RESPONSE_SIZE
+                ),
             };
         }
     }

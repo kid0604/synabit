@@ -1,8 +1,8 @@
-use rusqlite::params;
-use std::collections::HashMap;
+use super::DbBridge;
 use crate::error::{AppError, AppResult};
 use crate::models::whiteboard::WhiteboardMetadata;
-use super::DbBridge;
+use rusqlite::params;
+use std::collections::HashMap;
 
 impl DbBridge {
     pub fn upsert_whiteboard(&self, wb: &WhiteboardMetadata) -> AppResult<()> {

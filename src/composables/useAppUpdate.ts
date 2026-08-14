@@ -2,6 +2,7 @@ import { ref, onUnmounted } from 'vue'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { load, type Store } from '@tauri-apps/plugin-store'
+import { type } from '@tauri-apps/plugin-os'
 
 /**
  * Composable for managing app auto-updates via Tauri updater plugin.
@@ -90,6 +91,9 @@ export function useAppUpdate() {
    * @param ignoreSkipped - If true, show update even if user previously skipped this version
    */
   async function checkForUpdates(silent = true, ignoreSkipped = false): Promise<boolean> {
+    const osType = type()
+    if (osType === 'android' || osType === 'ios') return false
+
     if (isChecking.value) return false
 
     isChecking.value = true
