@@ -1,3 +1,4 @@
+pub mod asset;
 pub mod apply;
 pub mod change;
 pub mod crdt;

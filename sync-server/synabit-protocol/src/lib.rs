@@ -86,16 +86,28 @@ impl std::str::FromStr for SyncEntryKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssetChunkRef {
+    /// Where the server stores this chunk. A hash of the plaintext keyed with a
+    /// vault secret, so identical content deduplicates within a vault while the
+    /// server cannot test whether a vault holds a file it already knows.
     pub chunk_id: [u8; 32],
+    /// Hash of the encrypted bytes, checked on arrival before decrypting.
     pub chunk_hash: [u8; 32],
+    /// Length of the encrypted chunk.
     pub compressed_len: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssetRef {
     pub asset_id: [u8; 32],
+    /// Where the file belongs in the vault. Without this a receiver can fetch
+    /// the bytes and have nowhere to put them: the entry's `doc_hash` is a hash
+    /// of the path and cannot be inverted.
+    pub rel_path: String,
+    /// Identity of the document, mirroring `DeletePayload`.
+    pub node_id: String,
     pub mime_type: String,
     pub total_bytes: u64,
+    /// Hash of the whole file before encryption, checked once reassembled.
     pub plaintext_hash: [u8; 32],
     pub chunks: Vec<AssetChunkRef>,
 }

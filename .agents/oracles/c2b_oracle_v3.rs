@@ -514,6 +514,8 @@ fn frc2b_r1_02_matching_asset_delete_and_upsert_have_distinct_results() {
     let key = [9; 32];
     let asset = AssetRef {
         asset_id: [1; 32],
+        rel_path: "assets/x.bin".to_string(),
+        node_id: "assets/x.bin".to_string(),
         mime_type: "application/octet-stream".to_string(),
         total_bytes: 0,
         plaintext_hash: [2; 32],
@@ -1076,6 +1078,8 @@ fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
     let key = [19; 32];
     let asset = AssetRef {
         asset_id: [72; 32],
+        rel_path: "assets/x.bin".to_string(),
+        node_id: "assets/x.bin".to_string(),
         mime_type: "application/pdf".to_string(),
         total_bytes: 123,
         plaintext_hash: [73; 32],
