@@ -11,15 +11,6 @@ services:
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.sync.address=:4433/udp"
-      # Must stay well above iroh's QUIC keep-alive, which is 5s
-      # (HEARTBEAT_INTERVAL in iroh 1.0). Traefik's default UDP session timeout
-      # is 3s, so the client's address mapping expired between every heartbeat.
-      # Client-initiated traffic still got through, because sending re-creates
-      # the mapping, but the server's "new data available" push had nowhere to
-      # go for most of each cycle. That failure is near-invisible: the app's
-      # periodic sync still runs, so syncing works and merely stops being live.
-      - "--entrypoints.sync.udp.timeout=300s"
       # Cấu hình tự động lấy chứng chỉ SSL Let's Encrypt
       - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
       - "--certificatesresolvers.myresolver.acme.email=admin@synabit.net"
@@ -27,7 +18,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "4433:4433/udp"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "traefik-certs:/letsencrypt"
@@ -85,6 +75,13 @@ services:
       context: ../sync-server
       dockerfile: Dockerfile
     container_name: synabit-sync-server
+    # Published directly rather than routed through Traefik. Traefik cannot do
+    # anything useful for this port — UDP carries no hostname to route on, and
+    # QUIC brings its own TLS — while its UDP session tracking, which expires
+    # after 3s by default, is shorter than iroh's 5s keep-alive and so kept
+    # dropping the return path the server needs for push notifications.
+    ports:
+      - "4433:4433/udp"
     volumes:
       - sync-data:/app/data
     environment:
@@ -95,11 +92,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-    labels:
-      - "traefik.enable=true"
-      - "traefik.udp.routers.sync.entrypoints=sync"
-      # Forward port 4433 UDP into the container
-      - "traefik.udp.services.sync.loadbalancer.server.port=4433"
     networks:
       - synabit-network
     restart: unless-stopped
