@@ -26,6 +26,25 @@ fn rebuilt_v7_connection() -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_inbox (
+             vault_id TEXT NOT NULL,
+             provider_id TEXT NOT NULL,
+             page_cursor TEXT NOT NULL DEFAULT '',
+             remote_position TEXT NOT NULL,
+             remote_seq INTEGER,
+             operation_id BLOB NOT NULL,
+             doc_hash BLOB NOT NULL,
+             entry_kind TEXT NOT NULL,
+             encrypted_payload BLOB,
+             payload_hash BLOB,
+             source_device TEXT,
+             state TEXT NOT NULL DEFAULT 'pending',
+             last_error TEXT,
+             received_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             applied_at INTEGER,
+             PRIMARY KEY (vault_id, provider_id, operation_id)
+         );
          CREATE TABLE sync_schema_meta (
              singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
              version INTEGER NOT NULL,

@@ -223,7 +223,6 @@ async fn rename_arrives_as_a_rename_not_a_deletion() {
 }
 
 #[tokio::test]
-#[ignore = "S2-01: one unreadable entry blocks every later entry in the page"]
 async fn a_corrupt_entry_does_not_block_healthy_ones() {
     let (mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);

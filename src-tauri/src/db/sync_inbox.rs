@@ -1071,19 +1071,14 @@ impl DbBridge {
                         "Cannot mark page safe: member is applying".into(),
                     ))
                 }
-                InboxState::PendingAsset => {
-                    return Err(AppError::General(
-                        "Cannot mark page safe: member is pending_asset".into(),
-                    ))
-                }
+                // Terminal, even though nothing was written. Holding the page
+                // open for an entry we have decided not to apply is what stalled
+                // a vault forever behind a single bad payload; the entry stays on
+                // record and is reported, but it no longer gates the cursor.
+                InboxState::PendingAsset | InboxState::Quarantined => {}
                 InboxState::Failed => {
                     return Err(AppError::General(
                         "Cannot mark page safe: member is failed".into(),
-                    ))
-                }
-                InboxState::Quarantined => {
-                    return Err(AppError::General(
-                        "Cannot mark page safe: member is quarantined".into(),
                     ))
                 }
             }
@@ -1277,6 +1272,53 @@ impl DbBridge {
         }
 
         Ok(records)
+    }
+
+    /// Record one more failed apply attempt and return the new total.
+    ///
+    /// Kept separate from `transition_inbox_state` so the counter survives the
+    /// Failed → Applying → Failed cycle that a retry goes through.
+    pub fn increment_inbox_retry(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+        operation_id: &[u8; 16],
+        now: i64,
+    ) -> AppResult<u32> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::General(format!("DB tx error: {}", e)))?;
+
+        let rows = tx
+            .execute(
+                "UPDATE sync_inbox SET retry_count = retry_count + 1, updated_at = ?4
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3",
+                params![vault_id, provider_id, operation_id.as_slice(), now],
+            )
+            .map_err(|e| AppError::General(format!("DB Error bumping inbox retry: {}", e)))?;
+
+        if rows != 1 {
+            tx.rollback().ok();
+            return Err(AppError::General(format!(
+                "inbox entry {} not found while recording a retry",
+                hex::encode(operation_id)
+            )));
+        }
+
+        let count: i64 = tx
+            .query_row(
+                "SELECT retry_count FROM sync_inbox
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3",
+                params![vault_id, provider_id, operation_id.as_slice()],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::General(format!("DB Error reading inbox retry: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::General(format!("DB commit error: {}", e)))?;
+
+        Ok(count.max(0) as u32)
     }
 
     pub fn transition_inbox_state(
@@ -3329,14 +3371,33 @@ pub(crate) mod tests {
             assert_eq!(after, before);
         };
 
+        // Only states with work still outstanding may hold the page open.
         for blocking_state in [
             InboxState::Pending,
             InboxState::Applying,
-            InboxState::PendingAsset,
             InboxState::Failed,
-            InboxState::Quarantined,
         ] {
             assert_state_blocker(blocking_state);
+        }
+
+        // PendingAsset and Quarantined are terminal decisions, not unfinished
+        // work: the page must be able to commit past them, or one unusable
+        // entry stalls the vault forever.
+        for terminal_state in [InboxState::PendingAsset, InboxState::Quarantined] {
+            let db = setup_test_db();
+            let entry = sample_entry(1, 10);
+            db.stage_inbox_page("v1", "gdrive", "c1", "c2", true, &[entry], 1000)
+                .unwrap();
+            db.conn
+                .execute(
+                    "UPDATE sync_inbox SET state = ?1 WHERE vault_id = 'v1' AND provider_id = 'gdrive'",
+                    [terminal_state.as_str()],
+                )
+                .unwrap();
+            db.mark_inbox_page_applied_if_safe("v1", "gdrive", "c1", 1100)
+                .unwrap_or_else(|e| {
+                    panic!("page must commit past a {} member: {e}", terminal_state.as_str())
+                });
         }
 
         let missing_page_db = setup_test_db();

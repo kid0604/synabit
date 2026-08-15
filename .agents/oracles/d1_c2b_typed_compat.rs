@@ -845,7 +845,11 @@ fn c2b_v3_pull_crash_left_applying_reapplies_once_to_terminal_state() {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_corrupt_middle_blocks_later_member_cursor_and_ack() {
+async fn c2b_v3_pull_corrupt_middle_is_quarantined_and_later_members_still_apply() {
+    // This previously asserted that a corrupt entry must stop everything behind
+    // it and hold the cursor. That is what wedged a vault permanently: the bad
+    // entry was re-encountered on every sync and nothing after it ever ran. A
+    // corrupt payload is now quarantined and the page continues.
     let db_state = seeded_db();
     let key = [14; 32];
     let first = remote_upsert([64; 16], "p64", 64, vec![4], &key);
@@ -886,8 +890,12 @@ async fn c2b_v3_pull_corrupt_middle_blocks_later_member_cursor_and_ack() {
         &mut result,
     )
     .await;
-    assert!(result.is_err());
-    assert_eq!(applier.snapshots.lock().unwrap().as_slice(), &[vec![4]]);
+    assert!(result.is_ok(), "a corrupt entry must not fail the whole pull");
+    assert_eq!(
+        applier.snapshots.lock().unwrap().as_slice(),
+        &[vec![4], vec![6]],
+        "the entry after the corrupt one must still be applied"
+    );
     let db = db_state.lock().unwrap();
     assert_eq!(
         db.get_inbox_by_id(VAULT, PROVIDER, &[64; 16])
@@ -908,16 +916,17 @@ async fn c2b_v3_pull_corrupt_middle_blocks_later_member_cursor_and_ack() {
             .unwrap()
             .unwrap()
             .state,
-        InboxState::Pending
+        InboxState::Applied
     );
     assert_eq!(
         db.get_sync_provider_state(VAULT, PROVIDER)
             .unwrap()
             .unwrap()
             .cursor,
-        ""
+        "cursor-corrupt",
+        "the cursor must advance past a quarantined entry"
     );
-    assert_eq!(adapter.ack_calls.load(Ordering::SeqCst), 0);
+    assert!(adapter.ack_calls.load(Ordering::SeqCst) > 0);
 }
 
 #[tokio::test]
@@ -1083,7 +1092,7 @@ fn c2b_v3_pull_own_operation_evidence_is_scoped_and_unverified_source_applies() 
 }
 
 #[test]
-fn c2b_v3_pull_asset_blocks_while_delete_applies() {
+fn c2b_v3_pull_asset_is_set_aside_while_delete_applies() {
     // Originally this asserted that a *valid* delete also had to end in
     // Failed/retryable. That froze a defect as a requirement: the coordinator
     // simply had no apply arm for SyncPayload::Delete. Deletes now apply, so
@@ -1108,7 +1117,7 @@ fn c2b_v3_pull_asset_blocks_while_delete_applies() {
             ),
             InboxState::PendingAsset,
             None,
-            true,
+            false,
         ),
         (
             remote_typed(

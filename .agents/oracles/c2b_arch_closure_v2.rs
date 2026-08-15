@@ -7,6 +7,25 @@ fn historical_v6_connection() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_inbox (
+             vault_id TEXT NOT NULL,
+             provider_id TEXT NOT NULL,
+             page_cursor TEXT NOT NULL DEFAULT '',
+             remote_position TEXT NOT NULL,
+             remote_seq INTEGER,
+             operation_id BLOB NOT NULL,
+             doc_hash BLOB NOT NULL,
+             entry_kind TEXT NOT NULL,
+             encrypted_payload BLOB,
+             payload_hash BLOB,
+             source_device TEXT,
+             state TEXT NOT NULL DEFAULT 'pending',
+             last_error TEXT,
+             received_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             applied_at INTEGER,
+             PRIMARY KEY (vault_id, provider_id, operation_id)
+         );
          CREATE TABLE sync_schema_meta (
              singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
              version INTEGER NOT NULL,
@@ -200,7 +219,7 @@ fn c2b_arch_v5_real_v6_text_rebuild_normalizes_and_preserves_foreign_keys() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
     assert_eq!(pragma_foreign_keys(&conn), 1);
 
     let foreign_key_errors: i64 = conn
@@ -293,6 +312,25 @@ fn c2b_arch_v5_missing_identity_column_fails_before_mutation() {
     let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_inbox (
+             vault_id TEXT NOT NULL,
+             provider_id TEXT NOT NULL,
+             page_cursor TEXT NOT NULL DEFAULT '',
+             remote_position TEXT NOT NULL,
+             remote_seq INTEGER,
+             operation_id BLOB NOT NULL,
+             doc_hash BLOB NOT NULL,
+             entry_kind TEXT NOT NULL,
+             encrypted_payload BLOB,
+             payload_hash BLOB,
+             source_device TEXT,
+             state TEXT NOT NULL DEFAULT 'pending',
+             last_error TEXT,
+             received_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             applied_at INTEGER,
+             PRIMARY KEY (vault_id, provider_id, operation_id)
+         );
          CREATE TABLE sync_schema_meta (
              singleton_id INTEGER PRIMARY KEY,
              version INTEGER NOT NULL,

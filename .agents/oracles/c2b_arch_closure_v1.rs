@@ -124,7 +124,7 @@ fn c2b_arch_schema_upgrade_normalizes_legacy_text_remote_identity() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
 
     let declared_type: String = db
         .conn()

@@ -254,6 +254,79 @@ pub fn validate_and_parse_remote_entry(
     }
 }
 
+/// How many times an entry may fail to apply before it is set aside.
+///
+/// Transient problems — a locked file, a full disk, a directory that is not
+/// there yet — clear within a sync or two. Anything that survives this many
+/// attempts will not be fixed by retrying it forever at the cost of every
+/// entry queued behind it.
+pub const MAX_INBOX_APPLY_ATTEMPTS: u32 = 3;
+
+/// Record a failed apply and decide the entry's fate.
+///
+/// Returns `true` when the caller should stop processing this page so the next
+/// sync can retry, and `false` when the entry has exhausted its budget, was
+/// quarantined, and the loop should move on.
+fn record_apply_failure(
+    db_state: &DbState,
+    vault_id: &str,
+    provider_id: &str,
+    operation_id: &[u8; 16],
+    reason: &str,
+    result: &mut SyncResult,
+) -> AppResult<bool> {
+    use crate::db::sync_inbox::InboxState;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let attempts = {
+        let db = match db_state.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        db.increment_inbox_retry(vault_id, provider_id, operation_id, now)?
+    };
+
+    let exhausted = attempts >= MAX_INBOX_APPLY_ATTEMPTS;
+    let (target, label) = if exhausted {
+        (InboxState::Quarantined, InboxApplyFailureKind::Corrupt)
+    } else {
+        (InboxState::Failed, InboxApplyFailureKind::Retryable)
+    };
+
+    {
+        let db = match db_state.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        db.transition_inbox_state(
+            vault_id,
+            provider_id,
+            operation_id,
+            InboxState::Applying,
+            target,
+            Some(label.as_str()),
+            now,
+        )?;
+    }
+
+    if exhausted {
+        result.errors.push(format!(
+            "quarantined {} after {} attempts: {}",
+            hex::encode(operation_id),
+            attempts,
+            reason
+        ));
+        log::warn!(
+            "inbox entry {} quarantined after {} attempts: {}",
+            hex::encode(operation_id),
+            attempts,
+            reason
+        );
+    }
+
+    Ok(!exhausted)
+}
+
 pub fn process_staged_inbox_page<R: tauri::Runtime>(
     db_state: &DbState,
     vault_id: &str,
@@ -280,11 +353,23 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
     for (_page_entry, mut inbox_record) in entries {
         match inbox_record.state {
             InboxState::Applied | InboxState::IgnoredOwnOperation => continue,
+            // Set aside, not blocking. An entry we cannot use must never stop
+            // the entries behind it: one bad payload used to wedge a vault's
+            // sync permanently.
             InboxState::PendingAsset => {
-                return Err(AppError::General("Blocked by PendingAsset entry".into()));
+                result.errors.push(format!(
+                    "skipped {}: waiting on an asset that is not available",
+                    hex::encode(inbox_record.operation_id)
+                ));
+                continue;
             }
             InboxState::Quarantined => {
-                return Err(AppError::General("Blocked by Quarantined entry".into()));
+                result.errors.push(format!(
+                    "skipped {}: quarantined ({})",
+                    hex::encode(inbox_record.operation_id),
+                    inbox_record.last_error.as_deref().unwrap_or("unusable")
+                ));
+                continue;
             }
             InboxState::Failed => {
                 let db = match db_state.lock() {
@@ -364,7 +449,10 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     Some(InboxApplyFailureKind::Corrupt.as_str()),
                     chrono::Utc::now().timestamp_millis(),
                 )?;
-                return Err(AppError::General("Missing encrypted_payload".into()));
+                result
+                    .errors
+                    .push(format!("quarantined {}: Missing encrypted_payload", hex::encode(inbox_record.operation_id)));
+                continue;
             }
         };
 
@@ -384,7 +472,10 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     Some(InboxApplyFailureKind::Corrupt.as_str()),
                     chrono::Utc::now().timestamp_millis(),
                 )?;
-                return Err(AppError::General("Missing payload_hash".into()));
+                result
+                    .errors
+                    .push(format!("quarantined {}: Missing payload_hash", hex::encode(inbox_record.operation_id)));
+                continue;
             }
         };
 
@@ -396,32 +487,57 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
         ) {
             Ok(p) => p,
             Err(failure_kind) => {
-                let (target_state, err_param) = match failure_kind {
-                    InboxApplyFailureKind::Corrupt => {
-                        (InboxState::Quarantined, Some(failure_kind.as_str()))
+                match failure_kind {
+                    // Neither of these gets better by being retried, and neither
+                    // may hold up the entries behind it.
+                    InboxApplyFailureKind::Corrupt | InboxApplyFailureKind::PendingAsset => {
+                        let target = if failure_kind == InboxApplyFailureKind::Corrupt {
+                            InboxState::Quarantined
+                        } else {
+                            InboxState::PendingAsset
+                        };
+                        let err_param = if failure_kind == InboxApplyFailureKind::Corrupt {
+                            Some(failure_kind.as_str())
+                        } else {
+                            None
+                        };
+                        let db = match db_state.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        db.transition_inbox_state(
+                            vault_id,
+                            provider_id,
+                            &inbox_record.operation_id,
+                            InboxState::Applying,
+                            target,
+                            err_param,
+                            chrono::Utc::now().timestamp_millis(),
+                        )?;
+                        result.errors.push(format!(
+                            "skipped {}: {}",
+                            hex::encode(inbox_record.operation_id),
+                            failure_kind.as_str()
+                        ));
+                        continue;
                     }
-                    InboxApplyFailureKind::PendingAsset => (InboxState::PendingAsset, None),
                     InboxApplyFailureKind::UnsupportedDelete | InboxApplyFailureKind::Retryable => {
-                        (InboxState::Failed, Some(failure_kind.as_str()))
+                        if record_apply_failure(
+                            db_state,
+                            vault_id,
+                            provider_id,
+                            &inbox_record.operation_id,
+                            failure_kind.as_str(),
+                            result,
+                        )? {
+                            return Err(AppError::General(format!(
+                                "Inbox apply failed: {}",
+                                failure_kind.as_str()
+                            )));
+                        }
+                        continue;
                     }
-                };
-                let db = match db_state.lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                db.transition_inbox_state(
-                    vault_id,
-                    provider_id,
-                    &inbox_record.operation_id,
-                    InboxState::Applying,
-                    target_state,
-                    err_param,
-                    chrono::Utc::now().timestamp_millis(),
-                )?;
-                return Err(AppError::General(format!(
-                    "Inbox apply failed: {}",
-                    failure_kind.as_str()
-                )));
+                }
             }
         };
 
@@ -443,7 +559,11 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                             Some(InboxApplyFailureKind::Corrupt.as_str()),
                             chrono::Utc::now().timestamp_millis(),
                         )?;
-                        return Err(AppError::General("Corrupt doc payload".into()));
+                        result.errors.push(format!(
+                            "quarantined {}: unreadable document payload",
+                            hex::encode(inbox_record.operation_id)
+                        ));
+                        continue;
                     }
                 };
                 if let Err(_e) = applier.apply(
@@ -455,20 +575,17 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     vault_id,
                     provider_id,
                 ) {
-                    let db = match db_state.lock() {
-                        Ok(g) => g,
-                        Err(p) => p.into_inner(),
-                    };
-                    db.transition_inbox_state(
+                    if record_apply_failure(
+                        db_state,
                         vault_id,
                         provider_id,
                         &inbox_record.operation_id,
-                        InboxState::Applying,
-                        InboxState::Failed,
-                        Some(InboxApplyFailureKind::Retryable.as_str()),
-                        chrono::Utc::now().timestamp_millis(),
-                    )?;
-                    return Err(AppError::General("Apply doc payload failed".into()));
+                        "writing the document failed",
+                        result,
+                    )? {
+                        return Err(AppError::General("Apply doc payload failed".into()));
+                    }
+                    continue;
                 }
                 let db = match db_state.lock() {
                     Ok(g) => g,
@@ -493,20 +610,17 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     vault_id,
                     provider_id,
                 ) {
-                    let db = match db_state.lock() {
-                        Ok(g) => g,
-                        Err(p) => p.into_inner(),
-                    };
-                    db.transition_inbox_state(
+                    if record_apply_failure(
+                        db_state,
                         vault_id,
                         provider_id,
                         &inbox_record.operation_id,
-                        InboxState::Applying,
-                        InboxState::Failed,
-                        Some(InboxApplyFailureKind::Retryable.as_str()),
-                        chrono::Utc::now().timestamp_millis(),
-                    )?;
-                    return Err(AppError::General("Apply delete payload failed".into()));
+                        "removing the document failed",
+                        result,
+                    )? {
+                        return Err(AppError::General("Apply delete payload failed".into()));
+                    }
+                    continue;
                 }
                 let db = match db_state.lock() {
                     Ok(g) => g,
@@ -532,11 +646,15 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     provider_id,
                     &inbox_record.operation_id,
                     InboxState::Applying,
-                    InboxState::Failed,
-                    Some(InboxApplyFailureKind::Retryable.as_str()),
+                    InboxState::Quarantined,
+                    Some(InboxApplyFailureKind::Corrupt.as_str()),
                     chrono::Utc::now().timestamp_millis(),
                 )?;
-                return Err(AppError::General("Non-upsert payload failed".into()));
+                result.errors.push(format!(
+                    "quarantined {}: unsupported payload kind",
+                    hex::encode(inbox_record.operation_id)
+                ));
+                continue;
             }
         }
     }

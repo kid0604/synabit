@@ -420,7 +420,7 @@ impl DbBridge {
     }
 }
 
-const LATEST_SYNC_SCHEMA_VERSION: i64 = 7;
+const LATEST_SYNC_SCHEMA_VERSION: i64 = 8;
 
 pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")
@@ -474,6 +474,7 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
             5 => migrate_sync_schema_v5(conn)?,
             6 => migrate_sync_schema_v6(conn)?,
             7 => migrate_sync_schema_v7(conn)?,
+            8 => migrate_sync_schema_v8(conn)?,
             _ => {
                 return Err(AppError::General(format!(
                     "No migration defined for version {}",
@@ -1022,6 +1023,44 @@ pub(crate) fn migrate_sync_schema_v6(conn: &mut Connection) -> AppResult<()> {
     Ok(())
 }
 
+/// Give inbox entries a retry budget.
+///
+/// Without one, an entry that fails to apply can only either block the whole
+/// page forever or be dropped on its first hiccup. Counting attempts lets a
+/// transient failure be retried a few times and a permanent one be quarantined
+/// so it stops holding up every entry behind it.
+pub(crate) fn migrate_sync_schema_v8(conn: &mut Connection) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp();
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
+
+    tx.execute_batch(
+        "ALTER TABLE sync_inbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;",
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v8 migration): {}", e)))?;
+
+    tx.execute(
+        "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
+         VALUES (1, 8, ?1)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             version = excluded.version,
+             updated_at = excluded.updated_at;",
+        params![now],
+    )
+    .map_err(|e| {
+        AppError::General(format!(
+            "DB Schema Error (sync_schema_meta update v8): {}",
+            e
+        ))
+    })?;
+
+    tx.commit()
+        .map_err(|e| AppError::General(format!("Failed to commit sync schema v8: {}", e)))?;
+
+    Ok(())
+}
+
 pub(crate) fn migrate_sync_schema_v7(conn: &mut Connection) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp();
 
@@ -1244,7 +1283,7 @@ pub(crate) mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
 
         let tables = vec![
             "sync_crdt_documents",
@@ -1317,7 +1356,7 @@ pub(crate) mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
 
         let table_count: i64 = conn
             .query_row(
@@ -1379,7 +1418,7 @@ pub(crate) mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
     }
 
     #[test]
@@ -1601,7 +1640,7 @@ pub(crate) mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
 
         let outbox_exists: i64 = conn
             .query_row(
@@ -1720,7 +1759,7 @@ pub(crate) mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
 
         let cursor: String = conn
             .query_row(
