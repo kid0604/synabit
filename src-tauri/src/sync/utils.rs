@@ -39,6 +39,31 @@ pub fn file_sha256(path: &Path) -> String {
     }
 }
 
+/// Can this document be published by the current sync engine?
+///
+/// The engine carries documents as CRDT text, so it handles exactly the three
+/// text formats the vault uses. Everything else — images, PDFs, video, audio —
+/// needs the asset pipeline, which does not exist yet.
+///
+/// Attachments were previously walked like any other file, read as UTF-8, and
+/// rejected once per file per sync. Since a file that fails to publish never
+/// records a baseline, every one of them was re-read and re-reported on every
+/// single run: a vault with a hundred images reported a hundred errors forever
+/// and re-hashed every byte of them each time.
+///
+/// Excluding them here is not the same as syncing them. They stay local until
+/// the asset pipeline exists.
+pub fn is_syncable_document(rel_path: &str) -> bool {
+    matches!(
+        std::path::Path::new(rel_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("md") | Some("json") | Some("canvas")
+    )
+}
+
 /// Walk the vault directory and collect relative file paths.
 ///
 /// Skips:
@@ -118,5 +143,33 @@ mod tests {
         let files = collect_local_files(dir.to_str().unwrap());
         assert_eq!(files, vec!["visible.md"]);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod syncable_document_tests {
+    use super::is_syncable_document;
+
+    #[test]
+    fn text_documents_are_publishable() {
+        for p in ["Notes/a.md", "Boards/b.canvas", "Messages/day.json", "A.MD"] {
+            assert!(is_syncable_document(p), "{p} should be syncable");
+        }
+    }
+
+    #[test]
+    fn attachments_are_left_local_until_the_asset_pipeline_exists() {
+        // These used to be read as UTF-8 and rejected once per file per sync,
+        // forever, because a file that never publishes never records a baseline.
+        for p in [
+            "assets/photo.jpg",
+            "assets/scan.PDF",
+            "assets/clip.mp4",
+            "assets/voice.m4a",
+            "assets/image.png",
+            "assets/no-extension",
+        ] {
+            assert!(!is_syncable_document(p), "{p} should be left local");
+        }
     }
 }

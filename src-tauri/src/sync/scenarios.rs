@@ -285,6 +285,37 @@ async fn copied_files_that_share_an_identity_each_get_their_own() {
     assert!(b.exists("Boards/two.json"), "two.json never arrived");
 }
 
+#[tokio::test]
+async fn attachments_are_left_alone_and_do_not_pollute_every_sync() {
+    // Binary files cannot be carried as CRDT text, and one that fails to publish
+    // never records a baseline — so it used to be re-read, re-rejected and
+    // re-reported on every single sync, forever.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/note.md", "# Note\n\nText travels.\n");
+    std::fs::write(a.vault_path().join("photo.jpg"), [0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
+
+    let first = a.sync_ok().await;
+    assert!(
+        first.errors.is_empty(),
+        "an attachment is not an error: {:?}",
+        first.errors
+    );
+
+    // And the vault settles: nothing is re-detected on the next pass.
+    let second = a.sync_ok().await;
+    assert_eq!(second.pushed, 0, "sync did not settle");
+    assert!(second.errors.is_empty());
+
+    b.sync_ok().await;
+    assert!(b.exists("Notes/note.md"));
+    assert!(
+        !b.exists("photo.jpg"),
+        "attachments are not synced yet, and must not appear to be"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------

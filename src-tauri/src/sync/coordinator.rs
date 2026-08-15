@@ -1267,7 +1267,19 @@ impl SyncCoordinator {
         // Walk the vault once and share the listing: both detectors need it, and
         // the deletion guard needs to distinguish "file removed" from "vault not
         // present at all".
-        let local_files = crate::sync::utils::collect_local_files(vault_path);
+        let all_files = crate::sync::utils::collect_local_files(vault_path);
+        let local_files: Vec<String> = all_files
+            .iter()
+            .filter(|p| crate::sync::utils::is_syncable_document(p))
+            .cloned()
+            .collect();
+        let unsupported = all_files.len() - local_files.len();
+        if unsupported > 0 {
+            log::info!(
+                "{} attachment(s) left local: the asset pipeline is not implemented",
+                unsupported
+            );
+        }
 
         // Upserts are prepared before deletions are even looked for, and the
         // order matters. Preparing an upsert is what resolves a file's node_id
@@ -1291,11 +1303,13 @@ impl SyncCoordinator {
             &provider_id,
         )?;
 
+        // The presence check asks "is the vault there at all", so it looks at
+        // everything on disk, not just the documents this engine can publish.
         let deletions: Vec<LocalChange> = detect_deletions(
             app_handle,
             vault_path_obj,
             &vault_id,
-            &local_files,
+            &all_files,
         )?;
         log::info!(
             "Detected {} local change(s) and {} deletion(s)",
