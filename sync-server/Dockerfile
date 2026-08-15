@@ -12,6 +12,10 @@ WORKDIR /build
 
 # Cache dependency downloads by copying manifests first.
 COPY Cargo.toml Cargo.lock* ./
+# The workspace declares `synabit-protocol` as a member and depends on it by
+# path, so cargo cannot even read the manifest without it. It is small and
+# changes rarely, so copying it here keeps the dependency cache useful.
+COPY synabit-protocol/ synabit-protocol/
 RUN mkdir src && echo 'fn main() {}' > src/main.rs
 RUN cargo build --release 2>/dev/null || true
 
