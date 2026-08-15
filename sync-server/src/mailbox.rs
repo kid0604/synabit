@@ -552,38 +552,26 @@ impl MailboxHandler {
     // Individual request handlers
     // -----------------------------------------------------------------------
 
-    fn handle_get_sync_plan(
-        &self,
-        vault_hash: &str,
-        compacted_through_seq: u64,
-    ) -> Result<MailboxResponse> {
-        let (max_seq, server_inc_id, bootstrap_state) = self.db.get_sync_plan_info(vault_hash)?;
-
-        let cursor = compacted_through_seq;
-
-        if bootstrap_state == "not_ready" {
-            return Ok(MailboxResponse::SyncPlan(synabit_protocol::SyncPlan {
-                mode: synabit_protocol::SyncMode::Delta { until_seq: max_seq },
-                incarnation_id: server_inc_id.unwrap_or([0; 16]),
-                head_seq: max_seq,
-                compacted_through_seq,
-            }));
-        }
-
-        if cursor > 0 && cursor < compacted_through_seq {
-            return Ok(MailboxResponse::SyncPlan(synabit_protocol::SyncPlan {
-                mode: synabit_protocol::SyncMode::BootstrapRequired,
-                incarnation_id: server_inc_id.unwrap_or([0; 16]),
-                head_seq: max_seq,
-                compacted_through_seq,
-            }));
-        }
+    /// Tell a client how to catch up.
+    ///
+    /// The answer is always a delta replay, and deliberately so. Collection
+    /// keeps the head entry of every document (see `gc_acked_entries`), so
+    /// replaying from any cursor — including zero, for a device that has never
+    /// connected — always reconstructs the whole vault. There is nothing a
+    /// separate bootstrap exchange would recover that a replay does not.
+    ///
+    /// This previously had a `BootstrapRequired` branch guarded by
+    /// `cursor < compacted_through_seq`, where both sides were the same
+    /// variable, so it could never be taken. The branch is gone rather than
+    /// repaired: with heads preserved there is no case that needs it.
+    fn handle_get_sync_plan(&self, vault_hash: &str, client_cursor: u64) -> Result<MailboxResponse> {
+        let (max_seq, server_inc_id, _bootstrap_state) = self.db.get_sync_plan_info(vault_hash)?;
 
         Ok(MailboxResponse::SyncPlan(synabit_protocol::SyncPlan {
             mode: synabit_protocol::SyncMode::Delta { until_seq: max_seq },
             incarnation_id: server_inc_id.unwrap_or([0; 16]),
             head_seq: max_seq,
-            compacted_through_seq,
+            compacted_through_seq: client_cursor.min(max_seq),
         }))
     }
 
@@ -1752,5 +1740,118 @@ mod tests {
             matches!(result, AuthResult::Rejected(_)),
             "a pre-emptively revoked device was let in"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Garbage collection
+    // -----------------------------------------------------------------------
+
+    async fn push_doc(
+        server: &MailboxHandler,
+        vault_hash: &str,
+        device: &str,
+        op: u8,
+        doc: u8,
+        body: &[u8],
+    ) {
+        let item = synabit_protocol::PushBatchItem {
+            operation_id: [op; 16],
+            doc_hash: [doc; 32],
+            entry_kind: synabit_protocol::SyncEntryKind::Upsert,
+            encrypted_payload: body.to_vec(),
+            payload_hash: *blake3::hash(body).as_bytes(),
+        };
+        server
+            .handle_request(vault_hash, device, MailboxRequest::PushBatch { items: vec![item] })
+            .await
+            .expect("push");
+    }
+
+    fn seqs_in_mailbox(server: &MailboxHandler, vault_hash: &str) -> Vec<(u64, String)> {
+        let entries = server.db.pull_entries(vault_hash, 0).expect("pull");
+        entries
+            .into_iter()
+            .map(|e| (e.seq, hex::encode(e.doc_hash)))
+            .collect()
+    }
+
+    /// Collecting acknowledged history must never remove the last remaining
+    /// record of a document, or a device that joins later replays from the
+    /// beginning and silently ends up with an incomplete vault.
+    #[tokio::test]
+    async fn gc_keeps_the_head_of_every_document() {
+        let (server, _dir, vault_hash) = setup_test_mailbox().await;
+
+        push_doc(&server, &vault_hash, "dev1", 1, 0xAA, b"A first").await;
+        push_doc(&server, &vault_hash, "dev1", 2, 0xBB, b"B only").await;
+        push_doc(&server, &vault_hash, "dev1", 3, 0xAA, b"A second").await;
+
+        let before = seqs_in_mailbox(&server, &vault_hash);
+        assert_eq!(before.len(), 3, "precondition: three entries stored");
+
+        // Everything has been acknowledged by every device.
+        server
+            .db
+            .update_cursor(&vault_hash, "dev1", 3)
+            .expect("ack");
+        let min_seq = server.db.min_cursor(&vault_hash).expect("min cursor");
+        assert_eq!(min_seq, 3);
+        server
+            .db
+            .gc_acked_entries(&vault_hash, min_seq)
+            .expect("gc");
+
+        let after = seqs_in_mailbox(&server, &vault_hash);
+        let docs: Vec<String> = after.iter().map(|(_, d)| d.clone()).collect();
+
+        assert_eq!(
+            after.len(),
+            2,
+            "only the superseded entry should be collected, got {after:?}"
+        );
+        assert!(
+            docs.contains(&hex::encode([0xAAu8; 32])),
+            "document A lost its head"
+        );
+        assert!(
+            docs.contains(&hex::encode([0xBBu8; 32])),
+            "document B lost its only entry"
+        );
+        assert_eq!(after[0].0, 2, "B's entry kept at its original sequence");
+        assert_eq!(after[1].0, 3, "A's head kept, its earlier revision dropped");
+    }
+
+    /// The point of keeping heads: a device starting from nothing still sees
+    /// every document after aggressive collection.
+    #[tokio::test]
+    async fn a_new_device_replays_the_whole_vault_after_gc() {
+        let (server, _dir, vault_hash) = setup_test_mailbox().await;
+
+        for (op, doc) in [(1u8, 0xA1u8), (2, 0xA2), (3, 0xA3)] {
+            push_doc(&server, &vault_hash, "old-device", op, doc, b"content").await;
+        }
+        // The old device edits one of them again, then acknowledges everything.
+        push_doc(&server, &vault_hash, "old-device", 4, 0xA2, b"edited").await;
+        server
+            .db
+            .update_cursor(&vault_hash, "old-device", 4)
+            .expect("ack");
+        let min_seq = server.db.min_cursor(&vault_hash).expect("min cursor");
+        server
+            .db
+            .gc_acked_entries(&vault_hash, min_seq)
+            .expect("gc");
+
+        // A device that has never connected replays from the very beginning.
+        let replay = seqs_in_mailbox(&server, &vault_hash);
+        let docs: std::collections::HashSet<String> =
+            replay.into_iter().map(|(_, d)| d).collect();
+
+        for doc in [0xA1u8, 0xA2, 0xA3] {
+            assert!(
+                docs.contains(&hex::encode([doc; 32])),
+                "a new device would never learn about document {doc:#x}"
+            );
+        }
     }
 }

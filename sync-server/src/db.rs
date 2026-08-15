@@ -824,9 +824,26 @@ impl Database {
         let mut conn = self.pool.get().context("pool get")?;
         let tx = conn.transaction()?;
 
-        // Collect blob paths first.
-        let mut stmt =
-            tx.prepare("SELECT blob_path FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2")?;
+        // Collectable = acknowledged by every device *and* superseded by a later
+        // entry for the same document.
+        //
+        // The second half is what makes the mailbox a usable source of truth. An
+        // entry that is still the head of its document is the only remaining
+        // record of that document; dropping it because the current devices have
+        // acknowledged it leaves the vault reconstructible only by the devices
+        // that already hold a copy. A device that joins afterwards replays from
+        // the beginning and silently receives an incomplete vault — no error,
+        // just missing notes. Keeping heads means a replay from sequence zero
+        // always yields the whole vault.
+        const COLLECTABLE: &str = "vault_hash = ?1 AND seq <= ?2 AND seq < (
+                 SELECT MAX(newer.seq) FROM mailbox AS newer
+                 WHERE newer.vault_hash = mailbox.vault_hash
+                   AND newer.doc_hash = mailbox.doc_hash
+             )";
+
+        let mut stmt = tx.prepare(&format!(
+            "SELECT blob_path FROM mailbox WHERE {COLLECTABLE}"
+        ))?;
         let paths: Vec<String> = stmt
             .query_map(params![vault_hash, min_seq as i64], |row| row.get(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
@@ -834,13 +851,13 @@ impl Database {
 
         // Delete the rows and subtract storage quota.
         let freed_bytes: i64 = tx.query_row(
-            "SELECT COALESCE(SUM(blob_size), 0) FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2",
+            &format!("SELECT COALESCE(SUM(blob_size), 0) FROM mailbox WHERE {COLLECTABLE}"),
             params![vault_hash, min_seq as i64],
             |row| row.get(0),
         )?;
 
         tx.execute(
-            "DELETE FROM mailbox WHERE vault_hash = ?1 AND seq <= ?2",
+            &format!("DELETE FROM mailbox WHERE {COLLECTABLE}"),
             params![vault_hash, min_seq as i64],
         )?;
 

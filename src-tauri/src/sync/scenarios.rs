@@ -166,6 +166,46 @@ async fn emptying_a_vault_on_purpose_succeeds_on_the_second_try() {
 }
 
 // ---------------------------------------------------------------------------
+// Joining a vault that already has history
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_device_joining_after_compaction_gets_the_whole_vault() {
+    // The server collects history once every device has acknowledged it. A
+    // device that joins afterwards replays from zero, so collection must never
+    // remove the last remaining record of a document.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/one.md", "# One\n\nOriginal.\n");
+    a.write("Notes/two.md", "# Two\n\nUntouched since.\n");
+    a.write("Notes/three.md", "# Three\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // One document is revised, so its earlier entry becomes superseded.
+    a.write("Notes/one.md", &a.read("Notes/one.md").unwrap().replace("Original.", "Revised."));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let dropped = mailbox.compact_superseded();
+    assert!(dropped > 0, "nothing was compacted, so the test proves nothing");
+
+    // A device that has never connected joins now.
+    let c = HarnessDevice::new("c", &mailbox);
+    c.sync_ok().await;
+
+    for note in ["Notes/one.md", "Notes/two.md", "Notes/three.md"] {
+        assert!(c.exists(note), "the new device never received {note}");
+    }
+    assert!(
+        c.body("Notes/one.md").unwrap().contains("Revised."),
+        "the new device got a stale revision: {:?}",
+        c.body("Notes/one.md")
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Known defects — each of these should pass once the named bug is fixed
 // ---------------------------------------------------------------------------
 

@@ -93,6 +93,28 @@ impl InMemoryMailbox {
             .collect()
     }
 
+    /// Drop every entry that a later entry for the same document supersedes,
+    /// mirroring what the server's collector does once devices acknowledge.
+    ///
+    /// Heads survive on purpose: a device replaying from zero afterwards must
+    /// still see every document.
+    pub fn compact_superseded(&self) -> usize {
+        let mut inner = self.lock();
+        let before = inner.entries.len();
+        let heads: HashMap<[u8; 32], u64> =
+            inner.entries.iter().fold(HashMap::new(), |mut acc, e| {
+                let head = acc.entry(e.doc_hash).or_insert(e.seq);
+                if e.seq > *head {
+                    *head = e.seq;
+                }
+                acc
+            });
+        inner
+            .entries
+            .retain(|e| heads.get(&e.doc_hash) == Some(&e.seq));
+        before - inner.entries.len()
+    }
+
     /// Corrupt a stored entry's payload so it fails hash verification on pull.
     /// Models a bad actor, a truncated write, or a bit flip in transit.
     pub fn corrupt_entry_at(&self, seq: u64) {
