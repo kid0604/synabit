@@ -36,6 +36,7 @@ pub trait InboxEntryApplier<R: tauri::Runtime = tauri::Wry>: Send + Sync {
         app_handle: &tauri::AppHandle<R>,
         vault_path_obj: &Path,
         payload: &synabit_protocol::DeletePayload,
+        remote_seq: Option<u64>,
         result: &mut SyncResult,
         vault_id: &str,
         provider_id: &str,
@@ -73,6 +74,7 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for ProductionInboxEntryApplier<R> 
         _app_handle: &tauri::AppHandle<R>,
         vault_path_obj: &Path,
         payload: &synabit_protocol::DeletePayload,
+        remote_seq: Option<u64>,
         result: &mut SyncResult,
         vault_id: &str,
         provider_id: &str,
@@ -81,6 +83,7 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for ProductionInboxEntryApplier<R> 
             &self.app_handle,
             vault_path_obj,
             payload,
+            remote_seq,
             result,
             vault_id,
             provider_id,
@@ -606,6 +609,7 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     app_handle,
                     vault_path_obj,
                     &delete_payload,
+                    inbox_record.remote_seq,
                     result,
                     vault_id,
                     provider_id,
@@ -1116,12 +1120,12 @@ pub async fn dispatch_durable_outbox_at(
                 Err(p) => p.into_inner(),
             };
             for record in &dispatchable {
-                if push_result
+                if let Some(ack) = push_result
                     .accepted
                     .iter()
-                    .any(|ack| ack.operation_id == record.operation_id)
+                    .find(|ack| ack.operation_id == record.operation_id)
                 {
-                    db.commit_accepted_outbox_operation(record, now)?;
+                    db.commit_accepted_outbox_operation(record, ack.remote_seq, now)?;
                 } else if let Some(rej_ack) = push_result
                     .rejected
                     .iter()
@@ -1265,27 +1269,43 @@ impl SyncCoordinator {
         // present at all".
         let local_files = crate::sync::utils::collect_local_files(vault_path);
 
-        let mut changes: Vec<LocalChange> = Vec::new();
-        changes.extend(detect_local_changes(
+        // Upserts are prepared before deletions are even looked for, and the
+        // order matters. Preparing an upsert is what resolves a file's node_id
+        // and re-points that document's path mapping. A renamed file therefore
+        // updates its own mapping here, so the deletion pass below sees the
+        // document at its new path and never mistakes the rename for a delete.
+        let edits: Vec<LocalChange> = detect_local_changes(
             app_handle,
             vault_path_obj,
             &vault_id,
             &provider_id,
             &local_files,
-        )?);
-        changes.extend(detect_deletions(
+        )?;
+        let edit_count = edits.len();
+        prepare_durable_outbox_operations(
+            &db_state,
+            vault_path_obj,
+            edits,
+            e2ee_key,
+            &vault_id,
+            &provider_id,
+        )?;
+
+        let deletions: Vec<LocalChange> = detect_deletions(
             app_handle,
             vault_path_obj,
             &vault_id,
             &local_files,
-        )?);
-
-        log::info!("Detected {} local changes", changes.len());
-
-        let _ = prepare_durable_outbox_operations(
+        )?;
+        log::info!(
+            "Detected {} local change(s) and {} deletion(s)",
+            edit_count,
+            deletions.len()
+        );
+        prepare_durable_outbox_operations(
             &db_state,
             vault_path_obj,
-            changes,
+            deletions,
             e2ee_key,
             &vault_id,
             &provider_id,

@@ -605,13 +605,42 @@ impl DbBridge {
         Ok(())
     }
 
+    /// Find the highest mailbox sequence this device has successfully published
+    /// for a document.
+    ///
+    /// Used to tell whether an incoming tombstone predates work we have already
+    /// put into the shared order for the same document.
+    pub fn latest_acked_outbox_seq_for_node(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+        node_id: &str,
+    ) -> AppResult<Option<u64>> {
+        let seq: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT MAX(remote_seq) FROM sync_outbox
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND node_id = ?3
+                   AND state = 'acknowledged' AND remote_seq IS NOT NULL",
+                params![vault_id, provider_id, node_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::General(format!("DB Error reading outbox seq: {}", e)))?
+            .flatten();
+
+        Ok(seq.and_then(|s| u64::try_from(s).ok()))
+    }
+
     pub fn commit_accepted_outbox_operation(
         &mut self,
         record: &OutboxRecord,
+        remote_seq: Option<u64>,
         now: i64,
     ) -> AppResult<()> {
         record.validate_complete()?;
         let is_delete = record.entry_kind == synabit_protocol::SyncEntryKind::Delete;
+        let remote_seq_param = remote_seq.and_then(|s| i64::try_from(s).ok());
 
         let tx = self
             .conn
@@ -620,14 +649,15 @@ impl DbBridge {
 
         let rows_affected = tx
             .execute(
-                "UPDATE sync_outbox 
-                 SET state = 'acknowledged', updated_at = ?4, next_retry_at = NULL, last_error = NULL 
+                "UPDATE sync_outbox
+                 SET state = 'acknowledged', updated_at = ?4, next_retry_at = NULL, last_error = NULL, remote_seq = ?5
                  WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3 AND state = 'sent'",
                 params![
                     record.vault_id,
                     record.provider_id,
                     record.operation_id.as_slice(),
-                    now
+                    now,
+                    remote_seq_param
                 ],
             )
             .map_err(|e| AppError::General(format!("DB Tx outbox error: {}", e)))?;
@@ -1670,7 +1700,7 @@ pub mod tests {
         db.conn.execute_batch("CREATE TRIGGER fail_baseline BEFORE INSERT ON sync_document_baselines BEGIN SELECT RAISE(ABORT, 'injected DB failure'); END;").unwrap();
 
         let now = 2000i64;
-        let _ = db.commit_accepted_outbox_operation(&rec, now);
+        let _ = db.commit_accepted_outbox_operation(&rec, None, now);
 
         let after_failure =
             snapshot_outbox_baseline_and_path(&mut db, "v1", "gdrive", &rec.operation_id, "foo.md");
@@ -1679,7 +1709,7 @@ pub mod tests {
         db.conn
             .execute_batch("DROP TRIGGER fail_baseline;")
             .unwrap();
-        db.commit_accepted_outbox_operation(&rec, now).unwrap();
+        db.commit_accepted_outbox_operation(&rec, None, now).unwrap();
 
         let after_success =
             snapshot_outbox_baseline_and_path(&mut db, "v1", "gdrive", &rec.operation_id, "foo.md");
@@ -1726,7 +1756,7 @@ pub mod tests {
         db.conn.execute_batch("CREATE TRIGGER fail_delete_path BEFORE DELETE ON sync_document_paths BEGIN SELECT RAISE(ABORT, 'injected DB failure'); END;").unwrap();
 
         let now = 2000i64;
-        let _ = db.commit_accepted_outbox_operation(&rec, now);
+        let _ = db.commit_accepted_outbox_operation(&rec, None, now);
 
         let after_failure =
             snapshot_outbox_baseline_and_path(&mut db, "v1", "gdrive", &rec.operation_id, "del.md");
@@ -1736,7 +1766,7 @@ pub mod tests {
             .execute_batch("DROP TRIGGER fail_delete_path;")
             .unwrap();
 
-        db.commit_accepted_outbox_operation(&rec, now).unwrap();
+        db.commit_accepted_outbox_operation(&rec, None, now).unwrap();
 
         let after_success =
             snapshot_outbox_baseline_and_path(&mut db, "v1", "gdrive", &rec.operation_id, "del.md");

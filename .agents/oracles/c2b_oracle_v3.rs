@@ -639,6 +639,7 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for InspectingApplier {
         _app_handle: &tauri::AppHandle<R>,
         _vault_path_obj: &Path,
         payload: &synabit_protocol::DeletePayload,
+        _remote_seq: Option<u64>,
         _result: &mut SyncResult,
         _vault_id: &str,
         _provider_id: &str,

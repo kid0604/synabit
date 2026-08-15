@@ -420,7 +420,7 @@ impl DbBridge {
     }
 }
 
-const LATEST_SYNC_SCHEMA_VERSION: i64 = 8;
+const LATEST_SYNC_SCHEMA_VERSION: i64 = 9;
 
 pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")
@@ -475,6 +475,7 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
             6 => migrate_sync_schema_v6(conn)?,
             7 => migrate_sync_schema_v7(conn)?,
             8 => migrate_sync_schema_v8(conn)?,
+            9 => migrate_sync_schema_v9(conn)?,
             _ => {
                 return Err(AppError::General(format!(
                     "No migration defined for version {}",
@@ -1019,6 +1020,47 @@ pub(crate) fn migrate_sync_schema_v6(conn: &mut Connection) -> AppResult<()> {
 
     tx.commit()
         .map_err(|e| AppError::General(format!("Failed to commit sync schema v6: {}", e)))?;
+
+    Ok(())
+}
+
+/// Remember where each acknowledged operation landed in the mailbox.
+///
+/// The server's sequence is the only total order every device agrees on.
+/// Recording it lets a device tell that a tombstone arriving from a peer is
+/// older than work it has already published for the same document, and so must
+/// not be applied — without it, the device that made the newer edit is the one
+/// device that ends up deleting the file.
+pub(crate) fn migrate_sync_schema_v9(conn: &mut Connection) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp();
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
+
+    tx.execute_batch(
+        "ALTER TABLE sync_outbox ADD COLUMN remote_seq INTEGER;
+         CREATE INDEX IF NOT EXISTS idx_sync_outbox_node_seq
+             ON sync_outbox(vault_id, provider_id, node_id, remote_seq);",
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v9 migration): {}", e)))?;
+
+    tx.execute(
+        "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
+         VALUES (1, 9, ?1)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             version = excluded.version,
+             updated_at = excluded.updated_at;",
+        params![now],
+    )
+    .map_err(|e| {
+        AppError::General(format!(
+            "DB Schema Error (sync_schema_meta update v9): {}",
+            e
+        ))
+    })?;
+
+    tx.commit()
+        .map_err(|e| AppError::General(format!("Failed to commit sync schema v9: {}", e)))?;
 
     Ok(())
 }

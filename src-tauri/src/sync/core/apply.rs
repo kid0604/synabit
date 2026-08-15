@@ -223,6 +223,9 @@ pub enum DeleteOutcome {
     /// The file carried edits this device never published, so the edit wins and
     /// the file stays. The next sync republishes it as an upsert.
     KeptLocalEdit,
+    /// This device already published newer work for the document, so the
+    /// tombstone is stale and was ignored.
+    SupersededByNewerWork,
     /// Nothing to remove locally; only bookkeeping was cleaned up.
     AlreadyGone,
 }
@@ -237,6 +240,7 @@ pub fn apply_delete_payload<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     payload: &synabit_protocol::DeletePayload,
+    remote_seq: Option<u64>,
     result: &mut SyncResult,
     vault_id: &str,
     provider_id: &str,
@@ -253,6 +257,28 @@ pub fn apply_delete_payload<R: tauri::Runtime>(
     }
 
     let db_state = app_handle.state::<crate::db::DbState>();
+
+    // The mailbox sequence is the one order every device agrees on. If we have
+    // already published something for this document at a higher sequence, this
+    // tombstone was overtaken: every other device will see our upsert after the
+    // delete and keep the file, so deleting it here would leave this device as
+    // the only one without it.
+    if let Some(delete_seq) = remote_seq {
+        let ours = {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.latest_acked_outbox_seq_for_node(vault_id, provider_id, &payload.node_id)?
+        };
+        if let Some(our_seq) = ours {
+            if our_seq > delete_seq {
+                info!(
+                    "DELETE ignored for {}: our seq {} supersedes tombstone seq {}",
+                    payload.rel_path, our_seq, delete_seq
+                );
+                return Ok(DeleteOutcome::SupersededByNewerWork);
+            }
+        }
+    }
+
     let mut outcome = DeleteOutcome::AlreadyGone;
 
     if local_path.exists() {

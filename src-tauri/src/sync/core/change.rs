@@ -273,6 +273,14 @@ pub fn prepare_durable_outbox_operations(
 
         {
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            // A document that moved leaves a baseline row behind under its old
+            // path; drop it so the bookkeeping matches what is on disk.
+            if let Some(previous) = db.get_path_by_node_id(vault_id, &actual_node_id)? {
+                if previous != change.rel_path {
+                    log::info!("PUSH rename: {} -> {}", previous, change.rel_path);
+                    db.delete_document_baseline(vault_id, provider_id, &previous)?;
+                }
+            }
             db.upsert_document_path(vault_id, &actual_node_id, &change.rel_path)?;
         }
 
@@ -388,7 +396,7 @@ mod tests {
         db_state
             .lock()
             .unwrap()
-            .commit_accepted_outbox_operation(rec, 1000)
+            .commit_accepted_outbox_operation(rec, None, 1000)
             .unwrap();
 
         let baseline_after = db_state

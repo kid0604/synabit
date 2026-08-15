@@ -300,6 +300,10 @@ impl SyncAdapter for HarnessAdapter {
 pub struct HarnessDevice {
     pub name: String,
     pub device_id: String,
+    /// Held for the device's whole life. Dropping the `App` and keeping only a
+    /// handle lets Tauri tear the mock runtime down underneath us, which showed
+    /// up as rare, parallelism-dependent failures.
+    _app: tauri::App<MockRuntime>,
     handle: tauri::AppHandle<MockRuntime>,
     /// Held so the directory outlives the device; the vault itself is the
     /// `vault/` subdirectory inside it.
@@ -338,6 +342,7 @@ impl HarnessDevice {
         Self {
             name: name.to_string(),
             device_id: device_id.to_string(),
+            _app: app,
             handle,
             _tmp: vault,
             vault_root,

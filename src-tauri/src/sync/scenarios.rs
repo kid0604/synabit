@@ -107,10 +107,6 @@ async fn delete_propagates_to_the_other_device() {
 }
 
 #[tokio::test]
-#[ignore = "S2-07: sync pushes before it pulls, so B's edit is already published \
-            by the time A's older tombstone is applied. Converging correctly \
-            needs the mailbox sequence recorded on ack, so an upsert at a higher \
-            seq can supersede an earlier delete"]
 async fn a_delete_loses_to_an_unpublished_local_edit() {
     // Deleting is the only operation that destroys user data on a remote
     // instruction, so a file that has moved on since its last successful sync
@@ -192,7 +188,6 @@ async fn devices_sharing_a_device_id_still_exchange_changes() {
 }
 
 #[tokio::test]
-#[ignore = "S2-06: rename emits delete+upsert on two doc_hashes with no ordering guarantee"]
 async fn rename_arrives_as_a_rename_not_a_deletion() {
     let (mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);

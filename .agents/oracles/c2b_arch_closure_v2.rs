@@ -7,6 +7,26 @@ fn historical_v6_connection() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_outbox (
+             vault_id TEXT NOT NULL,
+             provider_id TEXT NOT NULL,
+             operation_id BLOB NOT NULL,
+             entry_kind TEXT NOT NULL,
+             node_id TEXT NOT NULL,
+             rel_path TEXT,
+             source_hash BLOB,
+             original_timestamp INTEGER NOT NULL,
+             encrypted_payload BLOB,
+             payload_hash BLOB,
+             asset_ref_blob BLOB,
+             state TEXT NOT NULL DEFAULT 'prepared',
+             retry_count INTEGER NOT NULL DEFAULT 0,
+             next_retry_at INTEGER,
+             last_error TEXT,
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (vault_id, provider_id, operation_id)
+         );
          CREATE TABLE IF NOT EXISTS sync_inbox (
              vault_id TEXT NOT NULL,
              provider_id TEXT NOT NULL,
@@ -312,6 +332,26 @@ fn c2b_arch_v5_missing_identity_column_fails_before_mutation() {
     let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_outbox (
+             vault_id TEXT NOT NULL,
+             provider_id TEXT NOT NULL,
+             operation_id BLOB NOT NULL,
+             entry_kind TEXT NOT NULL,
+             node_id TEXT NOT NULL,
+             rel_path TEXT,
+             source_hash BLOB,
+             original_timestamp INTEGER NOT NULL,
+             encrypted_payload BLOB,
+             payload_hash BLOB,
+             asset_ref_blob BLOB,
+             state TEXT NOT NULL DEFAULT 'prepared',
+             retry_count INTEGER NOT NULL DEFAULT 0,
+             next_retry_at INTEGER,
+             last_error TEXT,
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (vault_id, provider_id, operation_id)
+         );
          CREATE TABLE IF NOT EXISTS sync_inbox (
              vault_id TEXT NOT NULL,
              provider_id TEXT NOT NULL,
