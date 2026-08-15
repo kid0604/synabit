@@ -712,8 +712,14 @@ impl DbBridge {
 
         let rows_affected = tx
             .execute(
+                // The payload is released once the server has it. The row stays:
+                // it is how we recognise our own operations coming back and how
+                // a re-push is made idempotent, and neither needs the bytes.
+                // Keeping them meant every edit ever made left a full encrypted
+                // copy of the document in the database, permanently.
                 "UPDATE sync_outbox
-                 SET state = 'acknowledged', updated_at = ?4, next_retry_at = NULL, last_error = NULL, remote_seq = ?5
+                 SET state = 'acknowledged', updated_at = ?4, next_retry_at = NULL, last_error = NULL,
+                     remote_seq = ?5, encrypted_payload = NULL
                  WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3 AND state = 'sent'",
                 params![
                     record.vault_id,
@@ -1812,6 +1818,10 @@ pub mod tests {
                 r.next_retry_at = None;
                 r.last_error = None;
                 r.updated_at = now;
+                // The server has the bytes now, so the local copy is released.
+                // The row itself stays: it is how our own operations are
+                // recognised when they come back.
+                r.encrypted_payload = None;
                 r
             }),
             Some((
@@ -1867,6 +1877,10 @@ pub mod tests {
                 r.next_retry_at = None;
                 r.last_error = None;
                 r.updated_at = now;
+                // The server has the bytes now, so the local copy is released.
+                // The row itself stays: it is how our own operations are
+                // recognised when they come back.
+                r.encrypted_payload = None;
                 r
             }),
             None,
@@ -2528,5 +2542,38 @@ pub mod tests {
             .query_row("SELECT doc_id FROM sync_document_paths WHERE rel_path='Notes/a.md'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(owner, "new-identity", "the current owner must not be displaced");
+    }
+
+    /// The bytes are released on acknowledgement, but everything that depends on
+    /// the row surviving must keep working.
+    #[test]
+    fn a_released_payload_still_proves_the_operation_was_ours() {
+        let mut db = setup_test_db();
+        let rec = revision("v1", "gdrive", 1, "note", 10);
+
+        db.enqueue_or_reuse_outbox_operation(&rec).unwrap();
+        db.mark_outbox_batch_sent("v1", "gdrive", &[[1u8; 16]], 2000)
+            .unwrap();
+        db.commit_accepted_outbox_operation(&rec, Some(5), 3000)
+            .unwrap();
+
+        let stored = db
+            .get_outbox_by_id("v1", "gdrive", &[1u8; 16])
+            .unwrap()
+            .expect("the row must survive so our own operations stay recognisable");
+        assert_eq!(stored.state, OutboxState::Acknowledged);
+        assert_eq!(stored.encrypted_payload, None, "the payload should be gone");
+        assert_eq!(stored.payload_hash, rec.payload_hash, "metadata is kept");
+
+        // Preparing the same content again — with a fresh operation id, as the
+        // real path always does — queues new work rather than reviving a
+        // finished row.
+        let mut again = revision("v1", "gdrive", 2, "note", 10);
+        again.rel_path = rec.rel_path.clone();
+        let queued = db.enqueue_or_reuse_outbox_operation(&again).unwrap();
+        assert_eq!(
+            queued, [2u8; 16],
+            "an acknowledged operation is done and must not be reused"
+        );
     }
 }

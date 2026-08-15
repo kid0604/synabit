@@ -420,7 +420,7 @@ impl DbBridge {
     }
 }
 
-const LATEST_SYNC_SCHEMA_VERSION: i64 = 10;
+const LATEST_SYNC_SCHEMA_VERSION: i64 = 11;
 
 pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")
@@ -505,6 +505,7 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
             8 => migrate_sync_schema_v8(conn)?,
             9 => migrate_sync_schema_v9(conn)?,
             10 => migrate_sync_schema_v10(conn)?,
+            11 => migrate_sync_schema_v11(conn)?,
             _ => {
                 return Err(AppError::General(format!(
                     "No migration defined for version {}",
@@ -1049,6 +1050,53 @@ pub(crate) fn migrate_sync_schema_v6(conn: &mut Connection) -> AppResult<()> {
 
     tx.commit()
         .map_err(|e| AppError::General(format!("Failed to commit sync schema v6: {}", e)))?;
+
+    Ok(())
+}
+
+/// Release the payloads of operations that are already finished with.
+///
+/// The outbox and inbox each keep the full encrypted body of every operation
+/// that passes through them, and nothing ever removed it. On a vault of a few
+/// hundred notes that grew to roughly 180MB of database holding copies of
+/// documents the server already had and the disk already had — and it grew with
+/// every edit, without bound.
+///
+/// The rows themselves are still needed. An outbox row is how a device
+/// recognises its own operations coming back; an inbox row is how it avoids
+/// applying the same entry twice. Neither needs the bytes.
+pub(crate) fn migrate_sync_schema_v11(conn: &mut Connection) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp();
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
+
+    tx.execute_batch(
+        "UPDATE sync_outbox SET encrypted_payload = NULL
+             WHERE state = 'acknowledged' AND encrypted_payload IS NOT NULL;
+         UPDATE sync_inbox SET encrypted_payload = NULL
+             WHERE state IN ('applied', 'ignored_own_operation')
+               AND encrypted_payload IS NOT NULL;",
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v11 migration): {}", e)))?;
+
+    tx.execute(
+        "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
+         VALUES (1, 11, ?1)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             version = excluded.version,
+             updated_at = excluded.updated_at;",
+        params![now],
+    )
+    .map_err(|e| {
+        AppError::General(format!(
+            "DB Schema Error (sync_schema_meta update v11): {}",
+            e
+        ))
+    })?;
+
+    tx.commit()
+        .map_err(|e| AppError::General(format!("Failed to commit sync schema v11: {}", e)))?;
 
     Ok(())
 }

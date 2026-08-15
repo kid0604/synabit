@@ -1378,11 +1378,20 @@ impl DbBridge {
         let rows_affected = self
             .conn
             .execute(
+                // Reaching a terminal state releases the payload. The row is
+                // still needed — it records that this operation was handled, so
+                // the same entry is not applied twice — but the bytes are not.
+                // Retained, they left a full encrypted copy of every document
+                // that ever arrived sitting in the database forever.
                 "UPDATE sync_inbox
                  SET state = ?1,
                      last_error = ?2,
                      updated_at = ?3,
-                     applied_at = ?4
+                     applied_at = ?4,
+                     encrypted_payload = CASE
+                         WHEN ?1 IN ('applied', 'ignored_own_operation') THEN NULL
+                         ELSE encrypted_payload
+                     END
                  WHERE vault_id = ?5
                    AND provider_id = ?6
                    AND operation_id = ?7
