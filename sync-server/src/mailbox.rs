@@ -122,10 +122,11 @@ impl MailboxHandler {
                     let hello_resp = synabit_protocol::ServerHello {
                         protocol_version: 3,
                         server_incarnation: [0; 16], // TODO: use real incarnation ID
+                        // Only what this server actually implements. BootstrapV1
+                        // and AssetChunksV1 were advertised but unimplemented,
+                        // which would mislead any client that branched on them.
                         capabilities: vec![
                             synabit_protocol::Capability::PagedPull,
-                            synabit_protocol::Capability::BootstrapV1,
-                            synabit_protocol::Capability::AssetChunksV1,
                             synabit_protocol::Capability::DurableIdempotency,
                             synabit_protocol::Capability::DeviceLifecycleV1,
                             synabit_protocol::Capability::QuotaV1,
@@ -512,35 +513,18 @@ impl MailboxHandler {
                 max_bytes,
             } => self.handle_pull_page(vault_hash, after_seq, until_seq, max_entries, max_bytes),
 
-            MailboxRequest::BeginBootstrap {
-                page_max_entries,
-                page_max_bytes,
-            } => {
-                self.handle_begin_bootstrap(vault_hash, device_id, page_max_entries, page_max_bytes)
-            }
+            // Bootstrap is not offered. Collection keeps the head entry of
+            // every document, so replaying the mailbox from any cursor already
+            // reconstructs the whole vault and there is nothing left for a
+            // bootstrap session to recover. The handlers that used to sit here
+            // could never have run: they queried bootstrap_sessions,
+            // bootstrap_items, bootstrap_item_assets, document_heads and
+            // blob_objects, none of which this schema creates.
+            MailboxRequest::BeginBootstrap { .. }
+            | MailboxRequest::PullBootstrapPage { .. }
+            | MailboxRequest::KeepBootstrapAlive { .. }
+            | MailboxRequest::CompleteBootstrap { .. } => Ok(MailboxResponse::BootstrapUnavailable),
 
-            MailboxRequest::PullBootstrapPage {
-                session_id,
-                after_position,
-                max_entries,
-                max_bytes,
-            } => self.handle_pull_bootstrap_page(
-                vault_hash,
-                session_id,
-                after_position,
-                max_entries,
-                max_bytes,
-            ),
-
-            MailboxRequest::KeepBootstrapAlive { session_id } => {
-                self.db.keep_bootstrap_alive(&session_id)?;
-                Ok(MailboxResponse::BootstrapOk)
-            }
-
-            MailboxRequest::CompleteBootstrap { session_id } => {
-                self.db.complete_bootstrap(&session_id)?;
-                Ok(MailboxResponse::BootstrapOk)
-            }
 
             _ => Ok(MailboxResponse::Error {
                 message: "Not implemented in this version".to_string(),
@@ -673,113 +657,7 @@ impl MailboxHandler {
         ))
     }
 
-    fn handle_begin_bootstrap(
-        &self,
-        vault_hash: &str,
-        device_id: &str,
-        _page_max_entries: u16,
-        _page_max_bytes: u32,
-    ) -> Result<MailboxResponse> {
-        let (session_id, incarnation_id, base_seq, item_count, total_bytes) =
-            self.db.begin_bootstrap(vault_hash, device_id)?;
-        Ok(MailboxResponse::BootstrapStarted(
-            synabit_protocol::BootstrapStarted {
-                session_id,
-                incarnation_id,
-                base_seq,
-                item_count,
-                total_bytes,
-                expires_at: crate::db::unix_now() + 3600,
-            },
-        ))
-    }
 
-    fn handle_pull_bootstrap_page(
-        &self,
-        vault_hash: &str,
-        session_id: [u8; 16],
-        after_position: u64,
-        max_entries: u16,
-        max_bytes: u32,
-    ) -> Result<MailboxResponse> {
-        let meta = self
-            .db
-            .pull_bootstrap_page_meta(&session_id, after_position, max_entries)?;
-        let mut items = Vec::new();
-        let mut current_bytes = 0;
-        let mut next_pos = after_position;
-        let mut has_more = false;
-
-        for (
-            position,
-            doc_hash_hex,
-            head_seq,
-            operation_id,
-            entry_kind,
-            blob_id,
-            payload_hash_hex,
-            source_device,
-            timestamp,
-        ) in meta
-        {
-            let encrypted_payload = if entry_kind == synabit_protocol::SyncEntryKind::Delete {
-                Vec::new()
-            } else if let Some(bid) = blob_id {
-                if let Some(path) = self.db.get_blob_path(vault_hash, &bid)? {
-                    std::fs::read(&path).unwrap_or_default()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            };
-
-            if current_bytes + encrypted_payload.len() > max_bytes as usize && !items.is_empty() {
-                has_more = true;
-                break;
-            }
-
-            current_bytes += encrypted_payload.len();
-            next_pos = position;
-
-            let mut doc_hash = [0u8; 32];
-            if let Ok(b) = hex::decode(&doc_hash_hex) {
-                if b.len() == 32 {
-                    doc_hash.copy_from_slice(&b);
-                }
-            }
-            let mut payload_hash = [0u8; 32];
-            if let Ok(b) = hex::decode(&payload_hash_hex) {
-                if b.len() == 32 {
-                    payload_hash.copy_from_slice(&b);
-                }
-            }
-
-            items.push(synabit_protocol::BootstrapItem {
-                position,
-                doc_hash,
-                head_seq,
-                operation_id,
-                entry_kind,
-                source_device,
-                encrypted_payload,
-                payload_hash,
-                timestamp,
-            });
-        }
-
-        if !has_more {
-            has_more = self.db.has_more_bootstrap_items(&session_id, next_pos)?;
-        }
-
-        Ok(MailboxResponse::BootstrapPage(
-            synabit_protocol::BootstrapPage {
-                items,
-                next_position: next_pos,
-                has_more,
-            },
-        ))
-    }
 
     #[allow(clippy::too_many_arguments)]
     async fn handle_push(

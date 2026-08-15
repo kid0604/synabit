@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub mod coordinator;
-pub mod hlc;
 pub mod key_rotation;
 pub mod progress;
 pub mod protocol;
