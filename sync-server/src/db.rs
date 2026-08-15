@@ -162,6 +162,38 @@ impl Database {
             ",
         )?;
 
+        // Chunks that predate the reference graph must survive it.
+        //
+        // Entries record what they depend on only from the version that
+        // introduced `mailbox_chunks`; everything pushed before that says
+        // nothing, so every chunk already stored looks unreferenced and the
+        // collector below would take all of them — which is precisely the
+        // destruction this whole mechanism exists to prevent, arriving through
+        // the fix rather than the bug.
+        //
+        // Adding the column succeeds exactly once, which makes it the natural
+        // place to draw the line: whatever is stored at that moment is marked
+        // and never collected. On a fresh database the table is empty and this
+        // does nothing. The marked chunks are then kept for the life of the
+        // vault — wasted space, and again the right way to be wrong.
+        if conn
+            .execute(
+                "ALTER TABLE assets ADD COLUMN predates_reference_graph INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .is_ok()
+        {
+            let marked = conn.execute("UPDATE assets SET predates_reference_graph = 1", [])?;
+            if marked > 0 {
+                tracing::warn!(
+                    chunks = marked,
+                    "attachment chunks stored before entries declared their \
+                     references are exempt from collection and will not be \
+                     reclaimed"
+                );
+            }
+        }
+
         // Make the quota figure describe what is actually stored.
         //
         // Only entries were ever added to `used_storage_bytes`, so on any
@@ -896,7 +928,7 @@ impl Database {
         let tx = conn.transaction()?;
         let cutoff = unix_now() - min_age_secs as i64;
 
-        const ORPHANED: &str = "a.created_at <= ?1 AND NOT EXISTS (
+        const ORPHANED: &str = "a.created_at <= ?1 AND a.predates_reference_graph = 0 AND NOT EXISTS (
                  SELECT 1 FROM mailbox_chunks mc
                  WHERE mc.vault_hash = a.vault_hash AND mc.chunk_id = a.asset_hash
              )";
@@ -1070,6 +1102,53 @@ mod chunk_reference_tests {
             PushOutcome::Created(seq) => seq,
             other => panic!("unexpected push outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn chunks_stored_before_entries_declared_their_references_are_never_collected() {
+        // The failure this exists to prevent, and one this change came within a
+        // cleanup cycle of causing on a live server. Entries pushed by an older
+        // client declare nothing, so every chunk already on disk reads as an
+        // orphan — and the collector built to protect attachments would have
+        // deleted every one of them.
+        let (db, dir, vault) = vault();
+        let path = dir.path().join("test.db");
+        drop(db);
+
+        // Put the database back into the shape the old server left it in: no
+        // marker column, and a chunk stored with no entry declaring it. Opening
+        // it with the current code is the migration under test.
+        {
+            let conn = rusqlite::Connection::open(&path).expect("raw open");
+            conn.execute_batch(
+                "ALTER TABLE assets DROP COLUMN predates_reference_graph;
+                 DROP TABLE mailbox_chunks;",
+            )
+            .expect("undo the migration");
+            conn.execute(
+                "INSERT INTO assets (vault_hash, asset_hash, blob_path, blob_size, created_at)
+                 VALUES (?1, ?2, '/blob/legacy', 4096, 0)",
+                params![&vault, hex::encode([8u8; 32])],
+            )
+            .expect("store the way the old code did");
+        }
+
+        let db = Database::open(&path).expect("reopen");
+
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        assert!(
+            collected.is_empty(),
+            "a chunk from before the reference graph was collected: {collected:?}"
+        );
+
+        // A chunk stored afterwards is not exempt, or the collector never works.
+        let fresh = hex::encode([9u8; 32]);
+        db.store_asset(&vault, &fresh, "/blob/fresh", 512).expect("store");
+        assert_eq!(
+            db.gc_unreferenced_assets(0).expect("gc"),
+            vec!["/blob/fresh".to_string()],
+            "an unreferenced chunk stored after the line should still be collected"
+        );
     }
 
     #[test]
