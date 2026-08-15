@@ -348,7 +348,17 @@ fn prepare_one_operation(
         })?;
 
         // 3. Get/assign node_id and mutate durable path AFTER validations pass
-        let actual_node_id = crate::sync::core::identity::get_or_assign_node_id(vault, &file_path)?;
+        // Reuse the identity we already recorded for this path when the file has
+        // lost its own, so an unrelated rewrite cannot split one document in two.
+        let known_id = {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.get_node_id_by_path(vault_id, &change.rel_path)?
+        };
+        let actual_node_id = crate::sync::core::identity::get_or_assign_node_id_with_hint(
+            vault,
+            &file_path,
+            known_id.as_deref(),
+        )?;
 
         // 4. `get_or_assign_node_id` may have rewritten the file to inject the
         //    id, so both the text we publish and the hash we record must

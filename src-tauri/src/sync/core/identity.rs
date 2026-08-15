@@ -182,6 +182,28 @@ pub fn load_or_register_vault_identity<R: tauri::Runtime>(
 }
 
 pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<String> {
+    get_or_assign_node_id_with_hint(vault_path, file_path, None)
+}
+
+/// Resolve a document's identity, optionally reusing an id we already know.
+///
+/// `known_id` is the identity previously recorded for this path. It is used only
+/// when the file carries none of its own, which happens whenever something
+/// rewrites the file and drops the injected line — the app's own note writer
+/// does exactly that after a scan. Minting a fresh id in that moment splits one
+/// document into two: the outbox still holds an entry under the old identity,
+/// the path map moves to the new one, and acknowledging the old entry then
+/// collides on the path. Reusing the known id keeps a document a document.
+pub fn get_or_assign_node_id_with_hint(
+    vault_path: &Path,
+    file_path: &Path,
+    known_id: Option<&str>,
+) -> AppResult<String> {
+    let mint = || {
+        known_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    };
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     if ext == "md" {
@@ -205,7 +227,7 @@ pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<S
         }
 
         // No ID found, we need to inject it.
-        let new_id = uuid::Uuid::new_v4().to_string();
+        let new_id = mint();
         let new_content = inject_markdown_id(&content, &new_id);
         std::fs::write(file_path, new_content).map_err(|e| {
             AppError::General(format!(
@@ -244,7 +266,7 @@ pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<S
                 return Ok(node_id.to_string());
             }
             if let Some(meta_obj) = meta.as_object_mut() {
-                let new_id = uuid::Uuid::new_v4().to_string();
+                let new_id = mint();
                 meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
                 std::fs::write(file_path, serde_json::to_string_pretty(&json_val).unwrap())
                     .map_err(|e| {
@@ -262,7 +284,7 @@ pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<S
             }
         } else {
             // No metadata object, create it
-            let new_id = uuid::Uuid::new_v4().to_string();
+            let new_id = mint();
             let mut meta_obj = serde_json::Map::new();
             meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
             root_obj.insert("metadata".to_string(), Value::Object(meta_obj));
@@ -549,5 +571,27 @@ pub mod tests {
 
         assert!(get_or_assign_node_id(vault_path, &path).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+    }
+
+    #[test]
+    fn a_file_that_lost_its_id_reuses_the_one_we_already_knew() {
+        // Something else rewrote the note and dropped the injected line. Minting
+        // a fresh id here splits one document into two: the outbox still holds
+        // the old identity while the path map moves to the new one.
+        let temp_dir = TempDir::new().unwrap();
+        let vault_path = temp_dir.path();
+        let path = vault_path.join("note.md");
+        std::fs::write(&path, "---\ntitle: Note\n---\n\nbody\n").unwrap();
+
+        let id = get_or_assign_node_id_with_hint(vault_path, &path, Some("known-id")).unwrap();
+        assert_eq!(id, "known-id");
+        assert!(
+            std::fs::read_to_string(&path).unwrap().contains("node_id: known-id"),
+            "the known id should be written back into the file"
+        );
+
+        // And a file that still carries its own id keeps it, hint or not.
+        let id_again = get_or_assign_node_id_with_hint(vault_path, &path, Some("other-id")).unwrap();
+        assert_eq!(id_again, "known-id", "an existing id must win over the hint");
     }
 }

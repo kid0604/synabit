@@ -753,12 +753,38 @@ impl DbBridge {
                 params![record.vault_id, record.provider_id, rel_path, content_hash, now],
             ).map_err(|e| AppError::General(format!("DB Tx baseline error: {}", e)))?;
 
-            tx.execute(
-                "INSERT INTO sync_document_paths (vault_id, doc_id, rel_path, updated_at)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(vault_id, doc_id) DO UPDATE SET rel_path = excluded.rel_path, updated_at = excluded.updated_at",
-                params![record.vault_id, record.node_id, rel_path, now],
-            ).map_err(|e| AppError::General(format!("DB Tx path map error: {}", e)))?;
+            // Only claim the path if no other document holds it. An
+            // acknowledgement describes what was true when the operation was
+            // pushed, and by the time it lands the file may have been rewritten
+            // and re-identified. Forcing the stale claim through raised a UNIQUE
+            // violation that failed the whole sync, on every attempt, forever.
+            let path_owner: Option<String> = tx
+                .query_row(
+                    "SELECT doc_id FROM sync_document_paths WHERE vault_id = ?1 AND rel_path = ?2",
+                    params![record.vault_id, rel_path],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| AppError::General(format!("DB Tx path lookup error: {}", e)))?;
+
+            match path_owner {
+                Some(owner) if owner != record.node_id => {
+                    log::warn!(
+                        "outbox ack for {} kept: {} now owns that path, not {}",
+                        rel_path,
+                        owner,
+                        record.node_id
+                    );
+                }
+                _ => {
+                    tx.execute(
+                        "INSERT INTO sync_document_paths (vault_id, doc_id, rel_path, updated_at)
+                         VALUES (?1, ?2, ?3, ?4)
+                         ON CONFLICT(vault_id, doc_id) DO UPDATE SET rel_path = excluded.rel_path, updated_at = excluded.updated_at",
+                        params![record.vault_id, record.node_id, rel_path, now],
+                    ).map_err(|e| AppError::General(format!("DB Tx path map error: {}", e)))?;
+                }
+            }
         }
 
         tx.commit()
@@ -2464,5 +2490,39 @@ pub mod tests {
         assert_eq!(retry_count, 0);
         assert_eq!(next_retry, None);
         assert_eq!(last_error, None);
+    }
+
+    /// An acknowledgement describes what was true when the operation went out.
+    /// If the file has since been rewritten and re-identified, the ack must
+    /// still land — forcing the stale path claim through used to raise a UNIQUE
+    /// violation that failed every subsequent sync.
+    #[test]
+    fn an_ack_whose_path_changed_hands_does_not_fail_the_sync() {
+        let mut db = setup_test_db();
+
+        let mut rec = revision("v1", "gdrive", 1, "old-identity", 10);
+        rec.rel_path = Some("Notes/a.md".into());
+        db.enqueue_or_reuse_outbox_operation(&rec).unwrap();
+        db.mark_outbox_batch_sent("v1", "gdrive", &[[1u8; 16]], 2000)
+            .unwrap();
+
+        // Meanwhile the file lost its id and was re-identified.
+        db.upsert_document_path("v1", "new-identity", "Notes/a.md")
+            .unwrap();
+
+        db.commit_accepted_outbox_operation(&rec, Some(7), 3000)
+            .expect("a stale path claim must not fail the acknowledgement");
+
+        let state: String = db
+            .conn
+            .query_row("SELECT state FROM sync_outbox WHERE node_id='old-identity'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(state, "acknowledged");
+
+        let owner: String = db
+            .conn
+            .query_row("SELECT doc_id FROM sync_document_paths WHERE rel_path='Notes/a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(owner, "new-identity", "the current owner must not be displaced");
     }
 }
