@@ -233,6 +233,12 @@ pub fn delete_source_hash(
     *hasher.finalize().as_bytes()
 }
 
+/// Turn detected changes into durable outbox entries.
+///
+/// Returns one message per file that could not be prepared. A single
+/// unpublishable document must never stop the others: an unreadable file, a
+/// vanished path, or a shape the identity assigner cannot handle used to abort
+/// the whole run, so one bad file meant nothing in the vault synced at all.
 pub fn prepare_durable_outbox_operations(
     db_state: &crate::db::DbState,
     vault: &Path,
@@ -240,8 +246,30 @@ pub fn prepare_durable_outbox_operations(
     e2ee_key: &[u8; 32],
     vault_id: &str,
     provider_id: &str,
-) -> AppResult<()> {
+) -> AppResult<Vec<String>> {
+    let mut skipped: Vec<String> = Vec::new();
+
     for change in changes {
+        if let Err(e) =
+            prepare_one_operation(db_state, vault, &change, e2ee_key, vault_id, provider_id)
+        {
+            log::warn!("sync: skipping {}: {}", change.rel_path, e);
+            skipped.push(format!("{}: {}", change.rel_path, e));
+        }
+    }
+
+    Ok(skipped)
+}
+
+fn prepare_one_operation(
+    db_state: &crate::db::DbState,
+    vault: &Path,
+    change: &LocalChange,
+    e2ee_key: &[u8; 32],
+    vault_id: &str,
+    provider_id: &str,
+) -> AppResult<()> {
+    {
         let doc_hash = *blake3::hash(change.rel_path.as_bytes()).as_bytes();
         let timestamp = chrono::Utc::now().timestamp_millis();
 
@@ -290,7 +318,7 @@ pub fn prepare_durable_outbox_operations(
             };
             let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.enqueue_or_reuse_outbox_operation(&record)?;
-            continue;
+            return Ok(());
         }
 
         // 1. Detected-hash validation (hex::decode BEFORE any path mutation)
@@ -703,7 +731,10 @@ mod tests {
             "v1",
             "gdrive",
         );
-        assert!(res.is_err());
+        // A change that cannot be prepared is reported and skipped rather than
+        // failing the run, but it must still leave nothing behind.
+        let skipped = res.expect("one bad change must not fail the whole preparation");
+        assert_eq!(skipped.len(), 1, "the skipped file should be reported: {skipped:?}");
 
         let after = db_state
             .lock()

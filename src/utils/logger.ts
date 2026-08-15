@@ -38,9 +38,34 @@ function dispatchIpcLog(level: LogLevel, message: string) {
   });
 }
 
-function safeLog(level: LogLevel, message: string, ...args: any[]) {
-  const formatted = args.length ? `${message} ${JSON.stringify(args)}` : message;
-  
+/**
+ * Render anything as a string for the log IPC, which only accepts strings.
+ *
+ * Callers are typed to pass a string, but `.catch(logger.error)` hands the
+ * rejection value straight into the message position, so in practice it is
+ * often an Error or a plain object. Those calls used to be rejected by the
+ * backend with "invalid type: map, expected a string" — losing exactly the
+ * failures worth reading.
+ */
+function toMessage(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) {
+    return value.stack ? `${value.name}: ${value.message}\n${value.stack}` : `${value.name}: ${value.message}`;
+  }
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    // Circular structures, and anything else JSON cannot render.
+    return String(value);
+  }
+}
+
+function safeLog(level: LogLevel, message: unknown, ...args: any[]) {
+  const head = toMessage(message);
+  const formatted = args.length ? `${head} ${args.map(toMessage).join(' ')}` : head;
+
   // Console log immediately for DevTools
   if (level === 'info') console.log(message, ...args);
   else if (level === 'warn') console.warn(message, ...args);
@@ -56,10 +81,12 @@ function safeLog(level: LogLevel, message: string, ...args: any[]) {
   }
 }
 
+// `unknown` rather than `string` because `.catch(logger.error)` is used widely
+// and hands a rejection value into the first position.
 export const logger = {
-  info: (message: string, ...args: any[]) => safeLog('info', message, ...args),
-  warn: (message: string, ...args: any[]) => safeLog('warn', message, ...args),
-  error: (message: string, ...args: any[]) => safeLog('error', message, ...args),
-  debug: (message: string, ...args: any[]) => safeLog('debug', message, ...args),
-  trace: (message: string, ...args: any[]) => safeLog('trace', message, ...args),
+  info: (message: unknown, ...args: any[]) => safeLog('info', message, ...args),
+  warn: (message: unknown, ...args: any[]) => safeLog('warn', message, ...args),
+  error: (message: unknown, ...args: any[]) => safeLog('error', message, ...args),
+  debug: (message: unknown, ...args: any[]) => safeLog('debug', message, ...args),
+  trace: (message: unknown, ...args: any[]) => safeLog('trace', message, ...args),
 };

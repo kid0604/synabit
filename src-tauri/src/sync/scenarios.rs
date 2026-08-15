@@ -213,6 +213,48 @@ async fn offline_revisions_are_published_once() {
     );
 }
 
+#[tokio::test]
+async fn one_unpublishable_file_does_not_block_the_rest() {
+    // A vault holds documents the identity assigner cannot handle. Refusing one
+    // of them used to abort the whole run, so a single awkward file meant
+    // nothing in the vault synced at all.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/good.md", "# Good\n\nThis must still travel.\n");
+    // An object root whose `metadata` is a scalar: there is nowhere to put an
+    // id, and overwriting the field would destroy what the user put there.
+    a.write("Data/awkward.json", r#"{"metadata": "not-an-object"}"#);
+    // A JSON array is ordinary content, not an error — the message logs are
+    // exactly this shape — and must sync on its path identity.
+    a.write("Messages/day.json", r#"[{"id":"m1"},{"id":"m2"}]"#);
+
+    let result = a.sync_ok().await;
+
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "the skipped file should be reported once: {:?}",
+        result.errors
+    );
+    assert!(
+        result.errors[0].contains("awkward.json"),
+        "the report should name the file: {:?}",
+        result.errors
+    );
+
+    b.sync_ok().await;
+    assert!(
+        b.exists("Notes/good.md"),
+        "a healthy note was held up by an unrelated file"
+    );
+    assert!(
+        b.exists("Messages/day.json"),
+        "a JSON array is ordinary content and must sync"
+    );
+    assert!(!b.exists("Data/awkward.json"));
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------

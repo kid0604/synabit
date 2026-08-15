@@ -1282,7 +1282,7 @@ impl SyncCoordinator {
             &local_files,
         )?;
         let edit_count = edits.len();
-        prepare_durable_outbox_operations(
+        let mut skipped = prepare_durable_outbox_operations(
             &db_state,
             vault_path_obj,
             edits,
@@ -1302,14 +1302,14 @@ impl SyncCoordinator {
             edit_count,
             deletions.len()
         );
-        prepare_durable_outbox_operations(
+        skipped.extend(prepare_durable_outbox_operations(
             &db_state,
             vault_path_obj,
             deletions,
             e2ee_key,
             &vault_id,
             &provider_id,
-        )?;
+        )?);
 
         // 4. Drain newly prepared outbox
         let pushed_post =
@@ -1323,7 +1323,7 @@ impl SyncCoordinator {
             pulled: 0,
             pushed: total_pushed,
             deleted: 0,
-            errors: vec![],
+            errors: skipped,
             pulled_files: Vec::new(),
             tx_bytes: total_tx_bytes,
             rx_bytes: 0,

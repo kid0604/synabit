@@ -224,10 +224,18 @@ pub fn get_or_assign_node_id(vault_path: &Path, file_path: &Path) -> AppResult<S
         let root_obj = match json_val.as_object_mut() {
             Some(obj) => obj,
             None => {
-                return Err(AppError::General(format!(
-                    "JSON root is not an object in {}",
-                    file_path.display()
-                )))
+                // Plenty of legitimate documents are JSON arrays — the message
+                // logs under Messages/ are one per day. There is nowhere to put
+                // an id without changing the document's shape, so fall back to
+                // the path, exactly as unknown file types already do. The cost
+                // is that renaming such a file reads as delete-then-create
+                // rather than a move; the alternative was refusing to sync it,
+                // and one of them used to fail the entire run.
+                let rel_path = crate::path_utils::to_relative(
+                    file_path,
+                    vault_path.to_string_lossy().as_ref(),
+                );
+                return Ok(rel_path);
             }
         };
 
@@ -501,32 +509,45 @@ pub mod tests {
     }
 
     #[test]
-    fn json_node_identity_never_falls_back_to_relative_path() {
+    fn json_documents_that_cannot_hold_an_id_fall_back_to_their_path() {
+        // Requiring an object root meant a vault full of JSON arrays — the
+        // per-day message logs are exactly that — could not be given an
+        // identity, and refusing one file used to fail the entire sync. Such a
+        // document now takes its path as its identity, and is never rewritten
+        // to make room for an id.
         let temp_dir = TempDir::new().unwrap();
         let vault_path = temp_dir.path();
 
-        // 1) Primitive JSON root
-        let json_prim_path = vault_path.join("primitive.json");
-        let before_prim_content = "\"just a string\"";
-        std::fs::write(&json_prim_path, before_prim_content).unwrap();
+        for (name, content) in [
+            ("messages.json", r#"[{"id":"a"},{"id":"b"}]"#),
+            ("primitive.json", "\"just a string\""),
+        ] {
+            let path = vault_path.join(name);
+            std::fs::write(&path, content).unwrap();
 
-        let res1 = get_or_assign_node_id(vault_path, &json_prim_path);
-        assert!(res1.is_err());
-        let after_prim_content = std::fs::read_to_string(&json_prim_path).unwrap();
-        assert_eq!(before_prim_content, after_prim_content);
-        let err1_str = res1.unwrap_err().to_string();
-        assert_ne!(err1_str, "primitive.json");
+            let id = get_or_assign_node_id(vault_path, &path)
+                .unwrap_or_else(|e| panic!("{name} should be syncable, got {e}"));
+            assert_eq!(id, name, "identity should be the relative path");
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                content,
+                "{name} must not be rewritten"
+            );
+        }
+    }
 
-        // 2) Object with scalar metadata
-        let json_scalar_meta_path = vault_path.join("scalar_meta.json");
-        let before_scalar_content = r#"{"metadata": "invalid_scalar"}"#;
-        std::fs::write(&json_scalar_meta_path, before_scalar_content).unwrap();
+    #[test]
+    fn a_json_object_with_an_unusable_metadata_field_is_left_alone() {
+        // Here there *is* an object root, so overwriting `metadata` would
+        // destroy whatever the user put there. Refusing is right; the caller
+        // skips this one file instead of failing the run.
+        let temp_dir = TempDir::new().unwrap();
+        let vault_path = temp_dir.path();
+        let path = vault_path.join("scalar_meta.json");
+        let content = r#"{"metadata": "invalid_scalar"}"#;
+        std::fs::write(&path, content).unwrap();
 
-        let res2 = get_or_assign_node_id(vault_path, &json_scalar_meta_path);
-        assert!(res2.is_err());
-        let after_scalar_content = std::fs::read_to_string(&json_scalar_meta_path).unwrap();
-        assert_eq!(before_scalar_content, after_scalar_content);
-        let err2_str = res2.unwrap_err().to_string();
-        assert_ne!(err2_str, "scalar_meta.json");
+        assert!(get_or_assign_node_id(vault_path, &path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
     }
 }

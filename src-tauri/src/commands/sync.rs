@@ -154,6 +154,7 @@ pub async fn sync_connect(
         let now = chrono::Utc::now().to_rfc3339();
         let _ = db.set_kv("p2p_last_connected", &now);
         let _ = db.set_kv("p2p_server_addr", &server_addr);
+        let _ = db.set_kv("p2p_server_id_hex", &server_id_hex);
     }
 
     log::info!("P2P sync connected to {}", server_addr);
@@ -193,12 +194,49 @@ pub async fn sync_full(
     }
     let e2ee_key = e2ee_key_opt.unwrap();
 
-    // 2. Read Server config from managed state
-    let server_adapter_arc = {
+    // 2. Read Server config from managed state, reconnecting if it is not there.
+    //
+    // The adapter lives only in memory, so a sync triggered before the UI has
+    // finished calling `sync_connect` — on a cold start the timer and the
+    // watcher can both fire first — used to fail with "No sync adapter
+    // configured". Rebuilding it from the stored configuration makes the order
+    // of those calls stop mattering.
+    let mut server_adapter_arc = {
         let state = app_handle.state::<P2pSyncState>();
         let guard = state.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|(_, t)| t.clone())
     };
+
+    if server_adapter_arc.is_none() {
+        let stored = {
+            let db_state = app_handle.state::<crate::db::DbState>();
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            match (
+                db.get_kv("p2p_server_addr").ok().flatten(),
+                db.get_kv("p2p_server_id_hex").ok().flatten(),
+            ) {
+                (Some(addr), Some(id)) if !addr.is_empty() && !id.is_empty() => Some((addr, id)),
+                _ => None,
+            }
+        };
+
+        if let Some((addr, id)) = stored {
+            let config = P2pSyncConfig {
+                server_addr: addr.clone(),
+                server_id_hex: id,
+            };
+            match build_adapter(&app_handle, &config).await {
+                Ok(adapter) => {
+                    log::info!("Rebuilding sync adapter for {} from stored config", addr);
+                    let state = app_handle.state::<P2pSyncState>();
+                    let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+                    *guard = Some((config, adapter.clone()));
+                    server_adapter_arc = Some(adapter);
+                }
+                Err(e) => log::warn!("Could not rebuild sync adapter from stored config: {}", e),
+            }
+        }
+    }
 
     let vault_identity =
         crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)
