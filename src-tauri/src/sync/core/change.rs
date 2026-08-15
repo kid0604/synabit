@@ -197,6 +197,84 @@ pub fn detect_deletions<R: tauri::Runtime>(
     Ok(deletions)
 }
 
+/// Queue an attachment for publication.
+///
+/// The reference is stored now and the chunks are uploaded at dispatch time,
+/// which is why the entry starts in `Prepared` rather than `Ready`: a reference
+/// that reached a peer before its bytes did would be a reference to nothing.
+///
+/// Chunking is deterministic, so the bytes need not be held anywhere in the
+/// meantime — they are regenerated from the file when it is time to upload.
+fn prepare_asset_operation(
+    db_state: &crate::db::DbState,
+    vault: &Path,
+    change: &LocalChange,
+    e2ee_key: &[u8; 32],
+    vault_id: &str,
+    provider_id: &str,
+) -> AppResult<()> {
+    let file_path = vault.join(&change.rel_path);
+    let contents = fs::read(&file_path).map_err(|e| {
+        crate::error::AppError::General(format!("fs::read failed for {}: {}", change.rel_path, e))
+    })?;
+
+    // An attachment is identified by its path: there is nowhere inside a JPEG
+    // to record an id without altering the file.
+    let node_id = change.rel_path.clone();
+    let (asset, _chunks) =
+        crate::sync::core::asset::prepare(e2ee_key, &change.rel_path, &node_id, &contents)?;
+
+    let asset_ref_blob = postcard::to_stdvec(&asset).map_err(|e| {
+        crate::error::AppError::General(format!("Postcard AssetRef encode error: {}", e))
+    })?;
+
+    let payload = crate::sync::core::types::SyncPayload::AssetReference(asset);
+    let (encrypted_payload, payload_hash) = encode_sync_payload_v5(e2ee_key, &payload, true)?;
+
+    let published_hash = crate::sync::utils::sha256_hex(&contents);
+    let mut source_hash = [0u8; 32];
+    let decoded = hex::decode(&published_hash).map_err(|e| {
+        crate::error::AppError::General(format!("Invalid hex in attachment hash: {}", e))
+    })?;
+    if decoded.len() != 32 {
+        return Err(crate::error::AppError::General(
+            "attachment hash must be exactly 32 bytes".into(),
+        ));
+    }
+    source_hash.copy_from_slice(&decoded);
+
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let record = crate::db::sync_outbox::OutboxRecord {
+        vault_id: vault_id.to_string(),
+        provider_id: provider_id.to_string(),
+        operation_id: uuid::Uuid::new_v4().into_bytes(),
+        entry_kind: crate::sync::core::types::SyncEntryKind::AssetReference,
+        node_id: node_id.clone(),
+        rel_path: Some(change.rel_path.clone()),
+        doc_hash: Some(*blake3::hash(change.rel_path.as_bytes()).as_bytes()),
+        source_hash: Some(source_hash),
+        original_timestamp: timestamp,
+        encrypted_payload: Some(encrypted_payload),
+        payload_hash: Some(payload_hash),
+        asset_ref_blob: Some(asset_ref_blob),
+        state: crate::db::sync_outbox::OutboxState::Prepared,
+        retry_count: 0,
+        next_retry_at: None,
+        last_error: None,
+        created_at: timestamp,
+        updated_at: timestamp,
+    };
+
+    {
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.upsert_document_path(vault_id, &node_id, &change.rel_path)?;
+    }
+
+    let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+    db.enqueue_or_reuse_outbox_operation(&record)?;
+    Ok(())
+}
+
 pub fn encode_sync_payload_v5(
     e2ee_key: &[u8; 32],
     sync_payload: &crate::sync::core::types::SyncPayload,
@@ -319,6 +397,14 @@ fn prepare_one_operation(
             let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.enqueue_or_reuse_outbox_operation(&record)?;
             return Ok(());
+        }
+
+        // Attachments cannot be carried as text. They are published as a small
+        // reference naming encrypted chunks; the chunks themselves are uploaded
+        // separately, before the reference goes out, so a peer never sees a
+        // reference whose bytes are not yet fetchable.
+        if !crate::sync::utils::is_syncable_document(&change.rel_path) {
+            return prepare_asset_operation(db_state, vault, change, e2ee_key, vault_id, provider_id);
         }
 
         // 1. Detected-hash validation (hex::decode BEFORE any path mutation)

@@ -243,9 +243,10 @@ pub fn validate_and_parse_remote_entry(
 
     match (entry_kind, &sync_payload) {
         (SyncEntryKind::Upsert, SyncPayload::Upsert(_)) => Ok(sync_payload),
-        (SyncEntryKind::AssetReference, SyncPayload::AssetReference(_)) => {
-            Err(InboxApplyFailureKind::PendingAsset)
-        }
+        // Attachments are readable now. The bytes are fetched separately, before
+        // the page is applied, so by this point the entry is normally already
+        // finished with; anything still here is waiting on chunks.
+        (SyncEntryKind::AssetReference, SyncPayload::AssetReference(_)) => Ok(sync_payload),
         (SyncEntryKind::Delete, SyncPayload::Delete(del)) => {
             if validate_delete_payload(del) {
                 Ok(sync_payload)
@@ -640,6 +641,28 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     chrono::Utc::now().timestamp_millis(),
                 )?;
             }
+            // Its chunks were not all available when the fetch pass ran. Left
+            // where it is so the next run can try again — not quarantined,
+            // because there is nothing wrong with it.
+            SyncPayload::AssetReference(asset) => {
+                let db = match db_state.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                db.transition_inbox_state(
+                    vault_id,
+                    provider_id,
+                    &inbox_record.operation_id,
+                    InboxState::Applying,
+                    InboxState::PendingAsset,
+                    None,
+                    chrono::Utc::now().timestamp_millis(),
+                )?;
+                result
+                    .errors
+                    .push(format!("{}: waiting on attachment data", asset.rel_path));
+                continue;
+            }
             _ => {
                 let db = match db_state.lock() {
                     Ok(g) => g,
@@ -763,6 +786,18 @@ pub async fn resume_durable_inbox_before_pull<R: tauri::Runtime>(
             use crate::db::sync_inbox::InboxPageState;
             match page.state {
                 InboxPageState::Staged => {
+                    crate::sync::core::asset_sync::fetch_staged_assets(
+                        db_state,
+                        vault_path_obj,
+                        vault_id,
+                        provider_id,
+                        &provider_cursor,
+                        device_id,
+                        e2ee_key,
+                        adapter,
+                        result,
+                    )
+                    .await?;
                     process_staged_inbox_page(
                         db_state,
                         vault_id,
@@ -901,6 +936,19 @@ pub(crate) async fn pull_pages_durable<R: tauri::Runtime>(
                 now,
             )?;
         }
+
+        crate::sync::core::asset_sync::fetch_staged_assets(
+            db_state,
+            vault_path_obj,
+            vault_id,
+            provider_id,
+            &current_cursor,
+            device_id,
+            e2ee_key,
+            adapter,
+            result,
+        )
+        .await?;
 
         process_staged_inbox_page(
             db_state,
@@ -1268,18 +1316,6 @@ impl SyncCoordinator {
         // the deletion guard needs to distinguish "file removed" from "vault not
         // present at all".
         let all_files = crate::sync::utils::collect_local_files(vault_path);
-        let local_files: Vec<String> = all_files
-            .iter()
-            .filter(|p| crate::sync::utils::is_syncable_document(p))
-            .cloned()
-            .collect();
-        let unsupported = all_files.len() - local_files.len();
-        if unsupported > 0 {
-            log::info!(
-                "{} attachment(s) left local: the asset pipeline is not implemented",
-                unsupported
-            );
-        }
 
         // Upserts are prepared before deletions are even looked for, and the
         // order matters. Preparing an upsert is what resolves a file's node_id
@@ -1291,7 +1327,7 @@ impl SyncCoordinator {
             vault_path_obj,
             &vault_id,
             &provider_id,
-            &local_files,
+            &all_files,
         )?;
         let edit_count = edits.len();
         let mut skipped = prepare_durable_outbox_operations(
@@ -1324,6 +1360,19 @@ impl SyncCoordinator {
             &vault_id,
             &provider_id,
         )?);
+
+        // Attachment bytes go up before their references do, so a peer never
+        // sees a reference it cannot resolve.
+        let asset_failures = crate::sync::core::asset_sync::upload_pending_assets(
+            &db_state,
+            vault_path_obj,
+            &vault_id,
+            &provider_id,
+            e2ee_key,
+            adapter.as_ref(),
+        )
+        .await?;
+        skipped.extend(asset_failures);
 
         // 4. Drain newly prepared outbox
         let pushed_post =

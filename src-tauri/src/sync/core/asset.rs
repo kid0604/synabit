@@ -62,6 +62,60 @@ pub fn mime_for(rel_path: &str) -> String {
     .to_string()
 }
 
+/// Wire marker for a chunk, kept distinct from the document formats.
+const CHUNK_FORMAT: u8 = 0x06;
+
+/// Encrypt a chunk so that the same content always produces the same bytes.
+///
+/// The nonce is derived from the plaintext rather than drawn at random. That is
+/// deliberate and it is what makes content addressing work: the reference
+/// published to peers records the hash of the encrypted chunk, and the chunk is
+/// re-derived from the file when it is uploaded, so a random nonce would produce
+/// bytes that no longer match what was published.
+///
+/// Deriving a nonce from the message is safe here in the way that matters —
+/// nonce reuse is dangerous when two *different* messages share one, and a nonce
+/// that is a function of the message cannot do that. What it does reveal is that
+/// two chunks are identical, which the chunk address already reveals and which
+/// deduplication depends on.
+fn encrypt_chunk(vault_key: &[u8; 32], plaintext: &[u8]) -> AppResult<Vec<u8>> {
+    use chacha20poly1305::{
+        aead::{Aead, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+
+    let nonce_key = blake3::derive_key("synabit-asset-chunk-nonce-v1", vault_key);
+    let digest = blake3::keyed_hash(&nonce_key, plaintext);
+    let nonce_bytes: [u8; 24] = digest.as_bytes()[..24].try_into().expect("24 of 32 bytes");
+
+    let cipher = XChaCha20Poly1305::new(vault_key.into());
+    let ciphertext = cipher
+        .encrypt(XNonce::from_slice(&nonce_bytes), plaintext)
+        .map_err(|e| AppError::General(format!("chunk encryption failed: {}", e)))?;
+
+    let mut out = Vec::with_capacity(1 + 24 + ciphertext.len());
+    out.push(CHUNK_FORMAT);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+fn decrypt_chunk(vault_key: &[u8; 32], data: &[u8]) -> AppResult<Vec<u8>> {
+    use chacha20poly1305::{
+        aead::{Aead, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+
+    if data.len() < 1 + 24 || data[0] != CHUNK_FORMAT {
+        return Err(AppError::SyncError("chunk has an unknown format".into()));
+    }
+    let nonce_bytes: [u8; 24] = data[1..25].try_into().expect("checked length");
+    let cipher = XChaCha20Poly1305::new(vault_key.into());
+    cipher
+        .decrypt(&XNonce::from(nonce_bytes), &data[25..])
+        .map_err(|_| AppError::SyncError("chunk failed authentication".into()))
+}
+
 /// One chunk ready to be uploaded.
 pub struct PreparedChunk {
     pub reference: AssetChunkRef,
@@ -92,8 +146,7 @@ pub fn prepare(
         let id = chunk_id(vault_key, piece);
         // Compression is left off: these are already-compressed formats far more
         // often than not, and spending time to grow a JPEG helps nobody.
-        let encrypted = crate::sync::core::crypto::encrypt_v5(vault_key, piece, false)
-            .map_err(|e| AppError::General(format!("Failed to encrypt asset chunk: {}", e)))?;
+        let encrypted = encrypt_chunk(vault_key, piece)?;
 
         let compressed_len = u32::try_from(encrypted.len()).map_err(|_| {
             AppError::General("Encrypted asset chunk exceeds the addressable size".into())
@@ -157,7 +210,7 @@ pub fn reassemble(
                 asset.rel_path
             )));
         }
-        let plain = crate::sync::core::crypto::decrypt_v5(vault_key, &encrypted[1..])
+        let plain = decrypt_chunk(vault_key, encrypted)
             .map_err(|e| AppError::SyncError(format!("asset {}: {}", asset.rel_path, e)))?;
         out.extend_from_slice(&plain);
     }
@@ -275,5 +328,44 @@ mod tests {
             .map(|c| (c.reference, c.encrypted))
             .collect();
         assert!(reassemble(&[9u8; 32], &asset, &fetched).is_err());
+    }
+
+    #[test]
+    fn the_same_content_encrypts_to_the_same_bytes() {
+        // The reference published to peers records the hash of the encrypted
+        // chunk, and the chunk is re-derived from the file at upload time. If
+        // encryption were randomised those bytes would no longer match and every
+        // attachment would arrive "corrupt".
+        let (_, first) = prepare(&KEY, "a.bin", "a.bin", b"identical content").unwrap();
+        let (_, second) = prepare(&KEY, "a.bin", "a.bin", b"identical content").unwrap();
+        assert_eq!(first[0].encrypted, second[0].encrypted);
+        assert_eq!(first[0].reference.chunk_hash, second[0].reference.chunk_hash);
+    }
+
+    #[test]
+    fn different_content_does_not_share_a_nonce() {
+        let (_, a) = prepare(&KEY, "a.bin", "a.bin", b"one message").unwrap();
+        let (_, b) = prepare(&KEY, "a.bin", "a.bin", b"another message").unwrap();
+        assert_ne!(a[0].encrypted[1..25], b[0].encrypted[1..25], "nonces must differ");
+    }
+
+    #[test]
+    fn a_tampered_chunk_fails_authentication() {
+        let (asset, prepared) = prepare(&KEY, "a.bin", "a.bin", b"trusted bytes").unwrap();
+        let mut fetched: Vec<(AssetChunkRef, Vec<u8>)> = prepared
+            .into_iter()
+            .map(|c| (c.reference, c.encrypted))
+            .collect();
+        // Flip a bit inside the ciphertext and repair the outer hash, so only
+        // the cipher's own authentication can catch it.
+        let last = fetched[0].1.len() - 1;
+        fetched[0].1[last] ^= 0x01;
+        let repaired = *blake3::hash(&fetched[0].1).as_bytes();
+        let mut asset = asset;
+        asset.chunks[0].chunk_hash = repaired;
+        fetched[0].0.chunk_hash = repaired;
+
+        let err = reassemble(&KEY, &asset, &fetched).unwrap_err();
+        assert!(err.to_string().contains("authentication"), "unexpected: {err}");
     }
 }

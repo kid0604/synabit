@@ -519,6 +519,9 @@ fn frc2b_r1_02_kind_payload_mismatch_and_trailing_bytes_are_corrupt() {
 
 #[test]
 fn frc2b_r1_02_matching_asset_delete_and_upsert_have_distinct_results() {
+    // Attachments used to be rejected here as PendingAsset, because nothing
+    // could carry them. They are readable now; the bytes are fetched separately
+    // before the page is applied.
     let key = [9; 32];
     let asset = AssetRef {
         asset_id: [1; 32],
@@ -530,7 +533,7 @@ fn frc2b_r1_02_matching_asset_delete_and_upsert_have_distinct_results() {
         chunks: Vec::new(),
     };
     let (asset_bytes, asset_hash) =
-        encrypted_typed_payload(&SyncPayload::AssetReference(asset), &key);
+        encrypted_typed_payload(&SyncPayload::AssetReference(asset.clone()), &key);
     assert_eq!(
         validate_and_parse_remote_entry(
             &asset_bytes,
@@ -538,7 +541,7 @@ fn frc2b_r1_02_matching_asset_delete_and_upsert_have_distinct_results() {
             &key,
             &SyncEntryKind::AssetReference,
         ),
-        Err(InboxApplyFailureKind::PendingAsset)
+        Ok(SyncPayload::AssetReference(asset))
     );
 
     let (delete_bytes, delete_hash) =

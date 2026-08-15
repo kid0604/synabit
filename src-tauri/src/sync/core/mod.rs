@@ -1,3 +1,4 @@
+pub mod asset_sync;
 pub mod asset;
 pub mod apply;
 pub mod change;

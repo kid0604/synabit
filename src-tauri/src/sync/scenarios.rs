@@ -286,24 +286,20 @@ async fn copied_files_that_share_an_identity_each_get_their_own() {
 }
 
 #[tokio::test]
-async fn attachments_are_left_alone_and_do_not_pollute_every_sync() {
-    // Binary files cannot be carried as CRDT text, and one that fails to publish
-    // never records a baseline — so it used to be re-read, re-rejected and
-    // re-reported on every single sync, forever.
+async fn an_attachment_does_not_make_every_sync_report_errors() {
+    // Before attachments could be carried, each one was read as UTF-8, rejected,
+    // and — because a file that never publishes never records a baseline —
+    // re-read and re-reported on every run for the life of the vault.
     let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);
 
-    a.write("Notes/note.md", "# Note\n\nText travels.\n");
-    std::fs::write(a.vault_path().join("photo.jpg"), [0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
+    a.write("Notes/note.md", "# Note\n");
+    std::fs::write(a.vault_path().join("photo.jpg"), png_bytes(7)).unwrap();
 
     let first = a.sync_ok().await;
-    assert!(
-        first.errors.is_empty(),
-        "an attachment is not an error: {:?}",
-        first.errors
-    );
+    assert!(first.errors.is_empty(), "unexpected errors: {:?}", first.errors);
 
-    // And the vault settles: nothing is re-detected on the next pass.
+    // And it settles: nothing is re-detected once published.
     let second = a.sync_ok().await;
     assert_eq!(second.pushed, 0, "sync did not settle");
     assert!(second.errors.is_empty());
@@ -311,9 +307,99 @@ async fn attachments_are_left_alone_and_do_not_pollute_every_sync() {
     b.sync_ok().await;
     assert!(b.exists("Notes/note.md"));
     assert!(
-        !b.exists("photo.jpg"),
-        "attachments are not synced yet, and must not appear to be"
+        b.vault_path().join("photo.jpg").exists(),
+        "the attachment should now travel too"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+/// A small binary that is definitely not valid UTF-8.
+fn png_bytes(seed: u8) -> Vec<u8> {
+    let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    v.extend((0..4096u32).map(|i| (i as u8) ^ seed));
+    v
+}
+
+#[tokio::test]
+async fn an_attachment_reaches_the_other_device_intact() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    let picture = png_bytes(0x5A);
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/photo.png"), &picture).unwrap();
+    a.write("Notes/note.md", "# Note\n\n![](assets/photo.png)\n");
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let received = std::fs::read(b.vault_path().join("assets/photo.png"))
+        .expect("the attachment never arrived");
+    assert_eq!(received, picture, "the attachment arrived corrupted");
+    assert!(b.exists("Notes/note.md"), "the note referencing it should arrive too");
+}
+
+#[tokio::test]
+async fn a_large_attachment_survives_being_chunked() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    // Larger than one chunk, and not a round multiple of it.
+    let big: Vec<u8> = (0..(crate::sync::core::asset::CHUNK_BYTES * 2 + 12_345))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/clip.mp4"), &big).unwrap();
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let received = std::fs::read(b.vault_path().join("assets/clip.mp4")).expect("never arrived");
+    assert_eq!(received.len(), big.len(), "wrong length after reassembly");
+    assert_eq!(received, big, "content differs after reassembly");
+}
+
+#[tokio::test]
+async fn an_unchanged_attachment_is_not_uploaded_twice() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let a = &devices[0];
+
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/photo.png"), png_bytes(1)).unwrap();
+
+    a.sync_ok().await;
+    let after_first = mailbox.chunk_bytes();
+    assert!(after_first > 0, "nothing was uploaded");
+
+    let second = a.sync_ok().await;
+    assert_eq!(second.pushed, 0, "an unchanged attachment was published again");
+    assert_eq!(
+        mailbox.chunk_bytes(),
+        after_first,
+        "an unchanged attachment was uploaded again"
+    );
+    let _ = &devices[1];
+}
+
+#[tokio::test]
+async fn deleting_an_attachment_removes_it_from_the_other_device() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/photo.png"), png_bytes(2)).unwrap();
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(b.exists("assets/photo.png"), "precondition: B has it");
+
+    std::fs::remove_file(a.vault_path().join("assets/photo.png")).unwrap();
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(!b.exists("assets/photo.png"), "the deletion did not travel");
 }
 
 // ---------------------------------------------------------------------------

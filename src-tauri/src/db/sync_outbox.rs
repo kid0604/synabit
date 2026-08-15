@@ -294,6 +294,70 @@ fn decode_outbox_row(row: &Row) -> Result<OutboxRecord, rusqlite::Error> {
 }
 
 impl DbBridge {
+    /// Attachments whose chunks have not been uploaded yet.
+    ///
+    /// They sit in `Prepared` until their bytes reach the server, because a
+    /// reference that arrives before its chunks is a reference to nothing.
+    pub fn get_prepared_asset_operations(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+    ) -> AppResult<Vec<([u8; 16], String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT operation_id, rel_path FROM sync_outbox
+                 WHERE vault_id = ?1 AND provider_id = ?2
+                   AND entry_kind = 'asset_reference' AND state = 'prepared'
+                   AND rel_path IS NOT NULL
+                 ORDER BY created_at, operation_id",
+            )
+            .map_err(|e| AppError::General(format!("DB prepare asset query: {}", e)))?;
+
+        let rows = stmt
+            .query_map(params![vault_id, provider_id], |row| {
+                Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::General(format!("DB query assets: {}", e)))?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, path) = row.map_err(|e| AppError::General(e.to_string()))?;
+            let op: [u8; 16] = id
+                .try_into()
+                .map_err(|_| AppError::General("operation_id must be 16 bytes".into()))?;
+            out.push((op, path));
+        }
+        Ok(out)
+    }
+
+    /// Release an attachment for dispatch now that its chunks are stored.
+    pub fn mark_asset_operation_ready(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+        operation_id: &[u8; 16],
+        now: i64,
+    ) -> AppResult<()> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE sync_outbox SET state = 'ready', updated_at = ?4
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3
+                   AND state = 'prepared'",
+                params![vault_id, provider_id, operation_id.as_slice(), now],
+            )
+            .map_err(|e| AppError::General(format!("DB Error releasing asset: {}", e)))?;
+
+        if rows != 1 {
+            return Err(AppError::General(format!(
+                "asset operation {} was not in prepared state",
+                hex::encode(operation_id)
+            )));
+        }
+        Ok(())
+    }
+
     pub fn insert_outbox_record(&self, record: &OutboxRecord) -> AppResult<()> {
         record.validate_complete()?;
 

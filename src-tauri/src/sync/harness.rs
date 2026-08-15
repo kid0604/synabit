@@ -56,6 +56,9 @@ struct MailboxInner {
     /// Reject every push, so tests can build a backlog the way an offline
     /// device does without breaking the transport itself.
     reject_all: bool,
+    /// Encrypted attachment chunks, addressed the way the server addresses
+    /// them: one blob per chunk id.
+    chunks: HashMap<[u8; 32], Vec<u8>>,
 }
 
 /// Append-only mailbox shared by every device in one harness vault.
@@ -123,6 +126,17 @@ impl InMemoryMailbox {
 
     pub fn accept_pushes(&self) {
         self.lock().reject_all = false;
+    }
+
+    /// How many attachment chunks the mailbox is holding.
+    pub fn chunk_count(&self) -> usize {
+        self.lock().chunks.len()
+    }
+
+    /// Total bytes of attachment storage, for asserting that a re-push of
+    /// unchanged content does not upload it again.
+    pub fn chunk_bytes(&self) -> usize {
+        self.lock().chunks.values().map(|c| c.len()).sum()
     }
 
     /// Corrupt a stored entry's payload so it fails hash verification on pull.
@@ -314,12 +328,13 @@ impl SyncAdapter for HarnessAdapter {
         Ok(())
     }
 
-    async fn push_asset(&self, _hash: [u8; 32], _data: Vec<u8>) -> AppResult<()> {
-        Err(AppError::UnsupportedCapability("push_asset".into()))
+    async fn push_asset(&self, hash: [u8; 32], data: Vec<u8>) -> AppResult<()> {
+        self.mailbox.lock().chunks.insert(hash, data);
+        Ok(())
     }
 
-    async fn pull_asset(&self, _hash: [u8; 32]) -> AppResult<Option<Vec<u8>>> {
-        Err(AppError::UnsupportedCapability("pull_asset".into()))
+    async fn pull_asset(&self, hash: [u8; 32]) -> AppResult<Option<Vec<u8>>> {
+        Ok(self.mailbox.lock().chunks.get(&hash).cloned())
     }
 }
 
