@@ -420,7 +420,7 @@ impl DbBridge {
     }
 }
 
-const LATEST_SYNC_SCHEMA_VERSION: i64 = 11;
+const LATEST_SYNC_SCHEMA_VERSION: i64 = 12;
 
 pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")
@@ -506,6 +506,7 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
             9 => migrate_sync_schema_v9(conn)?,
             10 => migrate_sync_schema_v10(conn)?,
             11 => migrate_sync_schema_v11(conn)?,
+            12 => migrate_sync_schema_v12(conn)?,
             _ => {
                 return Err(AppError::General(format!(
                     "No migration defined for version {}",
@@ -1050,6 +1051,67 @@ pub(crate) fn migrate_sync_schema_v6(conn: &mut Connection) -> AppResult<()> {
 
     tx.commit()
         .map_err(|e| AppError::General(format!("Failed to commit sync schema v6: {}", e)))?;
+
+    Ok(())
+}
+
+/// Collect CRDT state that no document can reach.
+///
+/// Every read of a document's history goes through its identity, and an identity
+/// with no entry in the path map belongs to no file. Such state is unreachable:
+/// nothing will load it, and nothing will add to it.
+///
+/// A vault was found with 198 such records holding 65MB — almost the entire
+/// history table. They came from identity churn: when a file's id changed, the
+/// old id's path entry went with it and its history was left behind. Attachments
+/// contributed too, since binary content was once walked like any other file and
+/// stored as though it were prose.
+///
+/// This is a repair rather than a routine. Identities stop churning now that a
+/// file which loses its own id reuses the one already recorded for its path.
+pub(crate) fn migrate_sync_schema_v12(conn: &mut Connection) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp();
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
+
+    tx.execute(
+        "DELETE FROM sync_crdt_updates AS u
+         WHERE NOT EXISTS (
+             SELECT 1 FROM sync_document_paths p
+             WHERE p.vault_id = u.vault_id AND p.doc_id = u.doc_id
+         )",
+        [],
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v12 updates): {}", e)))?;
+
+    tx.execute(
+        "DELETE FROM sync_crdt_documents AS d
+         WHERE NOT EXISTS (
+             SELECT 1 FROM sync_document_paths p
+             WHERE p.vault_id = d.vault_id AND p.doc_id = d.doc_id
+         )",
+        [],
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v12 documents): {}", e)))?;
+
+    tx.execute(
+        "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
+         VALUES (1, 12, ?1)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             version = excluded.version,
+             updated_at = excluded.updated_at;",
+        params![now],
+    )
+    .map_err(|e| {
+        AppError::General(format!(
+            "DB Schema Error (sync_schema_meta update v12): {}",
+            e
+        ))
+    })?;
+
+    tx.commit()
+        .map_err(|e| AppError::General(format!("Failed to commit sync schema v12: {}", e)))?;
 
     Ok(())
 }

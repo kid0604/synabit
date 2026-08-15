@@ -26,6 +26,29 @@ fn rebuilt_v7_connection() -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sync_document_paths (
+             vault_id TEXT NOT NULL,
+             doc_id TEXT NOT NULL,
+             rel_path TEXT NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (vault_id, doc_id),
+             UNIQUE (vault_id, rel_path)
+         );
+         CREATE TABLE IF NOT EXISTS sync_crdt_documents (
+             vault_id TEXT NOT NULL,
+             doc_id TEXT NOT NULL,
+             snapshot BLOB NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (vault_id, doc_id)
+         );
+         CREATE TABLE IF NOT EXISTS sync_crdt_updates (
+             vault_id TEXT NOT NULL,
+             doc_id TEXT NOT NULL,
+             update_id INTEGER NOT NULL,
+             delta BLOB NOT NULL,
+             timestamp INTEGER NOT NULL,
+             PRIMARY KEY (vault_id, update_id)
+         );
          CREATE TABLE IF NOT EXISTS sync_outbox (
              vault_id TEXT NOT NULL,
              provider_id TEXT NOT NULL,

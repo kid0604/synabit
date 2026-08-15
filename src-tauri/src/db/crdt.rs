@@ -181,15 +181,25 @@ impl DbBridge {
         if vault_id.trim().is_empty() {
             return Err(AppError::General("vault_id cannot be empty".into()));
         }
+        // Compact on accumulated size as well as row count. Counting rows alone
+        // missed the case that actually matters: a document holding one very
+        // large update never reached the threshold and was never collapsed, so
+        // it sat in the update log forever. Vaults were found carrying half a
+        // megabyte per document this way.
+        const COMPACT_AFTER_UPDATES: i64 = 20;
+        const COMPACT_AFTER_BYTES: i64 = 256 * 1024;
+
         let doc_ids: Vec<String> = {
             let mut stmt = self
                 .conn
                 .prepare(
-                    "SELECT doc_id, COUNT(*) as cnt FROM sync_crdt_updates WHERE vault_id = ?1 GROUP BY doc_id HAVING cnt > 20",
+                    "SELECT doc_id FROM sync_crdt_updates WHERE vault_id = ?1
+                     GROUP BY doc_id
+                     HAVING COUNT(*) > ?2 OR SUM(LENGTH(delta)) > ?3",
                 )
                 .map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
             let mut rows = stmt
-                .query(params![vault_id])
+                .query(params![vault_id, COMPACT_AFTER_UPDATES, COMPACT_AFTER_BYTES])
                 .map_err(|e| AppError::General(e.to_string()))?;
             let mut list = Vec::new();
             while let Some(row) = rows.next().map_err(|e| AppError::General(e.to_string()))? {
@@ -199,8 +209,13 @@ impl DbBridge {
             list
         };
 
+        // One document that cannot be rebuilt must not stop the others being
+        // compacted — a single unreadable snapshot used to leave every other
+        // document's history growing unchecked.
         for doc_id in doc_ids {
-            self.compact_crdt_history(vault_id, &doc_id)?;
+            if let Err(e) = self.compact_crdt_history(vault_id, &doc_id) {
+                log::warn!("could not compact CRDT history for {}: {}", doc_id, e);
+            }
         }
         Ok(())
     }
@@ -1416,5 +1431,75 @@ impl DbBridge {
         tx.commit()
             .map_err(|e| AppError::General(format!("DB commit stat cache: {}", e)))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use crate::db::DbBridge;
+
+    fn db_with_doc() -> DbBridge {
+        let mut db = DbBridge::new_in_memory_full().unwrap();
+        db.insert_sync_vault_mapping(&crate::db::sync_vault::SyncVaultRecord {
+            vault_id: "v1".into(),
+            canonical_root: "/v1".into(),
+            metadata_version: 1,
+            created_at: 100,
+            updated_at: 100,
+        })
+        .unwrap();
+        db
+    }
+
+    /// A document holding one very large update never reached a row-count
+    /// threshold, so it was never collapsed and sat in the update log forever.
+    #[test]
+    fn one_oversized_update_is_compacted_even_though_it_is_a_single_row() {
+        let mut db = db_with_doc();
+
+        let doc = loro::LoroDoc::new();
+        doc.get_text("content").insert(0, &"x".repeat(400_000)).unwrap();
+        doc.commit();
+        db.save_crdt_delta("v1", "doc", doc.export_snapshot()).unwrap();
+
+        let before: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sync_crdt_updates", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, 1, "precondition: exactly one, oversized, update");
+
+        db.compact_all_crdt("v1").unwrap();
+
+        let after: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sync_crdt_updates", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, 0, "the oversized update should have been collapsed");
+
+        let snapshots: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sync_crdt_documents", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(snapshots, 1, "and folded into a snapshot");
+    }
+
+    /// A small amount of history is left alone: compacting on every save would
+    /// rewrite the whole document for one keystroke.
+    #[test]
+    fn a_little_history_is_left_to_accumulate() {
+        let mut db = db_with_doc();
+        let doc = loro::LoroDoc::new();
+        doc.get_text("content").insert(0, "small").unwrap();
+        doc.commit();
+        db.save_crdt_delta("v1", "doc", doc.export_snapshot()).unwrap();
+
+        db.compact_all_crdt("v1").unwrap();
+
+        let after: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sync_crdt_updates", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, 1, "a single small update is not worth collapsing");
     }
 }
