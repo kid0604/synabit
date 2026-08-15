@@ -12,6 +12,14 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.sync.address=:4433/udp"
+      # Must stay well above iroh's QUIC keep-alive, which is 5s
+      # (HEARTBEAT_INTERVAL in iroh 1.0). Traefik's default UDP session timeout
+      # is 3s, so the client's address mapping expired between every heartbeat.
+      # Client-initiated traffic still got through, because sending re-creates
+      # the mapping, but the server's "new data available" push had nowhere to
+      # go for most of each cycle. That failure is near-invisible: the app's
+      # periodic sync still runs, so syncing works and merely stops being live.
+      - "--entrypoints.sync.udp.timeout=300s"
       # Cấu hình tự động lấy chứng chỉ SSL Let's Encrypt
       - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
       - "--certificatesresolvers.myresolver.acme.email=admin@synabit.net"
@@ -96,20 +104,12 @@ services:
       - synabit-network
     restart: unless-stopped
 
-  coordinator:
-    build:
-      context: ../coordinator-server
-      dockerfile: Dockerfile
-    container_name: synabit-coordinator
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.coordinator.rule=Host(`coordinator.synabit.net`)"
-      - "traefik.http.routers.coordinator.entrypoints=websecure"
-      - "traefik.http.routers.coordinator.tls.certresolver=myresolver"
-      - "traefik.http.services.coordinator.loadbalancer.server.port=8090"
-    networks:
-      - synabit-network
-    restart: unless-stopped
+  # The coordinator (device pairing) is intentionally not deployed. The pairing
+  # UI calls p2p_pair_initiate, p2p_pair_accept, p2p_list_devices,
+  # p2p_pair_cancel and p2p_remove_device, none of which are registered as Tauri
+  # commands, and nothing in the app ever contacts coordinator.synabit.net. The
+  # service is in the repository under coordinator-server/ for when P2P pairing
+  # is picked back up.
 
 networks:
   synabit-network:
