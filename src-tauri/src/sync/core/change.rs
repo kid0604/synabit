@@ -354,11 +354,33 @@ fn prepare_one_operation(
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.get_node_id_by_path(vault_id, &change.rel_path)?
         };
-        let actual_node_id = crate::sync::core::identity::get_or_assign_node_id_with_hint(
+        let mut actual_node_id = crate::sync::core::identity::get_or_assign_node_id_with_hint(
             vault,
             &file_path,
             known_id.as_deref(),
         )?;
+
+        // A file that carries an id already held by a different, still-present
+        // file is a copy that brought the original's metadata with it. Both are
+        // real documents, so the copy needs an identity of its own. Left alone,
+        // the two overwrite each other's queued work — the outbox holds one
+        // entry per document — and neither ever settles, which spins sync
+        // forever.
+        let clashing_owner = {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.get_path_by_node_id(vault_id, &actual_node_id)?
+        };
+        if let Some(other_path) = clashing_owner {
+            if other_path != change.rel_path && vault.join(&other_path).exists() {
+                log::warn!(
+                    "{} claims the identity of {}; giving it a new one",
+                    change.rel_path,
+                    other_path
+                );
+                actual_node_id =
+                    crate::sync::core::identity::assign_fresh_node_id(vault, &file_path)?;
+            }
+        }
 
         // 4. `get_or_assign_node_id` may have rewritten the file to inject the
         //    id, so both the text we publish and the hash we record must

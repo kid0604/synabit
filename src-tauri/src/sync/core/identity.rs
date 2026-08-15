@@ -301,6 +301,65 @@ pub fn get_or_assign_node_id_with_hint(
     }
 }
 
+/// Give a file a brand-new identity, replacing whatever it carries.
+///
+/// Used when a file turns out to be carrying an id that already belongs to a
+/// different document — copying a note or a whiteboard duplicates its metadata,
+/// so several files end up claiming to be the same thing. They are separate
+/// files on disk, so they are separate documents, and each needs its own id
+/// before any of them can be tracked: the path map allows one path per id, and
+/// the outbox coalesces per document, so duplicates otherwise overwrite each
+/// other's queued work forever.
+pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<String> {
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let new_id = uuid::Uuid::new_v4().to_string();
+
+    if ext == "md" {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
+        let re = regex::Regex::new(r"(?m)^node_id:\s*[a-zA-Z0-9\-]+\s*$").unwrap();
+        let updated = if re.is_match(&content) {
+            re.replace(&content, format!("node_id: {}", new_id).as_str())
+                .to_string()
+        } else {
+            inject_markdown_id(&content, &new_id)
+        };
+        std::fs::write(file_path, updated)
+            .map_err(|e| AppError::General(format!("Failed to write fresh node_id: {}", e)))?;
+        return Ok(new_id);
+    }
+
+    if ext == "json" || ext == "canvas" {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
+        let mut json_val: Value = serde_json::from_str(&content)
+            .map_err(|e| AppError::General(format!("Failed to parse JSON for identity: {}", e)))?;
+        let root_obj = json_val
+            .as_object_mut()
+            .ok_or_else(|| AppError::General("JSON root is not an object".to_string()))?;
+
+        let meta = root_obj
+            .entry("metadata".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let meta_obj = meta.as_object_mut().ok_or_else(|| {
+            AppError::General("JSON metadata field is not an object".to_string())
+        })?;
+        meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
+
+        let rendered = serde_json::to_string_pretty(&json_val)
+            .map_err(|e| AppError::General(format!("Failed to render JSON: {}", e)))?;
+        std::fs::write(file_path, rendered)
+            .map_err(|e| AppError::General(format!("Failed to write fresh node_id: {}", e)))?;
+        return Ok(new_id);
+    }
+
+    // Anything else is identified by its path, which is already unique.
+    Ok(crate::path_utils::to_relative(
+        file_path,
+        vault_path.to_string_lossy().as_ref(),
+    ))
+}
+
 /// Helper to inject `node_id` into Markdown frontmatter
 fn inject_markdown_id(content: &str, node_id: &str) -> String {
     if content.starts_with("---\n") || content.starts_with("---\r\n") {

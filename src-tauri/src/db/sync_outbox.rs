@@ -405,7 +405,9 @@ impl DbBridge {
         }
 
         // No exact match, but there may be an earlier revision of this same
-        // document still waiting to go out. Overwrite it rather than queueing
+        // document still waiting to go out. Matched on path as well as id: if
+        // two files ever claim one identity, coalescing on the id alone makes
+        // them overwrite each other's queued entry and neither ever settles. Overwrite it rather than queueing
         // another entry: each payload carries a complete CRDT snapshot, so the
         // newer one already contains everything the older one did. Editing a
         // note fifty times while offline used to queue fifty full snapshots and
@@ -419,6 +421,7 @@ impl DbBridge {
             .query_row(
                 "SELECT operation_id FROM sync_outbox
                  WHERE vault_id = ?1 AND provider_id = ?2 AND node_id = ?3 AND entry_kind = ?4
+                   AND rel_path IS ?5
                    AND state IN ('prepared', 'ready', 'failed')
                  ORDER BY created_at, operation_id LIMIT 1",
                 params![
@@ -426,6 +429,7 @@ impl DbBridge {
                     record.provider_id,
                     record.node_id,
                     record.entry_kind.to_string(),
+                    record.rel_path,
                 ],
                 |row| row.get(0),
             )

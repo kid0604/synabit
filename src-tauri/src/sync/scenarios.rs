@@ -255,6 +255,36 @@ async fn one_unpublishable_file_does_not_block_the_rest() {
     assert!(!b.exists("Data/awkward.json"));
 }
 
+#[tokio::test]
+async fn copied_files_that_share_an_identity_each_get_their_own() {
+    // Duplicating a note or a whiteboard copies its metadata, so several files
+    // end up claiming to be the same document. They are separate files, so they
+    // are separate documents: sharing one identity made them overwrite each
+    // other's queued work, so neither ever settled and sync never went idle.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    let shared = r#"{"metadata":{"node_id":"shared-identity"},"title":"board"}"#;
+    a.write("Boards/one.json", shared);
+    a.write("Boards/two.json", shared);
+
+    a.sync_ok().await;
+
+    // Settled: a second pass with no user edits must publish nothing further.
+    let after_first = _mailbox.len();
+    let second = a.sync_ok().await;
+    assert_eq!(
+        _mailbox.len(),
+        after_first,
+        "sync did not settle — it published again with nothing changed"
+    );
+    assert_eq!(second.pushed, 0, "a quiet vault should push nothing");
+
+    b.sync_ok().await;
+    assert!(b.exists("Boards/one.json"), "one.json never arrived");
+    assert!(b.exists("Boards/two.json"), "two.json never arrived");
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------

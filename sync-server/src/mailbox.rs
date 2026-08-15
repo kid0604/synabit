@@ -38,8 +38,10 @@ pub struct MailboxHandler {
     concurrent_connections: Arc<Mutex<HashMap<String, u32>>>,
     /// Registry of active connections waiting for push notifications.
     /// Maps vault_hash (hex) to a list of channels.
+    /// Per-vault push channels, each tagged with the device it belongs to so a
+    /// device is never told about its own writes.
     active_subscriptions:
-        Arc<tokio::sync::RwLock<HashMap<String, Vec<tokio::sync::mpsc::Sender<u64>>>>>,
+        Arc<tokio::sync::RwLock<HashMap<String, Vec<(String, tokio::sync::mpsc::Sender<u64>)>>>>,
 }
 
 impl MailboxHandler {
@@ -277,7 +279,7 @@ impl MailboxHandler {
             let mut subs = self.active_subscriptions.write().await;
             subs.entry(vault_hash_hex.clone())
                 .or_default()
-                .push(notify_tx);
+                .push((device_id.clone(), notify_tx));
         }
 
         // Spawn a task to read requests, because read_message is not cancellation-safe.
@@ -343,7 +345,7 @@ impl MailboxHandler {
             let mut subs = self.active_subscriptions.write().await;
             if let Some(list) = subs.get_mut(&vault_hash_hex) {
                 // Since Sender doesn't have an ID, we just remove all closed channels
-                list.retain(|tx| !tx.is_closed());
+                list.retain(|(_, tx)| !tx.is_closed());
                 if list.is_empty() {
                     subs.remove(&vault_hash_hex);
                 }
@@ -354,10 +356,18 @@ impl MailboxHandler {
     }
 
     /// Notify subscribers when new sequence data is available.
-    async fn notify_subscribers(&self, vault_hash: &str, seq: u64) {
+    /// Tell a vault's other devices that new data has arrived.
+    ///
+    /// The device that produced the change is skipped. Notifying it made it sync
+    /// again immediately, which pushed again, which notified it again — a device
+    /// syncing alone spun at machine speed and never went idle.
+    async fn notify_subscribers(&self, vault_hash: &str, seq: u64, source_device: &str) {
         let subs = self.active_subscriptions.read().await;
         if let Some(list) = subs.get(vault_hash) {
-            for tx in list {
+            for (device, tx) in list {
+                if device == source_device {
+                    continue;
+                }
                 let _ = tx.send(seq).await;
             }
         }
@@ -764,7 +774,7 @@ impl MailboxHandler {
                     size = blob_size,
                     "document pushed"
                 );
-                self.notify_subscribers(vault_hash, seq).await;
+                self.notify_subscribers(vault_hash, seq, device_id).await;
                 Ok(MailboxResponse::PushOk { seq })
             }
             crate::db::PushOutcome::Conflict => Ok(MailboxResponse::Error {
