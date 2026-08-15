@@ -420,7 +420,7 @@ impl DbBridge {
     }
 }
 
-const LATEST_SYNC_SCHEMA_VERSION: i64 = 9;
+const LATEST_SYNC_SCHEMA_VERSION: i64 = 10;
 
 pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")
@@ -476,6 +476,7 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
             7 => migrate_sync_schema_v7(conn)?,
             8 => migrate_sync_schema_v8(conn)?,
             9 => migrate_sync_schema_v9(conn)?,
+            10 => migrate_sync_schema_v10(conn)?,
             _ => {
                 return Err(AppError::General(format!(
                     "No migration defined for version {}",
@@ -1020,6 +1021,62 @@ pub(crate) fn migrate_sync_schema_v6(conn: &mut Connection) -> AppResult<()> {
 
     tx.commit()
         .map_err(|e| AppError::General(format!("Failed to commit sync schema v6: {}", e)))?;
+
+    Ok(())
+}
+
+/// Cache each file's size, modification time and content hash.
+///
+/// Change detection hashed every file in the vault on every sync, so a vault of
+/// a few thousand notes re-read and re-digested all of them each time the
+/// watcher fired. The cache lets an unmodified file be recognised from its
+/// metadata alone.
+///
+/// This table is strictly an optimisation and never a source of truth: an entry
+/// that is missing, stale or wrong only costs a hash. What a file is compared
+/// *against* is still `sync_document_baselines`.
+pub(crate) fn migrate_sync_schema_v10(conn: &mut Connection) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp();
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
+
+    tx.execute_batch(
+        "CREATE TABLE sync_stat_cache (
+            vault_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            rel_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            mtime_ms INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (vault_id, provider_id, rel_path),
+            FOREIGN KEY (vault_id, provider_id)
+                REFERENCES sync_provider_state(vault_id, provider_id)
+                ON DELETE CASCADE,
+            CHECK (file_size >= 0),
+            CHECK (length(content_hash) = 64)
+        );",
+    )
+    .map_err(|e| AppError::General(format!("DB Schema Error (sync v10 migration): {}", e)))?;
+
+    tx.execute(
+        "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
+         VALUES (1, 10, ?1)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             version = excluded.version,
+             updated_at = excluded.updated_at;",
+        params![now],
+    )
+    .map_err(|e| {
+        AppError::General(format!(
+            "DB Schema Error (sync_schema_meta update v10): {}",
+            e
+        ))
+    })?;
+
+    tx.commit()
+        .map_err(|e| AppError::General(format!("Failed to commit sync schema v10: {}", e)))?;
 
     Ok(())
 }

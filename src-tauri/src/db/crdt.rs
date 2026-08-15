@@ -1274,3 +1274,127 @@ mod tests {
         assert_eq!(before_updates, after_updates);
     }
 }
+
+/// One row of the change-detection stat cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatCacheEntry {
+    pub file_size: u64,
+    pub mtime_ms: i64,
+    pub content_hash: String,
+}
+
+impl DbBridge {
+    /// Load every baseline for a provider in one query.
+    ///
+    /// Change detection used to take the database lock once per file; a vault of
+    /// a few thousand notes meant a few thousand lock acquisitions per sync.
+    pub fn load_document_baselines(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+    ) -> AppResult<std::collections::HashMap<String, String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT rel_path, content_hash FROM sync_document_baselines
+                 WHERE vault_id = ?1 AND provider_id = ?2",
+            )
+            .map_err(|e| AppError::General(format!("DB prepare baselines: {}", e)))?;
+
+        let rows = stmt
+            .query_map(params![vault_id, provider_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::General(format!("DB query baselines: {}", e)))?;
+
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (path, hash) = row.map_err(|e| AppError::General(e.to_string()))?;
+            out.insert(path, hash);
+        }
+        Ok(out)
+    }
+
+    /// Load the whole stat cache for a provider in one query.
+    pub fn load_stat_cache(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+    ) -> AppResult<std::collections::HashMap<String, StatCacheEntry>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT rel_path, file_size, mtime_ms, content_hash FROM sync_stat_cache
+                 WHERE vault_id = ?1 AND provider_id = ?2",
+            )
+            .map_err(|e| AppError::General(format!("DB prepare stat cache: {}", e)))?;
+
+        let rows = stmt
+            .query_map(params![vault_id, provider_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    StatCacheEntry {
+                        file_size: row.get::<_, i64>(1)?.max(0) as u64,
+                        mtime_ms: row.get::<_, i64>(2)?,
+                        content_hash: row.get::<_, String>(3)?,
+                    },
+                ))
+            })
+            .map_err(|e| AppError::General(format!("DB query stat cache: {}", e)))?;
+
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (path, entry) = row.map_err(|e| AppError::General(e.to_string()))?;
+            out.insert(path, entry);
+        }
+        Ok(out)
+    }
+
+    /// Replace the stat cache for a provider with exactly what was observed on
+    /// disk, so entries for files that no longer exist do not accumulate.
+    pub fn replace_stat_cache(
+        &mut self,
+        vault_id: &str,
+        provider_id: &str,
+        entries: &[(String, StatCacheEntry)],
+        now: i64,
+    ) -> AppResult<()> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|e| AppError::General(format!("DB tx stat cache: {}", e)))?;
+
+        tx.execute(
+            "DELETE FROM sync_stat_cache WHERE vault_id = ?1 AND provider_id = ?2",
+            params![vault_id, provider_id],
+        )
+        .map_err(|e| AppError::General(format!("DB clear stat cache: {}", e)))?;
+
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO sync_stat_cache
+                     (vault_id, provider_id, rel_path, file_size, mtime_ms, content_hash, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )
+                .map_err(|e| AppError::General(format!("DB prepare stat insert: {}", e)))?;
+
+            for (rel_path, entry) in entries {
+                stmt.execute(params![
+                    vault_id,
+                    provider_id,
+                    rel_path,
+                    entry.file_size as i64,
+                    entry.mtime_ms,
+                    entry.content_hash,
+                    now
+                ])
+                .map_err(|e| AppError::General(format!("DB insert stat entry: {}", e)))?;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| AppError::General(format!("DB commit stat cache: {}", e)))?;
+        Ok(())
+    }
+}

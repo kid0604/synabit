@@ -17,6 +17,44 @@ pub struct LocalChange {
 /// only note you had is ordinary.
 const MIN_TRACKED_FOR_EMPTY_VAULT_GUARD: usize = 2;
 
+/// A file whose modification time is this recent is re-hashed even when its
+/// size and timestamp match the cache.
+///
+/// Filesystems record modification times at limited resolution, so a write that
+/// lands in the same tick as the one we recorded would be invisible to a
+/// metadata comparison. Waiting until the tick has demonstrably passed removes
+/// that window, and costs nothing in practice: a file touched in the last two
+/// seconds is exactly the file we expect to be hashing anyway.
+const STAT_CACHE_SETTLE_MS: i64 = 2_000;
+
+/// May the cached digest stand in for hashing this file?
+///
+/// Only when size and modification time both match what was recorded *and* that
+/// timestamp is old enough that no write could still be hiding inside the same
+/// filesystem tick. Getting this wrong in the permissive direction means an edit
+/// never syncs, so every uncertain case answers `false`.
+fn stat_cache_hit(
+    observed: (u64, i64),
+    entry: &crate::db::StatCacheEntry,
+    now_ms: i64,
+) -> bool {
+    let (size, mtime_ms) = observed;
+    entry.file_size == size
+        && entry.mtime_ms == mtime_ms
+        && now_ms.saturating_sub(mtime_ms) > STAT_CACHE_SETTLE_MS
+}
+
+fn file_stat(path: &Path) -> Option<(u64, i64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    Some((meta.len(), mtime))
+}
+
 pub fn detect_local_changes<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     vault: &Path,
@@ -24,19 +62,54 @@ pub fn detect_local_changes<R: tauri::Runtime>(
     provider_id: &str,
     local_files: &[String],
 ) -> AppResult<Vec<LocalChange>> {
+    let db_state = app_handle.state::<DbState>();
+
+    // One query each instead of one database lock per file.
+    let (baselines, stat_cache) = {
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            db.load_document_baselines(vault_id, provider_id)?,
+            db.load_stat_cache(vault_id, provider_id)?,
+        )
+    };
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut changes = Vec::new();
+    let mut fresh_cache: Vec<(String, crate::db::StatCacheEntry)> =
+        Vec::with_capacity(local_files.len());
 
     for rel_path in local_files.iter().cloned() {
         let file_path = vault.join(&rel_path);
-        let current_hash = file_sha256(&file_path);
+        let stat = file_stat(&file_path);
 
-        let stored_hash = {
-            let db_state = app_handle.state::<DbState>();
-            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            db.get_document_baseline(vault_id, provider_id, &rel_path)?
-                .unwrap_or_default()
+        // Reuse the recorded digest when the file demonstrably has not been
+        // touched since we took it. Anything uncertain falls through to a hash.
+        let cached = match (&stat, stat_cache.get(&rel_path)) {
+            (Some(observed), Some(entry)) if stat_cache_hit(*observed, entry, now_ms) => {
+                Some(entry.content_hash.clone())
+            }
+            _ => None,
         };
 
+        let current_hash = match cached {
+            Some(hash) => hash,
+            None => file_sha256(&file_path),
+        };
+
+        if let Some((size, mtime)) = stat {
+            if !current_hash.is_empty() {
+                fresh_cache.push((
+                    rel_path.clone(),
+                    crate::db::StatCacheEntry {
+                        file_size: size,
+                        mtime_ms: mtime,
+                        content_hash: current_hash.clone(),
+                    },
+                ));
+            }
+        }
+
+        let stored_hash = baselines.get(&rel_path).cloned().unwrap_or_default();
         if current_hash != stored_hash {
             changes.push(LocalChange {
                 rel_path,
@@ -44,6 +117,11 @@ pub fn detect_local_changes<R: tauri::Runtime>(
                 new_hash: current_hash,
             });
         }
+    }
+
+    {
+        let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.replace_stat_cache(vault_id, provider_id, &fresh_cache, now_ms)?;
     }
 
     Ok(changes)
@@ -339,6 +417,165 @@ pub fn prepare_durable_outbox_operations(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod detect_with_cache_tests {
+    use super::*;
+    use crate::db::{DbBridge, DbState};
+    use tauri::Manager;
+
+    fn app_with_vault() -> (tauri::AppHandle<tauri::test::MockRuntime>, tempfile::TempDir) {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let handle = app.handle().clone();
+        std::mem::forget(app);
+
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.insert_sync_vault_mapping(&crate::db::sync_vault::SyncVaultRecord {
+            vault_id: "v1".into(),
+            canonical_root: "/v1".into(),
+            metadata_version: 1,
+            created_at: 100,
+            updated_at: 100,
+        })
+        .unwrap();
+        handle.manage(DbState::new(db));
+        {
+            let state = handle.state::<DbState>();
+            let db = state.lock().unwrap();
+            db.ensure_sync_provider_state("v1", "p1").unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        (handle, dir)
+    }
+
+    #[test]
+    fn detection_records_what_it_hashed() {
+        let (handle, dir) = app_with_vault();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+
+        let files = vec!["note.md".to_string()];
+        let changes =
+            detect_local_changes(&handle, dir.path(), "v1", "p1", &files).unwrap();
+        assert_eq!(changes.len(), 1, "a new file is a change");
+
+        let state = handle.state::<DbState>();
+        let db = state.lock().unwrap();
+        let cache = db.load_stat_cache("v1", "p1").unwrap();
+        let entry = cache.get("note.md").expect("the file was not cached");
+
+        assert_eq!(entry.file_size, 5);
+        assert_eq!(entry.content_hash, changes[0].new_hash);
+        assert_eq!(
+            entry.content_hash,
+            crate::sync::utils::sha256_hex(b"hello"),
+            "cached digest does not describe the file on disk"
+        );
+    }
+
+    #[test]
+    fn an_edit_that_keeps_the_file_the_same_length_is_still_detected() {
+        // The case a size-only check would miss, and the reason the cache also
+        // compares modification time.
+        let (handle, dir) = app_with_vault();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "aaaaa").unwrap();
+        let files = vec!["note.md".to_string()];
+
+        let first = detect_local_changes(&handle, dir.path(), "v1", "p1", &files).unwrap();
+        {
+            let state = handle.state::<DbState>();
+            let db = state.lock().unwrap();
+            db.upsert_document_baseline("v1", "p1", "note.md", &first[0].new_hash)
+                .unwrap();
+        }
+
+        // Nothing changed: no work to do.
+        let second = detect_local_changes(&handle, dir.path(), "v1", "p1", &files).unwrap();
+        assert!(second.is_empty(), "an untouched file was reported as changed");
+
+        std::fs::write(&path, "bbbbb").unwrap();
+        let third = detect_local_changes(&handle, dir.path(), "v1", "p1", &files).unwrap();
+        assert_eq!(
+            third.len(),
+            1,
+            "a same-length edit was missed by change detection"
+        );
+        assert_eq!(third[0].new_hash, crate::sync::utils::sha256_hex(b"bbbbb"));
+    }
+
+    #[test]
+    fn the_cache_forgets_files_that_are_gone() {
+        let (handle, dir) = app_with_vault();
+        std::fs::write(dir.path().join("a.md"), "a").unwrap();
+        std::fs::write(dir.path().join("b.md"), "b").unwrap();
+
+        let both = vec!["a.md".to_string(), "b.md".to_string()];
+        detect_local_changes(&handle, dir.path(), "v1", "p1", &both).unwrap();
+
+        let only_a = vec!["a.md".to_string()];
+        detect_local_changes(&handle, dir.path(), "v1", "p1", &only_a).unwrap();
+
+        let state = handle.state::<DbState>();
+        let db = state.lock().unwrap();
+        let cache = db.load_stat_cache("v1", "p1").unwrap();
+        assert!(cache.contains_key("a.md"));
+        assert!(
+            !cache.contains_key("b.md"),
+            "the cache kept an entry for a file that is no longer in the vault"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stat_cache_tests {
+    use super::*;
+    use crate::db::StatCacheEntry;
+
+    fn entry(size: u64, mtime_ms: i64) -> StatCacheEntry {
+        StatCacheEntry {
+            file_size: size,
+            mtime_ms,
+            content_hash: "a".repeat(64),
+        }
+    }
+
+    const SETTLED: i64 = 10_000;
+
+    #[test]
+    fn settled_file_with_matching_metadata_may_skip_hashing() {
+        assert!(stat_cache_hit((120, 1_000), &entry(120, 1_000), SETTLED));
+    }
+
+    #[test]
+    fn a_different_size_always_hashes() {
+        assert!(!stat_cache_hit((121, 1_000), &entry(120, 1_000), SETTLED));
+    }
+
+    #[test]
+    fn a_different_mtime_always_hashes() {
+        // The dangerous case: an edit that happens to leave the file the same
+        // length. Only the timestamp reveals it.
+        assert!(!stat_cache_hit((120, 1_500), &entry(120, 1_000), SETTLED));
+    }
+
+    #[test]
+    fn a_recently_written_file_always_hashes() {
+        // Within the settle window a second write could share the recorded
+        // timestamp, so the metadata proves nothing.
+        let mtime = 9_000;
+        assert!(!stat_cache_hit((120, mtime), &entry(120, mtime), 10_000));
+        assert!(!stat_cache_hit((120, mtime), &entry(120, mtime), 11_000));
+        assert!(stat_cache_hit((120, mtime), &entry(120, mtime), 11_001));
+    }
+
+    #[test]
+    fn a_clock_that_moved_backwards_hashes_rather_than_trusting_the_cache() {
+        assert!(!stat_cache_hit((120, 50_000), &entry(120, 50_000), 10_000));
+    }
 }
 
 #[cfg(test)]

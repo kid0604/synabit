@@ -1,5 +1,6 @@
 mod blocks;
 mod crdt;
+pub use crdt::StatCacheEntry;
 mod edges;
 mod files;
 mod kv;
