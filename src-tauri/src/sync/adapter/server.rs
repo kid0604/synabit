@@ -609,16 +609,56 @@ impl SyncAdapter for SynabitServerAdapter {
         }
     }
 
-    async fn push_asset(&self, _hash: [u8; 32], _data: Vec<u8>) -> AppResult<()> {
-        Err(AppError::UnsupportedCapability(
-            "Push asset not supported".into(),
-        ))
+    async fn push_asset(&self, hash: [u8; 32], data: Vec<u8>) -> AppResult<()> {
+        // Chunks are content-addressed, so one already on the server is the one
+        // we would send. Asking first turns a re-published attachment into a
+        // question rather than an upload.
+        match self.request(&MailboxRequest::HasAsset { chunk_id: hash }).await {
+            Ok(MailboxResponse::AssetExists { .. }) => return Ok(()),
+            Ok(_) => {}
+            Err(e) => log::debug!("HasAsset check failed, uploading anyway: {}", e),
+        }
+
+        let response = self
+            .request(&MailboxRequest::PushAsset {
+                asset_hash: hash,
+                encrypted_data: data,
+            })
+            .await?;
+
+        match response {
+            MailboxResponse::AssetOk => Ok(()),
+            MailboxResponse::QuotaExceeded {
+                current_bytes,
+                limit_bytes,
+            } => Err(AppError::SyncError(format!(
+                "the vault is full: {} of {} bytes used",
+                current_bytes, limit_bytes
+            ))),
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            other => Err(AppError::SyncError(format!(
+                "unexpected response to PushAsset: {:?}",
+                other
+            ))),
+        }
     }
 
-    async fn pull_asset(&self, _hash: [u8; 32]) -> AppResult<Option<Vec<u8>>> {
-        Err(AppError::UnsupportedCapability(
-            "Pull asset not supported".into(),
-        ))
+    async fn pull_asset(&self, hash: [u8; 32]) -> AppResult<Option<Vec<u8>>> {
+        let response = self
+            .request(&MailboxRequest::PullAsset { asset_hash: hash })
+            .await?;
+
+        match response {
+            MailboxResponse::AssetData { data } => Ok(Some(data)),
+            // Not an error: the device that owns this attachment may not have
+            // finished uploading it. The entry waits and is retried.
+            MailboxResponse::AssetNotFound => Ok(None),
+            MailboxResponse::Error { message } => Err(AppError::SyncError(message)),
+            other => Err(AppError::SyncError(format!(
+                "unexpected response to PullAsset: {:?}",
+                other
+            ))),
+        }
     }
 }
 
