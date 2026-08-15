@@ -70,9 +70,11 @@ pub fn mnemonic_to_key(phrase: &str) -> Result<[u8; 32], String> {
 
 /// Derive an epoch-specific encryption key from the master key.
 ///
-/// Each epoch produces a completely independent key via BLAKE3 keyed
-/// derivation, so revoking a device (incrementing the epoch) makes all
-/// future ciphertext unreadable to holders of only the old epoch key.
+/// Each epoch produces an independent key via BLAKE3 keyed derivation. Note what
+/// this does *not* buy: anyone holding the master key can derive every epoch, so
+/// this cannot revoke a device. See [`crate::sync::key_rotation`] for why the
+/// production path deliberately encrypts with the vault key directly instead.
+/// Kept because the v4 wire format that carries an epoch must stay decryptable.
 pub fn derive_epoch_key(master_key: &[u8; 32], epoch: u32) -> [u8; 32] {
     let context = format!("synabit-e2ee-epoch-{}", epoch);
     blake3::derive_key(&context, master_key)

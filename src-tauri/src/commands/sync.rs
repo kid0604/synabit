@@ -425,16 +425,35 @@ pub async fn sync_current_epoch(app_handle: tauri::AppHandle) -> Result<u32, Str
     Ok(crate::sync::key_rotation::KeyRotationManager::current_epoch(&app_handle))
 }
 
-/// Revoke a device by its node ID hex.
+/// Revoke another device's access to the sync server.
 ///
-/// Removes the device from the local registry and increments the E2EE epoch.
-/// Returns the new epoch number. The caller should subsequently tell the
-/// server to rotate the mailbox token.
+/// This is *access* revocation and nothing more. Every device shares one vault
+/// key derived from the recovery phrase, so a revoked device that still holds
+/// that phrase can enrol again under a different device id, and can still read
+/// any copy of the data it already has. Genuinely cutting off a device you no
+/// longer control means generating a new recovery phrase for the vault.
+///
+/// Returns the epoch counter after the local bump, kept for the existing UI.
 #[tauri::command]
 pub async fn sync_revoke_device(
     app_handle: tauri::AppHandle,
     node_id_hex: String,
 ) -> Result<u32, String> {
+    let adapter = {
+        let state = app_handle.state::<P2pSyncState>();
+        let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|(_, a)| a.clone())
+    };
+
+    let adapter = adapter.ok_or_else(|| {
+        "Not connected to a sync server, so there is nothing to revoke against.".to_string()
+    })?;
+
+    adapter
+        .revoke_device(&node_id_hex)
+        .await
+        .map_err(|e| e.to_string())?;
+
     crate::sync::key_rotation::KeyRotationManager::revoke_device_local(&app_handle, &node_id_hex)
         .map_err(|e| e.to_string())
 }

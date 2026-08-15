@@ -305,6 +305,36 @@ impl SynabitServerAdapter {
         Ok(resp)
     }
 
+    /// Ask the server to revoke another device.
+    ///
+    /// This is *access* revocation, not cryptographic revocation: the server
+    /// stops accepting that device id, but every device shares one vault key
+    /// derived from the recovery phrase, so anyone still holding that phrase can
+    /// enrol again under a new id. Revoking a device you no longer control is
+    /// only meaningful alongside rotating the recovery phrase itself.
+    pub async fn revoke_device(&self, device_id: &str) -> AppResult<()> {
+        let response = self
+            .request(&MailboxRequest::RevokeDevice {
+                device_id: device_id.to_string(),
+            })
+            .await?;
+
+        match response {
+            MailboxResponse::RevokeOk => {
+                info!("Sync server revoked device {}", device_id);
+                Ok(())
+            }
+            MailboxResponse::Error { message } => Err(AppError::SyncError(format!(
+                "server refused to revoke {}: {}",
+                device_id, message
+            ))),
+            other => Err(AppError::SyncError(format!(
+                "unexpected response to RevokeDevice: {:?}",
+                other
+            ))),
+        }
+    }
+
     /// Close the connection gracefully.
     pub async fn close(&self) {
         let mut session = self.session.lock().await;

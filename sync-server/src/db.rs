@@ -660,8 +660,8 @@ impl Database {
         let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
         conn.execute(
-            "INSERT INTO cursors (vault_hash, device_id, last_seq, last_seen)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO devices (vault_hash, device_id, last_seq, last_seen, status)
+             VALUES (?1, ?2, ?3, ?4, 'active')
              ON CONFLICT(vault_hash, device_id)
              DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq), last_seen = excluded.last_seen",
             params![vault_hash, device_id, last_seq as i64, now],
@@ -673,9 +673,14 @@ impl Database {
     pub fn touch_device(&self, vault_hash: &str, device_id: &str) -> Result<()> {
         let conn = self.pool.get().context("pool get")?;
         let now = unix_now();
+        // Register the device so its status can be read back at the next
+        // authentication. Without this the `devices` table stayed empty, so
+        // `get_device_status` always answered "unknown" and revocation could
+        // never take effect. `status` is deliberately not touched here: a
+        // revoked device reconnecting must not re-activate itself.
         conn.execute(
-            "INSERT INTO cursors (vault_hash, device_id, last_seq, last_seen)
-             VALUES (?1, ?2, 0, ?3)
+            "INSERT INTO devices (vault_hash, device_id, last_seq, last_seen, status)
+             VALUES (?1, ?2, 0, ?3, 'active')
              ON CONFLICT(vault_hash, device_id)
              DO UPDATE SET last_seen = excluded.last_seen",
             params![vault_hash, device_id, now],
@@ -689,7 +694,7 @@ impl Database {
         let conn = self.pool.get().context("pool get")?;
         let min: Option<i64> = conn
             .query_row(
-                "SELECT MIN(last_seq) FROM cursors WHERE vault_hash = ?1",
+                "SELECT MIN(last_seq) FROM devices WHERE vault_hash = ?1 AND status != 'revoked'",
                 params![vault_hash],
                 |row| row.get(0),
             )
@@ -960,11 +965,14 @@ impl Database {
         Ok(())
     }
 
-    /// Delete the cursor for a specific device in a vault (device revocation).
-    pub fn delete_cursor(&self, vault_hash: &str, device_id: &str) -> Result<()> {
+    /// Rewind a device's cursor to the start of the mailbox.
+    ///
+    /// The row itself is kept: it carries the device's status, and dropping it
+    /// would erase a revocation we had just recorded.
+    pub fn reset_device_cursor(&self, vault_hash: &str, device_id: &str) -> Result<()> {
         let conn = self.pool.get().context("pool get")?;
         conn.execute(
-            "DELETE FROM cursors WHERE vault_hash = ?1 AND device_id = ?2",
+            "UPDATE devices SET last_seq = 0 WHERE vault_hash = ?1 AND device_id = ?2",
             params![vault_hash, device_id],
         )?;
         Ok(())
@@ -1026,12 +1034,17 @@ impl Database {
         Ok(status)
     }
 
-    #[allow(dead_code)]
+    /// Set a device's status, creating the row if the device has never been
+    /// seen. Revoking a device that has not connected yet must still stick.
     pub fn set_device_status(&self, vault_hash: &str, device_id: &str, status: &str) -> Result<()> {
         let conn = self.pool.get()?;
+        let now = unix_now();
         conn.execute(
-            "UPDATE devices SET status = ? WHERE vault_hash = ? AND device_id = ?",
-            rusqlite::params![status, vault_hash, device_id],
+            "INSERT INTO devices (vault_hash, device_id, last_seq, last_seen, status)
+             VALUES (?2, ?3, 0, ?4, ?1)
+             ON CONFLICT(vault_hash, device_id)
+             DO UPDATE SET status = excluded.status",
+            rusqlite::params![status, vault_hash, device_id, now],
         )?;
         Ok(())
     }

@@ -1,21 +1,42 @@
-//! Epoch-based key rotation and device revocation manager.
+//! Device revocation and the epoch counter.
 //!
-//! The master key (BIP39 mnemonic) is NEVER changed. Instead, each "epoch"
-//! derives a fresh encryption key via `derive_epoch_key`. When a device is
-//! revoked the epoch is incremented, making all future ciphertext unreadable
-//! to the revoked device (which only knows epoch keys up to the old epoch).
+//! ## What revocation actually does
 //!
-//! ## Epoch storage
+//! Every device in a vault holds the *same* 32-byte key, derived from the one
+//! BIP39 recovery phrase and stored in the OS keychain. There are no per-device
+//! keys and no key wrapping.
 //!
-//! The current epoch is stored in the local KV store under key `"e2ee_epoch"`.
-//! Epoch 0 is the implicit default (no rotation has ever occurred).
+//! That has a consequence worth stating plainly, because the code here used to
+//! claim the opposite: **revocation cannot be cryptographic in this key model.**
+//! A revoked device still holds the vault key, so it can decrypt any copy of the
+//! data it already has, and it can derive any value computed from that key —
+//! including the key for any future "epoch". Incrementing an epoch counter does
+//! not make new ciphertext unreadable to it.
+//!
+//! What revocation *does* achieve is access control at the sync server: the
+//! server stops accepting that device id, so the device no longer receives new
+//! operations and can no longer push. That is genuinely useful for a device that
+//! was lost or handed on, and it is what `sync_revoke_device` performs.
+//!
+//! To actually cut off a device that still holds the recovery phrase, the vault
+//! needs a new phrase. Making revocation cryptographic without that would mean a
+//! different design: a per-device keypair, the vault key wrapped once per
+//! device, and rotation re-wrapping only for the devices that remain.
+//!
+//! ## The epoch counter
+//!
+//! `e2ee_epoch` in the local KV store counts how many times the user has revoked
+//! a device. It is a local audit counter shown in settings. It deliberately does
+//! not feed key derivation: an epoch-scoped key would have to be communicated to
+//! every other device, and the only channel for that is the vault key they
+//! already share — which the revoked device shares too.
 
 use log::info;
 use tauri::Manager;
 
 use crate::error::{AppError, AppResult};
 
-/// Manages epoch-based key rotation for E2EE sync.
+/// Tracks the local revocation counter.
 pub struct KeyRotationManager;
 
 impl KeyRotationManager {
@@ -36,35 +57,20 @@ impl KeyRotationManager {
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         db.set_kv("e2ee_epoch", &new_epoch.to_string())
             .map_err(|e| AppError::SyncError(format!("Set epoch: {}", e)))?;
-        info!("Key rotation: epoch incremented to {}", new_epoch);
+        info!("Revocation counter advanced to {}", new_epoch);
         Ok(new_epoch)
     }
 
-    /// Derive the mailbox token for a given epoch.
-    ///
-    /// The token is `blake3::derive_key("synabit-mailbox-v1", &epoch_key)` where
-    /// `epoch_key = derive_epoch_key(master_key, epoch)`. This ensures a rotated
-    /// epoch produces a new token the revoked device cannot compute.
-    pub fn derive_mailbox_token(master_key: &[u8; 32], epoch: u32) -> Vec<u8> {
-        let epoch_key = crate::sync::core::crypto::derive_epoch_key(master_key, epoch);
-        blake3::derive_key("synabit-mailbox-v1", &epoch_key).to_vec()
-    }
-
-    /// Full local revoke flow: remove device from registry + increment epoch.
-    ///
-    /// The caller is responsible for subsequently telling the server to
-    /// `RevokeDevice` and `RotateToken` with the new mailbox token.
-    ///
-    /// Returns the new epoch value.
+    /// Record a revocation locally. The server-side revocation is performed by
+    /// the caller, which is the part that actually denies access.
     pub fn revoke_device_local(
         app_handle: &tauri::AppHandle,
         device_id_to_revoke: &str,
     ) -> AppResult<u32> {
-        // 1. Increment epoch (We no longer use DeviceRegistry for P2P)
         let new_epoch = Self::increment_epoch(app_handle)?;
 
         info!(
-            "Key rotation: device {} revoked, new epoch = {}",
+            "Device {} revoked at the sync server; local revocation counter = {}",
             device_id_to_revoke, new_epoch
         );
         Ok(new_epoch)

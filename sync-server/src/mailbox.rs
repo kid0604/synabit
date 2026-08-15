@@ -1152,12 +1152,18 @@ impl MailboxHandler {
         vault_hash: &str,
         revoked_device_id: &str,
     ) -> Result<MailboxResponse> {
-        self.db.delete_cursor(vault_hash, revoked_device_id)?;
+        // Mark first, then drop the cursor. Only the status stops the device
+        // from authenticating again; deleting the cursor on its own merely made
+        // it re-sync from the beginning, which is why revocation previously had
+        // no effect at all.
+        self.db
+            .set_device_status(vault_hash, revoked_device_id, "revoked")?;
+        self.db.reset_device_cursor(vault_hash, revoked_device_id)?;
 
         info!(
             vault = vault_hash,
             revoked_device = revoked_device_id,
-            "device cursor revoked"
+            "device revoked"
         );
 
         Ok(MailboxResponse::RevokeOk)
@@ -1694,8 +1700,57 @@ mod tests {
             panic!("Expected PushBatchOk response");
         }
     }
-}
 
-#[cfg(test)]
-#[path = "../../.agents/oracles/d2_server_tombstone_transport.rs"]
-mod d2_server_tombstone_transport;
+    use crate::auth::{authenticate, AuthResult};
+
+
+    /// A revoked device must be turned away at authentication.
+    ///
+    /// Revocation used to delete the device's cursor and nothing else, which
+    /// only made it re-sync from the beginning. Meanwhile `devices` was never
+    /// written to, so the status check in `authenticate` had nothing to read
+    /// and always let the device back in.
+    #[tokio::test]
+    async fn revoked_device_cannot_authenticate_again() {
+        let (server, _dir, vault_hash) = setup_test_mailbox().await;
+        let token = [2u8; 32];
+
+        // First contact registers the device.
+        let first = authenticate(&server.db, &vault_hash, &token, "laptop", 0).expect("auth");
+        assert!(matches!(first, AuthResult::Authenticated));
+
+        server
+            .handle_revoke_device(&vault_hash, "laptop")
+            .expect("revoke");
+
+        let after = authenticate(&server.db, &vault_hash, &token, "laptop", 0).expect("auth");
+        match after {
+            AuthResult::Rejected(reason) => assert!(
+                reason.contains("revoked"),
+                "unexpected rejection reason: {reason}"
+            ),
+            other => panic!("revoked device was allowed back in: {other:?}"),
+        }
+
+        // Other devices in the same vault are unaffected.
+        let sibling = authenticate(&server.db, &vault_hash, &token, "phone", 0).expect("auth");
+        assert!(matches!(sibling, AuthResult::Authenticated));
+    }
+
+    /// Revoking a device that has never connected must still stick.
+    #[tokio::test]
+    async fn revoking_an_unseen_device_still_denies_its_first_connection() {
+        let (server, _dir, vault_hash) = setup_test_mailbox().await;
+        let token = [2u8; 32];
+
+        server
+            .handle_revoke_device(&vault_hash, "never-seen")
+            .expect("revoke");
+
+        let result = authenticate(&server.db, &vault_hash, &token, "never-seen", 0).expect("auth");
+        assert!(
+            matches!(result, AuthResult::Rejected(_)),
+            "a pre-emptively revoked device was let in"
+        );
+    }
+}
