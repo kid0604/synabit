@@ -528,6 +528,30 @@ mod detect_with_cache_tests {
             "the cache kept an entry for a file that is no longer in the vault"
         );
     }
+    #[test]
+    fn a_file_whose_identity_was_rewritten_outside_the_app_does_not_abort_the_sync() {
+        // An external editor, a checkout or a restore can strip the node_id from
+        // a file's frontmatter. The next scan mints a new one, and the path then
+        // has two claimants. That used to end the sync with a UNIQUE constraint
+        // error; the newer claim simply wins.
+        let (handle, _dir) = app_with_vault();
+        let state = handle.state::<DbState>();
+        let db = state.lock().unwrap();
+
+        db.upsert_document_path("v1", "old-identity", "note.md").unwrap();
+        db.upsert_document_path("v1", "new-identity", "note.md").unwrap();
+
+        assert_eq!(
+            db.get_node_id_by_path("v1", "note.md").unwrap().as_deref(),
+            Some("new-identity")
+        );
+        assert_eq!(
+            db.get_path_by_node_id("v1", "old-identity").unwrap(),
+            None,
+            "the displaced document should no longer claim the path"
+        );
+    }
+
 }
 
 #[cfg(test)]

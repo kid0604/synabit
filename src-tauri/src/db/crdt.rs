@@ -336,12 +336,32 @@ impl DbBridge {
             ));
         }
         let updated_at = chrono::Utc::now().timestamp_millis();
-        self.conn
-            .execute(
-                "INSERT INTO sync_document_paths (vault_id, doc_id, rel_path, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(vault_id, doc_id) DO UPDATE SET rel_path=excluded.rel_path, updated_at=excluded.updated_at",
-                params![vault_id, doc_id, rel_path, updated_at],
-            )
-            .map_err(|e| AppError::General(format!("DB Error upserting sync_document_path: {}", e)))?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::General(format!("DB tx error: {}", e)))?;
+
+        // A path belongs to exactly one document. If some other document was
+        // recorded at this path, it no longer is: the file there now identifies
+        // itself as this one. That happens whenever a file's identity is
+        // rewritten outside the app — an external editor stripping frontmatter,
+        // a checkout, a restore from backup — and used to abort the whole sync
+        // with a UNIQUE constraint error instead of simply re-pointing.
+        tx.execute(
+            "DELETE FROM sync_document_paths
+             WHERE vault_id = ?1 AND rel_path = ?2 AND doc_id <> ?3",
+            params![vault_id, rel_path, doc_id],
+        )
+        .map_err(|e| AppError::General(format!("DB Error clearing stale path claim: {}", e)))?;
+
+        tx.execute(
+            "INSERT INTO sync_document_paths (vault_id, doc_id, rel_path, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(vault_id, doc_id) DO UPDATE SET rel_path=excluded.rel_path, updated_at=excluded.updated_at",
+            params![vault_id, doc_id, rel_path, updated_at],
+        )
+        .map_err(|e| AppError::General(format!("DB Error upserting sync_document_path: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::General(format!("DB commit error: {}", e)))?;
         Ok(())
     }
 

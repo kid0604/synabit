@@ -404,6 +404,65 @@ impl DbBridge {
             Err(e) => return Err(AppError::General(format!("DB query error: {}", e))),
         }
 
+        // No exact match, but there may be an earlier revision of this same
+        // document still waiting to go out. Overwrite it rather than queueing
+        // another entry: each payload carries a complete CRDT snapshot, so the
+        // newer one already contains everything the older one did. Editing a
+        // note fifty times while offline used to queue fifty full snapshots and
+        // push every one of them.
+        //
+        // Rows already handed to the transport are left alone. A `sent`
+        // operation may have reached the server, and its acknowledgement is
+        // matched by operation id, so rewriting it underneath the push would
+        // corrupt that exchange.
+        let pending: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT operation_id FROM sync_outbox
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND node_id = ?3 AND entry_kind = ?4
+                   AND state IN ('prepared', 'ready', 'failed')
+                 ORDER BY created_at, operation_id LIMIT 1",
+                params![
+                    record.vault_id,
+                    record.provider_id,
+                    record.node_id,
+                    record.entry_kind.to_string(),
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::General(format!("DB query error: {}", e)))?;
+
+        if let Some(op_id_vec) = pending {
+            if let Ok(existing_id) = <Vec<u8> as TryInto<[u8; 16]>>::try_into(op_id_vec) {
+                tx.execute(
+                    "UPDATE sync_outbox SET
+                        rel_path = ?4, doc_hash = ?5, source_hash = ?6,
+                        original_timestamp = ?7, encrypted_payload = ?8, payload_hash = ?9,
+                        asset_ref_blob = ?10, state = 'ready', retry_count = 0,
+                        next_retry_at = NULL, last_error = NULL, updated_at = ?11
+                     WHERE vault_id = ?1 AND provider_id = ?2 AND operation_id = ?3",
+                    params![
+                        record.vault_id,
+                        record.provider_id,
+                        existing_id.as_slice(),
+                        record.rel_path,
+                        record.doc_hash.map(|h| h.to_vec()),
+                        record.source_hash.map(|h| h.to_vec()),
+                        record.original_timestamp,
+                        record.encrypted_payload,
+                        record.payload_hash.map(|h| h.to_vec()),
+                        record.asset_ref_blob,
+                        record.updated_at,
+                    ],
+                )
+                .map_err(|e| AppError::General(format!("DB Error coalescing outbox: {}", e)))?;
+
+                tx.commit()
+                    .map_err(|e| AppError::General(format!("DB Tx commit error: {}", e)))?;
+                return Ok(existing_id);
+            }
+        }
+
         tx.execute(
             "INSERT INTO sync_outbox (
                 vault_id, provider_id, operation_id, entry_kind, node_id, rel_path, doc_hash,
@@ -2296,5 +2355,114 @@ pub mod tests {
             r3.next_retry_at,
             Some(1000 + DbBridge::MAX_OUTBOX_RETRY_DELAY)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coalescing
+    // -----------------------------------------------------------------------
+
+    fn revision(vault: &str, provider: &str, op_byte: u8, node: &str, content: u8) -> OutboxRecord {
+        let mut rec = sample_record(vault, provider, op_byte);
+        rec.node_id = node.to_string();
+        rec.rel_path = Some(format!("{node}.md"));
+        rec.source_hash = Some([content; 32]);
+        rec.encrypted_payload = Some(vec![content; 8]);
+        rec.payload_hash = Some([content; 32]);
+        rec.state = OutboxState::Ready;
+        rec
+    }
+
+    fn outbox_rows(db: &DbBridge, node: &str) -> Vec<(Vec<u8>, String, Option<Vec<u8>>)> {
+        let mut stmt = db
+            .conn
+            .prepare(
+                "SELECT operation_id, state, encrypted_payload FROM sync_outbox
+                 WHERE node_id = ?1 ORDER BY created_at, operation_id",
+            )
+            .unwrap();
+        stmt.query_map([node], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
+    /// Revising the same document before it goes out must replace the queued
+    /// entry, not add another. Every payload is a complete CRDT snapshot, so
+    /// the newest one already contains the earlier ones.
+    #[test]
+    fn revisions_of_a_queued_document_collapse_into_one_entry() {
+        let mut db = setup_test_db();
+
+        for (op, content) in [(1u8, 10u8), (2, 20), (3, 30)] {
+            db.enqueue_or_reuse_outbox_operation(&revision("v1", "gdrive", op, "note", content))
+                .unwrap();
+        }
+
+        let rows = outbox_rows(&db, "note");
+        assert_eq!(rows.len(), 1, "three revisions queued three entries");
+        assert_eq!(
+            rows[0].2,
+            Some(vec![30u8; 8]),
+            "the queued entry does not hold the newest revision"
+        );
+        assert_eq!(
+            rows[0].0,
+            vec![1u8; 16],
+            "coalescing should keep the original operation id"
+        );
+    }
+
+    /// An operation already handed to the transport must be left alone: the
+    /// server may have it, and its acknowledgement is matched by operation id.
+    #[test]
+    fn a_sent_operation_is_never_rewritten_underneath_the_push() {
+        let mut db = setup_test_db();
+
+        db.enqueue_or_reuse_outbox_operation(&revision("v1", "gdrive", 1, "note", 10))
+            .unwrap();
+        db.mark_outbox_batch_sent("v1", "gdrive", &[[1u8; 16]], 2000)
+            .unwrap();
+
+        db.enqueue_or_reuse_outbox_operation(&revision("v1", "gdrive", 2, "note", 20))
+            .unwrap();
+
+        let rows = outbox_rows(&db, "note");
+        assert_eq!(rows.len(), 2, "the in-flight entry should have been left in place");
+        assert_eq!(rows[0].1, "sent");
+        assert_eq!(rows[0].2, Some(vec![10u8; 8]), "the sent payload was modified");
+        assert_eq!(rows[1].2, Some(vec![20u8; 8]));
+    }
+
+    /// A revision arriving after a failure clears the back-off, since the new
+    /// content deserves a fresh attempt.
+    #[test]
+    fn coalescing_onto_a_failed_entry_clears_its_backoff() {
+        let mut db = setup_test_db();
+
+        db.enqueue_or_reuse_outbox_operation(&revision("v1", "gdrive", 1, "note", 10))
+            .unwrap();
+        db.mark_outbox_batch_sent("v1", "gdrive", &[[1u8; 16]], 2000)
+            .unwrap();
+        db.schedule_outbox_retry("v1", "gdrive", &[1u8; 16], "network down", 2000)
+            .unwrap();
+
+        db.enqueue_or_reuse_outbox_operation(&revision("v1", "gdrive", 9, "note", 30))
+            .unwrap();
+
+        let rows = outbox_rows(&db, "note");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, "ready", "a fresh revision should be dispatchable");
+
+        let (retry_count, next_retry, last_error): (i64, Option<i64>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT retry_count, next_retry_at, last_error FROM sync_outbox WHERE node_id = 'note'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(retry_count, 0);
+        assert_eq!(next_retry, None);
+        assert_eq!(last_error, None);
     }
 }

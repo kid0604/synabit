@@ -53,9 +53,9 @@ struct StoredEntry {
 struct MailboxInner {
     entries: Vec<StoredEntry>,
     acks: HashMap<String, u64>,
-    /// Operation ids the mailbox should reject instead of accept, so tests can
-    /// exercise the retry path without breaking the transport.
-    reject: Vec<[u8; 16]>,
+    /// Reject every push, so tests can build a backlog the way an offline
+    /// device does without breaking the transport itself.
+    reject_all: bool,
 }
 
 /// Append-only mailbox shared by every device in one harness vault.
@@ -113,6 +113,16 @@ impl InMemoryMailbox {
             .entries
             .retain(|e| heads.get(&e.doc_hash) == Some(&e.seq));
         before - inner.entries.len()
+    }
+
+    /// Reject every push until [`accept_pushes`] is called, so tests can build
+    /// up a backlog the way an offline device does.
+    pub fn reject_pushes(&self) {
+        self.lock().reject_all = true;
+    }
+
+    pub fn accept_pushes(&self) {
+        self.lock().reject_all = false;
     }
 
     /// Corrupt a stored entry's payload so it fails hash verification on pull.
@@ -187,7 +197,7 @@ impl SyncAdapter for HarnessAdapter {
         for op in operations {
             tx_bytes += op.encrypted_payload.len() as u64;
 
-            if inner.reject.contains(&op.operation_id) {
+            if inner.reject_all {
                 rejected.push(PushAck {
                     operation_id: op.operation_id,
                     remote_position: "rejected by harness".to_string(),

@@ -165,6 +165,54 @@ async fn emptying_a_vault_on_purpose_succeeds_on_the_second_try() {
     assert!(!b.exists("Notes/one.md") && !b.exists("Notes/two.md"));
 }
 
+#[tokio::test]
+async fn offline_revisions_are_published_once() {
+    // Editing the same note repeatedly while the server is unreachable must not
+    // queue one full snapshot per edit. Each payload already contains the whole
+    // document, so only the newest one is worth sending.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nRevision 0.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    mailbox.reject_pushes();
+    let baseline = mailbox.len();
+    for revision in 1..=5 {
+        // Edit the body the way an editor would, leaving the frontmatter alone.
+        let current = a.read(NOTE).unwrap();
+        let edited = current.replace(
+            &format!("Revision {}.", revision - 1),
+            &format!("Revision {revision}."),
+        );
+        a.write(NOTE, &edited);
+        let _ = a.sync().await; // fails to push, by design
+    }
+    assert_eq!(mailbox.len(), baseline, "nothing should have been accepted yet");
+
+    // Coming back online does not by itself re-arm a backed-off entry; the next
+    // edit does, which is also what a returning user does.
+    mailbox.accept_pushes();
+    let current = a.read(NOTE).unwrap();
+    a.write(NOTE, &current.replace("Revision 5.", "Revision 6."));
+    a.sync_ok().await;
+
+    assert_eq!(
+        mailbox.len() - baseline,
+        1,
+        "six offline edits produced {} entries instead of one",
+        mailbox.len() - baseline
+    );
+
+    b.sync_ok().await;
+    assert!(
+        b.body(NOTE).unwrap().contains("Revision 6."),
+        "the peer did not receive the newest revision: {:?}",
+        b.body(NOTE)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------
