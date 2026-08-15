@@ -190,17 +190,16 @@ export interface WhiteboardMetadata {
 // Google Drive Sync
 // ──────────────────────────────────────────────
 
+/// Mirrors `sync::core::types::SyncResult`. Every field is always present.
+///
+/// Asset counters are deliberately absent: nothing in the sync engine produces
+/// them today, and declaring them made the UI read fields that never arrive.
 export interface SyncResult {
   pulled: number;
   pulled_files: string[];
   pushed: number;
   deleted: number;
   errors: string[];
-  tx_bytes?: number;
-  rx_bytes?: number;
-  assets_pushed?: number;
-  assets_pulled?: number;
-  assets_pending?: number;
-  asset_bytes_tx?: number;
-  asset_bytes_rx?: number;
+  tx_bytes: number;
+  rx_bytes: number;
 }

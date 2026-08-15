@@ -996,7 +996,11 @@ fn c2b_v3_pull_own_operation_evidence_is_scoped_and_unverified_source_applies() 
     let db_state = seeded_db();
     let key = [18; 32];
     let known_id = [70; 16];
-    assert!(is_verified_own_operation(
+    // A matching source_device label is not evidence of ownership. It is chosen
+    // by the pusher, and installs that share an id (the Google Drive path used
+    // the app bundle identifier) would otherwise discard every peer's work.
+    // With nothing in our outbox, this operation is not ours.
+    assert!(!is_verified_own_operation(
         &db_state,
         VAULT,
         PROVIDER,

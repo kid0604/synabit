@@ -53,7 +53,9 @@ fn parse_server_id(hex_str: &str) -> Result<iroh::EndpointId, String> {
 }
 
 /// Get (or generate + persist) the stable device ID from the KV store.
-fn ensure_device_id(app_handle: &tauri::AppHandle) -> Result<String, String> {
+pub(crate) fn ensure_device_id<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<String, String> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 

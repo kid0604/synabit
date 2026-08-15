@@ -30,7 +30,10 @@ pub async fn gdrive_sync_full(
             "E2EE key not set up. Please set up encryption first.".to_string()
         })?;
 
-    let device_id = app_handle.config().identifier.clone();
+    // Must be per-install, not per-application: `config().identifier` is the
+    // bundle id and is identical on every machine, which the server also uses
+    // to track and revoke devices.
+    let device_id = crate::commands::sync::ensure_device_id(&app_handle)?;
 
     let mut coordinator = crate::sync::coordinator::SyncCoordinator::new();
     let adapter = Arc::new(crate::sync::adapter::gdrive::GoogleDriveAdapter::new(

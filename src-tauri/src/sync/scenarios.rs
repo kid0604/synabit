@@ -146,7 +146,6 @@ async fn a_delete_loses_to_an_unpublished_local_edit() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "S1-02: identical device_id makes every peer operation look like our own"]
 async fn devices_sharing_a_device_id_still_exchange_changes() {
     // Reproduces the GDrive path, which derives device_id from the app bundle
     // identifier — the same value on every install.

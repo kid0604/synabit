@@ -171,14 +171,13 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
   const vType = activeVaultType?.value;
   const vPath = activeVaultPath.value;
 
-  // Check network policy using Tauri command if available, else fallback safely
-  let isCellular = false;
-  try {
-    isCellular = await invoke<boolean>('is_cellular_connection').catch(() => false);
-  } catch (e) {
-    // Fallback
-  }
-  
+  // KNOWN GAP (S3-10): there is no connection-type detection on any platform,
+  // so this is always false. That means the "don't sync on cellular" setting
+  // never takes effect and cellular transfer is always recorded as wifi.
+  // Previously this called an `is_cellular_connection` command that was never
+  // registered, so the failure was invisible.
+  const isCellular = false;
+
   if (isCellular && appStore.syncCellularPolicy === 'off') {
     logger.info('Skipping sync: Cellular data is restricted.');
     syncStatus.value = 'offline';
@@ -190,7 +189,6 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
   appStore.syncLastAttempted = new Date().toISOString();
   
   try {
-    let result: SyncResult;
     const tStart = Date.now();
 
     if (vType === 'none' || vType === 'local') {
@@ -209,31 +207,30 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       }, 60000);
     });
 
-    const syncPromise = invoke<SyncResult>('sync_run', {
-      vaultPath: vPath,
-      provider: vType,
-      isCellular,
-      cellularPolicy: appStore.syncCellularPolicy,
-      triggerReason,
-    });
+    // Each provider has its own registered command; there is no single
+    // dispatching command on the Rust side.
+    const syncPromise =
+      vType === 'gdrive'
+        ? invoke<SyncResult>('gdrive_sync_full', { vaultPath: vPath })
+        : invoke<SyncResult>('sync_full', {
+            vaultPath: vPath,
+            isCellular,
+            triggerReason,
+          });
 
-    result = await Promise.race([syncPromise, timeoutPromise]);
+    const result = await Promise.race([syncPromise, timeoutPromise]);
     
     if (abortSignal.aborted) {
        throw new Error("Cancelled by user");
     }
     
-    logger.info(`[${vType}] Sync done in ${Date.now() - tStart}ms: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted} | Assets: pushed=${result.assets_pushed || 0} pulled=${result.assets_pulled || 0} pending=${result.assets_pending || 0} rx=${result.asset_bytes_rx || 0}B tx=${result.asset_bytes_tx || 0}B`);
+    logger.info(`[${vType}] Sync done in ${Date.now() - tStart}ms: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted} tx=${result.tx_bytes}B rx=${result.rx_bytes}B`);
     
     let isPartial = false;
 
     if (result.errors.length > 0) {
       syncError.value = `${result.errors.length} error(s)`;
       logger.warn('Sync errors:', result.errors);
-      isPartial = true;
-    }
-    
-    if ((result.assets_pending || 0) > 0) {
       isPartial = true;
     }
     

@@ -1,6 +1,5 @@
-import { ref, watch, computed, type Ref } from 'vue';
+import { ref, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { emit as tauriEmit } from '@tauri-apps/api/event';
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
@@ -44,12 +43,8 @@ export function useGDrive(
           }
           
           gdriveSyncError.value = 'Syncing directly to active local vault...';
-          await invoke<SyncResult>('sync_run', {
+          await invoke<SyncResult>('gdrive_sync_full', {
             vaultPath: vaultPath.value,
-            provider: 'gdrive',
-            isCellular: false,
-            cellularPolicy: appStore.syncCellularPolicy || 'all',
-            triggerReason: 'initial_connect'
           });
           
           gdriveConnected.value = true;
@@ -88,7 +83,10 @@ export function useGDrive(
                   gdriveAuthLoading.value = true;
                   gdriveSyncError.value = 'OmniBrowse Exchange started...';
                   try {
-                      await invoke('gdrive_browse_auth_complete', { authCode: code });
+                      await invoke('connect_gdrive_complete', {
+                        authCode: code,
+                        vaultPath: vaultPath.value,
+                      });
                       gdriveConnected.value = true;
                       window.dispatchEvent(new CustomEvent('gdrive-browse-connected'));
                   } catch(err: any) {

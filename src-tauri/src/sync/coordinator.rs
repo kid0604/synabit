@@ -126,19 +126,24 @@ pub fn remote_entry_to_inbox_entry(
     })
 }
 
+/// Did *this* device produce the given operation?
+///
+/// The only sound evidence is our own outbox: an operation we pushed leaves a
+/// row keyed by its `operation_id`, and acknowledged rows are never purged.
+///
+/// The label the transport attaches (`source_device`) is deliberately *not*
+/// trusted. It is chosen by whoever pushed the entry, and any deployment where
+/// two installs report the same id — the Google Drive path derived it from the
+/// application bundle identifier, identical on every machine — would otherwise
+/// classify every peer's work as its own and silently discard all of it.
 pub fn is_verified_own_operation(
     db_state: &DbState,
     vault_id: &str,
     provider_id: &str,
     operation_id: &[u8; 16],
-    source_device: Option<&str>,
-    device_id: &str,
+    _source_device: Option<&str>,
+    _device_id: &str,
 ) -> AppResult<bool> {
-    if let Some(sd) = source_device {
-        if sd == device_id && !sd.is_empty() {
-            return Ok(true);
-        }
-    }
     let db = match db_state.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
