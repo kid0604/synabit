@@ -457,6 +457,34 @@ pub(crate) fn run_sync_schema_migrations(conn: &mut Connection) -> AppResult<()>
         )));
     }
 
+    // A database that has the sync tables but no recorded version was built by
+    // a pre-release that created them directly instead of through this chain.
+    // Migrating from zero then fails on `CREATE TABLE sync_vaults` and buries
+    // the reason under a page of SQL, so say plainly what happened instead.
+    if stored_version.is_none() {
+        let already_present: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sync_vaults'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::General(format!("Failed to inspect sync schema: {}", e)))?;
+
+        if already_present > 0 {
+            return Err(AppError::General(
+                "This database has sync tables but no recorded schema version, so it was \
+                 created by an older development build. The sync tables hold no durable \
+                 state — outbox, inbox and cursors are all rebuilt on the next sync — so \
+                 they can be dropped and rebuilt. Notes, CRDT history and settings live in \
+                 separate tables and are not affected. Back up the database, then drop \
+                 sync_vaults, sync_provider_state, sync_outbox, sync_inbox, \
+                 sync_pending_assets, sync_bootstrap_sessions, sync_bootstrap_items, and any \
+                 sync_targets or sync_inbox_operations left over, and start the app again."
+                    .to_string(),
+            ));
+        }
+    }
+
     if current_version > LATEST_SYNC_SCHEMA_VERSION {
         return Err(AppError::General(format!(
             "Database sync schema version {} is newer than binary supported version {}",
@@ -1588,6 +1616,39 @@ pub(crate) mod tests {
         assert_eq!(
             version, 0,
             "Version must not advance to 1 on failed migration"
+        );
+    }
+
+    /// A database from a pre-release that created the sync tables directly must
+    /// explain itself rather than failing inside `CREATE TABLE sync_vaults`.
+    #[test]
+    fn sync_tables_without_a_recorded_version_produce_an_actionable_error() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sync_schema_meta (
+                singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                version INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE sync_vaults (vault_id TEXT PRIMARY KEY);",
+        )
+        .unwrap();
+
+        let err = run_sync_schema_migrations(&mut conn)
+            .expect_err("migrating over pre-existing sync tables must fail");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("older development build"),
+            "the error does not explain the cause: {msg}"
+        );
+        assert!(
+            msg.contains("sync_outbox") && msg.contains("Back up"),
+            "the error does not say what to do: {msg}"
+        );
+        assert!(
+            !msg.contains("CREATE TABLE sync_vaults ("),
+            "the error still dumps raw SQL: {msg}"
         );
     }
 
