@@ -141,6 +141,34 @@ async fn a_delete_loses_to_an_unpublished_local_edit() {
     );
 }
 
+#[tokio::test]
+async fn emptying_a_vault_on_purpose_succeeds_on_the_second_try() {
+    // The guard must delay a real "delete everything", not block it forever.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/one.md", "# One\n");
+    a.write("Notes/two.md", "# Two\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    std::fs::remove_dir_all(a.vault_path().join("Notes")).expect("empty the vault");
+
+    let first = a.sync().await;
+    assert!(first.is_err(), "the first attempt should stop and explain");
+
+    // Syncing again is the confirmation.
+    a.sync_ok().await;
+    assert_eq!(
+        mailbox.kinds().iter().filter(|k| **k == SyncEntryKind::Delete).count(),
+        2,
+        "confirming should publish both tombstones"
+    );
+
+    b.sync_ok().await;
+    assert!(!b.exists("Notes/one.md") && !b.exists("Notes/two.md"));
+}
+
 // ---------------------------------------------------------------------------
 // Known defects — each of these should pass once the named bug is fixed
 // ---------------------------------------------------------------------------
@@ -218,7 +246,6 @@ async fn a_corrupt_entry_does_not_block_healthy_ones() {
 }
 
 #[tokio::test]
-#[ignore = "S2-05: a vault that disappears is read as a mass user deletion"]
 async fn an_unreachable_vault_does_not_emit_tombstones() {
     let (mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);

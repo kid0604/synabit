@@ -13,16 +13,20 @@ pub struct LocalChange {
     pub new_hash: String,
 }
 
+/// Below this many tracked documents, an empty vault says nothing: deleting the
+/// only note you had is ordinary.
+const MIN_TRACKED_FOR_EMPTY_VAULT_GUARD: usize = 2;
+
 pub fn detect_local_changes<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     vault_id: &str,
     provider_id: &str,
+    local_files: &[String],
 ) -> AppResult<Vec<LocalChange>> {
     let mut changes = Vec::new();
-    let local_files = collect_local_files(&vault.to_string_lossy());
 
-    for rel_path in local_files {
+    for rel_path in local_files.iter().cloned() {
         let file_path = vault.join(&rel_path);
         let current_hash = file_sha256(&file_path);
 
@@ -45,10 +49,19 @@ pub fn detect_local_changes<R: tauri::Runtime>(
     Ok(changes)
 }
 
+/// Work out which tracked documents have disappeared from disk.
+///
+/// A missing file is normally a deletion, but it is also what an unmounted
+/// drive, a half-populated cloud folder or a vault pointed at the wrong
+/// directory looks like — and in those cases publishing a tombstone for every
+/// document destroys the vault on every other device. When the evidence points
+/// at an absent vault rather than an intentional cleanup, this refuses to
+/// produce deletions at all and fails the sync instead, which is recoverable.
 pub fn detect_deletions<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     vault: &Path,
     vault_id: &str,
+    local_files: &[String],
 ) -> AppResult<Vec<LocalChange>> {
     let mut deletions = Vec::new();
 
@@ -58,6 +71,8 @@ pub fn detect_deletions<R: tauri::Runtime>(
         db.get_document_paths(vault_id)?
     };
 
+    let tracked = paths.len();
+
     for (_doc_id, path) in paths {
         let file_path = vault.join(&path);
         if !file_path.exists() {
@@ -66,6 +81,38 @@ pub fn detect_deletions<R: tauri::Runtime>(
                 is_delete: true,
                 new_hash: String::new(),
             });
+        }
+    }
+
+    // A vault that still tracks documents but currently holds no files at all is
+    // far more likely to be unmounted than emptied on purpose. Stop the first
+    // time and say so; if the next sync sees the same thing, take it as
+    // confirmation and let the deletions through, so a genuine "delete
+    // everything" is delayed rather than blocked.
+    let vault_looks_absent =
+        local_files.is_empty() && tracked >= MIN_TRACKED_FOR_EMPTY_VAULT_GUARD;
+    let warn_key = format!("sync:empty_vault_warned:{}", vault_id);
+
+    {
+        let db_state = app_handle.state::<DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+
+        if vault_looks_absent {
+            let already_warned = db.get_kv(&warn_key)?.is_some();
+            if !already_warned {
+                db.set_kv(&warn_key, &chrono::Utc::now().timestamp_millis().to_string())?;
+                return Err(crate::error::AppError::SyncError(format!(
+                    "Stopped before deleting anything: the vault at '{}' holds no \
+                     files, but {} document(s) are tracked here. If the drive or \
+                     folder simply is not mounted, reconnect it and sync again. If \
+                     you really did empty this vault, sync once more to confirm.",
+                    vault.display(),
+                    tracked
+                )));
+            }
+        } else if !local_files.is_empty() {
+            // The vault is back to normal, so a later disappearance warns again.
+            db.delete_kv(&warn_key)?;
         }
     }
 

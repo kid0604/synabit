@@ -1142,14 +1142,25 @@ impl SyncCoordinator {
             }
         }
 
+        // Walk the vault once and share the listing: both detectors need it, and
+        // the deletion guard needs to distinguish "file removed" from "vault not
+        // present at all".
+        let local_files = crate::sync::utils::collect_local_files(vault_path);
+
         let mut changes: Vec<LocalChange> = Vec::new();
         changes.extend(detect_local_changes(
             app_handle,
             vault_path_obj,
             &vault_id,
             &provider_id,
+            &local_files,
         )?);
-        changes.extend(detect_deletions(app_handle, vault_path_obj, &vault_id)?);
+        changes.extend(detect_deletions(
+            app_handle,
+            vault_path_obj,
+            &vault_id,
+            &local_files,
+        )?);
 
         log::info!("Detected {} local changes", changes.len());
 
