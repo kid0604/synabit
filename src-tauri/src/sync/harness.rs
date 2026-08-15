@@ -160,6 +160,9 @@ impl InMemoryMailbox {
 pub struct HarnessAdapter {
     mailbox: InMemoryMailbox,
     device_id: String,
+    /// Whether this target can store attachment chunks, so tests can model a
+    /// destination like Google Drive that cannot.
+    carries_assets: bool,
 }
 
 impl HarnessAdapter {
@@ -167,6 +170,7 @@ impl HarnessAdapter {
         Self {
             mailbox: mailbox.clone(),
             device_id: device_id.to_string(),
+            carries_assets: true,
         }
     }
 }
@@ -328,6 +332,10 @@ impl SyncAdapter for HarnessAdapter {
         Ok(())
     }
 
+    fn supports_assets(&self) -> bool {
+        self.carries_assets
+    }
+
     async fn push_asset(&self, hash: [u8; 32], data: Vec<u8>) -> AppResult<()> {
         self.mailbox.lock().chunks.insert(hash, data);
         Ok(())
@@ -367,6 +375,17 @@ impl HarnessDevice {
 
     /// Build a device with an explicit device id, so tests can reproduce the
     /// case where two installs report the same identity.
+    /// A device whose sync target cannot store attachments, like Google Drive.
+    pub fn without_asset_support(name: &str, mailbox: &InMemoryMailbox) -> Self {
+        let mut device = Self::new(name, mailbox);
+        device.adapter = Arc::new(HarnessAdapter {
+            mailbox: mailbox.clone(),
+            device_id: device.device_id.clone(),
+            carries_assets: false,
+        });
+        device
+    }
+
     pub fn new_with_device_id(name: &str, mailbox: &InMemoryMailbox, device_id: &str) -> Self {
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))

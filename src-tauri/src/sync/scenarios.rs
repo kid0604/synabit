@@ -402,6 +402,31 @@ async fn deleting_an_attachment_removes_it_from_the_other_device() {
     assert!(!b.exists("assets/photo.png"), "the deletion did not travel");
 }
 
+#[tokio::test]
+async fn a_target_that_cannot_store_attachments_leaves_them_quietly_alone() {
+    // Google Drive has nowhere to put chunks. Offering it an attachment anyway
+    // queues an entry that can never be published and reports the same failure
+    // on every sync for the life of the vault.
+    let mailbox = InMemoryMailbox::new();
+    let a = HarnessDevice::without_asset_support("a", &mailbox);
+
+    a.write("Notes/note.md", "# Note\n");
+    std::fs::write(a.vault_path().join("photo.jpg"), png_bytes(3)).unwrap();
+
+    let first = a.sync_ok().await;
+    assert_eq!(first.pushed, 1, "the note should still be published");
+    assert!(
+        first.errors.is_empty(),
+        "an attachment this target cannot carry is not a failure: {:?}",
+        first.errors
+    );
+
+    let second = a.sync_ok().await;
+    assert_eq!(second.pushed, 0, "sync did not settle");
+    assert!(second.errors.is_empty(), "the same complaint came back: {:?}", second.errors);
+    assert_eq!(mailbox.chunk_count(), 0, "no chunks should have been attempted");
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------

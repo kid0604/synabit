@@ -609,6 +609,10 @@ impl SyncAdapter for SynabitServerAdapter {
         }
     }
 
+    fn supports_assets(&self) -> bool {
+        true
+    }
+
     async fn push_asset(&self, hash: [u8; 32], data: Vec<u8>) -> AppResult<()> {
         // Chunks are content-addressed, so one already on the server is the one
         // we would send. Asking first turns a re-published attachment into a

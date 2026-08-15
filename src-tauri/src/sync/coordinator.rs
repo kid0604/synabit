@@ -663,26 +663,7 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     .push(format!("{}: waiting on attachment data", asset.rel_path));
                 continue;
             }
-            _ => {
-                let db = match db_state.lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                db.transition_inbox_state(
-                    vault_id,
-                    provider_id,
-                    &inbox_record.operation_id,
-                    InboxState::Applying,
-                    InboxState::Quarantined,
-                    Some(InboxApplyFailureKind::Corrupt.as_str()),
-                    chrono::Utc::now().timestamp_millis(),
-                )?;
-                result.errors.push(format!(
-                    "quarantined {}: unsupported payload kind",
-                    hex::encode(inbox_record.operation_id)
-                ));
-                continue;
-            }
+
         }
     }
 
@@ -1337,6 +1318,7 @@ impl SyncCoordinator {
             e2ee_key,
             &vault_id,
             &provider_id,
+            adapter.supports_assets(),
         )?;
 
         // The presence check asks "is the vault there at all", so it looks at
@@ -1359,6 +1341,7 @@ impl SyncCoordinator {
             e2ee_key,
             &vault_id,
             &provider_id,
+            adapter.supports_assets(),
         )?);
 
         // Attachment bytes go up before their references do, so a peer never

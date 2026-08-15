@@ -33,6 +33,7 @@ fn d1_tombstone_identity_preparation_is_exact_and_retry_stable() {
         &key,
         "v1",
         "gdrive",
+        true,
     )
     .unwrap();
 
@@ -70,6 +71,7 @@ fn d1_tombstone_identity_preparation_is_exact_and_retry_stable() {
         &key,
         "v1",
         "gdrive",
+        true,
     )
     .unwrap();
     let after = db_state

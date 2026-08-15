@@ -795,15 +795,27 @@ impl Database {
     }
 
     /// Delete assets older than cutoff and return blob paths for file removal.
-    pub fn gc_old_assets(&self, max_age_secs: u64) -> Result<Vec<String>> {
-        let conn = self.pool.get().context("pool get")?;
-        let cutoff = unix_now() - max_age_secs as i64;
-        let mut stmt = conn.prepare("SELECT blob_path FROM assets WHERE created_at < ?1")?;
-        let paths: Vec<String> = stmt
-            .query_map(params![cutoff], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
-        conn.execute("DELETE FROM assets WHERE created_at < ?1", params![cutoff])?;
-        Ok(paths)
+    /// Collect attachment chunks that nothing needs any more.
+    ///
+    /// Disabled, and it has to be. This deleted every chunk older than the
+    /// retention window regardless of whether a live entry still pointed at it,
+    /// so a month after an image was shared the chunks vanished while the
+    /// reference remained: any device that had not already fetched it — one
+    /// joining later, one that had been offline — would find a reference to
+    /// nothing, permanently.
+    ///
+    /// It cannot simply be repaired here. Which chunks a vault still needs is
+    /// recorded inside encrypted payloads, and the server cannot read them; it
+    /// has no way to tell a referenced chunk from an abandoned one. Collecting
+    /// them safely needs the clients, who can read their own references, to say
+    /// what is still in use. Until then chunks live for the life of the vault
+    /// and the storage quota is what bounds them.
+    ///
+    /// Superseded chunks do accumulate: editing an image leaves the old one
+    /// behind. That is wasted space, which is the right way to be wrong here.
+    #[allow(dead_code)]
+    pub fn gc_old_assets(&self, _max_age_secs: u64) -> Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     // -----------------------------------------------------------------------

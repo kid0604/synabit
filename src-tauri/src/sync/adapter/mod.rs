@@ -50,6 +50,15 @@ pub trait SyncAdapter: Send + Sync {
 
     /// Pull một asset
     async fn pull_asset(&self, hash: [u8; 32]) -> AppResult<Option<Vec<u8>>>;
+
+    /// Can this target store attachment chunks?
+    ///
+    /// A target that cannot must not be offered attachments at all: the entry
+    /// would sit unpublishable forever and report the same failure on every
+    /// sync. Answering honestly keeps those files local and quiet.
+    fn supports_assets(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

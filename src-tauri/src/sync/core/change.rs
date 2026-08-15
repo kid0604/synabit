@@ -324,15 +324,32 @@ pub fn prepare_durable_outbox_operations(
     e2ee_key: &[u8; 32],
     vault_id: &str,
     provider_id: &str,
+    supports_assets: bool,
 ) -> AppResult<Vec<String>> {
     let mut skipped: Vec<String> = Vec::new();
 
     for change in changes {
-        if let Err(e) =
-            prepare_one_operation(db_state, vault, &change, e2ee_key, vault_id, provider_id)
-        {
-            log::warn!("sync: skipping {}: {}", change.rel_path, e);
-            skipped.push(format!("{}: {}", change.rel_path, e));
+        match prepare_one_operation(
+            db_state,
+            vault,
+            &change,
+            e2ee_key,
+            vault_id,
+            provider_id,
+            supports_assets,
+        ) {
+            Ok(()) => {}
+            // A file this target simply cannot carry is not a failure. Reporting
+            // it would put the same complaint in front of the user on every
+            // sync, for the life of the vault, about something that is working
+            // as intended.
+            Err(crate::error::AppError::UnsupportedCapability(reason)) => {
+                log::debug!("sync: {}", reason);
+            }
+            Err(e) => {
+                log::warn!("sync: skipping {}: {}", change.rel_path, e);
+                skipped.push(format!("{}: {}", change.rel_path, e));
+            }
         }
     }
 
@@ -346,6 +363,7 @@ fn prepare_one_operation(
     e2ee_key: &[u8; 32],
     vault_id: &str,
     provider_id: &str,
+    supports_assets: bool,
 ) -> AppResult<()> {
     {
         let doc_hash = *blake3::hash(change.rel_path.as_bytes()).as_bytes();
@@ -404,6 +422,16 @@ fn prepare_one_operation(
         // separately, before the reference goes out, so a peer never sees a
         // reference whose bytes are not yet fetchable.
         if !crate::sync::utils::is_syncable_document(&change.rel_path) {
+            if !supports_assets {
+                // Google Drive has no place to put chunks. Queueing the
+                // attachment anyway would leave an entry that can never be
+                // published, and report the same failure on every sync for the
+                // life of the vault.
+                return Err(crate::error::AppError::UnsupportedCapability(format!(
+                    "{} stays local: this sync target cannot carry attachments",
+                    change.rel_path
+                )));
+            }
             return prepare_asset_operation(db_state, vault, change, e2ee_key, vault_id, provider_id);
         }
 
@@ -777,6 +805,7 @@ mod tests {
             &e2ee_key,
             "v1",
             "gdrive",
+            true,
         )
         .unwrap();
 
@@ -848,6 +877,7 @@ mod tests {
             &e2ee_key,
             "v1",
             "gdrive",
+            true,
         );
         // A change that cannot be prepared is reported and skipped rather than
         // failing the run, but it must still leave nothing behind.
