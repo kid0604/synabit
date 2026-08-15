@@ -255,6 +255,7 @@ pub fn decode_gdrive_operation(data: &[u8]) -> AppResult<SyncOperation> {
             encrypted_payload: v1.encrypted_payload,
             payload_hash: v1.payload_hash,
             timestamp: v1.timestamp,
+            asset_chunks: Vec::new(),
         });
     }
 
@@ -274,6 +275,7 @@ pub fn decode_gdrive_operation(data: &[u8]) -> AppResult<SyncOperation> {
             encrypted_payload: v0.encrypted_payload,
             payload_hash: v0.payload_hash,
             timestamp: v0.timestamp,
+            asset_chunks: Vec::new(),
         });
     }
 
@@ -958,6 +960,7 @@ pub mod tests {
             encrypted_payload: vec![1, 2, 3, op_id_byte],
             payload_hash: [op_id_byte; 32],
             timestamp: ts,
+            asset_chunks: Vec::new(),
         }
     }
 

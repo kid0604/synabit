@@ -25,6 +25,44 @@ use synabit_protocol::{AssetChunkRef, AssetRef};
 /// for the encryption overhead.
 pub const CHUNK_BYTES: usize = 1024 * 1024;
 
+/// The largest attachment this pipeline will carry.
+///
+/// Chunking holds the file and every one of its encrypted chunks in memory at
+/// the same time, so a file costs roughly twice its own size in resident memory
+/// while it is being prepared, and again while it is being reassembled. Without
+/// a ceiling a single dropped-in video decides how much memory the app needs,
+/// which on a phone means it is decided by being killed.
+///
+/// 100MB covers what a vault of notes actually holds — photographs, scans,
+/// voice memos — and keeps the worst case survivable. Files above it stay
+/// local, which is the same place they were before any of this existed.
+pub const MAX_ASSET_BYTES: u64 = 100 * 1024 * 1024;
+
+/// The most chunks any one attachment may claim.
+///
+/// Derived from the size ceiling rather than chosen, so the two cannot drift
+/// apart. This bounds what a malformed or hostile entry can make us allocate
+/// before a single byte has been verified: the chunk count arrives from the
+/// network, and `Vec::with_capacity` believes whatever it is told.
+pub const MAX_ASSET_CHUNKS: usize = (MAX_ASSET_BYTES / CHUNK_BYTES as u64) as usize + 1;
+
+/// Is this attachment within the size the pipeline will carry?
+///
+/// One function so the sending and receiving sides cannot disagree about the
+/// limit — a file we would refuse to send must also be one we refuse to be
+/// handed, or the ceiling only binds the well-behaved.
+pub fn check_size(rel_path: &str, total_bytes: u64) -> AppResult<()> {
+    if total_bytes > MAX_ASSET_BYTES {
+        return Err(AppError::AssetTooLarge(format!(
+            "{} is {:.1}MB, over the {}MB limit for attachments",
+            rel_path,
+            total_bytes as f64 / (1024.0 * 1024.0),
+            MAX_ASSET_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(())
+}
+
 fn chunk_id_key(vault_key: &[u8; 32]) -> [u8; 32] {
     blake3::derive_key("synabit-asset-chunk-id-v1", vault_key)
 }
@@ -133,6 +171,8 @@ pub fn prepare(
     node_id: &str,
     contents: &[u8],
 ) -> AppResult<(AssetRef, Vec<PreparedChunk>)> {
+    check_size(rel_path, contents.len() as u64)?;
+
     let mut chunks = Vec::new();
     let mut references = Vec::new();
 
@@ -176,6 +216,42 @@ pub fn prepare(
     Ok((asset, chunks))
 }
 
+/// Check an attachment description that arrived from another device.
+///
+/// Everything in an `AssetRef` is asserted by whoever sent it, and both the
+/// size and the chunk count are used to size allocations. They are checked
+/// before we act on them, so a corrupt or hostile entry costs a rejection
+/// rather than the memory it asked for.
+///
+/// This runs before the first chunk is fetched. Verifying afterwards would mean
+/// the damage — the allocation, the transfer — is already done.
+pub fn validate_incoming(asset: &AssetRef) -> AppResult<()> {
+    check_size(&asset.rel_path, asset.total_bytes)?;
+
+    if asset.chunks.len() > MAX_ASSET_CHUNKS {
+        return Err(AppError::AssetTooLarge(format!(
+            "{} claims {} chunks, over the {} a valid attachment can have",
+            asset.rel_path,
+            asset.chunks.len(),
+            MAX_ASSET_CHUNKS
+        )));
+    }
+
+    // The two claims have to agree with each other. A short chunk list beside a
+    // huge byte count is the shape of an entry built to make us allocate.
+    let capacity = asset.chunks.len() as u64 * CHUNK_BYTES as u64;
+    if asset.total_bytes > capacity {
+        return Err(AppError::SyncError(format!(
+            "{} claims {} bytes but only {} chunk(s) to hold them",
+            asset.rel_path,
+            asset.total_bytes,
+            asset.chunks.len()
+        )));
+    }
+
+    Ok(())
+}
+
 /// Rebuild a file from chunks that have already been fetched.
 ///
 /// Every stage is checked: each encrypted chunk against the hash in the
@@ -187,6 +263,8 @@ pub fn reassemble(
     asset: &AssetRef,
     fetched: &[(AssetChunkRef, Vec<u8>)],
 ) -> AppResult<Vec<u8>> {
+    validate_incoming(asset)?;
+
     if fetched.len() != asset.chunks.len() {
         return Err(AppError::SyncError(format!(
             "asset {} expected {} chunk(s), got {}",

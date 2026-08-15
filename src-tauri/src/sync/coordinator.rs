@@ -1,21 +1,32 @@
-use crate::db::sync_outbox::{OutboxRecord, OutboxState};
+use crate::db::sync_outbox::OutboxRecord;
 use crate::db::sync_provider_state::ProviderSyncState;
-use crate::db::{DbBridge, DbState};
+use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::sync::adapter::{
-    AdapterSyncMode, AdapterSyncPlan, PullLimits, PushAck, PushResult, SyncAdapter,
+    AdapterSyncMode, AdapterSyncPlan, PullLimits, PushAck, SyncAdapter,
 };
 use crate::sync::core::change::{
     detect_deletions, detect_local_changes, prepare_durable_outbox_operations, LocalChange,
 };
 use crate::sync::core::identity::VaultIdentity;
 use crate::sync::core::types::{
-    DocSyncPayload, SyncOperation, SyncPayload, SyncResult, SyncRunContext,
+    DocSyncPayload, SyncPayload, SyncResult, SyncRunContext,
 };
 use std::path::Path;
 use std::sync::Arc;
 use synabit_protocol::SyncEntryKind;
 use tauri::Manager;
+
+// Used only by the tests below and by the oracle files they include. Kept out of
+// the main import list so the build does not warn about them in a normal build.
+#[cfg(test)]
+use crate::db::sync_outbox::OutboxState;
+#[cfg(test)]
+use crate::db::DbBridge;
+#[cfg(test)]
+use crate::sync::adapter::PushResult;
+#[cfg(test)]
+use crate::sync::core::types::SyncOperation;
 
 pub trait InboxEntryApplier<R: tauri::Runtime = tauri::Wry>: Send + Sync {
     fn apply(
@@ -271,7 +282,7 @@ pub const MAX_INBOX_APPLY_ATTEMPTS: u32 = 3;
 /// Returns `true` when the caller should stop processing this page so the next
 /// sync can retry, and `false` when the entry has exhausted its budget, was
 /// quarantined, and the loop should move on.
-fn record_apply_failure(
+pub(crate) fn record_apply_failure(
     db_state: &DbState,
     vault_id: &str,
     provider_id: &str,

@@ -427,6 +427,151 @@ async fn a_target_that_cannot_store_attachments_leaves_them_quietly_alone() {
     assert_eq!(mailbox.chunk_count(), 0, "no chunks should have been attempted");
 }
 
+#[tokio::test]
+async fn an_attachment_too_large_to_carry_is_left_local_without_complaint() {
+    // Preparing an attachment holds the file and all of its encrypted chunks in
+    // memory at once. Without a ceiling, dropping a video into the vault decides
+    // how much memory the app needs, and on a phone that is decided by being
+    // killed. The file stays local — where it already was — and the refusal is
+    // not dressed up as a sync failure, because it will be just as large on
+    // every future run.
+    let mailbox = InMemoryMailbox::new();
+    let a = HarnessDevice::new("a", &mailbox);
+
+    a.write("Notes/note.md", "# Note\n");
+
+    // Sparse, so the test costs a size rather than the bytes behind it.
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    let huge = a.vault_path().join("assets/video.mp4");
+    std::fs::File::create(&huge)
+        .unwrap()
+        .set_len(crate::sync::core::asset::MAX_ASSET_BYTES + 1)
+        .unwrap();
+
+    let first = a.sync_ok().await;
+    assert_eq!(first.pushed, 1, "the note should still be published");
+    assert!(
+        first.errors.is_empty(),
+        "a file too large to carry is not a sync failure: {:?}",
+        first.errors
+    );
+    assert_eq!(mailbox.chunk_count(), 0, "no chunk should have been uploaded");
+
+    // The point of the whole exercise: it does not come back every run.
+    let second = a.sync_ok().await;
+    assert!(
+        second.errors.is_empty(),
+        "the same complaint returned on the next sync: {:?}",
+        second.errors
+    );
+
+    assert!(huge.exists(), "the file should still be on disk, untouched");
+}
+
+#[tokio::test]
+async fn an_attachment_whose_bytes_never_arrive_stops_being_asked_for() {
+    // A reference whose chunks are missing used to be retried on every sync for
+    // ever, pushing the same error into the result each time. Retrying is right
+    // — the bytes may be moments behind — but only a bounded number of times.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/photo.png"), png_bytes(9)).unwrap();
+    a.sync_ok().await;
+    assert!(mailbox.chunk_count() > 0, "the chunk should have been uploaded");
+
+    // The reference survives; the bytes do not.
+    mailbox.drop_all_chunks();
+
+    let mut last = b.sync_ok().await;
+    for _ in 0..crate::sync::coordinator::MAX_INBOX_APPLY_ATTEMPTS {
+        last = b.sync_ok().await;
+    }
+
+    assert!(
+        !b.vault_path().join("assets/photo.png").exists(),
+        "a file must never be written from chunks that were never fetched"
+    );
+    assert!(
+        last.errors.is_empty(),
+        "after giving up, the attempt should stop being reported every run: {:?}",
+        last.errors
+    );
+}
+
+#[tokio::test]
+async fn a_published_attachment_tells_the_server_which_chunks_it_needs() {
+    // The server stores chunks but cannot read the payload naming them, so
+    // without this declaration it has no way to tell a chunk still in use from
+    // one left behind — which is why its collector could only delete by age,
+    // and why deleting by age destroyed live attachments.
+    //
+    // The declaration has to actually leave the device. A client that sent an
+    // empty list would look correct from every angle except the one that
+    // matters: chunks would simply never be collected, silently, for ever.
+    let mailbox = InMemoryMailbox::new();
+    let a = HarnessDevice::new("a", &mailbox);
+
+    a.write("Notes/note.md", "# Note\n");
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    std::fs::write(a.vault_path().join("assets/photo.png"), png_bytes(4)).unwrap();
+    a.sync_ok().await;
+
+    let declared = mailbox.declared_chunk_ids();
+    assert!(
+        !declared.is_empty(),
+        "the attachment was published without saying what it depends on"
+    );
+    assert_eq!(
+        declared.len(),
+        mailbox.chunk_count(),
+        "every uploaded chunk should be accounted for by a reference"
+    );
+}
+
+#[test]
+fn an_attachment_reference_cannot_ask_for_more_memory_than_it_could_hold() {
+    // Every number in an `AssetRef` is asserted by whichever device sent it, and
+    // both the size and the chunk count are used to size allocations. A peer
+    // with the vault key is trusted with the contents, not with this machine's
+    // memory.
+    use crate::sync::core::asset::{validate_incoming, MAX_ASSET_BYTES, MAX_ASSET_CHUNKS};
+    use synabit_protocol::{AssetChunkRef, AssetRef};
+
+    let chunk = AssetChunkRef {
+        chunk_id: [0u8; 32],
+        chunk_hash: [0u8; 32],
+        compressed_len: 16,
+    };
+    let reference = |total_bytes: u64, count: usize| AssetRef {
+        asset_id: [0u8; 32],
+        rel_path: "assets/claim.bin".into(),
+        node_id: "assets/claim.bin".into(),
+        mime_type: "application/octet-stream".into(),
+        total_bytes,
+        plaintext_hash: [0u8; 32],
+        chunks: vec![chunk.clone(); count],
+    };
+
+    assert!(
+        validate_incoming(&reference(MAX_ASSET_BYTES + 1, MAX_ASSET_CHUNKS)).is_err(),
+        "a reference over the size limit should be refused"
+    );
+    assert!(
+        validate_incoming(&reference(1024, MAX_ASSET_CHUNKS + 1)).is_err(),
+        "a reference claiming more chunks than can exist should be refused"
+    );
+    assert!(
+        validate_incoming(&reference(u64::MAX, 1)).is_err(),
+        "a huge byte count beside one chunk is the shape of a memory claim"
+    );
+    assert!(
+        validate_incoming(&reference(1024, 1)).is_ok(),
+        "an ordinary reference should still pass"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Joining a vault that already has history
 // ---------------------------------------------------------------------------

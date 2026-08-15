@@ -20,6 +20,11 @@ pub struct SyncOperation {
     pub encrypted_payload: Vec<u8>,
     pub payload_hash: [u8; 32],
     pub timestamp: i64,
+    /// The chunks this operation depends on, for the server's reference graph.
+    ///
+    /// Sent in the clear so the server can collect a chunk when the last entry
+    /// naming it is collected. Empty for everything that is not an attachment.
+    pub asset_chunks: Vec<[u8; 32]>,
 }
 
 impl SyncOperation {

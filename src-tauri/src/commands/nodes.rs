@@ -842,7 +842,7 @@ pub fn delete_node_file(
 
     let identity =
         crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
-    let vault_id = identity.vault_id.to_string();
+    let _vault_id = identity.vault_id.to_string();
 
     // Update DB immediately
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -975,6 +975,35 @@ pub fn rename_node_file(
     Ok(old_rel_path)
 }
 
+/// Frontmatter for a newly created note, carrying its sync identity from the
+/// first byte it ever has.
+///
+/// A note used to be created without one, so its identity was decided later by
+/// whichever code path reached it first. When that turned out to be sync, sync
+/// had to mint an id and write it into the file — a read-modify-write against a
+/// file the editor may be saving at the same moment, with no coordination
+/// between them. Whoever wrote second won, and what the loser wrote was either
+/// the user's edit or the identity the vault had just agreed on.
+///
+/// Assigning it here does not make that write safe; it makes it unnecessary,
+/// which is the only version of safe available without a lock spanning both.
+fn new_note_frontmatter(title: &str, node_type: &str, tag: Option<&str>) -> String {
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let mut out = format!(
+        "---\nnode_id: {}\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n",
+        uuid::Uuid::new_v4(),
+        title,
+        node_type,
+        created_at,
+        created_at
+    );
+    if let Some(tag) = tag.map(str::trim).filter(|t| !t.is_empty()) {
+        out.push_str(&format!("tags:\n  - {}\n", tag));
+    }
+    out.push_str("---\n\n");
+    out
+}
+
 #[tauri::command]
 pub fn create_node_file(
     state: tauri::State<'_, DbState>,
@@ -1012,11 +1041,7 @@ pub fn create_node_file(
     let path = dir_path.join(&filename);
 
     if !path.exists() {
-        let created_at = chrono::Utc::now().to_rfc3339();
-        let content = format!(
-            "---\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n---\n\n",
-            title, node_type, created_at, created_at
-        );
+        let content = new_note_frontmatter(&title, &node_type, None);
         std::fs::write(&path, content)?;
 
         // Sync DB immediately
@@ -1095,15 +1120,7 @@ pub fn open_daily_note(
     let path = notes_dir.join(&filename);
 
     let title = date_str.clone();
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let content = if tag.trim().is_empty() {
-        format!(
-            "---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n---\n\n",
-            title, created_at, created_at
-        )
-    } else {
-        format!("---\ntitle: \"{}\"\ntype: \"note\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\ntags:\n  - {}\n---\n\n", title, created_at, created_at, tag.trim())
-    };
+    let content = new_note_frontmatter(&title, "note", Some(&tag));
     std::fs::write(&path, content)?;
 
     // Sync DB immediately to avoid race condition with frontend scanVault
@@ -1403,5 +1420,72 @@ pub(crate) fn crdt_apply_safe(
             "CRDT panic caught for {}",
             node_id
         ))),
+    }
+}
+
+#[cfg(test)]
+mod new_note_identity_tests {
+    use super::new_note_frontmatter;
+
+    /// The property the whole change exists for: sync finds an identity already
+    /// in the file, so it never reaches for the pen.
+    ///
+    /// `get_or_assign_node_id_with_hint` writes the file when it has to mint an
+    /// id. That write races the editor saving the same file, and this asserts
+    /// the race is not entered rather than that it is survived.
+    #[test]
+    fn a_freshly_created_note_is_never_rewritten_to_give_it_an_identity() {
+        let dir = std::env::temp_dir().join("synabit_new_note_identity");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("note.md");
+
+        let created = new_note_frontmatter("My note", "note", None);
+        std::fs::write(&path, &created).unwrap();
+
+        let resolved =
+            crate::sync::core::identity::get_or_assign_node_id_with_hint(&dir, &path, None)
+                .expect("identity should resolve from the frontmatter");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            created,
+            "the file was rewritten to inject an id it already had"
+        );
+        assert!(
+            created.contains(&format!("node_id: {}", resolved)),
+            "the id sync resolved is not the one written at creation"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_notes_created_in_the_same_moment_do_not_share_an_identity() {
+        // Copied files sharing a node_id has already been a bug once. Minting at
+        // creation must not reintroduce it by deriving the id from the clock.
+        let a = new_note_frontmatter("One", "note", None);
+        let b = new_note_frontmatter("Two", "note", None);
+        let id_of = |s: &str| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("node_id: "))
+                .map(str::to_string)
+                .expect("frontmatter should carry a node_id")
+        };
+        assert_ne!(id_of(&a), id_of(&b), "two new notes were given one identity");
+    }
+
+    #[test]
+    fn a_tag_is_carried_into_the_frontmatter_and_an_empty_one_is_not() {
+        let tagged = new_note_frontmatter("Daily", "note", Some("journal"));
+        assert!(tagged.contains("tags:\n  - journal\n"), "the tag was dropped");
+
+        for empty in [Some(""), Some("   "), None] {
+            let plain = new_note_frontmatter("Daily", "note", empty);
+            assert!(
+                !plain.contains("tags:"),
+                "an empty tag should not produce a tags block: {empty:?}"
+            );
+        }
     }
 }

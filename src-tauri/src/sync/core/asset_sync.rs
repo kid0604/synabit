@@ -15,6 +15,46 @@ use crate::sync::core::asset;
 use crate::sync::core::types::{SyncPayload, SyncResult};
 use synabit_protocol::{AssetChunkRef, AssetRef};
 
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// Why an incoming attachment could not be written, and whether asking again
+/// could ever change the answer.
+///
+/// The distinction is the whole point of the type. Treating every failure as
+/// retryable meant a malformed entry was re-fetched and re-reported on every
+/// sync for the life of the vault; treating every failure as fatal would throw
+/// away attachments whose chunks were merely a few seconds behind.
+enum AssetWriteError {
+    /// Settled. The entry is wrong in a way that time does not fix.
+    Terminal(String),
+    /// Unsettled. Worth a bounded number of further attempts.
+    Transient(String),
+}
+
+/// Anything raised on the way to writing a file describes the entry or this
+/// machine, not the network, so it defaults to settled. The one genuinely
+/// temporary case — chunks that have not arrived — is raised as `Transient` at
+/// the point it is detected, where it is known rather than guessed.
+///
+/// Local I/O is the exception: a full disk or a momentarily locked file says
+/// nothing about the entry, and the same bytes may well write cleanly later.
+impl From<std::io::Error> for AssetWriteError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Transient(err.to_string())
+    }
+}
+
+impl From<AppError> for AssetWriteError {
+    fn from(err: AppError) -> Self {
+        match err {
+            AppError::Io(e) => Self::Transient(e.to_string()),
+            other => Self::Terminal(other.to_string()),
+        }
+    }
+}
+
 /// Upload the chunks for every attachment waiting to be published, then release
 /// those entries for dispatch.
 ///
@@ -63,7 +103,16 @@ async fn upload_one(
     e2ee_key: &[u8; 32],
     adapter: &dyn SyncAdapter,
 ) -> AppResult<()> {
-    let contents = std::fs::read(vault.join(rel_path))
+    let path = vault.join(rel_path);
+
+    // Checked again rather than trusted from preparation: the file may have
+    // grown in between, and this is the point where it is read whole.
+    let size = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .map_err(|e| AppError::General(format!("cannot stat {}: {}", rel_path, e)))?;
+    asset::check_size(rel_path, size)?;
+
+    let contents = std::fs::read(&path)
         .map_err(|e| AppError::General(format!("cannot read {}: {}", rel_path, e)))?;
 
     // Regenerated rather than stored: chunking is deterministic, so keeping the
@@ -119,6 +168,22 @@ pub async fn fetch_staged_assets(
             device_id,
         )?;
 
+        // Claimed before the attempt, so that a failure has somewhere to be
+        // recorded from. `record_apply_failure` counts attempts out of this
+        // state, which is what stops a doomed entry retrying for ever.
+        {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.transition_inbox_state(
+                vault_id,
+                provider_id,
+                &record.operation_id,
+                record.state,
+                InboxState::Applying,
+                None,
+                now_ms(),
+            )?;
+        }
+
         let target = if is_own {
             InboxState::IgnoredOwnOperation
         } else {
@@ -130,26 +195,49 @@ pub async fn fetch_staged_assets(
                     result.pulled_files.push(rel_path);
                     InboxState::Applied
                 }
-                Err(e) => {
-                    log::warn!("attachment not fetched yet: {}", e);
-                    result.errors.push(e.to_string());
-                    // Left for the next run rather than failing the page.
+                // Nothing about this entry will be different next time: it is
+                // too large, malformed, or not an attachment at all. Retrying
+                // would report the same complaint on every sync for ever, so it
+                // is put aside once and said once.
+                Err(AssetWriteError::Terminal(reason)) => {
+                    log::warn!("attachment set aside: {}", reason);
+                    result.errors.push(reason);
+                    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    db.transition_inbox_state(
+                        vault_id,
+                        provider_id,
+                        &record.operation_id,
+                        InboxState::Applying,
+                        InboxState::Quarantined,
+                        Some("corrupt"),
+                        now_ms(),
+                    )?;
+                    continue;
+                }
+                // Could well work later — most often a chunk that has not
+                // landed yet. Retried, but a bounded number of times, so a
+                // chunk that is never coming stops being asked for.
+                // Could well work later — most often a chunk that has not
+                // landed yet. Retried, but a bounded number of times, so a
+                // chunk that is never coming stops being asked for. Reporting
+                // is left to the shared handler, which speaks up only once the
+                // attempts are spent rather than on every one of them.
+                Err(AssetWriteError::Transient(reason)) => {
+                    log::debug!("attachment not ready yet: {}", reason);
+                    crate::sync::coordinator::record_apply_failure(
+                        db_state,
+                        vault_id,
+                        provider_id,
+                        &record.operation_id,
+                        &reason,
+                        result,
+                    )?;
                     continue;
                 }
             }
         };
 
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let now = chrono::Utc::now().timestamp_millis();
-        db.transition_inbox_state(
-            vault_id,
-            provider_id,
-            &record.operation_id,
-            record.state,
-            InboxState::Applying,
-            None,
-            now,
-        )?;
         db.transition_inbox_state(
             vault_id,
             provider_id,
@@ -157,7 +245,7 @@ pub async fn fetch_staged_assets(
             InboxState::Applying,
             target,
             None,
-            now,
+            now_ms(),
         )?;
     }
 
@@ -172,7 +260,7 @@ async fn write_one(
     record: &crate::db::sync_inbox::InboxRecord,
     e2ee_key: &[u8; 32],
     adapter: &dyn SyncAdapter,
-) -> AppResult<String> {
+) -> Result<String, AssetWriteError> {
     let encrypted = record
         .encrypted_payload
         .as_ref()
@@ -191,7 +279,7 @@ async fn write_one(
 
     let asset: AssetRef = match parsed {
         SyncPayload::AssetReference(a) => a,
-        _ => return Err(AppError::SyncError("entry is not an attachment".into())),
+        _ => return Err(AppError::SyncError("entry is not an attachment".into()).into()),
     };
 
     // Defence in depth, matching the delete path: the resolved location must
@@ -201,17 +289,28 @@ async fn write_one(
         return Err(AppError::SyncError(format!(
             "refusing to write outside the vault: {}",
             asset.rel_path
-        )));
+        ))
+        .into());
     }
+
+    // Before the capacity below is taken from it. Every number in an `AssetRef`
+    // was chosen by another device, and `with_capacity` asks no questions.
+    asset::validate_incoming(&asset)?;
 
     let mut fetched: Vec<(AssetChunkRef, Vec<u8>)> = Vec::with_capacity(asset.chunks.len());
     for reference in &asset.chunks {
-        let bytes = adapter
-            .pull_asset(reference.chunk_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::SyncError(format!("{}: a chunk is not on the server yet", asset.rel_path))
-            })?;
+        let bytes = match adapter.pull_asset(reference.chunk_id).await? {
+            Some(bytes) => bytes,
+            // The sender uploads chunks before publishing the reference, so this
+            // is unusual rather than routine — a partial upload, or a chunk lost
+            // on the server. Worth retrying, but not for ever.
+            None => {
+                return Err(AssetWriteError::Transient(format!(
+                    "{}: a chunk is not on the server yet",
+                    asset.rel_path
+                )))
+            }
+        };
         fetched.push((reference.clone(), bytes));
     }
 

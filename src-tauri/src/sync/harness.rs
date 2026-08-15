@@ -47,6 +47,9 @@ struct StoredEntry {
     payload_hash: [u8; 32],
     source_device: String,
     timestamp: i64,
+    /// What the device declared this entry depends on, mirroring what the real
+    /// server records to build its reference graph.
+    asset_chunks: Vec<[u8; 32]>,
 }
 
 #[derive(Default)]
@@ -137,6 +140,33 @@ impl InMemoryMailbox {
     /// unchanged content does not upload it again.
     pub fn chunk_bytes(&self) -> usize {
         self.lock().chunks.values().map(|c| c.len()).sum()
+    }
+
+    /// Every chunk id the stored entries declare they depend on.
+    ///
+    /// The real server builds its collector from exactly this. Reading it back
+    /// here is what shows the declaration actually leaves the device — a client
+    /// that quietly sent nothing would leave the server unable to tell a live
+    /// chunk from an abandoned one, and it would look fine from the outside.
+    pub fn declared_chunk_ids(&self) -> Vec<[u8; 32]> {
+        let inner = self.lock();
+        let mut ids: Vec<[u8; 32]> = inner
+            .entries
+            .iter()
+            .flat_map(|e| e.asset_chunks.iter().copied())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Discard every stored chunk while leaving the entries that reference them.
+    ///
+    /// Models the state the server's attachment collector used to create, and
+    /// the one a partial upload still can: a published reference whose bytes
+    /// are not there. The receiving device has to stop asking eventually.
+    pub fn drop_all_chunks(&self) {
+        self.lock().chunks.clear();
     }
 
     /// Corrupt a stored entry's payload so it fails hash verification on pull.
@@ -248,6 +278,7 @@ impl SyncAdapter for HarnessAdapter {
                 payload_hash: op.payload_hash,
                 source_device: self.device_id.clone(),
                 timestamp: op.timestamp,
+                asset_chunks: op.asset_chunks.clone(),
             });
             accepted.push(PushAck {
                 operation_id: op.operation_id,

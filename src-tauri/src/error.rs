@@ -23,6 +23,14 @@ pub enum AppError {
     #[error("Unsupported capability: {0}")]
     UnsupportedCapability(String),
 
+    /// An attachment is bigger than the pipeline will carry.
+    ///
+    /// Kept separate from `SyncError` because it is not a failure to retry:
+    /// the file will be exactly as large on the next run. Callers skip it and
+    /// say so once, rather than reporting it every sync forever.
+    #[error("Attachment too large: {0}")]
+    AssetTooLarge(String),
+
     #[error("General application error: {0}")]
     General(String),
 }
@@ -49,6 +57,7 @@ impl Serialize for AppError {
             AppError::UnsupportedCapability(msg) => {
                 ("UNSUPPORTED_CAPABILITY".to_string(), msg.clone())
             }
+            AppError::AssetTooLarge(msg) => ("ASSET_TOO_LARGE".to_string(), msg.clone()),
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
         };
 

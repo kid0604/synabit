@@ -497,6 +497,7 @@ pub(crate) fn convert_ops_to_push_items(
             entry_kind: op.entry_kind.clone(),
             encrypted_payload: op.encrypted_payload.clone(),
             payload_hash: op.payload_hash,
+            asset_chunks: op.asset_chunks.clone(),
         });
     }
     (items, tx_bytes)
@@ -734,6 +735,7 @@ mod tests {
             encrypted_payload: vec![1, 2, 3],
             payload_hash: [100; 32],
             timestamp: 1000,
+            asset_chunks: Vec::new(),
         };
         let op_delete = crate::sync::core::types::SyncOperation {
             operation_id: [2; 16],
@@ -744,6 +746,7 @@ mod tests {
             encrypted_payload: vec![4, 5, 6],
             payload_hash: [200; 32],
             timestamp: 2000,
+            asset_chunks: Vec::new(),
         };
         let op_asset = crate::sync::core::types::SyncOperation {
             operation_id: [3; 16],
@@ -754,6 +757,7 @@ mod tests {
             encrypted_payload: vec![7, 8, 9],
             payload_hash: [30; 32],
             timestamp: 3000,
+            asset_chunks: Vec::new(),
         };
 
         let ops = vec![op_upsert, op_delete, op_asset];
@@ -980,6 +984,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: vec![1, 2, 3],
             payload_hash: [4; 32],
+            asset_chunks: Vec::new(),
         };
 
         let req = crate::sync::protocol::MailboxRequest::PushBatch { items: vec![item] };

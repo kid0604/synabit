@@ -162,7 +162,32 @@ pub fn outbox_record_to_sync_operation(
         encrypted_payload,
         payload_hash,
         timestamp: record.original_timestamp,
+        asset_chunks: asset_chunk_ids(record),
     })
+}
+
+/// The chunk ids an attachment operation depends on.
+///
+/// Read back out of the stored `AssetRef` rather than tracked separately, so
+/// the list the server is given cannot drift from the one the payload names.
+/// A blob that will not decode yields nothing: the entry is then published
+/// without references, which costs a chunk that is never collected — the safe
+/// direction to be wrong in, and far better than refusing to publish the file.
+fn asset_chunk_ids(record: &OutboxRecord) -> Vec<[u8; 32]> {
+    let Some(blob) = record.asset_ref_blob.as_ref() else {
+        return Vec::new();
+    };
+    match postcard::from_bytes::<synabit_protocol::AssetRef>(blob) {
+        Ok(asset) => asset.chunks.iter().map(|c| c.chunk_id).collect(),
+        Err(e) => {
+            log::warn!(
+                "sync: could not read the chunk list for {}: {}",
+                record.node_id,
+                e
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn decode_outbox_row(row: &Row) -> Result<OutboxRecord, rusqlite::Error> {
@@ -2273,6 +2298,7 @@ pub mod tests {
             encrypted_payload: rec.encrypted_payload.clone().unwrap(),
             payload_hash: rec.payload_hash.unwrap(),
             timestamp: rec.original_timestamp,
+        asset_chunks: Vec::new(),
         };
         assert_eq!(actual, expected);
     }

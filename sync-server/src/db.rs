@@ -95,6 +95,23 @@ impl Database {
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mailbox_vault_op_id ON mailbox(vault_hash, operation_id);
 
+            -- Which chunks each entry depends on. The server cannot read the
+            -- payload that names them, so without this it has no way to tell a
+            -- chunk still in use from one left behind, and collecting by age
+            -- deletes chunks whose references are still live.
+            --
+            -- Rows die with their entry, which is what makes the graph exact:
+            -- a chunk is collectable precisely when its last row is gone.
+            CREATE TABLE IF NOT EXISTS mailbox_chunks (
+                vault_hash TEXT NOT NULL REFERENCES vaults(vault_hash),
+                seq        INTEGER NOT NULL,
+                chunk_id   TEXT NOT NULL,
+                PRIMARY KEY (vault_hash, seq, chunk_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_chunks_lookup
+                ON mailbox_chunks(vault_hash, chunk_id);
+
             CREATE TABLE IF NOT EXISTS devices (
                 vault_hash  TEXT NOT NULL REFERENCES vaults(vault_hash),
                 device_id   TEXT NOT NULL,
@@ -142,6 +159,22 @@ impl Database {
                 is_purged      INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(vault_hash, doc_hash)
             );
+            ",
+        )?;
+
+        // Make the quota figure describe what is actually stored.
+        //
+        // Only entries were ever added to `used_storage_bytes`, so on any
+        // database that has carried attachments the number is short by all of
+        // them — and the collector now subtracts on the way out, which would
+        // drive an already-short counter to zero and leave the quota unable to
+        // measure anything. Recomputing from the two tables is cheap, exact,
+        // and settles both directions at once.
+        conn.execute_batch(
+            "
+            UPDATE vaults SET used_storage_bytes =
+                COALESCE((SELECT SUM(blob_size) FROM mailbox WHERE mailbox.vault_hash = vaults.vault_hash), 0)
+              + COALESCE((SELECT SUM(blob_size) FROM assets  WHERE assets.vault_hash  = vaults.vault_hash), 0);
             ",
         )?;
         Ok(())
@@ -255,6 +288,7 @@ impl Database {
         blob_path: &str,
         blob_size: u64,
         payload_hash: &str,
+        asset_chunks: &[[u8; 32]],
     ) -> Result<PushOutcome> {
         let mut conn = self.pool.get().context("pool get")?;
         let now = unix_now();
@@ -302,6 +336,16 @@ impl Database {
                 IdempotencyResult::Conflict => return Ok(PushOutcome::Conflict),
                 IdempotencyResult::NotFound => return Err(err.into()),
             }
+        }
+
+        // In the same transaction as the entry, so an entry can never exist
+        // without its references. A gap between the two would be a window in
+        // which the collector sees the chunks as unreferenced.
+        for chunk_id in asset_chunks {
+            tx.execute(
+                "INSERT OR IGNORE INTO mailbox_chunks (vault_hash, seq, chunk_id) VALUES (?1, ?2, ?3)",
+                params![vault_hash, next_seq, hex::encode(chunk_id)],
+            )?;
         }
 
         tx.execute(
@@ -546,6 +590,17 @@ impl Database {
     // -----------------------------------------------------------------------
 
     /// Store asset metadata.
+    /// Record a stored chunk and charge it to the vault.
+    ///
+    /// The charge is the part that was missing. `used_storage_bytes` is the
+    /// figure the quota check reads, and only entries were ever added to it, so
+    /// attachments consumed real disk while counting as nothing — the limit
+    /// could not be reached by uploading chunks no matter how many arrived.
+    ///
+    /// Re-storing a chunk already held is left alone rather than counted again.
+    /// Identical content deduplicates to one id by design, so a second arrival
+    /// is the normal case, and charging for it would inflate the figure until
+    /// the vault appeared full of a file it holds once.
     pub fn store_asset(
         &self,
         vault_hash: &str,
@@ -553,13 +608,25 @@ impl Database {
         blob_path: &str,
         blob_size: u64,
     ) -> Result<()> {
-        let conn = self.pool.get().context("pool get")?;
+        let mut conn = self.pool.get().context("pool get")?;
         let now = unix_now();
-        conn.execute(
-            "INSERT OR REPLACE INTO assets (vault_hash, asset_hash, blob_path, blob_size, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+        let tx = conn.transaction()?;
+
+        let inserted = tx.execute(
+            "INSERT INTO assets (vault_hash, asset_hash, blob_path, blob_size, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(vault_hash, asset_hash) DO NOTHING",
             params![vault_hash, asset_hash, blob_path, blob_size as i64, now],
         )?;
+
+        if inserted > 0 {
+            tx.execute(
+                "UPDATE vaults SET used_storage_bytes = used_storage_bytes + ?1 WHERE vault_hash = ?2",
+                params![blob_size as i64, vault_hash],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -694,6 +761,19 @@ impl Database {
             |row| row.get(0),
         )?;
 
+        // The chunk references die with the entry that made them, in the same
+        // transaction. Anything else leaves rows pointing at entries that no
+        // longer exist, and the collector below would then keep their chunks
+        // alive for ever.
+        tx.execute(
+            &format!(
+                "DELETE FROM mailbox_chunks WHERE vault_hash = ?1 AND seq IN (
+                     SELECT seq FROM mailbox WHERE {COLLECTABLE}
+                 )"
+            ),
+            params![vault_hash, min_seq as i64],
+        )?;
+
         tx.execute(
             &format!("DELETE FROM mailbox WHERE {COLLECTABLE}"),
             params![vault_hash, min_seq as i64],
@@ -794,28 +874,69 @@ impl Database {
         Ok(limit as u64)
     }
 
-    /// Delete assets older than cutoff and return blob paths for file removal.
-    /// Collect attachment chunks that nothing needs any more.
+    /// Collect attachment chunks that no live entry points at any more.
     ///
-    /// Disabled, and it has to be. This deleted every chunk older than the
-    /// retention window regardless of whether a live entry still pointed at it,
-    /// so a month after an image was shared the chunks vanished while the
-    /// reference remained: any device that had not already fetched it — one
-    /// joining later, one that had been offline — would find a reference to
-    /// nothing, permanently.
+    /// This replaces a collector that deleted by age alone. That one removed
+    /// chunks whose references were still live, so a month after an image was
+    /// shared its bytes vanished while the reference remained — and any device
+    /// that had not already fetched it found a reference to nothing, for good.
     ///
-    /// It cannot simply be repaired here. Which chunks a vault still needs is
-    /// recorded inside encrypted payloads, and the server cannot read them; it
-    /// has no way to tell a referenced chunk from an abandoned one. Collecting
-    /// them safely needs the clients, who can read their own references, to say
-    /// what is still in use. Until then chunks live for the life of the vault
-    /// and the storage quota is what bounds them.
+    /// What makes this version safe is that it never decides for itself what is
+    /// in use. `mailbox_chunks` is written with the entry and deleted with it,
+    /// so a chunk becomes collectable at exactly the moment its last entry is
+    /// collected — and entries are only collected once every device has
+    /// acknowledged them and a newer version exists. The bytes therefore
+    /// outlive every reference to them, which is the ordering that matters.
     ///
-    /// Superseded chunks do accumulate: editing an image leaves the old one
-    /// behind. That is wasted space, which is the right way to be wrong here.
-    #[allow(dead_code)]
-    pub fn gc_old_assets(&self, _max_age_secs: u64) -> Result<Vec<String>> {
-        Ok(Vec::new())
+    /// The age floor is not a retention policy but a margin: a chunk is
+    /// uploaded slightly before the entry naming it is published, and without
+    /// it that gap is a window in which a chunk looks like an orphan.
+    pub fn gc_unreferenced_assets(&self, min_age_secs: u64) -> Result<Vec<String>> {
+        let mut conn = self.pool.get().context("pool get")?;
+        let tx = conn.transaction()?;
+        let cutoff = unix_now() - min_age_secs as i64;
+
+        const ORPHANED: &str = "a.created_at <= ?1 AND NOT EXISTS (
+                 SELECT 1 FROM mailbox_chunks mc
+                 WHERE mc.vault_hash = a.vault_hash AND mc.chunk_id = a.asset_hash
+             )";
+
+        let mut stmt = tx.prepare(&format!(
+            "SELECT a.blob_path FROM assets AS a WHERE {ORPHANED}"
+        ))?;
+        let paths: Vec<String> = stmt
+            .query_map(params![cutoff], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        drop(stmt);
+
+        if paths.is_empty() {
+            return Ok(paths);
+        }
+
+        // Per vault, so each one's quota is credited what it actually gave back.
+        let mut stmt = tx.prepare(&format!(
+            "SELECT a.vault_hash, COALESCE(SUM(a.blob_size), 0) FROM assets AS a
+             WHERE {ORPHANED} GROUP BY a.vault_hash"
+        ))?;
+        let freed: Vec<(String, i64)> = stmt
+            .query_map(params![cutoff], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        tx.execute(
+            &format!("DELETE FROM assets AS a WHERE {ORPHANED}"),
+            params![cutoff],
+        )?;
+
+        for (vault_hash, bytes) in freed {
+            tx.execute(
+                "UPDATE vaults SET used_storage_bytes = MAX(0, used_storage_bytes - ?1) WHERE vault_hash = ?2",
+                params![bytes, vault_hash],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(paths)
     }
 
     // -----------------------------------------------------------------------
@@ -914,5 +1035,168 @@ impl Database {
             rusqlite::params![status, vault_hash, device_id, now],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod chunk_reference_tests {
+    use super::*;
+    use synabit_protocol::SyncEntryKind;
+
+    fn vault() -> (Database, tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::open(&dir.path().join("test.db")).expect("open");
+        let vault_hash = hex::encode([7u8; 32]);
+        db.register_vault(&vault_hash, &[9u8; 32], 1 << 30)
+            .expect("register");
+        (db, dir, vault_hash)
+    }
+
+    fn push(db: &Database, vault: &str, op: u8, doc: u8, chunks: &[[u8; 32]]) -> u64 {
+        match db
+            .push_entry(
+                vault,
+                &hex::encode([doc; 32]),
+                &[op; 16],
+                SyncEntryKind::Upsert,
+                "device-a",
+                &format!("/blob/{op}"),
+                10,
+                &hex::encode([op; 32]),
+                chunks,
+            )
+            .expect("push")
+        {
+            PushOutcome::Created(seq) => seq,
+            other => panic!("unexpected push outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_chunk_a_live_entry_points_at_is_never_collected() {
+        // The property the previous collector broke. It deleted by age alone, so
+        // a month after an image was shared its bytes went while the reference
+        // stayed — and every device that had not already fetched it was left
+        // holding a reference to nothing, permanently.
+        let (db, _dir, vault) = vault();
+        let chunk = [42u8; 32];
+
+        push(&db, &vault, 1, 1, &[chunk]);
+        db.store_asset(&vault, &hex::encode(chunk), "/blob/chunk", 1024)
+            .expect("store");
+
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        assert!(
+            collected.is_empty(),
+            "a chunk with a live reference was collected: {collected:?}"
+        );
+        assert!(
+            db.asset_exists(&vault, &hex::encode(chunk))
+                .expect("exists")
+                .is_some(),
+            "the chunk should still be stored"
+        );
+    }
+
+    #[test]
+    fn a_chunk_shared_by_two_entries_outlives_the_first_of_them() {
+        // Identical content is stored once and referenced twice — the dedupe the
+        // chunk addressing exists for. Collecting on the first release would
+        // take the bytes out from under the second reference.
+        let (db, _dir, vault) = vault();
+        let shared = [11u8; 32];
+
+        push(&db, &vault, 1, 1, &[shared]); // seq 1, doc 1
+        push(&db, &vault, 2, 2, &[shared]); // seq 2, doc 2
+        push(&db, &vault, 3, 1, &[]); // seq 3, supersedes seq 1
+        db.store_asset(&vault, &hex::encode(shared), "/blob/shared", 2048)
+            .expect("store");
+
+        // Every device has seen everything, so seq 1 is now collectable.
+        db.update_cursor(&vault, "device-a", 3).expect("cursor");
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        assert!(
+            collected.is_empty(),
+            "a chunk still referenced by the second entry was collected: {collected:?}"
+        );
+
+        // Now retire the second reference as well.
+        push(&db, &vault, 4, 2, &[]);
+        db.update_cursor(&vault, "device-a", 4).expect("cursor");
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        assert_eq!(
+            collected,
+            vec!["/blob/shared".to_string()],
+            "with the last reference gone the chunk should be collected"
+        );
+        assert!(
+            db.asset_exists(&vault, &hex::encode(shared))
+                .expect("exists")
+                .is_none(),
+            "the row should be gone too, not just the blob"
+        );
+    }
+
+    #[test]
+    fn storing_a_chunk_charges_it_to_the_vault_and_storing_it_twice_does_not() {
+        // The quota check reads `used_storage_bytes`, and only entries were ever
+        // added to it, so attachments filled the disk while counting as nothing.
+        // The second half matters just as much: identical content deduplicates
+        // to one id by design, so a repeat arrival is routine, and charging for
+        // it would report a vault as full of a file it holds once.
+        let (db, _dir, vault) = vault();
+        let chunk = hex::encode([3u8; 32]);
+
+        let empty = db.total_vault_storage(&vault).expect("used");
+        db.store_asset(&vault, &chunk, "/blob/one", 2048).expect("store");
+        let after_first = db.total_vault_storage(&vault).expect("used");
+        db.store_asset(&vault, &chunk, "/blob/one", 2048).expect("store again");
+        let after_second = db.total_vault_storage(&vault).expect("used");
+
+        assert_eq!(
+            after_first - empty,
+            2048,
+            "storing a chunk should count against the vault"
+        );
+        assert_eq!(
+            after_second, after_first,
+            "the same chunk arriving twice was charged twice"
+        );
+    }
+
+    #[test]
+    fn collecting_a_chunk_gives_the_space_back_to_the_vault() {
+        // Without this the quota only ever climbs, and a vault that has released
+        // everything still reads as full.
+        let (db, _dir, vault) = vault();
+        let chunk = [5u8; 32];
+
+        // An entry is what puts bytes on the vault's account; the asset row is
+        // charged the same way in production. Borrowing it here means the test
+        // measures the credit rather than arranging it by hand.
+        push(&db, &vault, 1, 1, &[]);
+        db.store_asset(&vault, &hex::encode(chunk), "/blob/orphan", 4096)
+            .expect("store");
+
+        let before = db.total_vault_storage(&vault).expect("used");
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        let after = db.total_vault_storage(&vault).expect("used");
+
+        assert_eq!(
+            collected,
+            vec!["/blob/orphan".to_string()],
+            "a chunk no entry points at should be collected"
+        );
+        assert_eq!(
+            before as i64 - after as i64,
+            4096,
+            "the collected bytes were not credited back to the vault"
+        );
     }
 }

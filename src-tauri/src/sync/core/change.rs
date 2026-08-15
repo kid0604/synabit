@@ -1,8 +1,7 @@
 use crate::db::DbState;
 use crate::error::AppResult;
 use crate::sync::core::crdt::apply_text_update;
-use crate::sync::core::types::SyncOperation;
-use crate::sync::utils::{collect_local_files, file_sha256};
+use crate::sync::utils::file_sha256;
 use std::fs;
 use std::path::Path;
 use tauri::Manager;
@@ -214,6 +213,14 @@ fn prepare_asset_operation(
     provider_id: &str,
 ) -> AppResult<()> {
     let file_path = vault.join(&change.rel_path);
+
+    // Asked of the filesystem, not of the bytes: reading a four-gigabyte video
+    // to discover it is too large to send is the failure this prevents.
+    let size = fs::metadata(&file_path).map(|m| m.len()).map_err(|e| {
+        crate::error::AppError::General(format!("cannot stat {}: {}", change.rel_path, e))
+    })?;
+    crate::sync::core::asset::check_size(&change.rel_path, size)?;
+
     let contents = fs::read(&file_path).map_err(|e| {
         crate::error::AppError::General(format!("fs::read failed for {}: {}", change.rel_path, e))
     })?;
@@ -345,6 +352,13 @@ pub fn prepare_durable_outbox_operations(
             // as intended.
             Err(crate::error::AppError::UnsupportedCapability(reason)) => {
                 log::debug!("sync: {}", reason);
+            }
+            // Also not a failure, for the same reason: the file will be exactly
+            // this large next time, so reporting it would be a permanent error
+            // about a permanent fact. Logged louder than the case above because
+            // this one the user can actually do something about.
+            Err(crate::error::AppError::AssetTooLarge(reason)) => {
+                log::warn!("sync: leaving {} local — {}", change.rel_path, reason);
             }
             Err(e) => {
                 log::warn!("sync: skipping {}: {}", change.rel_path, e);

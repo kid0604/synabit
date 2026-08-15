@@ -396,6 +396,7 @@ impl MailboxHandler {
                 payload_hash,
                 operation_id,
                 entry_kind,
+                asset_chunks,
             } => {
                 self.handle_push(
                     vault_hash,
@@ -405,6 +406,7 @@ impl MailboxHandler {
                     entry_kind,
                     encrypted_payload,
                     payload_hash,
+                    &asset_chunks,
                 )
                 .await
             }
@@ -424,6 +426,7 @@ impl MailboxHandler {
                             item.entry_kind,
                             item.encrypted_payload,
                             item.payload_hash,
+                            &item.asset_chunks,
                         )
                         .await
                     {
@@ -679,6 +682,7 @@ impl MailboxHandler {
         entry_kind: synabit_protocol::SyncEntryKind,
         encrypted_payload: Vec<u8>,
         payload_hash: [u8; 32],
+        asset_chunks: &[[u8; 32]],
     ) -> Result<MailboxResponse> {
         if encrypted_payload.is_empty() {
             return Ok(MailboxResponse::Error {
@@ -764,6 +768,7 @@ impl MailboxHandler {
             &blob_path_str,
             blob_size,
             &payload_hash_hex,
+            asset_chunks,
         )? {
             crate::db::PushOutcome::Created(seq) | crate::db::PushOutcome::Existing(seq) => {
                 info!(
@@ -1005,6 +1010,7 @@ impl MailboxHandler {
             "(restore)",
             0,
             &payload_hash_hex,
+            &[],
         )?;
 
         let seq = match outcome {
@@ -1140,6 +1146,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: b"upsert payload".to_vec(),
             payload_hash: *blake3::hash(b"upsert payload").as_bytes(),
+            asset_chunks: Vec::new(),
         };
 
         let item2 = synabit_protocol::PushBatchItem {
@@ -1148,6 +1155,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Delete,
             encrypted_payload: b"delete payload".to_vec(),
             payload_hash: *blake3::hash(b"delete payload").as_bytes(),
+            asset_chunks: Vec::new(),
         };
 
         let item3 = synabit_protocol::PushBatchItem {
@@ -1156,6 +1164,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::AssetReference,
             encrypted_payload: b"asset ref payload".to_vec(),
             payload_hash: *blake3::hash(b"asset ref payload").as_bytes(),
+            asset_chunks: Vec::new(),
         };
 
         let req = MailboxRequest::PushBatch {
@@ -1191,6 +1200,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: b"payload 1".to_vec(),
             payload_hash: *blake3::hash(b"payload 1").as_bytes(),
+            asset_chunks: Vec::new(),
         };
         let item2 = synabit_protocol::PushBatchItem {
             operation_id: [20; 16],
@@ -1198,6 +1208,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Delete,
             encrypted_payload: b"payload 2 delete".to_vec(),
             payload_hash: *blake3::hash(b"payload 2 delete").as_bytes(),
+            asset_chunks: Vec::new(),
         };
 
         let req = MailboxRequest::PushBatch {
@@ -1309,6 +1320,7 @@ mod tests {
             doc_hash: [1; 32],
             encrypted_payload: payload1.clone(),
             payload_hash: payload1_hash,
+            asset_chunks: Vec::new(),
         };
 
         // First push
@@ -1346,6 +1358,7 @@ mod tests {
             doc_hash: [1; 32],
             encrypted_payload: payload2,
             payload_hash: payload2_hash,
+            asset_chunks: Vec::new(),
         };
         let resp_conflict = server
             .handle_request(&vault_hash, "dev1", req_conflict)
@@ -1366,6 +1379,7 @@ mod tests {
             doc_hash: [1; 32],
             encrypted_payload: payload,
             payload_hash,
+            asset_chunks: Vec::new(),
         };
         server
             .handle_request(&vault_hash, "dev1", req)
@@ -1406,6 +1420,7 @@ mod tests {
             doc_hash,
             encrypted_payload: payload.clone(),
             payload_hash,
+            asset_chunks: Vec::new(),
         };
         let req2 = req1.clone();
 
@@ -1466,6 +1481,7 @@ mod tests {
             doc_hash,
             encrypted_payload: payload1,
             payload_hash: payload1_hash,
+            asset_chunks: Vec::new(),
         };
 
         let payload2 = b"conflicting payload B".to_vec();
@@ -1476,6 +1492,7 @@ mod tests {
             doc_hash,
             encrypted_payload: payload2,
             payload_hash: payload2_hash,
+            asset_chunks: Vec::new(),
         };
 
         let s1 = server.clone();
@@ -1527,6 +1544,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: payload.clone(),
             payload_hash,
+            asset_chunks: Vec::new(),
         };
 
         // Retry of item1 -> idempotent success
@@ -1539,6 +1557,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: b"different payload".to_vec(),
             payload_hash: *blake3::hash(b"different payload").as_bytes(),
+            asset_chunks: Vec::new(),
         };
 
         let item4_payload = b"delete payload item4".to_vec();
@@ -1549,6 +1568,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Delete,
             encrypted_payload: item4_payload,
             payload_hash: item4_hash,
+            asset_chunks: Vec::new(),
         };
 
         let batch_req = MailboxRequest::PushBatch {
@@ -1648,6 +1668,7 @@ mod tests {
             entry_kind: synabit_protocol::SyncEntryKind::Upsert,
             encrypted_payload: body.to_vec(),
             payload_hash: *blake3::hash(body).as_bytes(),
+            asset_chunks: Vec::new(),
         };
         server
             .handle_request(vault_hash, device, MailboxRequest::PushBatch { items: vec![item] })

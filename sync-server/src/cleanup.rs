@@ -13,6 +13,14 @@ use tracing::{debug, error, info, warn};
 
 use crate::mailbox::MailboxHandler;
 
+/// How long a chunk must have existed before it can be considered an orphan.
+///
+/// Chunks are uploaded a moment before the entry that names them is published,
+/// so a chunk mid-upload has no reference yet and is indistinguishable from one
+/// left behind. An hour is far longer than that gap and costs only a delay in
+/// reclaiming space.
+const ASSET_GRACE_SECS: u64 = 3600;
+
 /// Spawn the background cleanup task. Returns a `JoinHandle` that can be
 /// used to monitor the task (it runs until the cancellation token fires).
 pub fn spawn_cleanup_task(
@@ -68,8 +76,11 @@ async fn run_cleanup(db: &crate::db::Database, max_age_secs: u64) -> anyhow::Res
         remove_blob(path).await;
     }
 
-    // Phase 3: Age-based GC for assets.
-    let old_asset_paths = db.gc_old_assets(max_age_secs)?;
+    // Phase 3: collect attachment chunks nothing points at any more. Runs
+    // after the entry phases above, so a chunk released by an entry collected
+    // in this same cycle is picked up on the next one rather than in a state
+    // where the entry is half gone.
+    let old_asset_paths = db.gc_unreferenced_assets(ASSET_GRACE_SECS)?;
     for path in &old_asset_paths {
         remove_blob(path).await;
     }

@@ -132,6 +132,24 @@ pub struct PushBatchItem {
     pub entry_kind: SyncEntryKind,
     pub encrypted_payload: Vec<u8>,
     pub payload_hash: [u8; 32],
+    /// The chunks this entry depends on, in the clear.
+    ///
+    /// The server stores attachment chunks but cannot read the payload that
+    /// names them, so it has no way to tell a chunk still in use from one left
+    /// over. Its only previous option was to delete by age, which deleted
+    /// chunks that were still referenced and left the references pointing at
+    /// nothing — permanently, for any device that had not already fetched them.
+    ///
+    /// Listing the ids here lets the server keep an exact reference graph and
+    /// collect a chunk only when the last entry naming it is collected. The
+    /// cost is that the server learns which chunks belong together. It already
+    /// stores those chunks under these ids, already sees their sizes and
+    /// arrival times, and already reads `entry_kind`; the grouping is what is
+    /// new. The ids stay keyed hashes, so they reveal nothing about content to
+    /// anyone without the vault key.
+    ///
+    /// Empty for every entry that is not an attachment.
+    pub asset_chunks: Vec<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +175,8 @@ pub enum MailboxRequest {
         doc_hash: [u8; 32],
         encrypted_payload: Vec<u8>,
         payload_hash: [u8; 32],
+        /// See `PushBatchItem::asset_chunks`.
+        asset_chunks: Vec<[u8; 32]>,
     },
     /// Batch push multiple documents
     PushBatch { items: Vec<PushBatchItem> },
@@ -433,6 +453,7 @@ mod tests {
             entry_kind: SyncEntryKind::AssetReference,
             encrypted_payload: vec![1, 2, 3, 4],
             payload_hash: [3; 32],
+            asset_chunks: Vec::new(),
         };
         let req = MailboxRequest::PushBatch { items: vec![item] };
         let serialized = postcard::to_stdvec(&req).expect("serialize req");

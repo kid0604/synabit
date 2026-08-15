@@ -1359,6 +1359,7 @@ async fn c2b_v3_provider_mappers_preserve_native_positions() {
         encrypted_payload: vec![4, 5, 6],
         payload_hash: [96; 32],
         timestamp: NOW,
+        asset_chunks: Vec::new(),
     };
     let blob = encode_gdrive_operation(&operation).unwrap();
     let backend = Arc::new(FakeGDriveBackend::new());
