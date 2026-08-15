@@ -153,11 +153,16 @@ const handleDisconnectAll = () => {
   activeSettingsProvider.value = 'none';
 };
 
-// Official Synabit Sync Server config
-// TODO: Update these when the official server is deployed
+// Official Synabit Sync Server.
+//
+// The id is the server's iroh endpoint public key, derived from server.key in
+// the server's data volume. It changes whenever that volume is recreated, and
+// a stale value here fails to connect while the UI still labels it "Official" —
+// so read it back from the server after any redeploy that resets the volume:
+//   docker exec synabit-sync-server curl -s localhost:8080/health
 const OFFICIAL_SERVER = {
   addr: 'sync.synabit.net:4433',
-  id: 'a68ab6ca34233b3cb2b5613bfd9eebd6377c0895b2fb9ddcb338543aab593be1',
+  id: '16b18a03ce5ce91937d5856b1a233dcdbb6fdfc0c34df2e326e7df5b77ea4d24',
   available: true,
 };
 
