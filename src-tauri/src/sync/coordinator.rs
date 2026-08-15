@@ -28,6 +28,18 @@ pub trait InboxEntryApplier<R: tauri::Runtime = tauri::Wry>: Send + Sync {
         vault_id: &str,
         provider_id: &str,
     ) -> AppResult<()>;
+
+    /// Apply a remote tombstone. Separate from `apply` because a delete carries
+    /// only an identity, never a document body.
+    fn apply_delete(
+        &self,
+        app_handle: &tauri::AppHandle<R>,
+        vault_path_obj: &Path,
+        payload: &synabit_protocol::DeletePayload,
+        result: &mut SyncResult,
+        vault_id: &str,
+        provider_id: &str,
+    ) -> AppResult<()>;
 }
 
 pub struct ProductionInboxEntryApplier<R: tauri::Runtime = tauri::Wry> {
@@ -54,6 +66,26 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for ProductionInboxEntryApplier<R> 
             vault_id,
             provider_id,
         )
+    }
+
+    fn apply_delete(
+        &self,
+        _app_handle: &tauri::AppHandle<R>,
+        vault_path_obj: &Path,
+        payload: &synabit_protocol::DeletePayload,
+        result: &mut SyncResult,
+        vault_id: &str,
+        provider_id: &str,
+    ) -> AppResult<()> {
+        crate::sync::core::apply::apply_delete_payload(
+            &self.app_handle,
+            vault_path_obj,
+            payload,
+            result,
+            vault_id,
+            provider_id,
+        )
+        .map(|_outcome| ())
     }
 }
 
@@ -432,6 +464,44 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                         chrono::Utc::now().timestamp_millis(),
                     )?;
                     return Err(AppError::General("Apply doc payload failed".into()));
+                }
+                let db = match db_state.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                db.transition_inbox_state(
+                    vault_id,
+                    provider_id,
+                    &inbox_record.operation_id,
+                    InboxState::Applying,
+                    InboxState::Applied,
+                    None,
+                    chrono::Utc::now().timestamp_millis(),
+                )?;
+            }
+            SyncPayload::Delete(delete_payload) => {
+                if let Err(_e) = applier.apply_delete(
+                    app_handle,
+                    vault_path_obj,
+                    &delete_payload,
+                    result,
+                    vault_id,
+                    provider_id,
+                ) {
+                    let db = match db_state.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+                    db.transition_inbox_state(
+                        vault_id,
+                        provider_id,
+                        &inbox_record.operation_id,
+                        InboxState::Applying,
+                        InboxState::Failed,
+                        Some(InboxApplyFailureKind::Retryable.as_str()),
+                        chrono::Utc::now().timestamp_millis(),
+                    )?;
+                    return Err(AppError::General("Apply delete payload failed".into()));
                 }
                 let db = match db_state.lock() {
                     Ok(g) => g,

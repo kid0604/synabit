@@ -212,6 +212,84 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
 }
 
 // ---------------------------------------------------------------------------
+// Deletes
+// ---------------------------------------------------------------------------
+
+/// What happened when a remote tombstone was applied locally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    /// The file matched its last synced state and was removed.
+    Removed,
+    /// The file carried edits this device never published, so the edit wins and
+    /// the file stays. The next sync republishes it as an upsert.
+    KeptLocalEdit,
+    /// Nothing to remove locally; only bookkeeping was cleaned up.
+    AlreadyGone,
+}
+
+/// Apply a remote tombstone.
+///
+/// Deleting is the one operation that destroys user data on the strength of a
+/// remote instruction, so it is deliberately conservative: a file whose content
+/// no longer matches the baseline recorded at its last successful sync is
+/// treated as unpublished local work and is kept.
+pub fn apply_delete_payload<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    vault: &Path,
+    payload: &synabit_protocol::DeletePayload,
+    result: &mut SyncResult,
+    vault_id: &str,
+    provider_id: &str,
+) -> AppResult<DeleteOutcome> {
+    // `validate_delete_payload` already rejects traversal, absolute paths and
+    // drive letters, but that check and this use sit far apart in the pipeline,
+    // so confirm the resolved path is still inside the vault before unlinking.
+    let local_path = vault.join(&payload.rel_path);
+    if !local_path.starts_with(vault) {
+        return Err(AppError::SyncError(format!(
+            "refusing to delete outside the vault: {}",
+            payload.rel_path
+        )));
+    }
+
+    let db_state = app_handle.state::<crate::db::DbState>();
+    let mut outcome = DeleteOutcome::AlreadyGone;
+
+    if local_path.exists() {
+        let baseline = {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.get_document_baseline(vault_id, provider_id, &payload.rel_path)?
+        };
+        let current = file_sha256(&local_path);
+
+        if baseline.as_deref() != Some(current.as_str()) {
+            warn!(
+                "DELETE skipped for {}: local file has unpublished changes",
+                payload.rel_path
+            );
+            return Ok(DeleteOutcome::KeptLocalEdit);
+        }
+
+        fs::remove_file(&local_path)?;
+        outcome = DeleteOutcome::Removed;
+        result.deleted += 1;
+        info!("DELETE applied: {}", payload.rel_path);
+    }
+
+    // Clean up bookkeeping in both cases. Note the `nodes` and search rows are
+    // keyed by relative path (see `node_parser::parse_file_to_node`), not by the
+    // sync `node_id`, so they need the path rather than the id.
+    {
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.delete_document_path(vault_id, &payload.node_id)?;
+        db.delete_document_baseline(vault_id, provider_id, &payload.rel_path)?;
+        db.delete_crdt_doc(vault_id, &payload.node_id)?;
+        db.delete_node(&payload.rel_path)?;
+        db.delete_search_entry(&payload.rel_path);
+    }
+
+    Ok(outcome)
+}
 
 // ---------------------------------------------------------------------------
 // Pull helpers

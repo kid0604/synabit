@@ -168,19 +168,16 @@ pub fn prepare_durable_outbox_operations(
             continue;
         }
 
-        // 1. Source hash validation (hex::decode BEFORE any path mutation)
-        let source_hash_vec = hex::decode(&change.new_hash).map_err(|e| {
+        // 1. Detected-hash validation (hex::decode BEFORE any path mutation)
+        let detected_hash_vec = hex::decode(&change.new_hash).map_err(|e| {
             crate::error::AppError::General(format!("Invalid hex in new_hash: {}", e))
         })?;
-        if source_hash_vec.len() != 32 {
+        if detected_hash_vec.len() != 32 {
             return Err(crate::error::AppError::General(format!(
                 "source_hash must be exactly 32 bytes, got {}",
-                source_hash_vec.len()
+                detected_hash_vec.len()
             )));
         }
-        let mut buf = [0u8; 32];
-        buf.copy_from_slice(&source_hash_vec);
-        let source_hash = Some(buf);
 
         // 2. File read / type validation (fs::read BEFORE any path mutation)
         let file_path = vault.join(&change.rel_path);
@@ -190,7 +187,7 @@ pub fn prepare_durable_outbox_operations(
                 change.rel_path, e
             ))
         })?;
-        let text = String::from_utf8(content.clone()).map_err(|e| {
+        String::from_utf8(content).map_err(|e| {
             crate::error::AppError::General(format!(
                 "UTF-8 decode failed for file {}: {}",
                 change.rel_path, e
@@ -199,6 +196,34 @@ pub fn prepare_durable_outbox_operations(
 
         // 3. Get/assign node_id and mutate durable path AFTER validations pass
         let actual_node_id = crate::sync::core::identity::get_or_assign_node_id(vault, &file_path)?;
+
+        // 4. `get_or_assign_node_id` may have rewritten the file to inject the
+        //    id, so both the text we publish and the hash we record must
+        //    describe the file as it is now. Publishing the pre-injection text
+        //    makes every peer mint its own id for this document; recording the
+        //    pre-injection hash makes the file look changed on every later
+        //    sync, which re-pushes it forever.
+        let text = fs::read_to_string(&file_path).map_err(|e| {
+            crate::error::AppError::General(format!(
+                "fs::read failed for {} after identity assignment: {}",
+                change.rel_path, e
+            ))
+        })?;
+
+        let published_hash_vec = hex::decode(crate::sync::utils::sha256_hex(text.as_bytes()))
+            .map_err(|e| {
+                crate::error::AppError::General(format!("Invalid hex in published hash: {}", e))
+            })?;
+        if published_hash_vec.len() != 32 {
+            return Err(crate::error::AppError::General(format!(
+                "source_hash must be exactly 32 bytes, got {}",
+                published_hash_vec.len()
+            )));
+        }
+        let mut buf = [0u8; 32];
+        buf.copy_from_slice(&published_hash_vec);
+        let source_hash = Some(buf);
+
         {
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.upsert_document_path(vault_id, &actual_node_id, &change.rel_path)?;

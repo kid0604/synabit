@@ -641,6 +641,22 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for InspectingApplier {
         self.events.lock().unwrap().push("apply".to_string());
         Ok(())
     }
+
+    fn apply_delete(
+        &self,
+        _app_handle: &tauri::AppHandle<R>,
+        _vault_path_obj: &Path,
+        payload: &synabit_protocol::DeletePayload,
+        _result: &mut SyncResult,
+        _vault_id: &str,
+        _provider_id: &str,
+    ) -> AppResult<()> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("apply_delete:{}", payload.rel_path));
+        Ok(())
+    }
 }
 
 fn pull_plan(until: &str) -> AdapterSyncPlan {
@@ -1063,7 +1079,11 @@ fn c2b_v3_pull_own_operation_evidence_is_scoped_and_unverified_source_applies() 
 }
 
 #[test]
-fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
+fn c2b_v3_pull_asset_blocks_while_delete_applies() {
+    // Originally this asserted that a *valid* delete also had to end in
+    // Failed/retryable. That froze a defect as a requirement: the coordinator
+    // simply had no apply arm for SyncPayload::Delete. Deletes now apply, so
+    // only the asset reference remains a genuine durable blocker.
     let key = [19; 32];
     let asset = AssetRef {
         asset_id: [72; 32],
@@ -1084,6 +1104,7 @@ fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
             ),
             InboxState::PendingAsset,
             None,
+            true,
         ),
         (
             remote_typed(
@@ -1094,12 +1115,13 @@ fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
                 typed_delete("typed-delete-node", "typed-delete.md"),
                 &key,
             ),
-            InboxState::Failed,
-            Some("retryable"),
+            InboxState::Applied,
+            None,
+            false,
         ),
     ];
 
-    for (entry, expected_state, expected_error) in cases {
+    for (entry, expected_state, expected_error, expect_err) in cases {
         let db_state = seeded_db();
         {
             let db = db_state.lock().unwrap();
@@ -1122,7 +1144,7 @@ fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
         };
         let handle = mock_app_handle();
         let mut result = SyncResult::empty();
-        assert!(process_staged_inbox_page(
+        let outcome = process_staged_inbox_page(
             &db_state,
             VAULT,
             PROVIDER,
@@ -1134,8 +1156,8 @@ fn c2b_v3_pull_valid_asset_and_delete_reach_distinct_durable_blockers() {
             Path::new("/tmp"),
             "/tmp",
             &mut result,
-        )
-        .is_err());
+        );
+        assert_eq!(outcome.is_err(), expect_err, "unexpected outcome: {outcome:?}");
         let record = db_state
             .lock()
             .unwrap()

@@ -7,6 +7,17 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
+/// Compute the SHA-256 hex digest of a byte buffer.
+///
+/// Used when we already hold the exact bytes we are about to publish, so the
+/// recorded hash describes precisely what was sent rather than whatever the
+/// file happens to contain a moment later.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
 /// Compute the SHA-256 hex digest of a file.
 ///
 /// Returns an empty string if the file cannot be read.

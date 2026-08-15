@@ -633,6 +633,22 @@ impl<R: tauri::Runtime> InboxEntryApplier<R> for InspectingApplier {
         self.events.lock().unwrap().push("apply".to_string());
         Ok(())
     }
+
+    fn apply_delete(
+        &self,
+        _app_handle: &tauri::AppHandle<R>,
+        _vault_path_obj: &Path,
+        payload: &synabit_protocol::DeletePayload,
+        _result: &mut SyncResult,
+        _vault_id: &str,
+        _provider_id: &str,
+    ) -> AppResult<()> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("apply_delete:{}", payload.rel_path));
+        Ok(())
+    }
 }
 
 fn pull_plan(until: &str) -> AdapterSyncPlan {

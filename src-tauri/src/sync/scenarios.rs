@@ -40,9 +40,6 @@ async fn new_file_reaches_the_other_device() {
 }
 
 #[tokio::test]
-#[ignore = "S1-06: the pushed snapshot predates node_id injection, so each peer \
-            mints its own id for the same file and upsert_document_path then \
-            violates UNIQUE(vault_id, rel_path)"]
 async fn edit_propagates_back_to_the_origin_device() {
     let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);
@@ -65,9 +62,6 @@ async fn edit_propagates_back_to_the_origin_device() {
 }
 
 #[tokio::test]
-#[ignore = "S2-04: source_hash is taken before node_id injection rewrites the \
-            file, so every file looks changed on every sync — an unbounded \
-            re-push loop"]
 async fn own_operations_are_not_reapplied() {
     let (mailbox, devices) = vault_with_devices(&["a", "b"]);
     let a = &devices[0];
@@ -93,8 +87,6 @@ async fn own_operations_are_not_reapplied() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "S1-05: process_staged_inbox_page has no apply arm for \
-            SyncPayload::Delete — tombstones fall into the catch-all and fail"]
 async fn delete_propagates_to_the_other_device() {
     let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);
@@ -111,6 +103,41 @@ async fn delete_propagates_to_the_other_device() {
     assert!(
         !b.exists(NOTE),
         "B should have removed the file after A deleted it"
+    );
+}
+
+#[tokio::test]
+#[ignore = "S2-07: sync pushes before it pulls, so B's edit is already published \
+            by the time A's older tombstone is applied. Converging correctly \
+            needs the mailbox sequence recorded on ack, so an upsert at a higher \
+            seq can supersede an earlier delete"]
+async fn a_delete_loses_to_an_unpublished_local_edit() {
+    // Deleting is the only operation that destroys user data on a remote
+    // instruction, so a file that has moved on since its last successful sync
+    // is kept rather than removed.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "# Plan\n\nShared draft.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // B edits locally but never syncs; meanwhile A deletes and publishes.
+    let received = b.read(NOTE).expect("B has the note");
+    b.write(NOTE, &received.replace("Shared draft.", "B was still working here."));
+
+    a.delete(NOTE);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(
+        b.exists(NOTE),
+        "B's unpublished edit was destroyed by A's tombstone"
+    );
+    assert!(
+        b.body(NOTE).unwrap().contains("B was still working here."),
+        "B kept the file but lost the edit: {:?}",
+        b.body(NOTE)
     );
 }
 
