@@ -187,6 +187,45 @@ pub fn decode_exact_payload<T: serde::de::DeserializeOwned>(decrypted: &[u8]) ->
         })
 }
 
+/// Is this a path we are willing to resolve inside the vault?
+///
+/// Every path that arrives from the mailbox was chosen by somebody holding the
+/// vault key. That makes them trusted with the contents of the vault and with
+/// nothing else — certainly not with where those contents land on this machine's
+/// disk.
+///
+/// `Path::join` gives no protection here and is easy to assume it does. Joining
+/// a relative path containing `..` produces something that escapes the moment it
+/// is written, and joining an *absolute* path discards the base entirely, so
+/// `vault.join("/etc/passwd")` is simply `/etc/passwd`. Without this check a
+/// compromised device — or a leaked recovery phrase — could write a shell
+/// profile or an `authorized_keys` on every other device in the vault, turning
+/// access to somebody's notes into access to their machine.
+///
+/// Shared with the delete path deliberately: a path we refuse to write to is one
+/// we must also refuse to delete from, or the weaker of the two defines the
+/// boundary.
+pub fn is_safe_vault_relative_path(rel_path: &str) -> bool {
+    if rel_path.trim().is_empty()
+        || rel_path.len() > 16384
+        || rel_path.contains('\0')
+        || rel_path.contains('\\')
+        || rel_path.starts_with('/')
+    {
+        return false;
+    }
+
+    // A Windows drive letter is absolute too, and does not start with a slash.
+    let bytes = rel_path.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return false;
+    }
+
+    rel_path
+        .split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 fn validate_delete_payload(payload: &synabit_protocol::DeletePayload) -> bool {
     let node_id = &payload.node_id;
     if node_id.trim().is_empty() || node_id.len() > 128 || node_id.contains('\0') {
@@ -253,7 +292,15 @@ pub fn validate_and_parse_remote_entry(
     };
 
     match (entry_kind, &sync_payload) {
-        (SyncEntryKind::Upsert, SyncPayload::Upsert(_)) => Ok(sync_payload),
+        (SyncEntryKind::Upsert, SyncPayload::Upsert(ref doc_bytes)) => {
+            // Checked here rather than at the point of writing, so that every
+            // consumer of a parsed entry inherits it — including the conflict
+            // copy, which derives its own path from this one.
+            match decode_exact_payload::<DocSyncPayload>(doc_bytes) {
+                Some(doc) if is_safe_vault_relative_path(&doc.rel_path) => Ok(sync_payload),
+                _ => Err(InboxApplyFailureKind::Corrupt),
+            }
+        }
         // Attachments are readable now. The bytes are fetched separately, before
         // the page is applied, so by this point the entry is normally already
         // finished with; anything still here is waiting on chunks.
@@ -697,16 +744,23 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     vault_id,
                     provider_id,
                 ) {
-                    if record_apply_failure(
+                    record_apply_failure(
                         db_state,
                         vault_id,
                         provider_id,
                         &inbox_record.operation_id,
                         "writing the document failed",
                         result,
-                    )? {
-                        return Err(AppError::General("Apply doc payload failed".into()));
-                    }
+                    )?;
+                    // Never abort the run for one document.
+                    //
+                    // This used to return an error while retries remained, which
+                    // meant a single file that would not apply — locked, or a
+                    // hostile entry that will never apply at all — failed the
+                    // whole sync, and every entry behind it in the page waited
+                    // for it. `record_apply_failure` has already counted the
+                    // attempt and, once they are spent, put the entry aside and
+                    // reported it. There is nothing further to gain by stopping.
                     continue;
                 }
                 let db = match db_state.lock() {
@@ -733,16 +787,16 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     vault_id,
                     provider_id,
                 ) {
-                    if record_apply_failure(
+                    record_apply_failure(
                         db_state,
                         vault_id,
                         provider_id,
                         &inbox_record.operation_id,
                         "removing the document failed",
                         result,
-                    )? {
-                        return Err(AppError::General("Apply delete payload failed".into()));
-                    }
+                    )?;
+                    // Same reasoning as the document arm above: one tombstone
+                    // that will not apply must not hold up the rest of the page.
                     continue;
                 }
                 let db = match db_state.lock() {

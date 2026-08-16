@@ -208,6 +208,44 @@ impl InMemoryMailbox {
         self.lock().chunks.clear();
     }
 
+    /// Publish a well-formed, correctly encrypted document entry at any path.
+    ///
+    /// Everything a device receives was written by somebody holding the vault
+    /// key, so an entry can be perfectly authentic and still be hostile. This
+    /// builds one the way a compromised device would: valid signature, valid
+    /// encryption, and a path chosen to do harm.
+    pub fn publish_document_at_path(&self, e2ee_key: &[u8; 32], rel_path: &str, text: &str) {
+        use crate::sync::core::types::{DocSyncPayload, SyncPayload};
+
+        let payload = SyncPayload::Upsert(
+            postcard::to_stdvec(&DocSyncPayload {
+                node_id: uuid::Uuid::new_v4().to_string(),
+                rel_path: rel_path.to_string(),
+                snapshot: text.as_bytes().to_vec(),
+                is_json: false,
+            })
+            .expect("encode document payload"),
+        );
+        let plain = postcard::to_stdvec(&payload).expect("encode sync payload");
+        let encrypted_payload = crate::sync::core::crypto::encrypt_v5(e2ee_key, &plain, true)
+            .expect("encrypt");
+        let payload_hash = *blake3::hash(&encrypted_payload).as_bytes();
+
+        let mut inner = self.lock();
+        let seq = inner.entries.last().map(|e| e.seq).unwrap_or(0) + 1;
+        inner.entries.push(StoredEntry {
+            seq,
+            operation_id: uuid::Uuid::new_v4().into_bytes(),
+            doc_hash: *blake3::hash(rel_path.as_bytes()).as_bytes(),
+            entry_kind: SyncEntryKind::Upsert,
+            encrypted_payload,
+            payload_hash,
+            source_device: "hostile".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            asset_chunks: Vec::new(),
+        });
+    }
+
     /// Corrupt a stored entry's payload so it fails hash verification on pull.
     /// Models a bad actor, a truncated write, or a bit flip in transit.
     pub fn corrupt_entry_at(&self, seq: u64) {

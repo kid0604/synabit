@@ -1425,3 +1425,115 @@ async fn importing_the_same_file_on_two_devices_makes_no_conflict_copy() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Hostile input
+//
+// Everything that arrives from the mailbox was written by somebody holding the
+// vault key. That makes them trusted with the *contents* of the vault, and with
+// nothing else — not with where those contents land on this machine's disk.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_document_cannot_be_written_outside_the_vault() {
+    // `Path::join` does not normalise: joining a relative path containing `..`
+    // yields a path that escapes on write, and joining an *absolute* path
+    // discards the base entirely. A device that has been compromised, or a
+    // recovery phrase that has leaked, would otherwise be able to write any file
+    // anywhere the app can reach — a shell profile, an ssh authorized_keys —
+    // which turns access to someone's notes into access to their machine.
+    //
+    // The delete path has refused this for a while. The document path did not.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("Notes/ordinary.md", "# Ordinary\n\nthis one is fine\n");
+    a.sync_ok().await;
+
+    let escape_dir = tempfile::tempdir().expect("somewhere outside the vault");
+    let outside = escape_dir.path().join("escaped.md");
+    assert!(!outside.exists(), "precondition: the target does not exist");
+
+    // Publish an entry whose path climbs out of the vault, exactly as a hostile
+    // device would.
+    mailbox.publish_document_at_path(
+        &crate::sync::harness::HARNESS_E2EE_KEY,
+        outside.to_string_lossy().as_ref(),
+        "# Escaped\n\nwritten outside the vault\n",
+    );
+
+    let result = b.sync().await;
+
+    assert!(
+        !outside.exists(),
+        "a remote entry wrote a file outside the vault at {}",
+        outside.display()
+    );
+
+    // And it must not take the healthy document down with it.
+    b.sync_ok().await;
+    assert!(
+        b.exists("Notes/ordinary.md"),
+        "the hostile entry stopped an ordinary one from arriving"
+    );
+    let _ = result;
+}
+
+#[tokio::test]
+async fn a_hostile_entry_does_not_stop_the_healthy_ones_behind_it() {
+    // Two failures used to compound here. An entry that cannot be applied
+    // returned an error from the whole run while retries remained, so one file
+    // that would never apply — a path climbing out of the vault, say — failed
+    // every sync and held up every entry behind it in the page.
+    //
+    // Refusing the entry is right. Refusing the run is not: the vault stops
+    // moving entirely, and the user sees a sync error they cannot act on.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    // A path that climbs out with `..`, which is the ordinary shape of this
+    // attack and the one `Path::join` will happily resolve.
+    mailbox.publish_document_at_path(
+        &crate::sync::harness::HARNESS_E2EE_KEY,
+        "../../escaped.md",
+        "# Escaped\n",
+    );
+
+    // A perfectly good document published afterwards, sitting behind it.
+    a.write("Notes/behind.md", "# Behind\n\nthis must still arrive\n");
+    a.sync_ok().await;
+
+    let result = b.sync_ok().await;
+
+    assert!(
+        b.exists("Notes/behind.md"),
+        "a refused entry stopped the healthy one behind it from arriving"
+    );
+
+    let escaped = b.vault_path().parent().map(|p| p.join("escaped.md"));
+    if let Some(escaped) = escaped {
+        assert!(
+            !escaped.exists(),
+            "an entry wrote outside the vault at {}",
+            escaped.display()
+        );
+    }
+
+    // The refusal is reported once, not raised as a run failure.
+    assert!(
+        result.errors.len() <= 1,
+        "the refusal should be reported once, got {:?}",
+        result.errors
+    );
+
+    // And it settles: the next run is clean rather than repeating the complaint.
+    for _ in 0..crate::sync::coordinator::MAX_INBOX_APPLY_ATTEMPTS + 1 {
+        b.sync_ok().await;
+    }
+    let settled = b.sync_ok().await;
+    assert!(
+        settled.errors.is_empty(),
+        "the refused entry is still being reported every run: {:?}",
+        settled.errors
+    );
+}
