@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::db::DbState;
-use crate::error::AppResult;
+use crate::error::{logged, AppResult};
 
 #[tauri::command]
 pub fn get_all_tags(state: tauri::State<'_, DbState>) -> AppResult<Vec<(String, i64)>> {
@@ -69,7 +69,7 @@ pub fn rename_tag(
                                 &vault_path,
                                 &full_path,
                             ) {
-                                let _ = db.upsert_node(&parsed_node);
+                                logged("reindex after tag edit", &parsed_node.id, db.upsert_node(&parsed_node));
                             }
                         }
                     }
@@ -106,7 +106,7 @@ pub fn rename_tag(
                 if let Some(parsed_node) =
                     crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path)
                 {
-                    let _ = db.upsert_node(&parsed_node);
+                    logged("reindex after tag edit", &parsed_node.id, db.upsert_node(&parsed_node));
                 }
             }
         }
@@ -172,7 +172,7 @@ pub fn delete_tag(
                                 &vault_path,
                                 &full_path,
                             ) {
-                                let _ = db.upsert_node(&parsed_node);
+                                logged("reindex after tag edit", &parsed_node.id, db.upsert_node(&parsed_node));
                             }
                         }
                     }
@@ -208,7 +208,7 @@ pub fn delete_tag(
                 if let Some(parsed_node) =
                     crate::utils::node_parser::parse_file_to_node(&vault_path, &full_path)
                 {
-                    let _ = db.upsert_node(&parsed_node);
+                    logged("reindex after tag edit", &parsed_node.id, db.upsert_node(&parsed_node));
                 }
             }
         }

@@ -58,9 +58,11 @@ const loadNoteData = async () => {
   error.value = null;
   
   try {
-    const nodes = await invoke<any[]>('get_nodes', { nodeType: 'note' });
-    const targetNode = nodes.find(n => n.id === props.data.noteId);
-    
+    // Ask for the one note this card shows. Fetching every note in the vault
+    // and searching the result meant each card on a board paid for the whole
+    // vault, so a board of twenty cards loaded it twenty times over.
+    const targetNode = await invoke<any | null>('get_node', { id: props.data.noteId });
+
     if (targetNode) {
       title.value = targetNode.title;
       if (props.data.blockId) {

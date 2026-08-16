@@ -241,7 +241,7 @@ pub async fn gdrive_auth_start(app_handle: tauri::AppHandle) -> Result<String, S
         use tauri::Manager;
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.set_kv("pkce_code_verifier_vault", &code_verifier);
+        crate::error::logged("store PKCE verifier", "pkce_code_verifier_vault", db.set_kv("pkce_code_verifier_vault", &code_verifier));
     }
 
     let redirect_uri = "com.synabit.app:/oauth2callback";
@@ -329,7 +329,7 @@ pub async fn gdrive_auth_complete(
         use tauri::Manager;
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.delete_kv("pkce_code_verifier_vault");
+        crate::error::logged("clear PKCE verifier", "pkce_code_verifier_vault", db.delete_kv("pkce_code_verifier_vault"));
     }
 
     log::info!("Google Drive authentication complete (Mobile, PKCE).");

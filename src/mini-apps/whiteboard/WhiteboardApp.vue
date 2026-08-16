@@ -438,7 +438,9 @@ onMounted(async () => {
   }
 
   try {
-    const loadedNotes = await invoke<any[]>('get_nodes', { nodeType: 'note' });
+    // The sidebar is a drag source: it shows titles and one-line previews.
+    // Loading every note's body for that was the bulk of opening the board.
+    const loadedNotes = await invoke<any[]>('get_node_summaries', { nodeType: 'note' });
     whiteboardNotes.value = loadedNotes.sort((a: any, b: any) => b.created_at.localeCompare(a.created_at));
   } catch (err) {
     logger.error('Failed to load notes for whiteboard sidebar', err);

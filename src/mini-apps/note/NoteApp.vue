@@ -199,7 +199,16 @@ const togglePin = async (id: string) => {
     if (!note) return;
     note.pinned = !note.pinned;
     try {
-        const body = tabs.tabContents.value[id] !== undefined ? tabs.tabContents.value[id] : note.content;
+        // Pinning rewrites the note file, so it needs the body — but only at
+        // the moment it is clicked, and only for this one note. Fetching it
+        // here rather than holding every note's body in the list is both
+        // cheaper and fresher than the copy the last scan left behind.
+        let body = tabs.tabContents.value[id];
+        if (body === undefined) {
+            const full = await ns.getNode(id);
+            if (!full) { logger.error('Pin fail: note not found', id); return; }
+            body = full.content;
+        }
         await ns.writeNode(buildNotePayload(note, body));
         scanVault();
     } catch(e) { logger.error('Pin fail:', e); }
@@ -255,16 +264,19 @@ async function createNewNote() {
 async function scanVault() {
     if (!props.vaultPath) return;
     try {
-        const scannedNodes = await ns.getNodes('note');
+        // Summaries, not whole notes. The list renders a title, a date, some
+        // tags and a one-line summary; asking for the bodies as well was the
+        // bulk of what this call transferred and none of what it showed.
+        const scannedNodes = await ns.getNodeSummaries('note');
         const scannedNotes = scannedNodes.map((n: any) => {
             let noteTags: string[] = [];
             if (Array.isArray(n.properties?.tags)) noteTags = n.properties.tags as string[];
             return {
-                id: n.id, title: n.title, content: n.content,
+                id: n.id, title: n.title,
                 date: n.updated_at || n.created_at, path: n.id, tags: noteTags,
                 pinned: !!n.properties?.pinned, full_width: !!n.properties?.full_width,
                 linked_projects: Array.isArray(n.properties?.linked_projects) ? n.properties.linked_projects : [],
-                summary: n.content.substring(0, 150).trim()
+                summary: (n.preview || '').trim()
             };
         });
         notes.value = scannedNotes;

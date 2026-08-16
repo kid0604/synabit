@@ -111,8 +111,7 @@ export function useCalendarData(ns: any, bus: any, vaultPath: Ref<string>) {
                 nodeType: 'task',
                 title: task.title,
                 properties: properties,
-                content: task.content,
-                existingPath: task.path
+                content: task.content
             });
             
             // Reload to ensure consistency

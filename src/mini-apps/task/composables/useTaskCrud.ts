@@ -256,8 +256,7 @@ export function useTaskCrud(
           nodeType: 'task',
           title: editingTaskParams.value.title,
           properties: properties,
-          content: editingTaskParams.value.content,
-          existingPath: editingTask.value.path
+          content: editingTaskParams.value.content
         });
         
         editingTask.value.title = editingTaskParams.value.title;
@@ -364,8 +363,7 @@ export function useTaskCrud(
         nodeType: 'task',
         title: task.title,
         properties: properties,
-        content: task.content,
-        existingPath: task.path
+        content: task.content
       });
       task.status = newStatus;
       task.completed_at = newCompletedAt;

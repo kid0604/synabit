@@ -22,22 +22,23 @@ describe('NoteApp.vue', () => {
   });
 
   it('scans the vault on mount if vaultPath is provided', async () => {
-    // Mock the backend get_nodes response (Node Core architecture)
-    const mockNodes = [
+    // Summaries, not whole notes: the list renders a preview and never the
+    // body, so the body is not sent.
+    const mockSummaries = [
       {
         id: 'Notes/note1.md',
         node_type: 'note',
         title: 'Test Note 1',
-        content: 'hello',
+        preview: 'hello',
         properties: { tags: ['work'], pinned: false, full_width: false },
         created_at: '2026-05-01 00:00:00',
         updated_at: '2026-05-01 00:00:00',
         timestamp: 1746057600000
       }
     ];
-    
+
     vi.mocked(core.invoke).mockImplementation((cmd) => {
-      if (cmd === 'get_nodes') return Promise.resolve(mockNodes);
+      if (cmd === 'get_node_summaries') return Promise.resolve(mockSummaries);
       if (cmd === 'get_linked_nodes') return Promise.resolve([]);
       return Promise.resolve();
     });
@@ -62,13 +63,16 @@ describe('NoteApp.vue', () => {
     // Wait for async operations to complete
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // It should have called invoke('get_nodes') with nodeType filter
-    expect(core.invoke).toHaveBeenCalledWith('get_nodes', { nodeType: 'note' });
+    // The list asks for summaries, and must not ask for whole notes.
+    expect(core.invoke).toHaveBeenCalledWith('get_node_summaries', { nodeType: 'note' });
+    expect(core.invoke).not.toHaveBeenCalledWith('get_nodes', { nodeType: 'note' });
 
     // Component exposes notes array
     const exposed = wrapper.vm as any;
     expect(exposed.notes.length).toBe(1);
     expect(exposed.notes[0].title).toBe('Test Note 1');
+    expect(exposed.notes[0].summary).toBe('hello');
+    expect(exposed.notes[0].content).toBeUndefined();
     
     // Automatically selects the first note if none is selected
     expect(exposed.currentNoteId).toBe('Notes/note1.md');

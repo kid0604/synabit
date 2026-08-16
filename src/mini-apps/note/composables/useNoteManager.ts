@@ -38,7 +38,8 @@ export function useNoteManager(
            };
            result = result.filter(n => {
               if (isTagSearch) return n.tags.some(t => match(t));
-              return match(n.title) || n.tags.some(t => match(t)) || match(n.content);
+              // Matches the note's opening: the list does not carry bodies.
+              return match(n.title) || n.tags.some(t => match(t)) || match(n.summary);
            });
        }
     }

@@ -7,10 +7,13 @@ impl DbBridge {
     /// Rebuild the entire FTS5 search index from all data tables.
     /// Called on app startup or when the user requests a reindex.
     pub fn reindex_search(&self) -> AppResult<()> {
-        // Clear existing index
+        // Clear existing index, and the map that describes it.
         self.conn
             .execute("DELETE FROM search_index", [])
             .map_err(|e| AppError::General(format!("FTS Clear Error: {}", e)))?;
+        self.conn
+            .execute("DELETE FROM search_index_rowids", [])
+            .map_err(|e| AppError::General(format!("FTS Rowid Map Clear Error: {}", e)))?;
 
         // Index files (with properties)
         let mut stmt = self
@@ -29,35 +32,16 @@ impl DbBridge {
             let path: String = row.get(5)?;
             let source_type: String = row.get::<_, String>(6).unwrap_or_default();
             let props = format!("ext:{} source:{}", extension, source_type);
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'file', ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
-                params![id, filename, tags.join(" "), extension, props, date, path],
+            self.index_row(
+                None, &id, "file", &filename, &tags.join(" "), &extension, &props, "", &date, &path,
             );
             Ok(())
         }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
         .filter_map(|r| r.ok())
         .count();
 
-        // Index whiteboards
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, title, tags, path, updated_at FROM whiteboards")
-            .map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let tags_json: String = row.get(2)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let path: String = row.get(3)?;
-            let date: String = row.get(4)?;
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'whiteboard', ?2, ?3, ?2, '', NULL, ?4, ?5)",
-                params![id, title, tags.join(" "), date, path],
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
+        // Boards need no pass of their own: they are `nodes` rows like anything
+        // else, and are picked up by the query below.
 
         // Index nodes (Universal Core)
         let mut stmt = self.conn.prepare(
@@ -91,9 +75,17 @@ impl DbBridge {
                     props_search = format!("{} priority:{}", properties, p);
                 }
             }
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![id, node_type, title, tags_str, content, props_search, status.unwrap_or("".to_string()), date, search_path],
+            self.index_row(
+                None,
+                &id,
+                &node_type,
+                &title,
+                &tags_str,
+                &content,
+                &props_search,
+                &status.unwrap_or_default(),
+                &date,
+                &search_path,
             );
             Ok(())
         }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
@@ -110,9 +102,8 @@ impl DbBridge {
             let node_id: String = row.get(1)?;
             let content: String = row.get(2)?;
             let item_id = format!("{}#{}", node_id, block_id);
-            let _ = self.conn.execute(
-                "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, 'block', ?2, '', ?3, '', '', '', ?4)",
-                params![item_id, block_id, content, node_id],
+            self.index_row(
+                None, &item_id, "block", &block_id, "", &content, "", "", "", &node_id,
             );
             Ok(())
         }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
@@ -122,7 +113,65 @@ impl DbBridge {
         Ok(())
     }
 
+    /// Where an item currently sits in the FTS index, if it is in there.
+    ///
+    /// This lookup is the whole point of `search_index_rowids`: asking the FTS
+    /// table itself would mean reading every row.
+    fn fts_rowid_for(&self, item_id: &str) -> Option<i64> {
+        self.conn
+            .query_row(
+                "SELECT fts_rowid FROM search_index_rowids WHERE item_id = ?1",
+                params![item_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+    }
+
+    /// Insert one row into the FTS index and record where it landed.
+    ///
+    /// Pass `rowid: Some(_)` to place the row back where the item already lived,
+    /// or `None` to let FTS5 choose — in which case the choice has to be written
+    /// to the map here, since it is the only moment SQLite will report it.
+    #[allow(clippy::too_many_arguments)]
+    fn index_row(
+        &self,
+        rowid: Option<i64>,
+        item_id: &str,
+        item_type: &str,
+        title: &str,
+        tags: &str,
+        content: &str,
+        properties: &str,
+        status: &str,
+        date: &str,
+        path: &str,
+    ) {
+        let inserted = self.conn.execute(
+            "INSERT INTO search_index (rowid, item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![rowid, item_id, item_type, title, tags, content, properties, status, date, path],
+        );
+
+        if inserted.is_ok() && rowid.is_none() {
+            let _ = self.conn.execute(
+                "INSERT OR REPLACE INTO search_index_rowids (item_id, fts_rowid) VALUES (?1, ?2)",
+                params![item_id, self.conn.last_insert_rowid()],
+            );
+        }
+    }
+
     /// Insert or update a single entry in the FTS5 search index.
+    ///
+    /// FTS5 has no `ON CONFLICT`, so an update is a delete followed by an
+    /// insert. The delete used to match on `item_id` and so read the entire
+    /// index; it now goes straight to the row via the rowid map, and the
+    /// reinsert reuses that same rowid so the map stays valid without a second
+    /// write.
+    ///
+    /// Deliberately not wrapped in a transaction. The two statements are no
+    /// less atomic than the pair they replace, and every caller here discards
+    /// errors — a transaction that failed to open because some caller already
+    /// held one would silently stop indexing rather than fail loudly. A torn
+    /// write costs one stale entry, which a reindex repairs.
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_search_entry(
         &self,
@@ -139,21 +188,39 @@ impl DbBridge {
         if item_type.starts_with("finance_") {
             return;
         }
-        // FTS5 doesn't support ON CONFLICT, so delete + insert
-        let _ = self.conn.execute(
-            "DELETE FROM search_index WHERE item_id = ?1",
-            params![item_id],
-        );
-        let _ = self.conn.execute(
-            "INSERT INTO search_index (item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![item_id, item_type, title, tags, content, properties, status.unwrap_or(""), date, path],
+
+        let existing = self.fts_rowid_for(item_id);
+        if let Some(rid) = existing {
+            let _ = self.conn.execute(
+                "DELETE FROM search_index WHERE rowid = ?1",
+                params![rid],
+            );
+        }
+
+        self.index_row(
+            existing,
+            item_id,
+            item_type,
+            title,
+            tags,
+            content,
+            properties,
+            status.unwrap_or(""),
+            date,
+            path,
         );
     }
 
     /// Remove an entry from the FTS5 search index.
     pub fn delete_search_entry(&self, item_id: &str) {
+        if let Some(rid) = self.fts_rowid_for(item_id) {
+            let _ = self.conn.execute(
+                "DELETE FROM search_index WHERE rowid = ?1",
+                params![rid],
+            );
+        }
         let _ = self.conn.execute(
-            "DELETE FROM search_index WHERE item_id = ?1",
+            "DELETE FROM search_index_rowids WHERE item_id = ?1",
             params![item_id],
         );
     }
@@ -338,5 +405,162 @@ impl DbBridge {
             total_count,
             query_time_ms: elapsed,
         })
+    }
+}
+
+/// Tests for the FTS5 index's write path.
+///
+/// FTS5 has no `ON CONFLICT` and no secondary indexes, so "update this entry"
+/// has to be spelled out as delete-then-insert, and the delete can only be made
+/// fast by knowing the row's rowid. Both halves of that are easy to get wrong in
+/// ways nothing else notices: a delete that matches nothing leaves a duplicate,
+/// and a duplicate shows up as the same note appearing twice in search rather
+/// than as an error.
+#[cfg(test)]
+mod tests {
+    use crate::db::DbBridge;
+
+    fn db() -> DbBridge {
+        DbBridge::new_in_memory_full().expect("full in-memory schema")
+    }
+
+    fn count_all(db: &DbBridge) -> i64 {
+        db.conn()
+            .query_row("SELECT COUNT(*) FROM search_index", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap()
+    }
+
+    fn count_of(db: &DbBridge, item_id: &str) -> i64 {
+        db.conn()
+            .query_row(
+                "SELECT COUNT(*) FROM search_index WHERE item_id = ?1",
+                [item_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+    }
+
+    fn upsert(db: &DbBridge, item_id: &str, title: &str) {
+        db.upsert_search_entry(
+            item_id,
+            "note",
+            title,
+            "",
+            "body",
+            "{}",
+            None,
+            "2026-01-01",
+            item_id,
+        );
+    }
+
+    #[test]
+    fn upserting_the_same_item_twice_leaves_exactly_one_entry() {
+        let db = db();
+        upsert(&db, "Notes/a.md", "First");
+        upsert(&db, "Notes/a.md", "Second");
+
+        assert_eq!(count_of(&db, "Notes/a.md"), 1);
+        let title: String = db
+            .conn()
+            .query_row(
+                "SELECT title FROM search_index WHERE item_id = ?1",
+                ["Notes/a.md"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Second", "the newer entry should have won");
+    }
+
+    #[test]
+    fn deleting_an_entry_removes_it_and_leaves_its_neighbours_alone() {
+        let db = db();
+        upsert(&db, "Notes/a.md", "A");
+        upsert(&db, "Notes/b.md", "B");
+
+        db.delete_search_entry("Notes/a.md");
+
+        assert_eq!(count_of(&db, "Notes/a.md"), 0);
+        assert_eq!(count_of(&db, "Notes/b.md"), 1);
+    }
+
+    /// Finance nodes are deliberately excluded from search. Re-stated here
+    /// because the check lives at the top of the upsert and is easy to drop.
+    #[test]
+    fn finance_nodes_never_enter_the_index() {
+        let db = db();
+        db.upsert_search_entry(
+            "Finance/2026-08.json",
+            "finance_month",
+            "August",
+            "",
+            "",
+            "{}",
+            None,
+            "2026-01-01",
+            "Finance/2026-08.json",
+        );
+
+        assert_eq!(count_all(&db), 0);
+    }
+
+    /// Blocks are re-indexed every time their note is saved. Each save used to
+    /// add another copy rather than replace the previous one, so a note edited
+    /// fifty times contributed fifty copies of every block to the index — and
+    /// the index is scanned linearly on every write, so the cost compounded.
+    #[test]
+    fn re_indexing_a_note_does_not_accumulate_duplicate_block_entries() {
+        let db = db();
+        let blocks = vec![
+            ("blk001".to_string(), "first block".to_string()),
+            ("blk002".to_string(), "second block".to_string()),
+        ];
+
+        db.upsert_node_blocks("Notes/a.md", blocks.clone()).unwrap();
+        db.upsert_node_blocks("Notes/a.md", blocks.clone()).unwrap();
+        db.upsert_node_blocks("Notes/a.md", blocks).unwrap();
+
+        assert_eq!(count_of(&db, "Notes/a.md#blk001"), 1);
+        assert_eq!(count_of(&db, "Notes/a.md#blk002"), 1);
+    }
+
+    #[test]
+    fn dropping_a_notes_blocks_clears_them_from_the_index() {
+        let db = db();
+        db.upsert_node_blocks(
+            "Notes/a.md",
+            vec![("blk001".to_string(), "first".to_string())],
+        )
+        .unwrap();
+        db.upsert_node_blocks(
+            "Notes/b.md",
+            vec![("blk002".to_string(), "other note".to_string())],
+        )
+        .unwrap();
+
+        db.delete_node_blocks("Notes/a.md").unwrap();
+
+        assert_eq!(count_of(&db, "Notes/a.md#blk001"), 0);
+        assert_eq!(
+            count_of(&db, "Notes/b.md#blk002"),
+            1,
+            "another note's blocks must survive"
+        );
+    }
+
+    /// A full reindex must start from nothing. If it does not, every rebuild
+    /// doubles the index.
+    #[test]
+    fn a_full_reindex_replaces_the_index_rather_than_adding_to_it() {
+        let db = db();
+        upsert(&db, "Notes/a.md", "A");
+
+        db.reindex_search().unwrap();
+        let after_first = count_all(&db);
+        db.reindex_search().unwrap();
+
+        assert_eq!(count_all(&db), after_first, "a second rebuild changed size");
     }
 }

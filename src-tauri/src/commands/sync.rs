@@ -10,6 +10,7 @@
 //! demand for each sync operation because the QUIC connection is connection-
 //! oriented and should not be held across idle periods.
 
+use crate::error::logged;
 use std::sync::Mutex;
 
 use serde_json::json;
@@ -152,9 +153,9 @@ pub async fn sync_connect(
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let now = chrono::Utc::now().to_rfc3339();
-        let _ = db.set_kv("p2p_last_connected", &now);
-        let _ = db.set_kv("p2p_server_addr", &server_addr);
-        let _ = db.set_kv("p2p_server_id_hex", &server_id_hex);
+        logged("record last connection", "p2p_last_connected", db.set_kv("p2p_last_connected", &now));
+        logged("record peer address", "p2p_server_addr", db.set_kv("p2p_server_addr", &server_addr));
+        logged("record peer id", "p2p_server_id_hex", db.set_kv("p2p_server_id_hex", &server_id_hex));
     }
 
     log::info!("P2P sync connected to {}", server_addr);
@@ -290,11 +291,11 @@ pub async fn sync_full(
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let now = chrono::Utc::now();
-        let _ = db.set_kv("p2p_last_sync_time", &now.to_rfc3339());
+        logged("record sync time", "p2p_last_sync_time", db.set_kv("p2p_last_sync_time", &now.to_rfc3339()));
 
         // Record data usage metrics
         let today = now.format("%Y-%m-%d").to_string();
-        let _ = db.record_sync_metric(&today, is_cellular, result.tx_bytes, result.rx_bytes);
+        logged("record sync metric", &today, db.record_sync_metric(&today, is_cellular, result.tx_bytes, result.rx_bytes));
     }
 
     log::info!(

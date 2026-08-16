@@ -21,6 +21,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { useEventBus } from './useEventBus';
 
 import { storeToRefs } from 'pinia';
+import type { NodeSummary } from '../types/ipc';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -35,7 +36,6 @@ export interface WriteNodeParams {
   title: string;
   properties: Record<string, unknown>;
   content: string;
-  existingPath?: string;
   /** Skip event bus emission (e.g., internal migrations, batch ops) */
   silent?: boolean;
   /** Override event type. Auto-defaults to 'updated'. */
@@ -78,10 +78,6 @@ export function useNodeService() {
       properties: params.properties,
       content: params.content,
     };
-    if (params.existingPath) {
-      args.existingPath = params.existingPath;
-    }
-
     await invoke('write_node_file', args);
 
     if (!params.silent) {
@@ -145,9 +141,20 @@ export function useNodeService() {
 
   // ─── Read ───────────────────────────────────────────────
 
-  /** Fetch all nodes of a given type */
+  /** Fetch all nodes of a given type, bodies included. */
   async function getNodes(nodeType: string): Promise<any[]> {
     return await invoke<any[]>('get_nodes', { nodeType });
+  }
+
+  /**
+   * Fetch all nodes of a given type without their bodies — what a list needs.
+   *
+   * Prefer this for anything that renders a list. `getNodes` sends every body
+   * as well, which for a vault of ordinary notes is the bulk of the payload and
+   * none of what a list displays. Call `getNode` for the one the user opens.
+   */
+  async function getNodeSummaries(nodeType: string): Promise<NodeSummary[]> {
+    return await invoke<NodeSummary[]>('get_node_summaries', { nodeType });
   }
 
   /** Fetch a single node by ID */
@@ -162,9 +169,17 @@ export function useNodeService() {
 
   // ─── Specialized ────────────────────────────────────────
 
-  /** Update only the properties of a node (without rewriting content) */
-  async function updateNodeProperties(id: string, properties: Record<string, unknown>): Promise<void> {
-    await invoke('update_node_properties', { id, properties });
+  /**
+   * Update a `file` node's properties.
+   *
+   * Only for nodes the database manages on its own — `file` nodes, which point
+   * at files outside the vault and have no document of their own. Anything
+   * backed by a file in the vault must go through `writeNode`, or the change
+   * never reaches disk and never syncs; the backend rejects those outright
+   * rather than accepting a write it cannot honour.
+   */
+  async function updateFileNodeProperties(id: string, properties: Record<string, unknown>): Promise<void> {
+    await invoke('update_file_node_properties', { id, properties });
   }
 
   /** Scan specific node paths for indexing */
@@ -178,9 +193,10 @@ export function useNodeService() {
     deleteNode,
     renameNode,
     getNodes,
+    getNodeSummaries,
     getNode,
     getLinkedNodes,
-    updateNodeProperties,
+    updateFileNodeProperties,
     scanSpecificNodes,
     vaultPath,
   };

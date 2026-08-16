@@ -119,7 +119,7 @@ async fn get_valid_access_token(
                     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
                     let new_expires_at =
                         chrono::Utc::now().timestamp() + token_resp.expires_in.unwrap_or(3600);
-                    let _ = db.set_kv("gdrive_expires_at", &new_expires_at.to_string());
+                    crate::error::logged("store token expiry", "gdrive_expires_at", db.set_kv("gdrive_expires_at", &new_expires_at.to_string()));
 
                     return Ok(token_resp.access_token);
                 }
@@ -369,7 +369,7 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
         use tauri::Manager;
         let db_state = app_handle.state::<DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.set_kv("pkce_code_verifier_omnidrive", &code_verifier);
+        crate::error::logged("store PKCE verifier", "pkce_code_verifier_omnidrive", db.set_kv("pkce_code_verifier_omnidrive", &code_verifier));
     }
 
     let redirect_uri = "com.synabit.app:/oauth2callback";
@@ -458,9 +458,9 @@ pub async fn connect_gdrive_complete(
         let db_state = app_handle.state::<DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let expires_at = chrono::Utc::now().timestamp() + token_data.expires_in;
-        let _ = db.set_kv("gdrive_expires_at", &expires_at.to_string());
+        crate::error::logged("store token expiry", "gdrive_expires_at", db.set_kv("gdrive_expires_at", &expires_at.to_string()));
         // Clean up stored verifier
-        let _ = db.delete_kv("pkce_code_verifier_omnidrive");
+        crate::error::logged("clear PKCE verifier", "pkce_code_verifier_omnidrive", db.delete_kv("pkce_code_verifier_omnidrive"));
     }
 
     Ok(true)
@@ -478,9 +478,9 @@ pub async fn disconnect_gdrive(
 
     // Delete DB caches
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let _ = db.delete_kv("gdrive_expires_at");
-    let _ = db.delete_kv("gdrive_user_email");
-    let _ = db.delete_files_by_source_type("gdrive");
+    crate::error::logged("clear token expiry", "gdrive_expires_at", db.delete_kv("gdrive_expires_at"));
+    crate::error::logged("clear account email", "gdrive_user_email", db.delete_kv("gdrive_user_email"));
+    crate::error::logged("drop cached Drive files", "gdrive", db.delete_files_by_source_type("gdrive"));
 
     Ok(true)
 }

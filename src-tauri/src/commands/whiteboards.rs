@@ -3,12 +3,81 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 
-use crate::db::DbState;
-use crate::error::{AppError, AppResult};
+use crate::db::{DbBridge, DbState};
+use crate::error::{logged, AppResult};
+use crate::models::node::NodeMetadata;
 use crate::models::whiteboard::WhiteboardMetadata;
 use crate::path_utils;
+use crate::utils::node_parser::parse_file_to_node;
 
-/// Scan the Whiteboards/ directory and upsert all .whiteboard.json files into the DB cache.
+/// Describe an indexed board the way the frontend asks for it.
+///
+/// A board is an ordinary node; this is a view of one, not a second copy. The
+/// id and path are the same string — the vault-relative path of the file — and
+/// were the same string back when they were separate columns too.
+fn board_from_node(node: &NodeMetadata) -> WhiteboardMetadata {
+    let tags = node
+        .properties
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    WhiteboardMetadata {
+        id: node.id.clone(),
+        path: node.id.clone(),
+        title: node.title.clone(),
+        tags,
+        content: node.content.clone(),
+        created_at: node.created_at.clone(),
+        updated_at: node.updated_at.clone(),
+    }
+}
+
+/// Read a board file and record it as a node, index included.
+///
+/// Parsing goes through the same `parse_file_to_node` every other file in the
+/// vault goes through, so a board indexed here and the same board indexed by a
+/// vault scan cannot end up describing themselves differently.
+fn index_board(db: &DbBridge, vault_path: &str, abs_path: &Path) -> Option<WhiteboardMetadata> {
+    let node = parse_file_to_node(vault_path, abs_path)?;
+    let board = board_from_node(&node);
+
+    logged("index whiteboard", &node.id, db.upsert_node(&node));
+    db.upsert_search_entry(
+        &node.id,
+        "whiteboard",
+        &node.title,
+        &board.tags.join(" "),
+        &node.content,
+        "",
+        None,
+        &node.updated_at,
+        &node.id,
+    );
+
+    let resolver = crate::commands::nodes::build_resolver(db);
+    crate::commands::nodes::sync_node_edges(db, &node, &resolver);
+
+    Some(board)
+}
+
+/// Forget a board entirely: the row, its links, and its search entry.
+fn forget_board(db: &DbBridge, rel_path: &str) {
+    logged("drop whiteboard", rel_path, db.delete_node(rel_path));
+    logged(
+        "clear links",
+        rel_path,
+        db.delete_node_edges_by_source(rel_path),
+    );
+    db.delete_search_entry(rel_path);
+}
+
+/// Scan the Whiteboards/ directory and index every board found there.
 #[tauri::command]
 pub fn scan_whiteboards(
     _app_handle: tauri::AppHandle,
@@ -21,7 +90,7 @@ pub fn scan_whiteboards(
         fs::create_dir_all(&wb_dir)?;
     }
 
-    let db = state.lock().ok();
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let mut current_disk_files = std::collections::HashSet::new();
 
     for entry in WalkDir::new(&wb_dir)
@@ -33,73 +102,26 @@ pub fn scan_whiteboards(
             continue;
         }
         let path = entry.path();
-        let fname = path.file_name().unwrap_or_default().to_string_lossy();
-        if !fname.ends_with(".whiteboard.json") {
+        let is_board = path
+            .file_name()
+            .map(|n| n.to_string_lossy().ends_with(".whiteboard.json"))
+            .unwrap_or(false);
+        if !is_board {
             continue;
         }
 
-        if let Ok(raw) = fs::read_to_string(path) {
-            // Parse the JSON to extract title and tags for the DB cache
-            let title: String;
-            let tags: Vec<String>;
+        current_disk_files.insert(path_utils::to_relative(path, &vault_path));
 
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
-                title = parsed
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Untitled")
-                    .to_string();
-                tags = parsed
-                    .get("tags")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-            } else {
-                title = "Untitled".to_string();
-                tags = Vec::new();
-            }
-
-            let metadata = entry
-                .metadata()
-                .map_err(|e| AppError::General(e.to_string()))?;
-            let created = metadata
-                .created()
-                .unwrap_or(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
-            let modified = metadata.modified().unwrap_or(created);
-
-            let created_date: chrono::DateTime<chrono::Local> = created.into();
-            let modified_date: chrono::DateTime<chrono::Local> = modified.into();
-
-            let rel_path = path_utils::to_relative(path, &vault_path);
-            current_disk_files.insert(rel_path.clone());
-
-            // Build a text summary of nodes for searchability
-            let content_summary = build_content_summary(&raw);
-
-            let wb_meta = WhiteboardMetadata {
-                id: rel_path.clone(),
-                title,
-                tags,
-                content: content_summary,
-                path: rel_path,
-                created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
-                updated_at: modified_date.format("%Y-%m-%d %H:%M:%S").to_string(),
-            };
-
-            if let Some(db_bridge) = &db {
-                let _ = db_bridge.upsert_whiteboard(&wb_meta);
-            }
-            boards.push(wb_meta);
+        if let Some(board) = index_board(&db, &vault_path, path) {
+            boards.push(board);
         }
     }
 
-    // Purge stale DB entries
-    if let Some(db_bridge) = &db {
-        if let Ok(existing) = db_bridge.get_all_whiteboard_timestamps() {
-            for id in existing.keys() {
-                if !current_disk_files.contains(id) {
-                    let _ = db_bridge.delete_whiteboard(id);
-                    db_bridge.delete_search_entry(id);
-                }
+    // Purge boards whose file is gone.
+    if let Ok(existing) = db.get_all_whiteboard_timestamps() {
+        for id in existing.keys() {
+            if !current_disk_files.contains(id) {
+                forget_board(&db, id);
             }
         }
     }
@@ -124,46 +146,29 @@ pub fn create_whiteboard(
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| AppError::General(format!("System time error: {}", e)))?
+        .map_err(|e| crate::error::AppError::General(format!("System time error: {}", e)))?
         .as_millis();
-    let filename = format!("whiteboard-{}.whiteboard.json", timestamp);
-    let abs_path = wb_dir.join(&filename);
+    let abs_path = wb_dir.join(format!("whiteboard-{}.whiteboard.json", timestamp));
 
     fs::write(&abs_path, &content)?;
 
-    let date: chrono::DateTime<chrono::Local> = SystemTime::now().into();
-    let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
-    let rel_path = path_utils::to_relative(&abs_path, &vault_path);
-
-    let content_summary = build_content_summary(&content);
-
-    let wb_meta = WhiteboardMetadata {
-        id: rel_path.clone(),
-        title,
-        tags,
-        content: content_summary,
-        path: rel_path,
-        created_at: date_str.clone(),
-        updated_at: date_str,
-    };
-
-    {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.upsert_whiteboard(&wb_meta);
-        db.upsert_search_entry(
-            &wb_meta.id,
-            "whiteboard",
-            &wb_meta.title,
-            &wb_meta.tags.join(" "),
-            &wb_meta.content,
-            "",
-            None,
-            &wb_meta.created_at,
-            &wb_meta.path,
-        );
-    }
-
-    Ok(wb_meta)
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    index_board(&db, &vault_path, &abs_path).ok_or_else(|| {
+        crate::error::AppError::General(
+            "The new whiteboard was written but could not be read back".to_string(),
+        )
+    })
+    .map(|mut board| {
+        // The caller's title and tags are already inside the file it handed us;
+        // these only matter if the file did not carry them.
+        if board.title.is_empty() {
+            board.title = title;
+        }
+        if board.tags.is_empty() {
+            board.tags = tags;
+        }
+        board
+    })
 }
 
 #[tauri::command]
@@ -176,45 +181,12 @@ pub fn update_whiteboard(
     tags: Vec<String>,
     content: String,
 ) -> AppResult<()> {
-    path_utils::enforce_no_traversal(&path)?;
-    let abs_path = Path::new(&vault_path).join(&path);
+    let _ = (title, tags); // carried inside `content`, which is the file itself
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     fs::write(&abs_path, &content)?;
 
-    {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Ok(file_meta) = fs::metadata(&abs_path) {
-            let created = file_meta
-                .created()
-                .unwrap_or(file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
-            let modified = file_meta.modified().unwrap_or(created);
-            let created_date: chrono::DateTime<chrono::Local> = created.into();
-            let modified_date: chrono::DateTime<chrono::Local> = modified.into();
-
-            let content_summary = build_content_summary(&content);
-
-            let wb_meta = WhiteboardMetadata {
-                id: path.clone(),
-                title,
-                tags,
-                content: content_summary,
-                path: path.clone(),
-                created_at: created_date.format("%Y-%m-%d %H:%M:%S").to_string(),
-                updated_at: modified_date.format("%Y-%m-%d %H:%M:%S").to_string(),
-            };
-            let _ = db.upsert_whiteboard(&wb_meta);
-            db.upsert_search_entry(
-                &wb_meta.id,
-                "whiteboard",
-                &wb_meta.title,
-                &wb_meta.tags.join(" "),
-                &wb_meta.content,
-                "",
-                None,
-                &wb_meta.created_at,
-                &wb_meta.path,
-            );
-        }
-    }
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    index_board(&db, &vault_path, &abs_path);
 
     Ok(())
 }
@@ -226,14 +198,12 @@ pub fn delete_whiteboard(
     vault_path: String,
     path: String,
 ) -> AppResult<()> {
-    path_utils::enforce_no_traversal(&path)?;
-    let abs_path = Path::new(&vault_path).join(&path);
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
     fs::remove_file(&abs_path)?;
-    {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.delete_whiteboard(&path);
-        db.delete_search_entry(&path);
-    }
+
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    forget_board(&db, &path);
+
     Ok(())
 }
 
@@ -243,27 +213,6 @@ pub fn read_whiteboard(
     vault_path: String,
     path: String,
 ) -> AppResult<String> {
-    path_utils::enforce_no_traversal(&path)?;
-    let abs_path = Path::new(&vault_path).join(&path);
-    let content = fs::read_to_string(&abs_path)?;
-    Ok(content)
-}
-
-/// Extract text labels from all nodes for FTS searchability.
-fn build_content_summary(raw_json: &str) -> String {
-    let mut labels = Vec::new();
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw_json) {
-        if let Some(nodes) = parsed.get("nodes").and_then(|v| v.as_array()) {
-            for node in nodes {
-                if let Some(data) = node.get("data") {
-                    if let Some(label) = data.get("label").and_then(|v| v.as_str()) {
-                        if !label.is_empty() {
-                            labels.push(label.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    labels.join(" ")
+    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
+    Ok(fs::read_to_string(&abs_path)?)
 }

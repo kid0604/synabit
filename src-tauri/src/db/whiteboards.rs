@@ -1,37 +1,26 @@
+//! Whiteboards as nodes.
+//!
+//! A board used to have a table of its own, keyed — like `nodes` — by the
+//! board's path inside the vault. Since the vault scan indexes every file it
+//! finds, including `.whiteboard.json`, each board ended up written twice under
+//! one key, by two code paths that disagreed about what to store: the table
+//! held a summary of the board's labels, `nodes` held the raw file. Nexus read
+//! both and listed every board twice, once with a preview of braces.
+//!
+//! There is one row per board now. What is left here is the reading a board
+//! needs that a generic node query does not express.
+
 use super::DbBridge;
 use crate::error::{AppError, AppResult};
-use crate::models::whiteboard::WhiteboardMetadata;
-use rusqlite::params;
 use std::collections::HashMap;
 
 impl DbBridge {
-    pub fn upsert_whiteboard(&self, wb: &WhiteboardMetadata) -> AppResult<()> {
-        let tags_json = serde_json::to_string(&wb.tags)?;
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&wb.created_at, "%Y-%m-%d %H:%M:%S")
-            .map(|dt| dt.and_utc().timestamp_millis())
-            .unwrap_or(0);
-        self.conn.execute(
-            "INSERT INTO whiteboards (id, title, tags, content, path, created_at, updated_at, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, tags=excluded.tags, content=excluded.content,
-                path=excluded.path, updated_at=excluded.updated_at, timestamp=excluded.timestamp",
-            params![wb.id, wb.title, tags_json, wb.content, wb.path, wb.created_at, wb.updated_at, timestamp],
-        ).map_err(|e| AppError::General(format!("DB Upsert Whiteboard Error: {}", e)))?;
-        Ok(())
-    }
-
-    pub fn delete_whiteboard(&self, id: &str) -> AppResult<()> {
-        self.conn
-            .execute("DELETE FROM whiteboards WHERE id = ?1", params![id])
-            .map_err(|e| AppError::General(format!("DB Delete Whiteboard Error: {}", e)))?;
-        Ok(())
-    }
-
+    /// Board id → the modification time already recorded for it, so a scan can
+    /// tell which boards on disk it has seen before.
     pub fn get_all_whiteboard_timestamps(&self) -> AppResult<HashMap<String, i64>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, timestamp FROM whiteboards")
+            .prepare("SELECT id, timestamp FROM nodes WHERE node_type = 'whiteboard'")
             .map_err(|e| AppError::General(format!("DB Query Error: {}", e)))?;
         let rows = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))

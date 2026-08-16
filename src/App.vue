@@ -408,10 +408,29 @@ const handleEditFromNexus = async (id: string, type: string) => {
 };
 
 import { logger } from './utils/logger';
+import type { ScanReport } from './types/ipc';
 
 // ─── Notifications & Initial Scan ─────────────────────────
 const unreadNotificationCount = ref(0);
 const feedsUnreadCount = ref(0);
+
+/**
+ * Rescan the vault, and say something when part of it did not make it in.
+ *
+ * A scan never fails as a whole over one bad file — it steps over it and keeps
+ * going, which is what you want, but it used to mean a note could quietly stop
+ * being findable with nothing anywhere to say why. The count comes back from
+ * the scan now; the Rust log names the individual files.
+ */
+const scanVaultNodes = async (): Promise<void> => {
+    if (!vaultPath.value) return;
+    const report = await invoke<ScanReport>('scan_all_nodes', { vaultPath: vaultPath.value });
+    if (report && report.failed > 0) {
+        logger.warn(
+            `Vault scan: ${report.failed} file(s) could not be fully indexed and will not appear in search until the next scan.`
+        );
+    }
+};
 
 const checkUnreadNotifications = async () => {
     if (!vaultPath.value) return;
@@ -480,7 +499,7 @@ onMounted(async () => {
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
-     invoke('scan_all_nodes', { vaultPath: vaultPath.value }).then(async () => {
+     scanVaultNodes().then(async () => {
          await checkUnreadNotifications();
          await updateFeedsUnreadCount();
      }).catch(logger.error);
@@ -516,7 +535,7 @@ onMounted(async () => {
           if (hasFiles) await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
           if (hasWhiteboards) await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
-          await invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          await scanVaultNodes().catch(logger.error);
           await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
           await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }
@@ -543,7 +562,7 @@ onMounted(async () => {
           if (hasFiles) await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
           if (hasWhiteboards) await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       } else {
-          await invoke('scan_all_nodes', { vaultPath: vaultPath.value }).catch(logger.error);
+          await scanVaultNodes().catch(logger.error);
           await invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
           await invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
       }

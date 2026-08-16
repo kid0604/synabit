@@ -115,7 +115,7 @@ pub fn run() {
                     } else {
                         let elapsed = start.elapsed().as_millis();
                         log::info!("Search index rebuilt in {}ms.", elapsed);
-                        let _ = db.delete_kv("fts_needs_reindex");
+                        crate::error::logged("clear reindex flag", "fts_needs_reindex", db.delete_kv("fts_needs_reindex"));
                     }
                 } else {
                     log::info!("FTS index is up-to-date, skipping rebuild.");
@@ -152,11 +152,12 @@ pub fn run() {
             nodes::get_all_nodes,
             nodes::get_node,
             nodes::get_nodes,
+            nodes::get_node_summaries,
             nodes::get_linked_nodes,
             nodes::get_node_block,
             nodes::get_node_headings,
             nodes::create_block_reference,
-            nodes::update_node_properties,
+            nodes::update_file_node_properties,
             nodes::write_node_file,
             nodes::delete_node_file,
             nodes::archive_done_nodes,

@@ -22,6 +22,40 @@ export interface NodeMetadata {
   timestamp: number;
 }
 
+/**
+ * A node as a list needs it. Mirrors `models::node::NodeSummary`.
+ *
+ * Deliberately has no `content`: a list shows a title, a date, some properties
+ * and the opening of the text, and sending the bodies too was the single
+ * largest cost of opening one. Fetch the full node with `getNode` when the user
+ * opens it.
+ */
+export interface NodeSummary {
+  id: string;
+  node_type: string;
+  title: string;
+  /** The opening of the body — not the body. */
+  preview: string;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  timestamp: number;
+}
+
+/** What a vault scan managed to do. Mirrors `commands::nodes::ScanReport`. */
+export interface ScanReport {
+  /** Files parsed and written to the index on this run. */
+  indexed: number;
+  /** Nodes dropped because the file behind them is gone. */
+  removed: number;
+  /**
+   * Files the scan could not fully index. The vault itself is intact — these
+   * are simply missing from search and backlinks until the next successful
+   * scan. The Rust log names each one.
+   */
+  failed: number;
+}
+
 // ──────────────────────────────────────────────
 // Projects
 // ──────────────────────────────────────────────

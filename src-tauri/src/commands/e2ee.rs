@@ -1,3 +1,4 @@
+use crate::error::logged;
 use crate::secrets::SecretManager;
 use serde::Serialize;
 
@@ -45,9 +46,9 @@ pub async fn setup_e2ee(app_handle: tauri::AppHandle) -> Result<SetupResult, Str
     // Set flag to encrypt all existing data on next sync
     let db_state = app_handle.state::<crate::db::DbState>();
     if let Ok(db) = db_state.lock() {
-        let _ = db.set_kv("e2ee_key_version", "3");
-        let _ = db.set_kv("force_e2ee_sync", "1");
-        let _ = db.delete_kv("pending_key_migration");
+        logged("record key version", "e2ee_key_version", db.set_kv("e2ee_key_version", "3"));
+        logged("flag resync", "force_e2ee_sync", db.set_kv("force_e2ee_sync", "1"));
+        logged("clear migration flag", "pending_key_migration", db.delete_kv("pending_key_migration"));
     }
 
     Ok(SetupResult {
@@ -71,8 +72,8 @@ pub async fn restore_e2ee_from_phrase(
 
     let db_state = app_handle.state::<crate::db::DbState>();
     if let Ok(db) = db_state.lock() {
-        let _ = db.set_kv("e2ee_key_version", "3");
-        let _ = db.delete_kv("pending_key_migration");
+        logged("record key version", "e2ee_key_version", db.set_kv("e2ee_key_version", "3"));
+        logged("clear migration flag", "pending_key_migration", db.delete_kv("pending_key_migration"));
     }
 
     Ok(())

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::db::DbState;
-use crate::error::{AppError, AppResult};
+use crate::error::{logged, AppError, AppResult};
 use crate::models::file::{DuplicateGroup, FileMetadata, FileSource};
 use crate::path_utils;
 
@@ -307,73 +307,35 @@ fn upsert_file_node(
     node: &crate::models::node::NodeMetadata,
     path: &str,
 ) -> AppResult<crate::models::node::NodeMetadata> {
-    // Check if a node with this path already exists
-    if let Ok(nodes) = db.get_nodes_by_type("file") {
-        for existing in &nodes {
-            if let Some(p) = existing.properties.get("path").and_then(|v| v.as_str()) {
-                if p == path {
-                    // Update existing node (preserve ID, update metadata)
-                    let mut updated = node.clone();
-                    updated.id = existing.id.clone();
-                    // Preserve existing tags if new node has empty tags
-                    // Preserve existing tags and people if new node has empty ones
-                    if let Some(props) = updated.properties.as_object_mut() {
-                        if let Some(old_tags) =
-                            existing.properties.get("tags").and_then(|v| v.as_array())
-                        {
-                            if props
-                                .get("tags")
-                                .and_then(|v| v.as_array())
-                                .is_none_or(|v| v.is_empty())
-                                && !old_tags.is_empty()
-                            {
-                                props.insert(
-                                    "tags".to_string(),
-                                    serde_json::Value::Array(old_tags.clone()),
-                                );
-                            }
-                        }
-                        if let Some(old_people) =
-                            existing.properties.get("people").and_then(|v| v.as_array())
-                        {
-                            if props
-                                .get("people")
-                                .and_then(|v| v.as_array())
-                                .is_none_or(|v| v.is_empty())
-                                && !old_people.is_empty()
-                            {
-                                props.insert(
-                                    "people".to_string(),
-                                    serde_json::Value::Array(old_people.clone()),
-                                );
-                            }
-                        }
-                        if let Some(old_linked_projects) = existing
-                            .properties
-                            .get("linked_projects")
-                            .and_then(|v| v.as_array())
-                        {
-                            if props
-                                .get("linked_projects")
-                                .and_then(|v| v.as_array())
-                                .is_none_or(|v| v.is_empty())
-                                && !old_linked_projects.is_empty()
-                            {
-                                props.insert(
-                                    "linked_projects".to_string(),
-                                    serde_json::Value::Array(old_linked_projects.clone()),
-                                );
-                            }
-                        }
-                    }
-                    db.upsert_node(&updated)?;
-                    return Ok(updated);
-                }
+    let Ok(Some(existing)) = db.get_file_node_by_path(path) else {
+        db.upsert_node(node)?;
+        return Ok(node.clone());
+    };
+
+    // Keep the identity the file already had, and carry over the fields the
+    // rescan cannot know about: a rescan reads the filesystem, which has no
+    // record of the tags, people or projects the user attached here.
+    let mut updated = node.clone();
+    updated.id = existing.id.clone();
+
+    if let Some(props) = updated.properties.as_object_mut() {
+        for field in ["tags", "people", "linked_projects"] {
+            let Some(previous) = existing.properties.get(field).and_then(|v| v.as_array()) else {
+                continue;
+            };
+            let incoming_is_empty = props
+                .get(field)
+                .and_then(|v| v.as_array())
+                .is_none_or(|v| v.is_empty());
+
+            if incoming_is_empty && !previous.is_empty() {
+                props.insert(field.to_string(), serde_json::Value::Array(previous.clone()));
             }
         }
     }
-    db.upsert_node(node)?;
-    Ok(node.clone())
+
+    db.upsert_node(&updated)?;
+    Ok(updated)
 }
 
 /// Find existing tags for a file path from nodes table, with fallback to legacy files table
@@ -498,10 +460,8 @@ pub fn update_file_metadata(
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
 
     // Find the file node by path
-    let nodes = db.get_nodes_by_type("file")?;
-    let file_node = nodes
-        .iter()
-        .find(|n| n.properties.get("path").and_then(|v| v.as_str()) == Some(&path))
+    let file_node = db
+        .get_file_node_by_path(&path)?
         .ok_or_else(|| AppError::General("File node not found".to_string()))?;
 
     let mut updated_node = file_node.clone();
@@ -633,9 +593,9 @@ pub fn reindex_sources(
             if let Some(path) = node.properties.get("path").and_then(|v| v.as_str()) {
                 let is_managed_path = scan_paths.iter().any(|sp| path.starts_with(sp));
                 if is_managed_path && !current_disk_files.contains(path) {
-                    let _ = db.delete_node(&node.id);
+                    logged("drop file node", &node.id, db.delete_node(&node.id));
                     db.delete_search_entry(&node.id);
-                    let _ = db.delete_node_edges_by_source(&node.id);
+                    logged("clear links", &node.id, db.delete_node_edges_by_source(&node.id));
                     deleted_count += 1;
                 }
             }

@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 /// (e.g. adding/removing columns, changing tokenizer).
 /// The index will only be dropped and rebuilt when this version differs
 /// from the stored value in `kv_store`.
-const FTS_SCHEMA_VERSION: &str = "3";
+const FTS_SCHEMA_VERSION: &str = "4";
 
 impl DbBridge {
     /// Create an in-memory database with sync schema initialized (useful for testing).
@@ -117,7 +117,11 @@ impl DbBridge {
                 properties TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                timestamp INTEGER NOT NULL
+                timestamp INTEGER NOT NULL,
+                -- The identity that follows this node when its file moves; see
+                -- `NodeMetadata::stable_id`. Declared here for a new database
+                -- and added by the ALTER below for one that predates it.
+                stable_id TEXT NOT NULL DEFAULT ''
             )",
             [],
         )
@@ -131,6 +135,61 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (nodes indexes): {}", e)))?;
 
+        // A `file` node is keyed by a UUID, but it is looked up by the path it
+        // describes, which lives inside its JSON properties. Every file the
+        // scanner touches did that lookup by reading every file node in turn.
+        // Indexing the expression makes it a lookup; restricting the index to
+        // `file` nodes keeps it off every other write to the table.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_nodes_file_path
+             ON nodes(json_extract(properties, '$.path'))
+             WHERE node_type = 'file';",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (nodes file path): {}", e)))?;
+
+        // ─── Stable identity column ─────────────────────────────
+        //
+        // A node's stable identity lives in the `node_id` field of its JSON
+        // properties, and links are recorded between those rather than between
+        // paths. It is kept in a column of its own because SQLite will use an
+        // index on a JSON expression for a direct lookup but not to satisfy a
+        // join — measured, not assumed — and the backlink query is a join.
+        let has_stable_id = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(nodes)")
+                .map_err(|e| AppError::General(format!("DB Schema Error (table_info): {}", e)))?;
+            let names: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| AppError::General(format!("DB Schema Error (columns): {}", e)))?
+                .filter_map(|r| r.ok())
+                .collect();
+            names.iter().any(|n| n == "stable_id")
+        };
+
+        if !has_stable_id {
+            conn.execute(
+                "ALTER TABLE nodes ADD COLUMN stable_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| AppError::General(format!("DB Schema Error (stable_id): {}", e)))?;
+        }
+
+        // Backfill anything that predates the column, including rows written
+        // before a file was given an identity at all — those fall back to the
+        // path, which is what the code does too.
+        conn.execute(
+            "UPDATE nodes
+             SET stable_id = COALESCE(json_extract(properties, '$.node_id'), id)
+             WHERE stable_id = ''",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Migrate Error (stable_id backfill): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_nodes_stable_id ON nodes(stable_id);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (nodes stable id): {}", e)))?;
+
         // ─── Node Blocks (for Block-Level Referencing) ──────────
         conn.execute(
             "CREATE TABLE IF NOT EXISTS node_blocks (
@@ -142,22 +201,6 @@ impl DbBridge {
             [],
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (node_blocks): {}", e)))?;
-
-        // ─── Whiteboards Table ─────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS whiteboards (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                tags TEXT NOT NULL DEFAULT '[]',
-                content TEXT NOT NULL DEFAULT '',
-                path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                timestamp INTEGER NOT NULL DEFAULT 0
-            )",
-            [],
-        )
-        .map_err(|e| AppError::General(format!("DB Schema Error (whiteboards): {}", e)))?;
 
         // ─── KV Store (for OAuth tokens and settings) ──────────
         conn.execute(
@@ -174,6 +217,60 @@ impl DbBridge {
             "INSERT OR IGNORE INTO kv_store (key, value) VALUES ('legacy_tables_cleaned', '1')",
             [],
         );
+
+        // ─── One-time: fold `whiteboards` into `nodes` ──────────
+        //
+        // Boards had a table of their own keyed by the board's path — the same
+        // key `nodes` uses. Since the vault scan indexes every file it finds,
+        // `.whiteboard.json` included, each board was written twice under one
+        // key by two code paths that disagreed on what to store. Nexus read both
+        // and showed every board twice.
+        //
+        // Rows are copied across rather than assumed present, so a board that
+        // somehow never reached `nodes` is not lost. `OR IGNORE` lets the
+        // existing `nodes` row win where there is one, since it came from the
+        // file rather than from this cache.
+        {
+            let table_exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'whiteboards'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|_| true)
+                .unwrap_or(false);
+
+            if table_exists {
+                log::info!("Folding the whiteboards table into nodes...");
+                conn.execute(
+                    "INSERT OR IGNORE INTO nodes
+                        (id, node_type, title, content, properties, created_at, updated_at, timestamp)
+                     SELECT id, 'whiteboard', title, content,
+                            json_object('tags', json(tags)),
+                            created_at, updated_at, timestamp
+                     FROM whiteboards",
+                    [],
+                )
+                .map_err(|e| AppError::General(format!("DB Migrate Error (whiteboards): {}", e)))?;
+
+                // Both sources stored something other than what a board node
+                // should hold: this cache kept a summary, `nodes` kept the raw
+                // file. Zeroing the timestamp makes the next vault scan treat
+                // every board as changed and re-read it from disk, which is the
+                // only copy that was ever right.
+                conn.execute(
+                    "UPDATE nodes SET timestamp = 0 WHERE node_type = 'whiteboard'",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::General(format!("DB Migrate Error (board refresh): {}", e))
+                })?;
+
+                conn.execute("DROP TABLE whiteboards", []).map_err(|e| {
+                    AppError::General(format!("DB Migrate Error (drop whiteboards): {}", e))
+                })?;
+            }
+        }
 
         // ─── Node Edges (NEW — ID-based knowledge graph) ────────
         conn.execute(
@@ -196,6 +293,53 @@ impl DbBridge {
              CREATE INDEX IF NOT EXISTS idx_node_edges_type ON node_edges(edge_type);",
         )
         .map_err(|e| AppError::General(format!("DB Index Error (node_edges): {}", e)))?;
+
+        // ─── One-time: re-key node_edges onto stable identities ─
+        //
+        // Edges used to name both ends by the node's path. Moving a file
+        // therefore broke every link to and from it, which the app did to
+        // itself: archiving a task moves it into `archived/`, and every
+        // backlink to that task went dangling.
+        //
+        // The mapping is already in hand — a node's stable id is the `node_id`
+        // in its own properties — so the rows can be rewritten in place. Edges
+        // whose target never resolved to a node keep their `ghost:` marker, and
+        // a node without a stable id keeps its path, which is what the code
+        // falls back to anyway.
+        {
+            let already_rekeyed: bool = conn
+                .query_row(
+                    "SELECT value FROM kv_store WHERE key = 'edges_use_stable_ids'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|v| v == "1")
+                .unwrap_or(false);
+
+            if !already_rekeyed {
+                log::info!("Re-keying node_edges onto stable node identities...");
+                for column in ["source_id", "target_id"] {
+                    conn.execute(
+                        &format!(
+                            "UPDATE node_edges SET {column} = COALESCE(
+                                 (SELECT json_extract(n.properties, '$.node_id')
+                                  FROM nodes n WHERE n.id = node_edges.{column}),
+                                 {column}
+                             )"
+                        ),
+                        [],
+                    )
+                    .map_err(|e| {
+                        AppError::General(format!("DB Migrate Error (edge {column}): {e}"))
+                    })?;
+                }
+                conn.execute(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES ('edges_use_stable_ids', '1')",
+                    [],
+                )
+                .map_err(|e| AppError::General(format!("DB KV Error (edge re-key): {e}")))?;
+            }
+        }
 
         // ─── CRDT Core Tables (Synabit V2) ──────────────────────
         conn.execute(
@@ -239,6 +383,37 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Index Error (document_paths): {}", e)))?;
 
+        // ─── FTS5 rowid map ──────────────────────────────────────
+        // An FTS5 table answers `MATCH` and `rowid = ?` quickly and everything
+        // else by reading every row. `upsert_search_entry` has to delete an
+        // entry before reinserting it — FTS5 has no `ON CONFLICT` — and it
+        // identified that entry by `item_id`, which is not a key of anything.
+        // Every write therefore scanned the whole index, making a vault scan
+        // quadratic in the number of indexed items.
+        //
+        // This table supplies the missing key: item_id → the FTS5 rowid, so the
+        // delete becomes a rowid lookup. It is a cache of the index's own
+        // shape, not user data — dropping it costs a reindex and nothing more,
+        // which is what the version bump above does.
+        //
+        // `fts_rowid`, not `rowid`: in an ordinary table that name aliases the
+        // implicit primary key.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS search_index_rowids (
+                item_id TEXT PRIMARY KEY,
+                fts_rowid INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (search_index_rowids): {}", e)))?;
+
+        // Blocks are cleared a whole note at a time, but the table's primary key
+        // leads with block_id, so that lookup had no index to use.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_node_blocks_node ON node_blocks(node_id);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (node_blocks): {}", e)))?;
+
         // ─── FTS5 Full-Text Search Index (versioned) ─────────────
         // Only DROP + CREATE when the schema version changes.
         // Incremental updates (upsert_search_entry / delete_search_entry)
@@ -281,6 +456,12 @@ impl DbBridge {
                     );",
                 )
                 .map_err(|e| AppError::General(format!("DB Schema Error (search_index): {}", e)))?;
+
+                // The rowid map describes the index that was just thrown away.
+                conn.execute_batch("DELETE FROM search_index_rowids;")
+                    .map_err(|e| {
+                        AppError::General(format!("DB Schema Error (clear rowid map): {}", e))
+                    })?;
 
                 // Persist new version + flag for reindex
                 conn.execute(
@@ -3075,5 +3256,360 @@ mod upgrade_from_released_version_tests {
         let mut conn = released_0_9_3_database();
         run_sync_schema_migrations(&mut conn).unwrap();
         run_sync_schema_migrations(&mut conn).expect("a second run must be a no-op");
+    }
+
+    /// A database from before nodes had a stable identity column, holding a
+    /// note that links to a task, keyed the old way: by path.
+    fn database_with_path_keyed_edges(db_path: &std::path::Path) {
+        let conn = Connection::open(db_path).unwrap();
+        DbBridge::init_with_conn(conn).unwrap();
+
+        let conn = Connection::open(db_path).unwrap();
+        // Undo the column and the flag, so this really is the older shape.
+        conn.execute_batch(
+            "UPDATE nodes SET stable_id = '';
+             DELETE FROM kv_store WHERE key = 'edges_use_stable_ids';",
+        )
+        .unwrap();
+
+        for (id, uuid, title) in [
+            ("Notes/writer.md", "uuid-writer", "Writer"),
+            ("Tasks/target.md", "uuid-target", "Target"),
+        ] {
+            conn.execute(
+                "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp, stable_id)
+                 VALUES (?1, 'note', ?3, '', json_object('node_id', ?2), '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0, '')",
+                rusqlite::params![id, uuid, title],
+            )
+            .unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO node_edges (id, source_id, target_id, edge_type, relation, created_at)
+             VALUES ('e1', 'Notes/writer.md', 'Tasks/target.md', 'wikilink', NULL, '2026-01-01 00:00:00')",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// Existing links have to come across, or every backlink in every vault
+    /// disappears the moment this ships.
+    #[test]
+    fn links_recorded_against_paths_are_rewritten_to_stable_identities() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_path_keyed_edges(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).expect("the re-key should succeed");
+
+        let (source, target): (String, String) = db
+            .conn()
+            .query_row(
+                "SELECT source_id, target_id FROM node_edges WHERE id = 'e1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source, "uuid-writer");
+        assert_eq!(target, "uuid-target");
+
+        // And the backlink is still reachable by the path the interface holds.
+        let linked = db.get_linked_nodes("", "Tasks/target.md").unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].id, "Notes/writer.md");
+    }
+
+    /// The backfill has to reach rows written before the column existed.
+    #[test]
+    fn nodes_that_predate_the_column_are_given_their_identity() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_path_keyed_edges(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+
+        let stable: String = db
+            .conn()
+            .query_row(
+                "SELECT stable_id FROM nodes WHERE id = 'Notes/writer.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stable, "uuid-writer");
+    }
+
+    /// Running it again must not re-key already-keyed edges into nonsense.
+    #[test]
+    fn re_keying_the_links_a_second_time_changes_nothing() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_path_keyed_edges(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        drop(DbBridge::init_with_conn(conn).unwrap());
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).expect("a second startup must be harmless");
+
+        let source: String = db
+            .conn()
+            .query_row("SELECT source_id FROM node_edges WHERE id = 'e1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(source, "uuid-writer");
+    }
+
+    /// A database from before boards became nodes, with one board in it.
+    ///
+    /// The table is recreated by hand because the schema no longer builds it —
+    /// which is the point: this is the shape an installed copy still has.
+    fn database_with_a_legacy_whiteboards_table(db_path: &std::path::Path, also_in_nodes: bool) {
+        let conn = Connection::open(db_path).unwrap();
+        DbBridge::init_with_conn(conn).unwrap();
+
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE whiteboards (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                content TEXT NOT NULL DEFAULT '',
+                path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                timestamp INTEGER NOT NULL DEFAULT 0
+            );
+             INSERT INTO whiteboards (id, title, tags, content, path, created_at, updated_at, timestamp)
+             VALUES ('Whiteboards/plan.whiteboard.json', 'Plan', '[\"work\"]', 'Kickoff Design',
+                     'Whiteboards/plan.whiteboard.json', '2026-01-01 00:00:00', '2026-01-02 00:00:00', 99);",
+        )
+        .unwrap();
+
+        if also_in_nodes {
+            conn.execute(
+                "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp)
+                 VALUES ('Whiteboards/plan.whiteboard.json', 'whiteboard', 'Plan from the file',
+                         'raw', '{}', '2026-01-01 00:00:00', '2026-01-02 00:00:00', 99)",
+                [],
+            )
+            .unwrap();
+        }
+    }
+
+    /// A board that only ever reached the old table must survive the fold.
+    #[test]
+    fn a_board_held_only_in_the_legacy_table_is_carried_into_nodes() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_a_legacy_whiteboards_table(&db_path, false);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).expect("the fold should succeed");
+
+        let board = db
+            .get_node("Whiteboards/plan.whiteboard.json")
+            .unwrap()
+            .expect("the board should have been carried across");
+        assert_eq!(board.node_type, "whiteboard");
+        assert_eq!(board.title, "Plan");
+        assert_eq!(
+            board.properties.get("tags").and_then(|t| t.as_array()),
+            Some(&vec![serde_json::json!("work")]),
+            "the board's tags should survive as node properties"
+        );
+    }
+
+    /// Where both copies exist, the one that came from the file wins. The old
+    /// table was a cache; `nodes` is what the vault scan wrote.
+    #[test]
+    fn the_copy_already_in_nodes_is_not_overwritten_by_the_legacy_one() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_a_legacy_whiteboards_table(&db_path, true);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+
+        let board = db
+            .get_node("Whiteboards/plan.whiteboard.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(board.title, "Plan from the file");
+    }
+
+    /// Every board is marked stale so the next vault scan re-reads it. Neither
+    /// old copy held what a board node should hold — one had a summary, the
+    /// other the raw file — and only the file on disk was ever right.
+    #[test]
+    fn folded_boards_are_marked_for_a_fresh_read_from_disk() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_a_legacy_whiteboards_table(&db_path, true);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+
+        let board = db
+            .get_node("Whiteboards/plan.whiteboard.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            board.timestamp, 0,
+            "a non-zero timestamp would let the scan skip the board as unchanged"
+        );
+    }
+
+    /// The table goes, and startup after that must not trip over its absence.
+    #[test]
+    fn the_legacy_table_is_dropped_and_starting_again_is_harmless() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_with_a_legacy_whiteboards_table(&db_path, false);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+        let still_there: bool = db
+            .conn()
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'whiteboards'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .is_ok();
+        assert!(!still_there, "the legacy table outlived the migration");
+        drop(db);
+
+        let conn = Connection::open(&db_path).unwrap();
+        DbBridge::init_with_conn(conn).expect("a second startup must be a no-op");
+    }
+
+    /// A database carrying the previous FTS layout, which had no rowid map.
+    ///
+    /// Every installed copy of the app is in this state, so this is the shape
+    /// the upgrade actually has to survive — not an empty directory.
+    fn database_at_fts_version_3(db_path: &std::path::Path) {
+        let conn = Connection::open(db_path).unwrap();
+        DbBridge::init_with_conn(conn).unwrap();
+
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value) VALUES ('fts_schema_version', '3')",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM kv_store WHERE key = 'fts_needs_reindex'", [])
+            .unwrap();
+        // A stale mapping, standing in for whatever the old index left behind.
+        conn.execute(
+            "INSERT OR REPLACE INTO search_index_rowids (item_id, fts_rowid) VALUES ('Notes/stale.md', 41)",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// The rowid map describes one specific FTS index. When the version bump
+    /// throws that index away, a map left pointing into it would send every
+    /// later delete at a row number that now belongs to a different item — or
+    /// to nothing.
+    #[test]
+    fn upgrading_the_search_index_discards_the_rowid_map_and_asks_for_a_reindex() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_at_fts_version_3(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).expect("an installed database should upgrade");
+
+        let stale: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM search_index_rowids", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(stale, 0, "the map outlived the index it described");
+
+        let version: String = db
+            .conn()
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = 'fts_schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, FTS_SCHEMA_VERSION);
+
+        let needs_reindex: String = db
+            .conn()
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = 'fts_needs_reindex'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("the upgrade must ask for the index to be rebuilt");
+        assert_eq!(needs_reindex, "1");
+    }
+
+    /// The rebuild that the flag above triggers has to leave the map usable,
+    /// or the first edit after an upgrade starts duplicating entries again.
+    #[test]
+    fn the_reindex_after_an_upgrade_repopulates_the_rowid_map() {
+        let holder = tempfile::tempdir().unwrap();
+        let db_path = holder.path().join("vault_cache.db");
+        database_at_fts_version_3(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Notes/a.md".to_string(),
+            node_type: "note".to_string(),
+            title: "A note".to_string(),
+            content: "body".to_string(),
+            properties: serde_json::json!({}),
+            created_at: "2026-01-01 00:00:00".to_string(),
+            updated_at: "2026-01-01 00:00:00".to_string(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .unwrap();
+
+        db.reindex_search().unwrap();
+
+        let mapped: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM search_index_rowids WHERE item_id = 'Notes/a.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mapped, 1, "the rebuild did not record where the row landed");
+
+        // And the map has to be correct, not merely present: saving the note
+        // again must replace its entry rather than add a second one.
+        db.upsert_search_entry(
+            "Notes/a.md",
+            "note",
+            "A note, edited",
+            "",
+            "body",
+            "{}",
+            None,
+            "2026-01-01",
+            "Notes/a.md",
+        );
+        let entries: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM search_index WHERE item_id = 'Notes/a.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(entries, 1);
     }
 }

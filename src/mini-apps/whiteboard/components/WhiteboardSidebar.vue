@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
 import { Plus, Trash2, PenTool, PanelLeftClose, Search, FileText, GripVertical, ChevronDown, ChevronRight } from 'lucide-vue-next';
+import { useAppStore } from '../../../stores/useAppStore';
+import { storeToRefs } from 'pinia';
+import { logger } from '../../../utils/logger';
 
 const props = defineProps<{
   boards: any[];
@@ -8,6 +12,8 @@ const props = defineProps<{
   currentBoardData: any;
   notes: any[];
 }>();
+
+const { vaultPath } = storeToRefs(useAppStore());
 
 const emit = defineEmits<{
   (e: 'switch-board', boardId: string): void;
@@ -40,19 +46,56 @@ const notePreview = (content: string) => {
   return clean.length > 60 ? clean.substring(0, 60) + '…' : clean;
 };
 
-const filteredRegularNotes = computed(() => {
-  const q = noteSearch.value.toLowerCase().trim();
-  return props.notes
-    .filter(n => !isDailyNote(n.title))
-    .filter(n => !q || (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
+/**
+ * Ids of notes matching the search, from the full-text index.
+ *
+ * The sidebar carries each note's opening rather than its body, so searching it
+ * in the browser could only ever match the first line. The index has the whole
+ * text, ranks by relevance and handles diacritics — it is both a smaller
+ * payload and a better search than the substring scan this replaces. `null`
+ * means no search is active.
+ */
+const searchMatchIds = ref<Set<string> | null>(null);
+let searchTimer: ReturnType<typeof setTimeout>;
+
+watch(noteSearch, (q) => {
+  clearTimeout(searchTimer);
+  const query = q.trim();
+  if (!query) {
+    searchMatchIds.value = null;
+    return;
+  }
+  searchTimer = setTimeout(async () => {
+    try {
+      const resp = await invoke<{ results: { id: string }[] }>('search_notes', {
+        vaultPath: vaultPath.value,
+        query,
+      });
+      // Ignore a reply the user has already typed past.
+      if (noteSearch.value.trim() === query) {
+        searchMatchIds.value = new Set(resp.results.map(r => r.id));
+      }
+    } catch (e) {
+      logger.error('Whiteboard sidebar search failed', e);
+    }
+  }, 200);
 });
 
-const filteredDailyNotes = computed(() => {
+/** Title matching, shown immediately while the indexed search is in flight. */
+const matchesSearch = (note: any) => {
   const q = noteSearch.value.toLowerCase().trim();
-  return props.notes
-    .filter(n => isDailyNote(n.title))
-    .filter(n => !q || (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
-});
+  if (!q) return true;
+  if (searchMatchIds.value !== null) return searchMatchIds.value.has(note.id);
+  return (note.title || '').toLowerCase().includes(q);
+};
+
+const filteredRegularNotes = computed(() =>
+  props.notes.filter(n => !isDailyNote(n.title)).filter(matchesSearch)
+);
+
+const filteredDailyNotes = computed(() =>
+  props.notes.filter(n => isDailyNote(n.title)).filter(matchesSearch)
+);
 
 function handleNoteDragStart(event: DragEvent, note: any) {
   if (event.dataTransfer) {
@@ -178,8 +221,8 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
             <FileText class="w-3.5 h-3.5 flex-shrink-0 text-accent/60" />
             <span class="text-sm font-medium text-text dark:text-text-dark truncate">{{ note.title || 'Untitled' }}</span>
           </div>
-          <p v-if="notePreview(note.content)" class="text-[11px] text-muted dark:text-muted-dark truncate mt-0.5 ml-[34px]">
-            {{ notePreview(note.content) }}
+          <p v-if="notePreview(note.preview)" class="text-[11px] text-muted dark:text-muted-dark truncate mt-0.5 ml-[34px]">
+            {{ notePreview(note.preview) }}
           </p>
         </div>
 

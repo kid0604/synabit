@@ -5,7 +5,18 @@ use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tauri::Manager;
+
+// Identity resolution runs once per file on every vault scan, so these are
+// compiled once rather than per call. Building a regex costs orders of
+// magnitude more than running one.
+static NODE_ID_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^node_id:\s*([a-zA-Z0-9\-]+)\s*$").unwrap());
+static LEGACY_ID_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^synabit_id:\s*([a-zA-Z0-9\-]+)\s*$").unwrap());
+static NODE_ID_LINE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^node_id:\s*[a-zA-Z0-9\-]+\s*$").unwrap());
 
 pub const VAULT_METADATA_SCHEMA_VERSION: u32 = 1;
 
@@ -211,16 +222,14 @@ pub fn get_or_assign_node_id_with_hint(
             .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
 
         // Simple regex to extract node_id from frontmatter
-        let re = regex::Regex::new(r"(?m)^node_id:\s*([a-zA-Z0-9\-]+)\s*$").unwrap();
-        if let Some(caps) = re.captures(&content) {
+        if let Some(caps) = NODE_ID_RE.captures(&content) {
             if let Some(id_match) = caps.get(1) {
                 return Ok(id_match.as_str().to_string());
             }
         }
 
         // Try fallback to synabit_id just in case
-        let re_legacy = regex::Regex::new(r"(?m)^synabit_id:\s*([a-zA-Z0-9\-]+)\s*$").unwrap();
-        if let Some(caps) = re_legacy.captures(&content) {
+        if let Some(caps) = LEGACY_ID_RE.captures(&content) {
             if let Some(id_match) = caps.get(1) {
                 return Ok(id_match.as_str().to_string());
             }
@@ -317,9 +326,9 @@ pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<St
     if ext == "md" {
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
-        let re = regex::Regex::new(r"(?m)^node_id:\s*[a-zA-Z0-9\-]+\s*$").unwrap();
-        let updated = if re.is_match(&content) {
-            re.replace(&content, format!("node_id: {}", new_id).as_str())
+        let updated = if NODE_ID_LINE_RE.is_match(&content) {
+            NODE_ID_LINE_RE
+                .replace(&content, format!("node_id: {}", new_id).as_str())
                 .to_string()
         } else {
             inject_markdown_id(&content, &new_id)

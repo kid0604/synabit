@@ -254,8 +254,7 @@ export function useBoardLogic(
           tags: task.tags,
           completed_at: task.completed_at
         },
-        content: task.content,
-        existingPath: task.path
+        content: task.content
       });
     } catch (err) {
       logger.error("Drag update failed", err);
@@ -289,8 +288,7 @@ export function useBoardLogic(
           tags: task.tags,
           completed_at: task.completed_at
         },
-        content: task.content,
-        existingPath: task.path
+        content: task.content
       });
     } catch (err) {
       logger.error("Matrix drag update failed", err);

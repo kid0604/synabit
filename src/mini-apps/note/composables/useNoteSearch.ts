@@ -39,7 +39,10 @@ export function useNoteSearch(
         };
         result = result.filter(n => {
             if (isTagSearch) return n.tags.some(t => match(t));
-            return match(n.title) || n.tags.some(t => match(t)) || match(n.content);
+            // The list holds each note's opening rather than its body, so this
+            // interim pass matches on that. It is only what the user sees for
+            // the 200ms before the ranked full-text results below replace it.
+            return match(n.title) || n.tags.some(t => match(t)) || match(n.summary);
         });
     }
     if (selectedTags.value.size > 0) {

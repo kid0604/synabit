@@ -1,13 +1,21 @@
+/**
+ * A note as the list holds it.
+ *
+ * There is deliberately no `content`. The list shows a title, a date, tags and
+ * `summary`; carrying every note's body as well was the bulk of what loading
+ * the list cost. Anything that needs a body — opening a note, rewriting its
+ * file — fetches that one note with `getNode`.
+ */
 export interface NoteItem {
   id: string;
   title: string;
+  /** The opening of the body, for display and for interim search matching. */
   summary: string;
   date: string;
   tags: string[];
   path: string;
   pinned: boolean;
   full_width: boolean;
-  content: string;
   linked_projects?: string[];
 }
 

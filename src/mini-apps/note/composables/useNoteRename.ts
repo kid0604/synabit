@@ -75,7 +75,10 @@ export function useNoteRename(
             currentNoteId.value = newPath;
         }
         
-        const contentBody = tabContents.value[newPath] || savedContent || note.content;
+        // Renaming rewrites the file, so it needs the body. The list holds
+        // only each note's opening, so fall back to fetching this one.
+        const contentBody = tabContents.value[newPath] || savedContent
+            || (await ns.getNode(newPath))?.content || '';
         await ns.writeNode(buildNotePayload(note, contentBody));
         
         if (needsSave) {
@@ -147,7 +150,10 @@ export function useNoteRename(
         }
 
         currentNoteId.value = newPath;
-        const contentBody = tabContents.value[newPath] || savedContent || note.content;
+        // Renaming rewrites the file, so it needs the body. The list holds
+        // only each note's opening, so fall back to fetching this one.
+        const contentBody = tabContents.value[newPath] || savedContent
+            || (await ns.getNode(newPath))?.content || '';
         await ns.writeNode(buildNotePayload(note, contentBody));
         scanVault();
         

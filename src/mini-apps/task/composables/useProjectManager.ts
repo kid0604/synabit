@@ -106,13 +106,12 @@ export function useProjectManager(
     if (!activeProject.value) return;
     try {
       const edges = await ns.getLinkedNodes(activeProject.value.title, activeProject.value.id);
-      linkedResources.value = edges.filter((n: any) => {
-        if (n.node_type === 'json' && n.id.endsWith('.whiteboard.json')) {
-          n.node_type = 'whiteboard';
-          return true;
-        }
-        return ['note', 'whiteboard', 'file'].includes(n.node_type);
-      });
+      // Boards arrive already typed as 'whiteboard'. This used to receive some
+      // of them typed 'json' and relabel them here, because boards were indexed
+      // by two different code paths that did not agree; there is one path now.
+      linkedResources.value = edges.filter((n: any) =>
+        ['note', 'whiteboard', 'file'].includes(n.node_type)
+      );
     } catch(e) {
       console.error('Failed to get linked resources', e);
     }
@@ -194,8 +193,7 @@ export function useProjectManager(
             color: activeProject.value.color || '',
             ...(updatedProject.custom_fields || {})
           },
-          content: updatedProject.content,
-          existingPath: activeProject.value.path
+          content: updatedProject.content
         });
         showProjectEditModal.value = false;
         await loadTasks();
@@ -372,7 +370,7 @@ export function useProjectManager(
           const propsObj = fetchedNode.properties || {};
           if (Array.isArray(propsObj.linked_projects)) {
             propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
-            await ns.updateNodeProperties(fetchedNode.id, propsObj);
+            await ns.updateFileNodeProperties(fetchedNode.id, propsObj);
           }
         }
       } else {
@@ -440,7 +438,7 @@ export function useProjectManager(
             projectsArray.push(projectLink);
             propsObj.linked_projects = projectsArray;
             
-            await ns.updateNodeProperties(fullNode.id, propsObj);
+            await ns.updateFileNodeProperties(fullNode.id, propsObj);
           }
         }
       } else {

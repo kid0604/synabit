@@ -48,15 +48,19 @@ export function useNoteTabs(
     }
     
     if (tabContents.value[id] === undefined) {
-        let note = notes.value.find(n => n.id === id);
-        if (!note) {
-            try {
-                const fetchedNode = await ns.getNode(id);
-                if (fetchedNode) {
-                    note = {
+        // The body always comes from a fetch now: the list carries only each
+        // note's opening, so there is nothing in it to open a note from.
+        try {
+            const fetchedNode = await ns.getNode(id);
+            if (fetchedNode) {
+                tabContents.value[id] = fetchedNode.content;
+
+                // A note reached by link or by deep link may not be in the list
+                // yet. Put it there so the sidebar shows what is open.
+                if (!notes.value.some(n => n.id === id)) {
+                    notes.value.unshift({
                         id: fetchedNode.id,
                         title: fetchedNode.title,
-                        content: fetchedNode.content,
                         date: fetchedNode.updated_at || fetchedNode.created_at,
                         path: fetchedNode.rel_path,
                         tags: Array.isArray(fetchedNode.properties?.tags) ? fetchedNode.properties.tags : [],
@@ -64,16 +68,11 @@ export function useNoteTabs(
                         full_width: !!fetchedNode.properties?.full_width,
                         linked_projects: Array.isArray(fetchedNode.properties?.linked_projects) ? fetchedNode.properties.linked_projects : [],
                         summary: fetchedNode.content.substring(0, 150).trim()
-                    };
-                    notes.value.unshift(note);
+                    });
                 }
-            } catch (e) {
-                console.error("Failed to fetch missing note", e);
             }
-        }
-        
-        if (note) {
-            tabContents.value[id] = note.content;
+        } catch (e) {
+            console.error("Failed to fetch note body", e);
         }
     }
   };

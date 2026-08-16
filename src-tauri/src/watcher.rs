@@ -76,7 +76,7 @@ mod desktop {
         {
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.set_kv("vault_path", &vault_path);
+            crate::error::logged("record vault path", "vault_path", db.set_kv("vault_path", &vault_path));
         }
 
         let emit_handle = app_handle.clone();
@@ -226,7 +226,7 @@ pub mod mobile_stub {
         {
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.set_kv("vault_path", &vault_path);
+            crate::error::logged("record vault path", "vault_path", db.set_kv("vault_path", &vault_path));
         }
 
         // On mobile, file watching is a no-op.
