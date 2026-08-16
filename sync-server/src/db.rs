@@ -1223,6 +1223,101 @@ mod chunk_reference_tests {
     }
 
     #[test]
+    fn deleting_a_file_eventually_frees_the_chunks_it_held() {
+        // The question this whole mechanism has to answer: does storage come
+        // back, or does the vault only ever grow?
+        //
+        // A delete carries the same doc_hash as the attachment it removes —
+        // both are the hash of the path — so it supersedes the reference entry.
+        // Once every device has acknowledged, that entry is collected, its rows
+        // in mailbox_chunks go with it, and the chunk is left with nothing
+        // pointing at it. Only then is it collectable.
+        let (db, _dir, vault) = vault();
+        let chunk = [77u8; 32];
+        let doc = 5u8; // the same document throughout: one path, one doc_hash
+
+        // The attachment is published and its bytes stored.
+        push(&db, &vault, 1, doc, &[chunk]);
+        db.store_asset(&vault, &hex::encode(chunk), "/blob/photo", 8192)
+            .expect("store");
+
+        // While the file exists, its chunk must survive every collection.
+        db.update_cursor(&vault, "device-a", 1).expect("cursor");
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+        assert!(
+            db.gc_unreferenced_assets(0).expect("gc").is_empty(),
+            "the chunk of a file that still exists was collected"
+        );
+
+        // The user deletes the file. The tombstone shares the document, so it
+        // supersedes the reference rather than sitting beside it.
+        push(&db, &vault, 2, doc, &[]);
+        db.update_cursor(&vault, "device-a", 2).expect("cursor");
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+
+        let collected = db.gc_unreferenced_assets(0).expect("gc");
+        assert_eq!(
+            collected,
+            vec!["/blob/photo".to_string()],
+            "deleting the file did not release its chunk — storage would only grow"
+        );
+        assert_eq!(
+            db.total_vault_storage(&vault).expect("used"),
+            10,
+            "the freed bytes were not credited back (only the tombstone should remain)"
+        );
+    }
+
+    #[test]
+    fn one_device_that_never_comes_back_holds_every_chunk_in_place() {
+        // The real unbounded-growth path, and it is not the collector's doing.
+        //
+        // Entries are only collected once every registered device has
+        // acknowledged them, which is what makes collection safe. The cost is
+        // that a device which stops syncing — reinstalled, lost, replaced —
+        // pins that floor wherever it left off, and nothing above it can ever
+        // be collected. Deleting files then frees nothing at all.
+        //
+        // Written down here because it is a property of the design rather than
+        // a bug to fix quietly: the way out is revoking the stale device, and
+        // someone has to know that.
+        let (db, _dir, vault) = vault();
+        let chunk = [55u8; 32];
+
+        push(&db, &vault, 1, 5, &[chunk]);
+        push(&db, &vault, 2, 5, &[]); // the delete, superseding it
+        db.store_asset(&vault, &hex::encode(chunk), "/blob/held", 4096)
+            .expect("store");
+
+        // One device is up to date; the other registered and never caught up,
+        // so it has not yet seen the attachment itself and may still need the
+        // bytes. Note that a device which *had* acknowledged the reference is a
+        // different case entirely — it no longer needs the chunk, only the
+        // tombstone, and collection there is correct.
+        db.update_cursor(&vault, "device-a", 2).expect("cursor");
+        db.touch_device(&vault, "device-b").expect("register");
+
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+        assert!(
+            db.gc_unreferenced_assets(0).expect("gc").is_empty(),
+            "a chunk was collected while a device still had not seen the delete"
+        );
+
+        // Revoking the absent device lifts the floor and the space comes back.
+        db.set_device_status(&vault, "device-b", "revoked").expect("revoke");
+        db.gc_acked_entries(&vault, db.min_cursor(&vault).expect("min"))
+            .expect("gc entries");
+        assert_eq!(
+            db.gc_unreferenced_assets(0).expect("gc"),
+            vec!["/blob/held".to_string()],
+            "revoking the stale device should let the chunk go"
+        );
+    }
+
+    #[test]
     fn storing_a_chunk_charges_it_to_the_vault_and_storing_it_twice_does_not() {
         // The quota check reads `used_storage_bytes`, and only entries were ever
         // added to it, so attachments filled the disk while counting as nothing.
