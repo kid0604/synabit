@@ -973,7 +973,6 @@ pub async fn preflight_provider_state(
     provider_id: &str,
     adapter: &dyn SyncAdapter,
 ) -> AppResult<(AdapterSyncPlan, String)> {
-    let now = chrono::Utc::now().timestamp_millis();
     {
         let db = match db_state.lock() {
             Ok(g) => g,
@@ -981,6 +980,13 @@ pub async fn preflight_provider_state(
         };
         db.ensure_sync_provider_state(vault_id, provider_id)?;
     }
+
+    // Read after the row exists, not before. `ensure_sync_provider_state` stamps
+    // `created_at` from its own reading of the clock, so a reading taken up here
+    // can be older than the row it is about to update — and the table quite
+    // correctly refuses an update that predates its own creation. Crossing a
+    // single millisecond boundary between the two was enough to fail the run.
+    let now = chrono::Utc::now().timestamp_millis();
 
     let stored_state = {
         let db = match db_state.lock() {

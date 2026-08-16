@@ -114,6 +114,25 @@ pub fn enforce_within_roots(
 
 #[cfg(test)]
 mod tests {
+
+    /// A fixture directory unique to this run.
+    ///
+    /// A fixed name under the system temp directory is shared by every process
+    /// on the machine, so two `cargo test` runs at once — an IDE beside a
+    /// terminal, or CI beside a local one — delete each other's fixtures
+    /// mid-test. The failure lands on whichever test lost the race, which reads
+    /// as flakiness with no pattern to it. It contaminated a measurement in this
+    /// very repository.
+    ///
+    /// The named subdirectory is not decoration: `tempdir()` hands back a
+    /// dot-prefixed path, and vault walking filters dotfiles — including the
+    /// root of the walk itself.
+    fn unique_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let holder = tempfile::tempdir().expect("tempdir");
+        let path = holder.path().join(name);
+        std::fs::create_dir_all(&path).expect("create fixture dir");
+        (holder, path)
+    }
     use super::*;
     use std::path::PathBuf;
 
@@ -175,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_resolve_safe_path_normal() {
-        let tmp = std::env::temp_dir().join("synabit_test_vault_normal");
+        let (_holder, tmp) = unique_dir("synabit_test_vault_normal");
         let _ = std::fs::create_dir_all(tmp.join("Notes"));
         std::fs::write(tmp.join("Notes/hello.md"), "test").unwrap();
 
@@ -184,36 +203,33 @@ mod tests {
         let resolved = result.unwrap();
         assert!(resolved.ends_with("Notes/hello.md"));
 
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_resolve_safe_path_blocks_traversal() {
-        let tmp = std::env::temp_dir().join("synabit_test_vault_traversal");
+        let (_holder, tmp) = unique_dir("synabit_test_vault_traversal");
         let _ = std::fs::create_dir_all(tmp.join("Notes"));
 
         // Attempt to escape vault via ../
         let result = resolve_safe_path(tmp.to_str().unwrap(), "../../../etc/passwd");
         assert!(result.is_err(), "Should reject path traversal via ../");
 
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_resolve_safe_path_blocks_intermediate_traversal() {
-        let tmp = std::env::temp_dir().join("synabit_test_vault_intermediate");
+        let (_holder, tmp) = unique_dir("synabit_test_vault_intermediate");
         let _ = std::fs::create_dir_all(tmp.join("Notes"));
 
         // Attempt to escape via Notes/../../../
         let result = resolve_safe_path(tmp.to_str().unwrap(), "Notes/../../../etc/shadow");
         assert!(result.is_err(), "Should reject intermediate path traversal");
 
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_resolve_safe_path_allows_new_file() {
-        let tmp = std::env::temp_dir().join("synabit_test_vault_newfile");
+        let (_holder, tmp) = unique_dir("synabit_test_vault_newfile");
         let _ = std::fs::create_dir_all(tmp.join("Notes"));
 
         // Creating a new file that doesn't exist yet should work
@@ -222,12 +238,11 @@ mod tests {
         let resolved = result.unwrap();
         assert!(resolved.ends_with("Notes/new_note.md"));
 
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_resolve_safe_path_blocks_symlink_escape() {
-        let tmp = std::env::temp_dir().join("synabit_test_vault_symlink");
+        let (_holder, tmp) = unique_dir("synabit_test_vault_symlink");
         let _ = std::fs::create_dir_all(tmp.join("Notes"));
 
         // Create a symlink that points outside the vault
@@ -239,7 +254,6 @@ mod tests {
             let result = resolve_safe_path(tmp.to_str().unwrap(), "Notes/escape_link/some_file");
             assert!(result.is_err(), "Should reject symlink escaping vault");
 
-            let _ = std::fs::remove_dir_all(&tmp);
         }
     }
 
@@ -247,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_enforce_within_roots_allows_valid() {
-        let tmp = std::env::temp_dir().join("synabit_test_roots_valid");
+        let (_holder, tmp) = unique_dir("synabit_test_roots_valid");
         let _ = std::fs::create_dir_all(tmp.join("sub"));
         std::fs::write(tmp.join("sub/file.txt"), "test").unwrap();
 
@@ -256,13 +270,12 @@ mod tests {
         let result = enforce_within_roots(&tmp.join("sub/file.txt"), &root_refs);
         assert!(result.is_ok());
 
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_enforce_within_roots_rejects_outside() {
-        let tmp1 = std::env::temp_dir().join("synabit_test_roots_inside");
-        let tmp2 = std::env::temp_dir().join("synabit_test_roots_outside");
+        let (_holder, tmp1) = unique_dir("synabit_test_roots_inside");
+        let (_holder, tmp2) = unique_dir("synabit_test_roots_outside");
         let _ = std::fs::create_dir_all(&tmp1);
         let _ = std::fs::create_dir_all(&tmp2);
         std::fs::write(tmp2.join("secret.txt"), "sensitive").unwrap();
@@ -278,8 +291,8 @@ mod tests {
 
     #[test]
     fn test_enforce_within_roots_multiple_roots() {
-        let tmp1 = std::env::temp_dir().join("synabit_test_multi_root1");
-        let tmp2 = std::env::temp_dir().join("synabit_test_multi_root2");
+        let (_holder, tmp1) = unique_dir("synabit_test_multi_root1");
+        let (_holder, tmp2) = unique_dir("synabit_test_multi_root2");
         let _ = std::fs::create_dir_all(&tmp1);
         let _ = std::fs::create_dir_all(&tmp2);
         std::fs::write(tmp2.join("file.txt"), "test").unwrap();

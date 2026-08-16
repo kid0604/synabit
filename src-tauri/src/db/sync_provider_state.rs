@@ -311,8 +311,17 @@ impl DbBridge {
         }
 
         let rows_res = tx.execute(
+            // MAX against created_at rather than trusting the caller's clock.
+            //
+            // `CHECK (updated_at >= created_at)` is worth keeping — a row whose
+            // update predates its creation is nonsense — but a wall clock is not
+            // a reliable source of monotonic readings. It steps backwards on NTP
+            // correction, and a caller that read it slightly too early produces
+            // the same effect. Neither is a reason to abort a sync run with a
+            // database error the user cannot act on.
             "UPDATE sync_provider_state 
-             SET sync_state = ?1, incarnation_id = ?2, remote_vault_id = ?3, last_error = ?4, updated_at = ?5
+             SET sync_state = ?1, incarnation_id = ?2, remote_vault_id = ?3, last_error = ?4,
+                 updated_at = MAX(?5, created_at)
              WHERE vault_id = ?6 AND provider_id = ?7",
             params![
                 new_state.as_str(),
@@ -422,9 +431,12 @@ impl DbBridge {
         let rows_affected = self
             .conn
             .execute(
+                // MAX for the same reason as the reconcile above: the table's
+                // CHECK is worth keeping, and a wall clock is not a monotonic
+                // source. Advancing the cursor must never fail over a clock step.
                 "UPDATE sync_provider_state
                  SET cursor = ?1,
-                     updated_at = ?2
+                     updated_at = MAX(?2, created_at)
                  WHERE vault_id = ?3
                    AND provider_id = ?4
                    AND cursor = ?5",
@@ -498,7 +510,7 @@ impl DbBridge {
             .execute(
                 "UPDATE sync_provider_state
                  SET ack_cursor = ?1,
-                     updated_at = ?2
+                     updated_at = MAX(?2, created_at)
                  WHERE vault_id = ?3
                    AND provider_id = ?4
                    AND cursor = ?1
@@ -532,7 +544,7 @@ mod tests {
     use crate::db::schema::run_sync_schema_migrations;
     use rusqlite::Connection;
 
-    fn setup_test_db() -> DbBridge {
+    pub(super) fn setup_test_db() -> DbBridge {
         let mut conn = Connection::open_in_memory().unwrap();
         run_sync_schema_migrations(&mut conn).unwrap();
 
@@ -1428,5 +1440,49 @@ mod tests {
             assert_eq!(remote_after.cursor, cursor.to_string());
             assert_eq!(remote_after.ack_cursor, Some(ack_cursor.to_string()));
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_skew_tests {
+    use super::super::DbBridge;
+    use super::tests::setup_test_db;
+
+    /// A sync run must not fail because two calls to the clock disagreed.
+    ///
+    /// `preflight_provider_state` read the clock, *then* created the provider row
+    /// — which stamped `created_at` from its own, later, reading — and then wrote
+    /// `updated_at` from the first one. Cross a millisecond boundary between the
+    /// two and `CHECK (updated_at >= created_at)` fails, aborting the whole run
+    /// with a database error the user can do nothing about. It reproduced about
+    /// once in forty runs, on whichever test happened to be running.
+    ///
+    /// The ordering is fixed at the call site, but a wall clock can also simply
+    /// step backwards — NTP corrections do it — so the write is made unable to
+    /// violate the constraint regardless of what it is handed.
+    #[test]
+    fn a_clock_that_reads_backwards_does_not_break_the_sync_run() {
+        let mut db: DbBridge = setup_test_db();
+
+        // The row was created at 100. Reconcile with a reading from before that,
+        // which is what an early clock read looks like from here.
+        let result = db.reconcile_sync_provider_plan("v1", "gdrive", Some([1u8; 16]), None, false, 40);
+
+        assert!(
+            result.is_ok(),
+            "a backwards clock reading aborted the sync run: {:?}",
+            result.err()
+        );
+
+        let row = db
+            .get_sync_provider_state("v1", "gdrive")
+            .unwrap()
+            .expect("the row should still be there");
+        assert!(
+            row.updated_at >= row.created_at,
+            "updated_at {} ended up before created_at {}",
+            row.updated_at,
+            row.created_at
+        );
     }
 }

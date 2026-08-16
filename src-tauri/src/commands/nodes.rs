@@ -1425,6 +1425,25 @@ pub(crate) fn crdt_apply_safe(
 
 #[cfg(test)]
 mod new_note_identity_tests {
+
+    /// A fixture directory unique to this run.
+    ///
+    /// A fixed name under the system temp directory is shared by every process
+    /// on the machine, so two `cargo test` runs at once — an IDE beside a
+    /// terminal, or CI beside a local one — delete each other's fixtures
+    /// mid-test. The failure lands on whichever test lost the race, which reads
+    /// as flakiness with no pattern to it. It contaminated a measurement in this
+    /// very repository.
+    ///
+    /// The named subdirectory is not decoration: `tempdir()` hands back a
+    /// dot-prefixed path, and vault walking filters dotfiles — including the
+    /// root of the walk itself.
+    fn unique_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let holder = tempfile::tempdir().expect("tempdir");
+        let path = holder.path().join(name);
+        std::fs::create_dir_all(&path).expect("create fixture dir");
+        (holder, path)
+    }
     use super::new_note_frontmatter;
 
     /// The property the whole change exists for: sync finds an identity already
@@ -1435,9 +1454,7 @@ mod new_note_identity_tests {
     /// the race is not entered rather than that it is survived.
     #[test]
     fn a_freshly_created_note_is_never_rewritten_to_give_it_an_identity() {
-        let dir = std::env::temp_dir().join("synabit_new_note_identity");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let (_holder, dir) = unique_dir("synabit_new_note_identity");
         let path = dir.join("note.md");
 
         let created = new_note_frontmatter("My note", "note", None);
@@ -1457,7 +1474,6 @@ mod new_note_identity_tests {
             "the id sync resolved is not the one written at creation"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

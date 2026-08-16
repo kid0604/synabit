@@ -105,6 +105,25 @@ pub fn collect_local_files(vault_path: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A fixture directory unique to this run.
+    ///
+    /// A fixed name under the system temp directory is shared by every process
+    /// on the machine, so two `cargo test` runs at once — an IDE beside a
+    /// terminal, or CI beside a local one — delete each other's fixtures
+    /// mid-test. The failure lands on whichever test lost the race, which reads
+    /// as flakiness with no pattern to it. It contaminated a measurement in this
+    /// very repository.
+    ///
+    /// The named subdirectory is not decoration: `tempdir()` hands back a
+    /// dot-prefixed path, and vault walking filters dotfiles — including the
+    /// root of the walk itself.
+    fn unique_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let holder = tempfile::tempdir().expect("tempdir");
+        let path = holder.path().join(name);
+        std::fs::create_dir_all(&path).expect("create fixture dir");
+        (holder, path)
+    }
     use super::*;
 
     #[test]
@@ -116,7 +135,7 @@ mod tests {
     #[test]
     fn test_file_sha256_known_value() {
         // Create a temp file in a unique dir to avoid collisions
-        let dir = std::env::temp_dir().join("synabit_test_utils_sha256");
+        let (_holder, dir) = unique_dir("synabit_test_utils_sha256");
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("hello.txt");
         fs::write(&path, b"hello").unwrap();
@@ -126,14 +145,11 @@ mod tests {
             hash,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_collect_local_files_skips_hidden() {
-        let dir = std::env::temp_dir().join("synabit_test_utils_collect");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let (_holder, dir) = unique_dir("synabit_test_utils_collect");
         fs::write(dir.join("visible.md"), "hi").unwrap();
         fs::write(dir.join(".hidden"), "hi").unwrap();
         let hidden_dir = dir.join(".obsidian");
@@ -142,7 +158,6 @@ mod tests {
 
         let files = collect_local_files(dir.to_str().unwrap());
         assert_eq!(files, vec!["visible.md"]);
-        let _ = fs::remove_dir_all(&dir);
     }
 }
 
