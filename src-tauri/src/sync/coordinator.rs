@@ -681,6 +681,10 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                             doc_payload.rel_path,
                             kept
                         );
+                        result.conflicts.push(crate::sync::core::types::SyncConflict {
+                            rel_path: doc_payload.rel_path.clone(),
+                            kept_as: kept.clone(),
+                        });
                     }
                 }
 
@@ -1490,6 +1494,7 @@ impl SyncCoordinator {
             pushed: total_pushed,
             deleted: 0,
             errors: skipped,
+            conflicts: Vec::new(),
             pulled_files: Vec::new(),
             tx_bytes: total_tx_bytes,
             rx_bytes: 0,

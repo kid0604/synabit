@@ -194,12 +194,22 @@ export interface WhiteboardMetadata {
 ///
 /// Asset counters are deliberately absent: nothing in the sync engine produces
 /// them today, and declaring them made the UI read fields that never arrive.
+/** A file kept aside because another device's version took its place. */
+export interface SyncConflict {
+  /** The contested location, which now holds the other device's version. */
+  rel_path: string;
+  /** Where ours was moved to. */
+  kept_as: string;
+}
+
 export interface SyncResult {
   pulled: number;
   pulled_files: string[];
   pushed: number;
   deleted: number;
   errors: string[];
+  /** Not failures. The sync worked; these files were preserved under new names. */
+  conflicts: SyncConflict[];
   tx_bytes: number;
   rx_bytes: number;
 }

@@ -430,9 +430,13 @@ fn pull_markdown<R: tauri::Runtime>(
             if merged_text != local_text {
                 atomic_write(local_path, merged_text.as_bytes())
                     .map_err(|e| AppError::SyncError(format!("Write merged {}: {}", node_id, e)))?;
-                // Emit CRDT merge conflict info only if actual changes occurred
+                // A merge is not a conflict. Both sides survived, in one document,
+                // which is the whole point of carrying text as a CRDT — reporting
+                // it as a conflict would put a warning in front of the user on
+                // every ordinary concurrent edit, and drown the reports that mean
+                // something was actually set aside.
                 let _ = app_handle.emit(
-                    "sync-conflict",
+                    "sync-merged",
                     SyncConflictInfo {
                         file_name: payload.rel_path.clone(),
                         resolution: "crdt_merge".to_string(),

@@ -243,9 +243,12 @@ pub async fn fetch_staged_assets(
             match write_one(db_state, vault, vault_id, provider_id, &record, e2ee_key, adapter)
                 .await
             {
-                Ok(rel_path) => {
+                Ok((rel_path, conflict)) => {
                     result.pulled += 1;
                     result.pulled_files.push(rel_path);
+                    if let Some(conflict) = conflict {
+                        result.conflicts.push(conflict);
+                    }
                     InboxState::Applied
                 }
                 // Nothing about this entry will be different next time: it is
@@ -313,7 +316,8 @@ async fn write_one(
     record: &crate::db::sync_inbox::InboxRecord,
     e2ee_key: &[u8; 32],
     adapter: &dyn SyncAdapter,
-) -> Result<String, AssetWriteError> {
+) -> Result<(String, Option<crate::sync::core::types::SyncConflict>), AssetWriteError> {
+    let mut conflict = None;
     let encrypted = record
         .encrypted_payload
         .as_ref()
@@ -404,6 +408,10 @@ async fn write_one(
                     asset.rel_path,
                     kept
                 );
+                conflict = Some(crate::sync::core::types::SyncConflict {
+                    rel_path: asset.rel_path.clone(),
+                    kept_as: kept.clone(),
+                });
             }
         }
     }
@@ -433,5 +441,5 @@ async fn write_one(
     }
 
     log::info!("attachment written: {}", asset.rel_path);
-    Ok(asset.rel_path)
+    Ok((asset.rel_path, conflict))
 }

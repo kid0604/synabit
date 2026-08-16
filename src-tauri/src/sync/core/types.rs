@@ -33,6 +33,20 @@ impl SyncOperation {
     }
 }
 
+/// A file this device kept because another device's version took its place.
+///
+/// Neither a failure nor a routine pull, which is why it needs saying at all:
+/// the sync worked, and something the user wrote is now somewhere they did not
+/// put it. Without this the copy appears in the vault under a name nobody
+/// recognises, and the likeliest outcome is that it gets deleted as clutter.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncConflict {
+    /// The contested location, which now holds the other device's version.
+    pub rel_path: String,
+    /// Where ours was moved to.
+    pub kept_as: String,
+}
+
 /// Result of a sync operation, used by the UI to show what happened.
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncResult {
@@ -41,6 +55,10 @@ pub struct SyncResult {
     pub pushed: u32,
     pub deleted: u32,
     pub errors: Vec<String>,
+    /// Files kept aside rather than overwritten. Reported separately from
+    /// `errors` on purpose — a conflict is not a failure, and showing it as one
+    /// teaches people to ignore the failures that matter.
+    pub conflicts: Vec<SyncConflict>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
 }
@@ -53,6 +71,7 @@ impl SyncResult {
             pushed: 0,
             deleted: 0,
             errors: Vec::new(),
+            conflicts: Vec::new(),
             tx_bytes: 0,
             rx_bytes: 0,
         }

@@ -24,9 +24,15 @@ export interface SyncProgressEvent {
   currentFile?: string;
 }
 
+/**
+ * A file kept aside because another device's version took its place.
+ *
+ * Not an error — the sync worked. Reported separately so the UI can say the one
+ * thing the user needs to hear: your file is still here, under this name.
+ */
 export interface SyncConflictInfo {
-  fileName: string;
-  resolution: string;
+  rel_path: string;
+  kept_as: string;
 }
 
 export interface QuotaInfo {
@@ -233,6 +239,23 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       logger.warn('Sync errors:', result.errors);
       isPartial = true;
     }
+
+    // Files kept aside rather than overwritten. Deliberately not folded into
+    // `errors`: the sync succeeded, and showing this as a failure is how people
+    // learn to ignore the failures that matter.
+    //
+    // Accumulated rather than replaced, because syncs run on their own and a
+    // notice that clears on the next one is a notice nobody sees. It stays until
+    // dismissed, which is the only way the user reliably finds out that a file
+    // of theirs now lives under a different name.
+    if (result.conflicts?.length) {
+      for (const conflict of result.conflicts) {
+        if (!syncConflicts.value.some((c) => c.kept_as === conflict.kept_as)) {
+          syncConflicts.value.push(conflict);
+        }
+      }
+      logger.info('Sync kept files aside:', result.conflicts);
+    }
     
     if (isPartial) {
        syncStatus.value = 'partial';
@@ -319,6 +342,10 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
 
   const isSyncing = computed(() => ['checking', 'pulling', 'applying', 'pushing', 'waiting_for_assets'].includes(syncStatus.value));
 
+  const dismissConflicts = () => {
+    syncConflicts.value = [];
+  };
+
   return {
     isSyncing,
     syncStatus,
@@ -326,6 +353,7 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
     syncProgress,
     syncErrors,
     syncConflicts,
+    dismissConflicts,
     quotaWarning,
     sync: doSync,
     cancelSync,

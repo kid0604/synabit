@@ -236,6 +236,12 @@ const handleGDriveMigrated = async (newPath: string) => {
 
 // ─── Sync ────────────────────────────────────────────────
 const syncState = useSync(vaultPath, activeSyncProvider);
+
+// Files another device's version displaced. Held until dismissed rather than
+// cleared on the next sync: syncs run on their own, and a notice that clears
+// itself is a notice nobody sees.
+const syncConflictCount = computed(() => syncState.syncConflicts.value.length);
+const showSyncConflicts = ref(false);
 let lastAutoSyncTriggerTime = 0;
 
 import { appDataDir } from '@tauri-apps/api/path';
@@ -791,10 +797,11 @@ onUnmounted(() => {
                    <Cloud v-else class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
                 </button>
-                <button v-if="activeSyncProvider === 'server'" @click="syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
+                <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
                    <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
+                   <span v-if="syncConflictCount > 0" class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-4 text-center">{{ syncConflictCount }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : syncConflictCount > 0 ? `${syncConflictCount} file(s) kept aside — click to see` : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
                 </button>
 
                  <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
@@ -899,6 +906,30 @@ onUnmounted(() => {
     />
 
   </div>
+
+    <!-- Files kept aside during sync. Deliberately not styled as an error: the
+         sync worked, and the only thing the user needs is where their file went. -->
+    <div v-if="showSyncConflicts" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" @click.self="showSyncConflicts = false">
+      <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">Đã giữ lại {{ syncConflictCount }} tệp</h2>
+          <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            Một máy khác đã ghi tệp của nó vào cùng vị trí. Bản của bạn không bị mất — nó được đổi tên và vẫn nằm trong vault.
+          </p>
+        </div>
+        <ul class="max-h-72 overflow-y-auto px-5 py-3 space-y-3">
+          <li v-for="c in syncState.syncConflicts.value" :key="c.kept_as" class="text-sm">
+            <div class="text-gray-500 dark:text-gray-400 line-through break-all">{{ c.rel_path }}</div>
+            <div class="font-medium text-gray-900 dark:text-gray-100 break-all">{{ c.kept_as }}</div>
+          </li>
+        </ul>
+        <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
+          <button @click="syncState.dismissConflicts(); showSyncConflicts = false" class="px-4 py-2 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer">
+            Đã hiểu
+          </button>
+        </div>
+      </div>
+    </div>
 </template>
 
 <style scoped>

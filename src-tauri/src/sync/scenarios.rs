@@ -1331,6 +1331,59 @@ async fn a_picture_replaced_by_another_device_is_kept_rather_than_lost() {
 }
 
 #[tokio::test]
+async fn a_conflict_is_reported_to_the_user_and_not_as_a_failure() {
+    // Keeping the file is only half the job. A copy nobody is told about arrives
+    // under a name nobody recognises, and gets deleted as clutter — so the sync
+    // that preserved it loses it anyway, just more slowly.
+    //
+    // It must also not be reported as an error: the sync worked. Dressing a
+    // conflict as a failure is how people learn to ignore the failures that
+    // matter.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    for dev in [a, b] {
+        std::fs::create_dir_all(dev.vault_path().join("assets")).unwrap();
+    }
+    std::fs::write(a.vault_path().join("assets/report.png"), png_bytes(41)).unwrap();
+    std::fs::write(b.vault_path().join("assets/report.png"), png_bytes(42)).unwrap();
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let mut reported = Vec::new();
+    for _ in 0..3 {
+        for dev in [a, b] {
+            let result = dev.sync_ok().await;
+            assert!(
+                result.errors.is_empty(),
+                "a conflict was reported as a sync failure: {:?}",
+                result.errors
+            );
+            reported.extend(result.conflicts);
+        }
+    }
+
+    assert!(
+        !reported.is_empty(),
+        "the file was kept, but nothing told the user it happened"
+    );
+    let first = &reported[0];
+    assert_eq!(first.rel_path, "assets/report.png");
+    assert!(
+        first.kept_as.contains("conflict"),
+        "the report should name where the file went, got {:?}",
+        first.kept_as
+    );
+    assert!(
+        std::fs::metadata(a.vault_path().join(&first.kept_as)).is_ok()
+            || std::fs::metadata(b.vault_path().join(&first.kept_as)).is_ok(),
+        "the report names a file that is not there: {}",
+        first.kept_as
+    );
+}
+
+#[tokio::test]
 async fn importing_the_same_file_on_two_devices_makes_no_conflict_copy() {
     // Gate 2, and the reason gate 3 stays rare. The same file arriving on two
     // machines under one name collides in every mechanical sense, but there is
