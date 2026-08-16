@@ -18,11 +18,25 @@ const SALT_LEN: usize = 32;
 
 // ─── Key Generation ──────────────────────────────────────
 
-/// Generate a cryptographically secure 256-bit key that is
-/// round-trip compatible with the 12-word BIP39 mnemonic.
-/// Only 16 random bytes are generated; the other 16 are derived
-/// deterministically via BLAKE3 so that mnemonic recovery always
-/// reproduces the same 32-byte key.
+/// Generate the vault key: 32 bytes wide, **128 bits strong**.
+///
+/// The width and the strength are not the same number here, and the difference
+/// matters enough to say first. Sixteen bytes come from the system RNG; the
+/// other sixteen are BLAKE3 of those, so guessing the first half yields the
+/// second. Everything derived from this key — `vault_hash`, `mailbox_token`,
+/// the chunk keys — inherits 128 bits, not 256.
+///
+/// That is a deliberate consequence of a 12-word recovery phrase, which carries
+/// exactly 128 bits of entropy. Keeping the key recoverable from the phrase
+/// means it cannot hold more than the phrase does; padding it to 32 bytes only
+/// satisfies XChaCha20's key width.
+///
+/// 128 bits is beyond brute force by any classical measure and is the same
+/// strength as AES-128. The reason to know it anyway: a 24-word phrase would
+/// give a genuine 256 bits, which is what long-term secrets are usually given
+/// as margin against Grover's algorithm halving the exponent. Moving to one is
+/// a breaking change for every existing vault, so it is a decision to take
+/// deliberately rather than to discover later.
 pub fn generate_key() -> [u8; 32] {
     let mut entropy = [0u8; 16];
     rand::rng().fill_bytes(&mut entropy);
@@ -35,9 +49,11 @@ pub fn generate_key() -> [u8; 32] {
     key
 }
 
-/// Convert a 32-byte key to a 12-word BIP39 mnemonic (128-bit entropy).
-/// We use the first 16 bytes of the key for the mnemonic (128 bits = 12 words).
-/// The full 32-byte key is stored in keychain; the mnemonic is a recovery backup.
+/// Convert the vault key to its 12-word BIP39 phrase.
+///
+/// Only the first 16 bytes are encoded, because the rest is derived from them —
+/// see [`generate_key`]. The phrase therefore carries the whole key despite
+/// being half its width.
 pub fn key_to_mnemonic(key: &[u8; 32]) -> Result<String, String> {
     // Use first 16 bytes (128 bits) for 12-word mnemonic
     let mnemonic = bip39::Mnemonic::from_entropy(&key[..16])
