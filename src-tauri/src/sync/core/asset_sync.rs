@@ -168,6 +168,59 @@ pub async fn fetch_staged_assets(
             device_id,
         )?;
 
+        // An older version of a file we have already published a newer one for.
+        //
+        // Attachments are identified by their path, so two devices that both
+        // save "Pasted image.png" — the name editors generate, which makes this
+        // the collision most likely to happen for real — publish two entries for
+        // one document. Unlike text there is nothing to merge: a picture is
+        // replaced whole.
+        //
+        // Each device skips its own entry and applies the other's. The one whose
+        // entry landed first lands on the head; the one whose entry landed
+        // second writes an older picture over the top and stops below it, and
+        // nothing afterwards notices, because neither device sees a local change
+        // to republish. The two devices then hold different pictures at the same
+        // path for good.
+        //
+        // The text path guards this by comparing identities, which cannot work
+        // here: both entries carry the same `node_id`, since the path *is* the
+        // identity. For an attachment the sequence alone settles it — moving
+        // backwards is never right when there is no merge to be had.
+        let ours_is_newer = match record.remote_seq {
+            Some(theirs) => {
+                let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                db.latest_acked_outbox_seq_for_doc_hash(vault_id, provider_id, &record.doc_hash)?
+                    .is_some_and(|ours| ours > theirs)
+            }
+            None => false,
+        };
+
+        if ours_is_newer && !is_own {
+            log::info!("sync: keeping our newer attachment over an older one from another device");
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            let now = now_ms();
+            db.transition_inbox_state(
+                vault_id,
+                provider_id,
+                &record.operation_id,
+                record.state,
+                InboxState::Applying,
+                None,
+                now,
+            )?;
+            db.transition_inbox_state(
+                vault_id,
+                provider_id,
+                &record.operation_id,
+                InboxState::Applying,
+                InboxState::Applied,
+                None,
+                now,
+            )?;
+            continue;
+        }
+
         // Claimed before the attempt, so that a failure has somewhere to be
         // recorded from. `record_apply_failure` counts attempts out of this
         // state, which is what stops a doomed entry retrying for ever.

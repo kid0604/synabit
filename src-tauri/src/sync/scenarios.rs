@@ -1202,3 +1202,44 @@ async fn four_devices_working_at_once_all_agree_at_the_end() {
         );
     }
 }
+
+#[tokio::test]
+async fn two_devices_adding_a_different_picture_under_the_same_name_still_agree() {
+    // Attachments are identified by their path — there is nowhere inside a JPEG
+    // to record an identity — so two devices that both save "Pasted image.png"
+    // are, as far as the system is concerned, editing one document. Editors
+    // generate exactly these names, which makes this the collision most likely
+    // to happen in practice.
+    //
+    // Whatever the outcome, the devices must agree on it. Disagreement is what
+    // splits a vault.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    for dev in [a, b] {
+        std::fs::create_dir_all(dev.vault_path().join("assets")).unwrap();
+    }
+    let from_a = png_bytes(31);
+    let from_b = png_bytes(77);
+    assert_ne!(from_a, from_b, "the two pictures must actually differ");
+
+    std::fs::write(a.vault_path().join("assets/Pasted image.png"), &from_a).unwrap();
+    std::fs::write(b.vault_path().join("assets/Pasted image.png"), &from_b).unwrap();
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    for _ in 0..2 {
+        for dev in [a, b, c] {
+            dev.sync_ok().await;
+        }
+    }
+
+    let read = |dev: &HarnessDevice| {
+        std::fs::read(dev.vault_path().join("assets/Pasted image.png"))
+            .expect("every device should have a picture at that path")
+    };
+    let (ra, rb, rc) = (read(a), read(b), read(c));
+
+    assert_eq!(ra, rb, "A and B disagree about the picture");
+    assert_eq!(rb, rc, "B and C disagree about the picture");
+}
