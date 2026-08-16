@@ -1633,6 +1633,41 @@ mod tests {
         assert!(matches!(sibling, AuthResult::Authenticated));
     }
 
+    #[tokio::test]
+    #[ignore = "known defect: device_id is self-asserted, so revocation is bypassed by \
+                sending a different one. Fixing it needs per-device credentials — see \
+                sync/key_rotation.rs. Run with --ignored to see the gap."]
+    async fn a_revoked_device_cannot_return_under_a_new_name() {
+        // What revocation is understood to mean, by anyone who clicks it.
+        //
+        // Authentication proves possession of the vault key and nothing else:
+        // `vault_hash` and `mailbox_token` are both derived from it, identical on
+        // every device. The only device-specific value in the exchange is the
+        // `device_id` string, which the client chooses and sends.
+        //
+        // So the revocation check asks a question the caller answers. A device
+        // that still holds the key edits one string and is a new device.
+        let (server, _dir, vault_hash) = setup_test_mailbox().await;
+        let token = [2u8; 32];
+
+        authenticate(&server.db, &vault_hash, &token, "stolen-laptop", 0).expect("auth");
+        server
+            .handle_revoke_device(&vault_hash, "stolen-laptop")
+            .expect("revoke");
+
+        // The same device, one string later.
+        let renamed = authenticate(&server.db, &vault_hash, &token, "stolen-laptop-2", 0)
+            .expect("auth");
+
+        match renamed {
+            AuthResult::Rejected(_) => {}
+            other => panic!(
+                "a revoked device got back in by renaming itself: {other:?}. \
+                 Revocation currently denies a name, not a device."
+            ),
+        }
+    }
+
     /// Revoking a device that has never connected must still stick.
     #[tokio::test]
     async fn revoking_an_unseen_device_still_denies_its_first_connection() {
