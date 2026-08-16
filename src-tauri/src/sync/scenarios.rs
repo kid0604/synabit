@@ -1018,6 +1018,33 @@ async fn two_devices_creating_the_same_path_do_not_destroy_each_other() {
 
     assert_eq!(a_body, b_body, "A and B disagree about the shared path");
     assert_eq!(b_body, c_body, "B and C disagree about the shared path");
+
+    // Agreeing is not enough. One of the two notes lost the path, and the writing
+    // in it belongs to somebody — it has to still be somewhere, on every device.
+    let holds_both = |dev: &HarnessDevice| {
+        let mut found = (false, false);
+        for entry in walkdir::WalkDir::new(dev.vault_path().join("Notes"))
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                if text.contains("A wrote this first.") {
+                    found.0 = true;
+                }
+                if text.contains("B wrote this too.") {
+                    found.1 = true;
+                }
+            }
+        }
+        found
+    };
+
+    for (name, dev) in [("A", a), ("B", b), ("C", c)] {
+        let (has_a, has_b) = holds_both(dev);
+        assert!(has_a, "{name} lost what A wrote");
+        assert!(has_b, "{name} lost what B wrote");
+    }
 }
 
 #[tokio::test]
@@ -1242,4 +1269,106 @@ async fn two_devices_adding_a_different_picture_under_the_same_name_still_agree(
 
     assert_eq!(ra, rb, "A and B disagree about the picture");
     assert_eq!(rb, rc, "B and C disagree about the picture");
+}
+
+#[tokio::test]
+async fn a_picture_replaced_by_another_device_is_kept_rather_than_lost() {
+    // Gate 3. Two devices import different files that happen to share a name, so
+    // one of them loses the position. Losing the position must not mean losing
+    // the file: the loser is set aside under a derived name, and travels to the
+    // other devices as an ordinary new attachment.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    for dev in [a, b] {
+        std::fs::create_dir_all(dev.vault_path().join("assets")).unwrap();
+    }
+    let from_a = png_bytes(31);
+    let from_b = png_bytes(77);
+    std::fs::write(a.vault_path().join("assets/report.png"), &from_a).unwrap();
+    std::fs::write(b.vault_path().join("assets/report.png"), &from_b).unwrap();
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    for _ in 0..3 {
+        for dev in [a, b, c] {
+            dev.sync_ok().await;
+        }
+    }
+
+    // Whoever won, every device agrees about the contested path.
+    let at_path = |dev: &HarnessDevice| {
+        std::fs::read(dev.vault_path().join("assets/report.png")).expect("a picture at the path")
+    };
+    assert_eq!(at_path(a), at_path(b), "the devices disagree about the path");
+    assert_eq!(at_path(b), at_path(c), "the devices disagree about the path");
+
+    // And both pictures still exist somewhere on every device.
+    let holds_both = |dev: &HarnessDevice| {
+        let mut found = (false, false);
+        for entry in walkdir::WalkDir::new(dev.vault_path().join("assets"))
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            if let Ok(bytes) = std::fs::read(entry.path()) {
+                if bytes == from_a {
+                    found.0 = true;
+                }
+                if bytes == from_b {
+                    found.1 = true;
+                }
+            }
+        }
+        found
+    };
+
+    for (name, dev) in [("A", a), ("B", b), ("C", c)] {
+        let (has_a, has_b) = holds_both(dev);
+        assert!(has_a, "{name} lost the picture that A imported");
+        assert!(has_b, "{name} lost the picture that B imported");
+    }
+}
+
+#[tokio::test]
+async fn importing_the_same_file_on_two_devices_makes_no_conflict_copy() {
+    // Gate 2, and the reason gate 3 stays rare. The same file arriving on two
+    // machines under one name collides in every mechanical sense, but there is
+    // nothing to preserve: the bytes are identical. Making a copy anyway would
+    // litter the vault every time someone imported a file they already had.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    let shared = png_bytes(55);
+    for dev in [a, b] {
+        std::fs::create_dir_all(dev.vault_path().join("assets")).unwrap();
+        std::fs::write(dev.vault_path().join("assets/logo.png"), &shared).unwrap();
+    }
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    for _ in 0..2 {
+        for dev in [a, b, c] {
+            dev.sync_ok().await;
+        }
+    }
+
+    for (name, dev) in [("A", a), ("B", b), ("C", c)] {
+        let files: Vec<String> = walkdir::WalkDir::new(dev.vault_path().join("assets"))
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "{name} ended up with more than the one picture: {files:?}"
+        );
+        assert_eq!(
+            std::fs::read(dev.vault_path().join("assets/logo.png")).unwrap(),
+            shared,
+            "{name} has the wrong bytes at the path"
+        );
+    }
 }

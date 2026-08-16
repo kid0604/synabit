@@ -600,18 +600,16 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                 // Matching identities fall straight through — concurrent edits
                 // to the same document are exactly what the CRDT is for, and
                 // arriving out of order is normal.
-                let same_position_different_document = {
+                let our_document_here = {
                     let db = match db_state.lock() {
                         Ok(g) => g,
                         Err(p) => p.into_inner(),
                     };
-                    match db.get_node_id_by_path(vault_id, &doc_payload.rel_path)? {
-                        Some(ours) => ours != doc_payload.node_id,
-                        None => false,
-                    }
+                    db.get_node_id_by_path(vault_id, &doc_payload.rel_path)?
+                        .filter(|ours| *ours != doc_payload.node_id)
                 };
 
-                if same_position_different_document {
+                if let Some(our_node_id) = our_document_here {
                     let ours_is_newer = match inbox_record.remote_seq {
                         Some(theirs) => {
                             let db = match db_state.lock() {
@@ -647,6 +645,42 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                             chrono::Utc::now().timestamp_millis(),
                         )?;
                         continue;
+                    }
+
+                    // We are the one losing the position. Their document is about
+                    // to be written where ours is, so ours is set aside first —
+                    // otherwise the only copy of it disappears under the write.
+                    //
+                    // The name is derived from our own identity, so it is stable:
+                    // running this twice finds the file already there rather than
+                    // making a second copy. Re-pointing the mapping is what makes
+                    // the rest ordinary — the next run sees our document at a new
+                    // path and publishes it as a plain rename, which carries the
+                    // copy to every other device with no new machinery at all.
+                    let kept = crate::sync::core::asset::conflict_path(
+                        &doc_payload.rel_path,
+                        &our_node_id.replace('-', ""),
+                    );
+                    let ours_on_disk = vault_path_obj.join(&doc_payload.rel_path);
+                    let kept_on_disk = vault_path_obj.join(&kept);
+
+                    if ours_on_disk.exists() && !kept_on_disk.exists() {
+                        if let Some(parent) = kept_on_disk.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::rename(&ours_on_disk, &kept_on_disk)?;
+                        {
+                            let db = match db_state.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            db.upsert_document_path(vault_id, &our_node_id, &kept)?;
+                        }
+                        log::info!(
+                            "sync: {} was taken by another device's note; ours kept as {}",
+                            doc_payload.rel_path,
+                            kept
+                        );
                     }
                 }
 

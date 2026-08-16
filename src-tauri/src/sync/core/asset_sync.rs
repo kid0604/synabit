@@ -369,6 +369,45 @@ async fn write_one(
 
     let contents = asset::reassemble(e2ee_key, &asset, &fetched)?;
 
+    // Is there something of ours here that this would destroy?
+    //
+    // An attachment is identified by its path, so a file already sitting at this
+    // one is, to the system, an earlier version of this same document — even when
+    // it is really an unrelated file that two devices happened to name alike.
+    // Overwriting is right in the first case and destroys work in the second, and
+    // the entry carries nothing that tells them apart.
+    //
+    // Content does. Identical bytes mean there was never anything to lose, which
+    // is the common case worth being quiet about: the same file imported on two
+    // machines, or one already carried here by other means. Only genuinely
+    // different bytes are moved aside, so the vault gains a spare copy exactly
+    // when a copy would otherwise have been lost.
+    if local_path.exists() {
+        let ours = std::fs::read(&local_path)?;
+        let theirs_hash = asset.plaintext_hash;
+
+        if *blake3::hash(&ours).as_bytes() != theirs_hash {
+            let discriminator = hex::encode(blake3::hash(&ours).as_bytes());
+            let kept = asset::conflict_path(&asset.rel_path, &discriminator);
+            let kept_path = vault.join(&kept);
+
+            // A device that already made this copy must not make it again: the
+            // name is a function of the content, so the same content lands on
+            // the same name and finding it there means the work is done.
+            if !kept_path.exists() {
+                if let Some(parent) = kept_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&local_path, &kept_path)?;
+                log::info!(
+                    "sync: {} was replaced by another device's version; ours kept as {}",
+                    asset.rel_path,
+                    kept
+                );
+            }
+        }
+    }
+
     if let Some(parent) = local_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

@@ -447,3 +447,83 @@ mod tests {
         assert!(err.to_string().contains("authentication"), "unexpected: {err}");
     }
 }
+
+/// Where a file goes when it loses its position to another device's version.
+///
+/// Two devices can put different content at one path — importing files that
+/// happen to share a name, or naming two notes identically. One of them has to
+/// win the position, and without somewhere for the other to go, losing it means
+/// losing the content.
+///
+/// The name is derived rather than chosen so that every device computing it
+/// arrives at the same answer with nothing to co-ordinate. `discriminator` is a
+/// hex digest of whatever identifies the losing side — its content for a file
+/// with no identity of its own, its `node_id` for a document that has one.
+///
+/// Kept to ASCII on purpose: the vault syncs between machines whose filesystems
+/// disagree about Unicode normalisation, and a filename is the last place to
+/// discover that.
+pub fn conflict_path(rel_path: &str, discriminator: &str) -> String {
+    let short: String = discriminator.chars().take(8).collect();
+    let path = std::path::Path::new(rel_path);
+
+    let parent = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|p| !p.is_empty());
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let extension = path.extension().and_then(|e| e.to_str());
+
+    let name = match extension {
+        Some(ext) => format!("{stem} (conflict {short}).{ext}"),
+        None => format!("{stem} (conflict {short})"),
+    };
+
+    match parent {
+        Some(dir) => format!("{dir}/{name}"),
+        None => name,
+    }
+}
+
+#[cfg(test)]
+mod conflict_path_tests {
+    use super::conflict_path;
+
+    #[test]
+    fn the_name_keeps_its_folder_and_its_extension() {
+        assert_eq!(
+            conflict_path("assets/report.pdf", "3f2a91c8dead"),
+            "assets/report (conflict 3f2a91c8).pdf"
+        );
+        assert_eq!(
+            conflict_path("Notes/plan.md", "abcdef0123"),
+            "Notes/plan (conflict abcdef01).md"
+        );
+    }
+
+    #[test]
+    fn a_file_at_the_root_or_without_an_extension_still_works() {
+        assert_eq!(conflict_path("notes.md", "11112222"), "notes (conflict 11112222).md");
+        assert_eq!(conflict_path("assets/LICENSE", "aaaabbbb"), "assets/LICENSE (conflict aaaabbbb)");
+    }
+
+    #[test]
+    fn the_same_input_always_gives_the_same_name() {
+        // Every device works this out alone. If two of them disagreed, the copy
+        // would arrive twice under two names.
+        let a = conflict_path("assets/photo.png", "deadbeefcafe");
+        let b = conflict_path("assets/photo.png", "deadbeefcafe");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_losers_do_not_land_on_the_same_name() {
+        assert_ne!(
+            conflict_path("assets/photo.png", "aaaaaaaa"),
+            conflict_path("assets/photo.png", "bbbbbbbb")
+        );
+    }
+}
