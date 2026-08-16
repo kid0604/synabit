@@ -2968,3 +2968,112 @@ mod c2b_arch_closure_v3;
 #[rustfmt::skip]
 #[path = "../../../.agents/oracles/c2b_arch_closure_v4.rs"]
 mod c2b_arch_closure_v4;
+
+#[cfg(test)]
+mod upgrade_from_released_version_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// The exact shape a 0.9.3 database has, taken from the released schema.
+    ///
+    /// That version had no `sync_*` tables at all beyond `sync_metrics` — the
+    /// whole sync schema arrives with the migration chain. What it did have is
+    /// CRDT state written by the editor, which the legacy migration reads, so an
+    /// upgrade that loses it loses the user's document history.
+    fn released_0_9_3_database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE crdt_documents (
+                doc_id TEXT PRIMARY KEY,
+                snapshot BLOB NOT NULL
+            );
+             CREATE TABLE crdt_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_id TEXT NOT NULL,
+                delta BLOB NOT NULL,
+                timestamp INTEGER NOT NULL
+            );
+             CREATE TABLE document_paths (
+                doc_id TEXT PRIMARY KEY,
+                rel_path TEXT NOT NULL UNIQUE,
+                path_updated_at INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO crdt_documents (doc_id, snapshot) VALUES ('doc-1', ?1)",
+            rusqlite::params![vec![1u8, 2, 3, 4]],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO document_paths (doc_id, rel_path, path_updated_at)
+             VALUES ('doc-1', 'Notes/kept.md', 1700000000000)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO crdt_updates (doc_id, delta, timestamp) VALUES ('doc-1', ?1, 1700000000000)",
+            rusqlite::params![vec![9u8, 8, 7]],
+        )
+        .unwrap();
+
+        conn
+    }
+
+    #[test]
+    fn a_real_0_9_3_database_upgrades_to_the_current_schema() {
+        // The upgrade path had never been run against the schema an actual
+        // release left behind — every test until now started from nothing, and
+        // the one time a populated database was tried in development it failed
+        // on a half-built dev schema rather than a released one.
+        let mut conn = released_0_9_3_database();
+
+        run_sync_schema_migrations(&mut conn).expect("a released database should upgrade");
+
+        let version: i64 = conn
+            .query_row(
+                "SELECT version FROM sync_schema_meta WHERE singleton_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the migration should record where it got to");
+        assert_eq!(version, LATEST_SYNC_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn upgrading_does_not_discard_what_the_old_version_wrote() {
+        // The tables the editor filled in 0.9.3 are still the source for the
+        // legacy sync migration. An upgrade that quietly empties them takes the
+        // user's document history with it.
+        let mut conn = released_0_9_3_database();
+        run_sync_schema_migrations(&mut conn).unwrap();
+
+        let snapshot: Vec<u8> = conn
+            .query_row(
+                "SELECT snapshot FROM crdt_documents WHERE doc_id = 'doc-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the old CRDT snapshot should survive the upgrade");
+        assert_eq!(snapshot, vec![1u8, 2, 3, 4]);
+
+        let rel_path: String = conn
+            .query_row(
+                "SELECT rel_path FROM document_paths WHERE doc_id = 'doc-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the old path mapping should survive the upgrade");
+        assert_eq!(rel_path, "Notes/kept.md");
+    }
+
+    #[test]
+    fn running_the_upgrade_twice_is_harmless() {
+        // App restarts run it again. A migration that is not idempotent turns
+        // every launch after the first into a failure to open the vault.
+        let mut conn = released_0_9_3_database();
+        run_sync_schema_migrations(&mut conn).unwrap();
+        run_sync_schema_migrations(&mut conn).expect("a second run must be a no-op");
+    }
+}

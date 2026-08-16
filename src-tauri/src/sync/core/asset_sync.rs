@@ -339,8 +339,10 @@ async fn write_one(
         _ => return Err(AppError::SyncError("entry is not an attachment".into()).into()),
     };
 
-    // Defence in depth, matching the delete path: the resolved location must
-    // stay inside the vault.
+    // Defence in depth. The real check is `is_safe_vault_relative_path`, applied
+    // when the entry is parsed; this catches an absolute path if that were ever
+    // bypassed. It is deliberately *not* the primary defence: `starts_with` is
+    // component-wise and does not normalise, so `vault/../../x` passes it.
     let local_path = vault.join(&asset.rel_path);
     if !local_path.starts_with(vault) {
         return Err(AppError::SyncError(format!(

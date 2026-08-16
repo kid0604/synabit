@@ -304,7 +304,17 @@ pub fn validate_and_parse_remote_entry(
         // Attachments are readable now. The bytes are fetched separately, before
         // the page is applied, so by this point the entry is normally already
         // finished with; anything still here is waiting on chunks.
-        (SyncEntryKind::AssetReference, SyncPayload::AssetReference(_)) => Ok(sync_payload),
+        (SyncEntryKind::AssetReference, SyncPayload::AssetReference(ref asset)) => {
+            // The attachment path had no check at all. The one in `write_one`
+            // compares with `Path::starts_with`, which is component-wise and does
+            // not normalise: `vault/../../x` starts with `vault` as far as it is
+            // concerned, so it stopped absolute paths and nothing else.
+            if is_safe_vault_relative_path(&asset.rel_path) {
+                Ok(sync_payload)
+            } else {
+                Err(InboxApplyFailureKind::Corrupt)
+            }
+        }
         (SyncEntryKind::Delete, SyncPayload::Delete(del)) => {
             if validate_delete_payload(del) {
                 Ok(sync_payload)
@@ -1922,3 +1932,53 @@ mod d1_c2b_typed_compat;
 #[rustfmt::skip]
 #[path = "../../../.agents/oracles/d1_tombstone_identity.rs"]
 mod d1_tombstone_identity;
+
+#[cfg(test)]
+mod vault_path_safety_tests {
+    use super::is_safe_vault_relative_path;
+
+    #[test]
+    fn ordinary_vault_paths_are_accepted() {
+        for p in [
+            "Notes/plan.md",
+            "assets/photo.png",
+            "a/b/c/deep.md",
+            "file with spaces.md",
+            "Ghi chú/kế hoạch.md",
+        ] {
+            assert!(is_safe_vault_relative_path(p), "{p} should be allowed");
+        }
+    }
+
+    #[test]
+    fn anything_that_could_leave_the_vault_is_refused() {
+        // `Path::join` offers no protection: a relative path with `..` escapes
+        // when written, and an absolute one discards the base outright. The
+        // `starts_with` check that used to stand in for this is component-wise
+        // and does not normalise — it says `vault/../../x` starts with `vault`.
+        for p in [
+            "../escaped.md",
+            "../../escaped.md",
+            "assets/../../escaped.md",
+            "Notes/../../../etc/passwd",
+            "/etc/passwd",
+            "/Users/someone/.ssh/authorized_keys",
+            "C:\\Windows\\system32\\x",
+            "C:/Windows/system32/x",
+            "..",
+            "./x.md",
+            "Notes//double.md",
+            "with\0null.md",
+            "",
+            "   ",
+        ] {
+            assert!(!is_safe_vault_relative_path(p), "{p:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn an_absurdly_long_path_is_refused() {
+        let long = format!("Notes/{}.md", "a".repeat(20_000));
+        assert!(!is_safe_vault_relative_path(&long));
+    }
+}
