@@ -710,3 +710,495 @@ async fn an_unreachable_vault_does_not_emit_tombstones() {
         mailbox.len() - before
     );
 }
+
+// ---------------------------------------------------------------------------
+// Three and four devices
+//
+// Everything above this line converges at n=2. Several properties the design
+// depends on are invisible at that size: a head that must survive for a device
+// which has not arrived yet, an acknowledgement floor held down by the slowest
+// participant, and a merge with more than two sides to it.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_note_written_once_reaches_both_other_devices() {
+    // The plainest thing three devices can do, and it had never been run.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(NOTE, "# Plan\n\nWritten once.\n");
+    a.sync_ok().await;
+
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    for (name, dev) in [("B", b), ("C", c)] {
+        assert!(dev.exists(NOTE), "{name} never received the note");
+        assert!(
+            dev.body(NOTE).unwrap().contains("Written once."),
+            "{name} received the note without its content: {:?}",
+            dev.body(NOTE)
+        );
+    }
+}
+
+#[tokio::test]
+async fn three_devices_editing_the_same_note_all_end_up_with_the_same_text() {
+    // The merge property itself. Two devices exercise one merge; three exercise
+    // merging a merge, which is where a CRDT either earns its keep or does not.
+    //
+    // The assertion is convergence, not a particular winner: all three must
+    // agree, and every edit must survive somewhere in the result.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(NOTE, "# Plan\n\nshared base\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    // Each device appends its own line without seeing the others.
+    for (dev, line) in [(a, "from A"), (b, "from B"), (c, "from C")] {
+        let current = dev.read(NOTE).expect("every device has the note");
+        dev.write(NOTE, &format!("{current}{line}\n"));
+    }
+
+    // Publish all three, then let everyone catch up twice: the second pass is
+    // what carries each device's view of the merge to the others.
+    for dev in [a, b, c] {
+        dev.sync_ok().await;
+    }
+    for _ in 0..2 {
+        for dev in [a, b, c] {
+            dev.sync_ok().await;
+        }
+    }
+
+    let a_body = a.body(NOTE).expect("A has the note");
+    let b_body = b.body(NOTE).expect("B has the note");
+    let c_body = c.body(NOTE).expect("C has the note");
+
+    assert_eq!(a_body, b_body, "A and B disagree after converging");
+    assert_eq!(b_body, c_body, "B and C disagree after converging");
+
+    for line in ["from A", "from B", "from C"] {
+        assert!(
+            a_body.contains(line),
+            "the merge lost '{line}':\n{a_body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_fourth_device_joining_a_compacted_vault_receives_everything() {
+    // The reason entry collection preserves heads. Three devices work for a
+    // while, the server collects what they have all acknowledged, and only then
+    // does a fourth device appear — with no history of its own, replaying from
+    // sequence zero.
+    //
+    // Getting this wrong is silent: the newcomer receives a vault that is merely
+    // incomplete, with no error anywhere to say so.
+    let (mailbox, devices) = vault_with_devices(&["a", "b", "c", "d"]);
+    let (a, b, c, d) = (&devices[0], &devices[1], &devices[2], &devices[3]);
+
+    a.write("Notes/one.md", "# One\n\nfirst version\n");
+    a.write("Notes/two.md", "# Two\n\nnever touched again\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    // B revises one of them, so that document has history to collect.
+    let current = b.read("Notes/one.md").expect("B has it");
+    b.write("Notes/one.md", &current.replace("first version", "second version"));
+    b.sync_ok().await;
+    a.sync_ok().await;
+    c.sync_ok().await;
+
+    let removed = mailbox.compact_acked_by_all();
+    assert!(removed > 0, "nothing was collected, so the test proves nothing");
+
+    // Now D arrives.
+    d.sync_ok().await;
+
+    assert!(d.exists("Notes/one.md"), "D never received the revised note");
+    assert!(d.exists("Notes/two.md"), "D never received the untouched note");
+    assert!(
+        d.body("Notes/one.md").unwrap().contains("second version"),
+        "D received a stale version: {:?}",
+        d.body("Notes/one.md")
+    );
+    assert!(
+        d.body("Notes/two.md").unwrap().contains("never touched again"),
+        "D received the second note without its content: {:?}",
+        d.body("Notes/two.md")
+    );
+}
+
+#[tokio::test]
+async fn the_slowest_device_holds_the_floor_under_collection() {
+    // Collection waits for everyone. A device that has synced once and then gone
+    // quiet keeps the entries it has not seen alive, and this is the property
+    // that makes collection safe rather than merely tidy.
+    let (mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write("Notes/one.md", "# One\n\noriginal\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    // C stops here. A and B carry on revising.
+    for revision in ["second", "third"] {
+        let current = a.read("Notes/one.md").expect("A has it");
+        let previous = if revision == "second" { "original" } else { "second" };
+        a.write("Notes/one.md", &current.replace(previous, revision));
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let floor_before = mailbox.ack_floor();
+    mailbox.compact_acked_by_all();
+
+    // C now returns and must still be able to rebuild the document.
+    c.sync_ok().await;
+    assert!(
+        c.body("Notes/one.md").unwrap().contains("third"),
+        "the quiet device came back to a stale or missing note: {:?}",
+        c.body("Notes/one.md")
+    );
+    assert!(
+        mailbox.ack_floor() > floor_before,
+        "the floor should rise once the quiet device catches up"
+    );
+}
+
+#[tokio::test]
+async fn an_attachment_reaches_a_device_that_was_not_there_when_it_was_published() {
+    // Attachment bytes live beside the entries rather than inside them, so a
+    // device arriving later has to resolve a reference against chunks published
+    // before it existed. This is the case the chunk collector can break.
+    let (mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    let picture = png_bytes(11);
+    std::fs::write(a.vault_path().join("assets/photo.png"), &picture).unwrap();
+    a.write("Notes/note.md", "# Note\n\n![](assets/photo.png)\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // Only now does C appear, after the chunks were uploaded and acknowledged
+    // by everyone who was present.
+    mailbox.compact_acked_by_all();
+    c.sync_ok().await;
+
+    let received = std::fs::read(c.vault_path().join("assets/photo.png"))
+        .expect("the late device never received the attachment");
+    assert_eq!(received, picture, "the late device received it corrupted");
+}
+
+#[tokio::test]
+async fn two_devices_editing_different_notes_both_arrive_at_the_third() {
+    // Concurrent work on separate documents must not interfere. A single shared
+    // mailbox sequence carries both, and the third device applies them in one
+    // pass.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write("Notes/shared.md", "# Shared\n\nbase\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    a.write("Notes/from_a.md", "# From A\n\nA's work.\n");
+    b.write("Notes/from_b.md", "# From B\n\nB's work.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    c.sync_ok().await;
+
+    assert!(c.exists("Notes/from_a.md"), "C missed A's note");
+    assert!(c.exists("Notes/from_b.md"), "C missed B's note");
+    assert!(
+        c.body("Notes/from_b.md").unwrap().contains("B's work."),
+        "C got B's note without its content: {:?}",
+        c.body("Notes/from_b.md")
+    );
+}
+
+#[tokio::test]
+async fn a_delete_from_one_device_reaches_every_other_device() {
+    // A tombstone has to fan out like anything else. With two devices a delete
+    // that only half works is indistinguishable from one that works.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(NOTE, "# Plan\n\nto be removed\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+    assert!(b.exists(NOTE) && c.exists(NOTE), "precondition: all three have it");
+
+    b.delete(NOTE);
+    b.sync_ok().await;
+
+    a.sync_ok().await;
+    c.sync_ok().await;
+
+    assert!(!a.exists(NOTE), "A kept a note that B deleted");
+    assert!(!c.exists(NOTE), "C kept a note that B deleted");
+}
+
+#[tokio::test]
+async fn a_device_returning_after_a_long_absence_catches_up_in_one_run() {
+    // Ten revisions and several new notes accumulate while one device is away.
+    // Coming back must not require repeated runs, and must not lose the notes it
+    // already had.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write("Notes/journal.md", "# Journal\n\nentry 0\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    // C goes away here.
+    for entry in 1..=10 {
+        let current = a.read("Notes/journal.md").expect("A has it");
+        a.write(
+            "Notes/journal.md",
+            &current.replace(&format!("entry {}", entry - 1), &format!("entry {entry}")),
+        );
+        a.write(&format!("Notes/note_{entry}.md"), &format!("# Note {entry}\n"));
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let result = c.sync_ok().await;
+
+    assert!(
+        c.body("Notes/journal.md").unwrap().contains("entry 10"),
+        "the returning device has a stale journal: {:?}",
+        c.body("Notes/journal.md")
+    );
+    for entry in 1..=10 {
+        assert!(
+            c.exists(&format!("Notes/note_{entry}.md")),
+            "the returning device missed note_{entry}.md after pulling {} file(s)",
+            result.pulled
+        );
+    }
+}
+
+#[tokio::test]
+async fn two_devices_creating_the_same_path_do_not_destroy_each_other() {
+    // Two people make a note with the same title on the same day. Nothing
+    // co-ordinated the two paths, so both devices publish a document that claims
+    // the same location with different content and a different identity.
+    //
+    // Losing one silently is the failure mode worth guarding: whatever the
+    // resolution, the devices must end up agreeing with each other.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write("Notes/2026-08-16.md", "# Daily\n\nA wrote this first.\n");
+    b.write("Notes/2026-08-16.md", "# Daily\n\nB wrote this too.\n");
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    for _ in 0..2 {
+        for dev in [a, b, c] {
+            dev.sync_ok().await;
+        }
+    }
+
+    let a_body = a.body("Notes/2026-08-16.md").expect("A has a daily note");
+    let b_body = b.body("Notes/2026-08-16.md").expect("B has a daily note");
+    let c_body = c.body("Notes/2026-08-16.md").expect("C has a daily note");
+
+    assert_eq!(a_body, b_body, "A and B disagree about the shared path");
+    assert_eq!(b_body, c_body, "B and C disagree about the shared path");
+}
+
+#[tokio::test]
+async fn a_delete_that_one_device_refuses_is_not_left_half_applied() {
+    // B deletes a note. C has edited the same note without publishing, so C is
+    // entitled to keep it — that rule already has a two-device test. What two
+    // devices cannot show is what the vault looks like afterwards: A obeyed the
+    // tombstone, C did not, and the two now disagree about whether the note
+    // exists at all. C's surviving edit has to make its way back.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(NOTE, "# Plan\n\nshared draft\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    let current = c.read(NOTE).expect("C has the note");
+    c.write(NOTE, &current.replace("shared draft", "C was still working here"));
+
+    b.delete(NOTE);
+    b.sync_ok().await;
+
+    a.sync_ok().await;
+    c.sync_ok().await;
+
+    assert!(!a.exists(NOTE), "A should have obeyed the tombstone");
+    assert!(c.exists(NOTE), "C's unpublished edit was destroyed");
+
+    for _ in 0..2 {
+        for dev in [c, a, b] {
+            dev.sync_ok().await;
+        }
+    }
+
+    assert!(
+        a.exists(NOTE),
+        "the vault stayed split: C kept the note but never got it back to A"
+    );
+    assert!(
+        a.body(NOTE).unwrap().contains("C was still working here"),
+        "A got the note back without C's edit: {:?}",
+        a.body(NOTE)
+    );
+}
+
+#[tokio::test]
+async fn two_devices_deleting_the_same_note_at_once_is_not_an_error() {
+    // Both delete it, both publish a tombstone for the same document. The second
+    // tombstone arrives for a file that is already gone, which must be a no-op
+    // rather than a failure reported on every future run.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(NOTE, "# Plan\n\nboth will delete this\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    a.delete(NOTE);
+    b.delete(NOTE);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    c.sync_ok().await;
+    assert!(!c.exists(NOTE), "C kept a note both other devices deleted");
+
+    let later = c.sync_ok().await;
+    assert!(
+        later.errors.is_empty(),
+        "a duplicate tombstone is still being reported: {:?}",
+        later.errors
+    );
+}
+
+#[tokio::test]
+async fn a_rename_reaches_a_device_that_was_offline_when_it_happened() {
+    // C holds the file at its old path and never saw the move. Applying the
+    // rename means removing one path and creating another on a device whose only
+    // record of the document is the old location. Getting it wrong leaves two
+    // copies — the vault gains a file nobody created.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write("Notes/old-name.md", "# Note\n\ncontent that moves\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+    assert!(c.exists("Notes/old-name.md"), "precondition: C has the original");
+
+    a.rename("Notes/old-name.md", "Notes/new-name.md");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    c.sync_ok().await;
+
+    assert!(c.exists("Notes/new-name.md"), "C never received the renamed file");
+    assert!(
+        !c.exists("Notes/old-name.md"),
+        "C ended up with the note at both paths — the rename duplicated it"
+    );
+    assert!(
+        c.body("Notes/new-name.md").unwrap().contains("content that moves"),
+        "C received the new path without the content: {:?}",
+        c.body("Notes/new-name.md")
+    );
+}
+
+#[tokio::test]
+async fn an_attachment_revised_while_a_device_was_away_arrives_as_the_new_version() {
+    // The picture is replaced while C is offline. C must end up with the new
+    // bytes, and must not be left holding a reference to chunks that were only
+    // ever needed by the version it never saw.
+    let (mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    std::fs::create_dir_all(a.vault_path().join("assets")).unwrap();
+    let first = png_bytes(21);
+    std::fs::write(a.vault_path().join("assets/photo.png"), &first).unwrap();
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    let second = png_bytes(99);
+    assert_ne!(first, second, "the fixture must actually change");
+    std::fs::write(a.vault_path().join("assets/photo.png"), &second).unwrap();
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    mailbox.compact_acked_by_all();
+    c.sync_ok().await;
+
+    let received = std::fs::read(c.vault_path().join("assets/photo.png"))
+        .expect("C lost the attachment entirely");
+    assert_eq!(received, second, "C came back to the old version of the picture");
+}
+
+#[tokio::test]
+async fn four_devices_working_at_once_all_agree_at_the_end() {
+    // The convergence property at the largest size the harness runs. Every
+    // device writes its own note and edits a shared one, all before anything is
+    // published, so no device has seen any other's work.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c", "d"]);
+
+    devices[0].write("Notes/shared.md", "# Shared\n\nbase\n");
+    devices[0].sync_ok().await;
+    for dev in &devices {
+        dev.sync_ok().await;
+    }
+
+    for (i, dev) in devices.iter().enumerate() {
+        dev.write(&format!("Notes/own_{i}.md"), &format!("# Own {i}\n"));
+        let current = dev.read("Notes/shared.md").expect("everyone has the shared note");
+        dev.write("Notes/shared.md", &format!("{current}line from {i}\n"));
+    }
+
+    for _ in 0..3 {
+        for dev in &devices {
+            dev.sync_ok().await;
+        }
+    }
+
+    let reference = devices[0]
+        .body("Notes/shared.md")
+        .expect("device 0 has the shared note");
+
+    for (i, dev) in devices.iter().enumerate() {
+        assert_eq!(
+            dev.body("Notes/shared.md").expect("shared note"),
+            reference,
+            "device {i} disagrees about the shared note"
+        );
+        for j in 0..devices.len() {
+            assert!(
+                dev.exists(&format!("Notes/own_{j}.md")),
+                "device {i} never received own_{j}.md"
+            );
+        }
+        assert!(
+            reference.contains(&format!("line from {i}")),
+            "the merge lost device {i}'s line:\n{reference}"
+        );
+    }
+}

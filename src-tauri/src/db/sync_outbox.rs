@@ -784,6 +784,42 @@ impl DbBridge {
         Ok(seq.and_then(|s| u64::try_from(s).ok()))
     }
 
+    /// The newest sequence this device has published for a *document position*,
+    /// rather than for a document identity.
+    ///
+    /// The two differ exactly when they need to. `doc_hash` is the hash of the
+    /// path, so two devices that independently create a note at the same path
+    /// produce entries with different `node_id`s and the same `doc_hash` — two
+    /// distinct documents claiming one location. A CRDT cannot merge them; they
+    /// are not versions of each other.
+    ///
+    /// Without this lookup the device whose entry came *later* would skip its own
+    /// operation, apply the other device's earlier one on top, and settle on a
+    /// state that is not the head — while every other device settled on the head.
+    /// The vault would then be split, permanently, with nothing left to reconcile
+    /// it.
+    pub fn latest_acked_outbox_seq_for_doc_hash(
+        &self,
+        vault_id: &str,
+        provider_id: &str,
+        doc_hash: &[u8; 32],
+    ) -> AppResult<Option<u64>> {
+        let seq: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT MAX(remote_seq) FROM sync_outbox
+                 WHERE vault_id = ?1 AND provider_id = ?2 AND doc_hash = ?3
+                   AND state = 'acknowledged' AND remote_seq IS NOT NULL",
+                params![vault_id, provider_id, doc_hash.as_slice()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::General(format!("DB Error reading outbox seq: {}", e)))?
+            .flatten();
+
+        Ok(seq.and_then(|s| u64::try_from(s).ok()))
+    }
+
     pub fn commit_accepted_outbox_operation(
         &mut self,
         record: &OutboxRecord,

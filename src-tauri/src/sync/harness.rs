@@ -121,6 +121,45 @@ impl InMemoryMailbox {
         before - inner.entries.len()
     }
 
+    /// Collect the way the server actually does: superseded *and* acknowledged
+    /// by every device that has ever synced.
+    ///
+    /// [`compact_superseded`] models only half the predicate, which is the right
+    /// worst case for "can a late joiner still rebuild the vault" but says
+    /// nothing about the floor that acknowledgements put under collection. That
+    /// floor is what stops an entry disappearing before a slow device has read
+    /// it, and with two devices it is barely exercised.
+    ///
+    /// Returns how many entries were removed.
+    pub fn compact_acked_by_all(&self) -> usize {
+        let mut inner = self.lock();
+        let before = inner.entries.len();
+
+        // A device that has never acknowledged anything holds the floor at zero,
+        // exactly as `min_cursor` does on the server.
+        let floor = inner.acks.values().copied().min().unwrap_or(0);
+
+        let heads: HashMap<[u8; 32], u64> =
+            inner.entries.iter().fold(HashMap::new(), |mut acc, e| {
+                let head = acc.entry(e.doc_hash).or_insert(e.seq);
+                if e.seq > *head {
+                    *head = e.seq;
+                }
+                acc
+            });
+
+        inner
+            .entries
+            .retain(|e| e.seq > floor || heads.get(&e.doc_hash) == Some(&e.seq));
+
+        before - inner.entries.len()
+    }
+
+    /// How far each device has acknowledged, for asserting on the floor above.
+    pub fn ack_floor(&self) -> u64 {
+        self.lock().acks.values().copied().min().unwrap_or(0)
+    }
+
     /// Reject every push until [`accept_pushes`] is called, so tests can build
     /// up a backlog the way an offline device does.
     pub fn reject_pushes(&self) {

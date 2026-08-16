@@ -581,6 +581,75 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                         continue;
                     }
                 };
+                // A *different* document claiming a position we have already
+                // published something newer for.
+                //
+                // Two devices that independently create a note at the same path
+                // produce entries with the same `doc_hash` — it is the hash of
+                // the path — but different `node_id`s. They are not two versions
+                // of one document, so no CRDT merge applies; one of them is
+                // simply going to lose the position.
+                //
+                // Which one must be the same everywhere. Without this check the
+                // device whose entry landed later skipped its own operation,
+                // wrote the other's earlier one over the top, and came to rest
+                // below the head while every other device came to rest on it.
+                // Nothing afterwards reconciled that: neither side saw a local
+                // change, so neither republished, and the vault stayed split.
+                //
+                // Matching identities fall straight through — concurrent edits
+                // to the same document are exactly what the CRDT is for, and
+                // arriving out of order is normal.
+                let same_position_different_document = {
+                    let db = match db_state.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+                    match db.get_node_id_by_path(vault_id, &doc_payload.rel_path)? {
+                        Some(ours) => ours != doc_payload.node_id,
+                        None => false,
+                    }
+                };
+
+                if same_position_different_document {
+                    let ours_is_newer = match inbox_record.remote_seq {
+                        Some(theirs) => {
+                            let db = match db_state.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            db.latest_acked_outbox_seq_for_doc_hash(
+                                vault_id,
+                                provider_id,
+                                &inbox_record.doc_hash,
+                            )?
+                            .is_some_and(|ours| ours > theirs)
+                        }
+                        None => false,
+                    };
+
+                    if ours_is_newer {
+                        log::info!(
+                            "sync: keeping our newer note at {} over an older one from another device",
+                            doc_payload.rel_path
+                        );
+                        let db = match db_state.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        db.transition_inbox_state(
+                            vault_id,
+                            provider_id,
+                            &inbox_record.operation_id,
+                            InboxState::Applying,
+                            InboxState::Applied,
+                            None,
+                            chrono::Utc::now().timestamp_millis(),
+                        )?;
+                        continue;
+                    }
+                }
+
                 if let Err(_e) = applier.apply(
                     app_handle,
                     vault_path_obj,
