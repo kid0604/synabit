@@ -912,9 +912,9 @@ onUnmounted(() => {
     <div v-if="showSyncConflicts" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" @click.self="showSyncConflicts = false">
       <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">Đã giữ lại {{ syncConflictCount }} tệp</h2>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ syncConflictCount }} file(s) kept</h2>
           <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Một máy khác đã ghi tệp của nó vào cùng vị trí. Bản của bạn không bị mất — nó được đổi tên và vẫn nằm trong vault.
+            Another device saved its own file to the same place. Yours was not lost — it was renamed and is still in your vault.
           </p>
         </div>
         <ul class="max-h-72 overflow-y-auto px-5 py-3 space-y-3">
@@ -925,7 +925,7 @@ onUnmounted(() => {
         </ul>
         <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
           <button @click="syncState.dismissConflicts(); showSyncConflicts = false" class="px-4 py-2 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer">
-            Đã hiểu
+            Got it
           </button>
         </div>
       </div>

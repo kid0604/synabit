@@ -56,7 +56,7 @@ const handleRevokeConfirmed = async () => {
     });
     currentEpoch.value = newEpoch;
     await loadDevices();
-    revocationSuccess.value = `"${removeTarget.value.name}" has been revoked. Security epoch advanced to #${newEpoch}.`;
+    revocationSuccess.value = `"${removeTarget.value.name}" will no longer sync. It still holds the copy it already had.`;
     // Auto-dismiss success banner after 6 seconds
     if (revocationTimer) window.clearTimeout(revocationTimer);
     revocationTimer = window.setTimeout(() => {
@@ -110,9 +110,16 @@ const sortedDevices = computed(() => {
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
         <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">Paired Devices</h4>
-        <!-- Security Epoch Badge -->
-        <div class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a]" :title="'Epoch increments when a device is revoked'">
-          <span class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Security Epoch: #{{ currentEpoch }}</span>
+        <!--
+          Counts disconnections, and nothing more. It was labelled "Security
+          Epoch", which reads as a key generation the vault has advanced
+          through — it is not one. The counter is local and deliberately does
+          not feed key derivation, because an epoch key would have to travel to
+          the other devices over the only channel available: the vault key a
+          disconnected device still holds.
+        -->
+        <div class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a]" :title="'How many times you have disconnected a device. This is a record, not a security setting — it does not change any key.'">
+          <span class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Disconnections: {{ currentEpoch }}</span>
           <Info class="w-3 h-3 text-gray-400 dark:text-gray-500" />
         </div>
       </div>
@@ -179,18 +186,17 @@ const sortedDevices = computed(() => {
             <div class="flex items-center gap-3 mt-0.5">
               <span class="text-[11px] text-gray-400 dark:text-gray-500">Last seen: {{ formatLastSeen(device.last_seen) }}</span>
               <span class="text-[11px] text-gray-400 dark:text-gray-500">· Paired {{ formatPairedDate(device.paired_at) }}</span>
-              <span class="text-[10px] font-medium text-gray-400 dark:text-gray-500 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-[#2a2a2a]">Epoch #{{ currentEpoch }}</span>
             </div>
           </div>
 
-          <!-- Revoke Button -->
+          <!-- Disconnect Button -->
           <button
             @click="confirmRemove(device.node_id_hex, device.device_name || 'Unknown Device')"
             class="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors cursor-pointer shrink-0 group"
-            title="Revoke device access"
+            title="Stop this device syncing"
           >
             <ShieldOff class="w-3.5 h-3.5" />
-            <span class="text-[11px] font-medium hidden group-hover:inline">Revoke</span>
+            <span class="text-[11px] font-medium hidden group-hover:inline">Disconnect</span>
           </button>
         </div>
 
@@ -219,12 +225,25 @@ const sortedDevices = computed(() => {
       @paired="handlePaired"
     />
 
-    <!-- Confirm Revoke Modal -->
+    <!-- Confirm Disconnect Modal -->
+    <!--
+      The wording here used to promise a lock-out and a re-encryption, and the
+      code does neither. Every device holds the same vault key, derived from the
+      one recovery phrase, so there is no key to rotate away from a device and
+      nothing this button can make unreadable.
+
+      It does not point at changing the recovery phrase either, tempting as that
+      is to write: `setup_e2ee` refuses outright once a key exists, and no other
+      command replaces one. Sending someone who has just lost a laptop after a
+      feature that is not there would be worse than the overpromise it replaced.
+
+      So it says what happens and where that stops, and nothing else.
+    -->
     <ConfirmModal
       :show="showConfirmRemove"
-      title="Revoke Device?"
-      :message="`This will lock out '${removeTarget?.name}' and re-encrypt all data. The device will no longer be able to sync.`"
-      confirm-text="Revoke Device"
+      title="Disconnect this device?"
+      :message="`'${removeTarget?.name}' will stop receiving and sending changes. It keeps the copy of your vault it already has, and disconnecting does not make that copy unreadable.`"
+      confirm-text="Disconnect"
       :is-destructive="true"
       @confirm="handleRevokeConfirmed"
       @cancel="handleRevokeCancelled"
