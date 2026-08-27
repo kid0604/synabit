@@ -49,6 +49,22 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Tauri links against the system webview, and on Linux that is WebKitGTK
+      # found through pkg-config. Without these the crate does not compile at
+      # all, so `cargo test` fails while building rather than while testing.
+      #
+      # Easy to miss from a Mac: macOS supplies WKWebView with the OS, so the
+      # same command needs nothing installed there and passes locally. The list
+      # matches the one release.yml already uses to build the Linux bundle,
+      # minus patchelf, which is only needed when packaging one.
+      - name: Linux webview dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
