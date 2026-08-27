@@ -13,6 +13,16 @@ on:
     paths:
       - 'src/**'
       - 'src-tauri/**'
+      # This job runs `cargo test -p synabit-protocol` and the sync server's
+      # own tests, but did not wake for a change to either — the commit that
+      # repaired the protocol crate's tests produced no run at all. The crate
+      # whose tests broke unnoticed was also the one that could not trigger the
+      # CI that tests it.
+      - 'sync-server/**'
+      # Four Rust tests read these JSON fixtures directly, through
+      # CARGO_MANIFEST_DIR/../contracts/. Editing a contract can turn the suite
+      # red, and without this nothing would run to say so.
+      - 'contracts/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/android.yml'
@@ -20,6 +30,8 @@ on:
     paths:
       - 'src/**'
       - 'src-tauri/**'
+      - 'sync-server/**'
+      - 'contracts/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
