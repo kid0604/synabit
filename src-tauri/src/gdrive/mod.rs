@@ -79,6 +79,14 @@ const _: () = assert!(
 // Desktop OAuth clients: Google still requires client_secret for token exchange/refresh.
 // It's considered "not truly secret" for desktop apps, but mandatory for the endpoint.
 // PKCE is added as an additional security layer on top.
+//
+// Desktop-only, and cfg-gated rather than merely unused on mobile. An Android
+// client is a public client: it sends no secret, and every reference to this
+// constant is already behind the same cfg — the compiler confirms it, having
+// reported this as dead code on that target. Left ungated it still had to
+// *exist* at build time, so an Android-only CI job was obliged to hold the
+// desktop client secret in order to compile code that would never read it.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const CLIENT_SECRET: &str = env!(
     "SYNABIT_GOOGLE_CLIENT_SECRET",
     "Set SYNABIT_GOOGLE_CLIENT_SECRET env var at build time"
@@ -86,7 +94,12 @@ pub(crate) const CLIENT_SECRET: &str = env!(
 pub(crate) const AUTH_URI: &str = "https://accounts.google.com/o/oauth2/auth";
 pub(crate) const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 pub(crate) const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
+// The ephemeral range the desktop flow scans for a free port to catch its
+// loopback redirect on. Mobile is redirected through a custom scheme and never
+// binds a socket, so these do not exist there.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const REDIRECT_PORT_START: u16 = 49152;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) const REDIRECT_PORT_END: u16 = 49200;
 pub(crate) const VAULT_FOLDER_NAME: &str = "Synabit Vault";
 

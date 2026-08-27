@@ -339,6 +339,19 @@ fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     let log_file = log_dir.join("Synabit.log");
 
+    // Android has no file manager to hand a path to. Every arm below is a
+    // desktop `cfg`, so this used to fall through all of them and return
+    // `Ok(())` having done nothing at all — the caller was told the folder had
+    // been opened. Saying so is more useful than a silent success.
+    #[cfg(target_os = "android")]
+    {
+        let _ = log_file;
+        return Err(format!(
+            "Opening the log folder is a desktop feature. The log is at {}",
+            log_dir.display()
+        ));
+    }
+
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
         .arg("-R")
@@ -362,6 +375,9 @@ fn open_app_log_folder(app: tauri::AppHandle) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    // Unreachable on Android, where the arm above returns. Reachable on every
+    // other target, where each arm falls through to it.
+    #[allow(unreachable_code)]
     Ok(())
 }
 

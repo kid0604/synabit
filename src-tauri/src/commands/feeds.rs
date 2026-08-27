@@ -2263,6 +2263,11 @@ pub struct FeedSchedulerState {
 
 /// How often the scheduler wakes to see whether anything is due. Each feed's
 /// own interval decides whether it is actually fetched.
+///
+/// Not compiled on Android: there is no background loop there to tick. See
+/// `feed_start_scheduler`, which refreshes in the foreground instead because a
+/// timer the OS kills is worse than no timer at all.
+#[cfg(not(target_os = "android"))]
 const SCHEDULER_TICK_SECONDS: u64 = 5 * 60;
 
 /// Start refreshing feeds on a timer, whether or not the Feeds app is open.

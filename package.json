@@ -75,7 +75,7 @@
     "markmap-toolbar": "^0.18.12",
     "markmap-view": "^0.18.12",
     "mermaid": "^11.15.0",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.2.108",
     "perfect-freehand": "^1.2.3",
     "pinia": "^3.0.4",
     "tailwindcss": "^4.2.2",

@@ -1,3 +1,6 @@
+// Used only by the desktop hardware id, which is what licensing keys off.
+// Android reports itself licensed unconditionally, so it hashes nothing.
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use blake3::Hasher;
 use sysinfo::System;
 

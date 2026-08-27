@@ -1,4 +1,7 @@
 use std::path::Path;
+// Handing a path to the desktop's own file manager — `open`, `start`,
+// `xdg-open`. Android has no such command to spawn.
+#[cfg(not(target_os = "android"))]
 use std::process::Command;
 use std::time::SystemTime;
 use uuid::Uuid;

@@ -1,8 +1,10 @@
-use super::CLIENT_SECRET;
-use super::{
-    generate_pkce_pair, GDriveTokens, TokenResponse, AUTH_URI, CLIENT_ID, REDIRECT_PORT_END,
-    REDIRECT_PORT_START, SCOPE, TOKEN_URI,
-};
+// Desktop-only, all three: the client secret an Android public client never
+// sends, and the port range for the loopback listener the desktop flow spins up
+// to catch its redirect. Mobile is redirected back through a custom scheme and
+// binds nothing.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use super::{CLIENT_SECRET, REDIRECT_PORT_END, REDIRECT_PORT_START};
+use super::{generate_pkce_pair, GDriveTokens, TokenResponse, AUTH_URI, CLIENT_ID, SCOPE, TOKEN_URI};
 
 // ──────────────────────────────────────────────
 // Token Management

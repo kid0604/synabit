@@ -1,6 +1,13 @@
 <resources>
-    <string name="app_name">Synabit</string>
-    <string name="main_activity_title">Synabit</string>
+    <!--
+      translatable="false" rather than a Vietnamese copy of the same word. Both
+      are the product name, and lint was right that they were missing from
+      values-vi and wrong about what to do: adding "Synabit" there again would
+      have satisfied the check and left two strings to keep in step for no
+      reason. This says the name is not translated, which is the actual intent.
+    -->
+    <string name="app_name" translatable="false">Synabit</string>
+    <string name="main_activity_title" translatable="false">Synabit</string>
 
     <!--
       What the text-selection menu says. Android shows the label of the

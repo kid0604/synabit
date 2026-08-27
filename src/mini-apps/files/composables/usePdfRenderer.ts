@@ -63,11 +63,25 @@ export function usePdfRenderer() {
       const arrayBuffer = await response.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
 
+      // Served from the bundle, not from unpkg.
+      //
+      // These pointed at `https://unpkg.com/pdfjs-dist@5.7.284/...`, which could
+      // not work: `connect-src` in tauri.conf.json does not list unpkg, so the
+      // CSP blocked both fetches. A PDF needing a CMap — anything CJK — or a
+      // standard font it does not embed rendered wrong, silently, with the
+      // failure looking like a bad PDF rather than a blocked request. In an app
+      // that describes itself as local-first they should not have been remote
+      // at all, and the 169 CMaps and 16 fonts were already in public/pdfjs/,
+      // shipping unused.
+      //
+      // Dropping the pinned version from the URL also means these no longer
+      // have to be edited in step with the pdfjs-dist dependency, which is how
+      // they came to name a version the package had already moved past.
       const loadingTask = pdfjsLib.getDocument({
         data: bytes,
-        cMapUrl: 'https://unpkg.com/pdfjs-dist@5.7.284/cmaps/',
+        cMapUrl: '/pdfjs/cmaps/',
         cMapPacked: true,
-        standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@5.7.284/standard_fonts/',
+        standardFontDataUrl: '/pdfjs/standard_fonts/',
       });
       const doc = await loadingTask.promise;
       pdfDoc.value = doc;
@@ -158,7 +172,11 @@ export function usePdfRenderer() {
 
   const cleanup = () => {
     if (pdfDoc.value) {
-      pdfDoc.value.destroy();
+      // `PDFDocumentProxy.destroy()` is gone in pdfjs-dist 6; teardown moved to
+      // the loading task, which is what owns the worker. Caught rather than
+      // ignored: it returns a promise, and a rejected one thrown away here
+      // surfaces later as an unhandled rejection with no context attached.
+      pdfDoc.value.loadingTask.destroy().catch(() => {});
       pdfDoc.value = null;
     }
     totalPages.value = 0;

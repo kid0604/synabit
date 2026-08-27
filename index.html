@@ -4,14 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Tauri + Vue + Typescript App</title>
+    <title>Synabit</title>
   </head>
 
   <style>
-    body, html { margin: 0; padding: 0; height: 100%; background-color: #1a1a1c; color: #fff; font-family: system-ui, sans-serif; }
+    /*
+      These four values are the same ground colour the app and the Android
+      window use: --color-base / --color-base-dark in src/style.css, and
+      @color/app_background in the Android resources. They are repeated rather
+      than imported because this block has to paint before any stylesheet
+      loads — that is the whole reason it exists.
+
+      Repeated, but they had drifted. The background was pinned to #1a1a1c
+      whatever the user's theme, so a phone in light mode went splash (#FDFDFC,
+      light) → webview (#1a1a1c, dark) → app (#fdfdfc, light): a black flash on
+      every cold start, in the one place a splash theme was added to remove it.
+      If the tokens ever move, move them here too.
+    */
+    :root { --boot-bg: #fdfdfc; --boot-fg: #1c1c1e; --boot-track: rgba(0,0,0,0.08); }
+    @media (prefers-color-scheme: dark) {
+      :root { --boot-bg: #242424; --boot-fg: #f4f4f5; --boot-track: rgba(255,255,255,0.1); }
+    }
+    body, html { margin: 0; padding: 0; height: 100%; background-color: var(--boot-bg); color: var(--boot-fg); font-family: system-ui, sans-serif; }
     #app-loader { display: flex; justify-content: center; align-items: center; height: 100%; flex-direction: column; gap: 1rem; }
-    .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-radius: 50%; border-top-color: #6366f1; animation: spin 1s ease-in-out infinite; }
+    .spinner { width: 40px; height: 40px; border: 3px solid var(--boot-track); border-radius: 50%; border-top-color: #6366f1; animation: spin 1s ease-in-out infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
   </style>
   <body>
     <div id="app">

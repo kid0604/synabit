@@ -8,6 +8,7 @@
   visible without opening anything, and to remove the hunt for the app.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -33,5 +34,14 @@
         android:layout_marginStart="12dp"
         android:contentDescription="@string/widget_description"
         android:src="@drawable/ic_shortcut_quickcap"
-        android:tint="@color/widget_glyph" />
+        android:tint="@color/widget_glyph"
+        tools:ignore="UseAppTint" />
+    <!--
+      android:tint, not app:tint, and lint is wrong to insist otherwise here.
+      app:tint is an AppCompat attribute handled by AppCompatImageView, and a
+      widget is inflated through RemoteViews, which can only build a fixed set
+      of framework views — an AppCompat one throws at inflation time and the
+      widget renders as "Problem loading widget". android:tint has worked on
+      ImageView since API 21, well under this app's minSdk of 24.
+    -->
 </LinearLayout>

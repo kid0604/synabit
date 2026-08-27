@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import DOMPurify from 'dompurify';
 import { CalendarDays, Plus, Settings, ChevronDown, Link, FileText, Palette, File, Unlink } from 'lucide-vue-next';
+import { computed } from 'vue';
 import { type TaskMetadata, isOverdue } from '../types';
 
-defineProps<{
+const props = defineProps<{
   activeProject: any;
   activeProjectTab: string;
   activeCategoryTasks: TaskMetadata[];
@@ -15,6 +17,20 @@ defineProps<{
   showAddResourceMenu: boolean;
   showEmptyAddMenu: boolean;
 }>();
+
+/**
+ * The project description, sanitised before it is handed to `v-html`.
+ *
+ * It was passed through raw. The content is the user's own, so this is not the
+ * classic hostile-input case — but it arrives from a vault that syncs between
+ * devices and can be edited by anything with access to the files, and the CSP
+ * was the only thing standing between a crafted description and script
+ * execution. One control is not a defence, and every other `v-html` in the app
+ * already goes through DOMPurify or through `ammonia` on the Rust side.
+ */
+const safeDescription = computed(() =>
+  DOMPurify.sanitize(String(props.activeProject?.content ?? ''))
+);
 
 const emit = defineEmits<{
   (e: 'update:activeProjectTab', value: string): void;
@@ -60,7 +76,7 @@ const emit = defineEmits<{
               <div class="md:col-span-1 bg-white dark:bg-[#1a1a1a] rounded-2xl p-5 border border-gray-100 dark:border-[#2c2c2c] shadow-sm flex flex-col">
                   <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">{{ $t('task.project_description') }}</h3>
                   <div v-if="activeProject.content" class="text-sm text-gray-600 dark:text-gray-400 prose prose-sm dark:prose-invert max-w-none mb-4 line-clamp-3">
-                      <div v-html="activeProject.content"></div>
+                      <div v-html="safeDescription"></div>
                   </div>
                   <div v-else class="text-sm text-gray-400 italic mb-4">{{ $t('task.no_description') }}</div>
                   

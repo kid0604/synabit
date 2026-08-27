@@ -48,7 +48,11 @@ class CaptureTileService : TileService() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       startActivityAndCollapse(pending)
     } else {
-      @Suppress("DEPRECATION")
+      // Both ids are needed. "DEPRECATION" is the Kotlin compiler's; the lint
+      // check that reports this one is called StartActivityAndCollapseDeprecated
+      // and is unaffected by the other, which is why the build carried a lint
+      // error over a branch that is already guarded by an SDK_INT check.
+      @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
       startActivityAndCollapse(
         Intent(Intent.ACTION_VIEW, Uri.parse(COMPOSE_URL)).setPackage(packageName)
       )

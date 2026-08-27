@@ -48,12 +48,12 @@ Tất cả các số dưới đây được chạy trực tiếp trên working t
 |---|---|---|
 | `cargo test --lib` | **1369 passed, 0 failed, 12 ignored** | không compile được → xanh |
 | `npx vitest run` | **1077 passed / 78 files** | fail → xanh |
-| `npx eslint 'src/**/*.{ts,vue}'` | **0 errors, 59 warnings** | 34 errors → xanh |
-| `cargo check --target aarch64-linux-android` | **0 errors, 14 warnings** | — |
+| `npx eslint 'src/**/*.{ts,vue}'` | **0 errors, 35 warnings** | 34 errors → xanh |
+| `cargo check --target aarch64-linux-android` | **0 errors, 0 warnings** | — |
 | `npm run type-check` | **PASS** (đã sửa trong phiên này — xem P0-2) | 68 lỗi → 9 → 0 |
 | `npm run build` | **PASS** | — |
-| `./gradlew :app:lintUniversalDebug` | **4 errors, 43 warnings, 1 hint** | 2 errors → 4 |
-| `npm audit --omit=dev` | **6 vulns (3 high, 3 moderate)** | 0 → **regress** |
+| `./gradlew :app:lintUniversalDebug` | **0 errors, 43 warnings, 1 hint** | 2 errors → 4 → 0 |
+| `npm audit --omit=dev` | **0 vulnerabilities** | 0 → 6 → 0 |
 | 16 KB page alignment (NDK 27.1 pinned) | **PT_LOAD align = `0x4000`** ✅ | giữ nguyên |
 
 ---
@@ -383,17 +383,23 @@ hoặc lấy đúng hai token đã có.
 `index.html` còn nguyên title scaffold. Không ảnh hưởng Android WebView nhưng là
 thứ lọt ra khi ai đó xem source hoặc build web preview.
 
-### P1-5 — ABI matrix mâu thuẫn với `minSdk 24`
+### P1-5 — ABI matrix vs `minSdk 24` → **ĐÍNH CHÍNH, không sửa**
 
-`build:android:play` build `aarch64` + `x86_64`. `minSdk = 24` (Android 7.0).
-Rất nhiều máy Android 7 là **armeabi-v7a only** — Play sẽ đơn giản không phục vụ
-app cho chúng, và người dùng thấy "không tương thích với thiết bị này".
+Bản đầu gọi đây là "mâu thuẫn". Nói quá.
 
-Chọn một trong hai và làm cho nhất quán:
-- Giữ arm64-only → nâng `minSdk` lên 26 hoặc 28 và nói rõ trong store listing; hoặc
-- Giữ `minSdk 24` → build thêm `armeabi-v7a`.
+`build:android:play` build `aarch64` + `x86_64`, nên máy **armeabi-v7a** sẽ
+không được Play phục vụ. Nhưng `minSdk 24` vẫn có nghĩa thật: máy **64-bit chạy
+Android 7.0/7.1** vẫn cài được. Hai thứ này không mâu thuẫn — chúng chặn hai
+nhóm khác nhau.
 
-Comment trong CI có giải thích lý do bỏ 32-bit, nhưng `minSdk` chưa được chỉnh theo.
+Nên đây là **quyết định về độ phủ thiết bị**, không phải bug:
+
+- Nâng `minSdk` lên 26/28 sẽ **loại thêm** máy 64-bit Android 7 đang cài được —
+  làm mọi thứ tệ hơn, không tốt hơn.
+- Thêm `armeabi-v7a` sẽ mở rộng độ phủ, đổi lại CI lâu hơn và AAB to hơn.
+
+Comment trong CI đã nói rõ lý do bỏ 32-bit. Giữ nguyên arm64 + x86_64 là lựa
+chọn hợp lý cho một bản phát hành năm 2026. Không sửa gì.
 
 ### P1-6 — `tauri` feature `"test"` nằm trong dependency production
 
@@ -420,7 +426,7 @@ phải `option_env!`) khiến build Android vẫn **fail nếu thiếu** biến 
 chỉ build Android vẫn buộc phải cầm secret của desktop. Đổi `CLIENT_SECRET` sang
 cfg-gate desktop-only là xong.
 
-### P1-8 — Capability scope `**` áp dụng cả Android
+### P1-8 — Capability scope `**` áp dụng cả Android → **ĐÍNH CHÍNH, không sửa**
 
 `capabilities/default.json` không có field `platforms`, nên các quyền sau áp dụng
 cho Android:
@@ -433,10 +439,22 @@ cho Android:
 
 cộng `assetProtocol.scope: ["**"]` trong `tauri.conf.json`.
 
-Trên Android sandbox thu hẹp thiệt hại đáng kể, và CSP `script-src 'self'` chặn
-được vector XSS phổ biến. Nhưng đây là quyền rộng nhất có thể cấp, cho một app
-render nội dung RSS không tin cậy. Nên thu về `$APPDATA/**` + `$DOCUMENT/**`
-cho mobile.
+**Đính chính — không thu hẹp, và có lý do.**
+
+Kiểm tra merged manifest: app **không khai bất kỳ quyền storage nào** — không
+`READ_EXTERNAL_STORAGE`, không `READ_MEDIA_*`, không `MANAGE_EXTERNAL_STORAGE`.
+Nghĩa là trên Android, tiến trình bị OS sandbox nhốt trong đúng thư mục của
+chính nó, bất kể Tauri scope ghi gì. `**` ở đây **đã** bằng đúng
+`$APPDATA/**` + `$DOCUMENT/**` trên thực tế.
+
+Thu hẹp scope sẽ: không tăng an toàn thêm chút nào, nhưng có thật rủi ro làm vỡ
+đường đọc file trên máy thật — thứ không kiểm chứng được nếu không có thiết bị.
+Đổi lấy rủi ro đó để nhận về số 0 là sai.
+
+Chỗ `**` thực sự có nghĩa là **desktop**, nơi tiến trình đọc được cả ổ đĩa. Nhưng
+ở đó user chọn vault ở bất kỳ đâu, nên scope tĩnh hẹp là không khả thi — muốn
+đúng phải chuyển sang cấp scope động lúc chạy (`fs::Scope::allow_directory` sau
+khi biết vault path). Đó là việc riêng, không phải việc của Android.
 
 ### P1-9 — `v-html` không sanitize ở `ProjectDashboard.vue:63`
 
@@ -525,8 +543,8 @@ Công cụ tốt hơn, kỷ luật kém hơn.
 
 **Trước closed testing:**
 
-7. P1-2 (lint errors), P1-3 (flash đen), P1-5 (ABI vs minSdk), P1-6 (`test` feature),
-   P1-7 (`CLIENT_SECRET` cfg-gate), P1-8 (thu hẹp capability scope), P1-9 (`v-html`).
+7. ~~P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-9~~ **Xong 27/08.** P1-5 và P1-8 đã
+   đính chính thành "không sửa", kèm lý do tại mục tương ứng.
 
 **Trước production:**
 

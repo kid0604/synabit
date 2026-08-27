@@ -10,9 +10,17 @@
 // in a local JSON file. The two never share credentials.
 // ──────────────────────────────────────────────
 
-use reqwest::{Client, Url};
+use reqwest::Client;
 use serde::Deserialize;
+
+// The loopback listener the desktop OAuth flow catches its redirect on, and the
+// URL parsing that reads the code back out of the request line. Mobile is
+// redirected through a custom scheme and binds no socket.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use reqwest::Url;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tokio::net::TcpListener;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -359,6 +367,12 @@ pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) ->
 
 #[tauri::command]
 #[cfg(any(target_os = "android", target_os = "ios"))]
+// `vault_path` is unread here — the mobile flow only opens a browser and waits
+// for the deep link, and the vault is not known until `connect_gdrive_complete`
+// takes it. It keeps its name rather than gaining an underscore because the
+// name is the IPC contract: Tauri maps the caller's `vaultPath` onto it, and
+// renaming the binding renames the argument the front end has to send.
+#[allow(unused_variables)]
 pub async fn connect_gdrive(app_handle: tauri::AppHandle, vault_path: String) -> AppResult<String> {
     use tauri_plugin_opener::OpenerExt;
 
