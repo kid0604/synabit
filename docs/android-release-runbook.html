@@ -237,6 +237,16 @@
     user-select: all;
   }
 
+
+  /* sub-steps: the clicks, in order */
+  .substeps { margin: 0; padding-left: 1.35rem; display: flex; flex-direction: column; gap: 0.55rem; font-size: 0.95rem; }
+  .substeps li { padding-left: 0.2rem; }
+  .substeps li::marker { color: var(--accent); font-weight: 600; font-family: "IBM Plex Mono", monospace; font-size: 0.85em; }
+  .substeps ul { margin: 0.4rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.25rem; color: var(--ink-muted); }
+  .path { font-family: "IBM Plex Mono", monospace; font-size: 0.85em; background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 0.1em 0.4em; white-space: nowrap; }
+  .decision { border-left-color: var(--bad); background: var(--bad-soft); }
+  .decision b { color: var(--bad); }
+
   section { display: flex; flex-direction: column; gap: 1.1rem; }
   hr { border: 0; border-top: 1px solid var(--border); margin: 0; }
 
@@ -256,7 +266,7 @@
     <p class="lede">
       Mọi thứ trong repo đã xong và đã push. Những gì còn lại nằm ngoài repo —
       Play Console, Google Cloud, GitHub Secrets — và có ràng buộc thứ tự thật,
-      nên các bước dưới đây đánh số theo phụ thuộc chứ không phải theo ý thích.
+      nên các bước dưới đây đánh số theo phụ thuộc chứ không phải theo ý thích. Bước đầu là một quyết định sản phẩm, và nó đứng đầu vì mọi bước sau đều đổi theo nó.
     </p>
 
     <dl class="snapshot">
@@ -292,76 +302,140 @@
   <hr>
 
   <section>
-    <h2>Sáu bước còn lại</h2>
+    <h2>Bảy bước còn lại</h2>
 
     <div class="steps">
 
       <article class="step">
         <div class="head">
-          <h2>Tạo app trên Play Console, bật Play App Signing</h2>
-          <span class="pill idle who">mày làm</span>
+          <h2>Quyết định: có giữ nút Drive trong app Files không</h2>
+          <span class="pill bad who">làm trước tiên</span>
         </div>
         <div class="body">
-          <p>Làm trước tiên vì bước 2 cần <em>hai</em> vân tay, và vân tay thứ hai
-          chỉ tồn tại sau khi Play App Signing được bật.</p>
-          <ul class="check">
-            <li><input type="checkbox" id="p1"><label for="p1">Tạo app draft, package <code>com.synabit.app</code></label></li>
-            <li><input type="checkbox" id="p2"><label for="p2">Bật Play App Signing</label></li>
-            <li><input type="checkbox" id="p3"><label for="p3">Chép SHA-1 của <strong>app signing key</strong> tại <em>Test and release → Setup → App signing</em></label></li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="step">
-        <div class="head">
-          <h2>Tạo OAuth client type Android</h2>
-          <span class="pill idle who">mày làm</span>
-        </div>
-        <div class="body">
-          <p>Trên Google Cloud Console → <em>Credentials → Create OAuth client ID →
-          Android</em>. Package name là <code>com.synabit.app</code>.</p>
-          <p>SHA-1 của upload key — đã lấy sẵn từ keystore trong repo:</p>
-          <div class="fingerprint">F8:E9:B7:D4:43:50:C6:5F:5A:FF:23:65:80:33:4B:40:F8:6C:45:D6</div>
-          <div class="dep">
-            <span aria-hidden="true">⚠︎</span>
-            <span><b>Phải khai cả hai vân tay.</b> Google ký lại app bằng app
-            signing key trước khi phát hành, nên nếu chỉ khai upload key thì bản
-            sideload chạy còn bản tải từ Play sẽ hỏng Google Drive — một lỗi chỉ
-            lộ ra sau khi đã phát hành.</span>
-          </div>
-          <p>Kết quả là một client id dạng <code>…apps.googleusercontent.com</code>.
-          Đó là giá trị cho <code>SYNABIT_ANDROID_CLIENT_ID</code> ở bước sau.</p>
-        </div>
-      </article>
-
-      <article class="step">
-        <div class="head">
-          <h2>Điền 7 secret trên GitHub</h2>
-          <span class="pill idle who">mày làm</span>
-        </div>
-        <div class="body">
-          <p><em>Settings → Secrets and variables → Actions.</em> Hai cái đầu nhiều
-          khả năng đã có sẵn vì <code>release.yml</code> vẫn đang dùng chúng.</p>
+          <p>Bước này đứng đầu vì nó quyết định mày khai scope nào ở bước 3 —
+          và scope sai có thể kéo dài đợt phát hành thêm hàng tháng.</p>
           <div class="tablewrap">
             <table>
-              <thead><tr><th>Secret</th><th>Lấy từ đâu</th></tr></thead>
+              <thead><tr><th>Nút</th><th>Scope</th><th>Google xếp loại</th></tr></thead>
               <tbody>
-                <tr><td><code>SYNABIT_GOOGLE_CLIENT_ID</code></td><td>đã có — OAuth client desktop</td></tr>
-                <tr><td><code>SYNABIT_GOOGLE_CLIENT_SECRET</code></td><td>đã có — OAuth client desktop</td></tr>
-                <tr><td><code>SYNABIT_ANDROID_CLIENT_ID</code></td><td>bước 2</td></tr>
-                <tr><td><code>ANDROID_KEYSTORE_BASE64</code></td><td>lệnh bên dưới</td></tr>
-                <tr><td><code>ANDROID_KEYSTORE_PASSWORD</code></td><td><code>storePassword</code> trong <code>keystore.properties</code></td></tr>
-                <tr><td><code>ANDROID_KEY_ALIAS</code></td><td><code>upload_key</code></td></tr>
-                <tr><td><code>ANDROID_KEY_PASSWORD</code></td><td><code>keyPassword</code> trong <code>keystore.properties</code></td></tr>
+                <tr><td>Vault sync (App.vue)</td><td><code>drive.file</code></td><td>thường</td></tr>
+                <tr><td>Files → Connect Drive<br><span style="color:var(--ink-muted)"><code>FilesSidebar.vue:117</code></span></td><td><code>drive.readonly</code></td><td><span class="pill bad">restricted</span></td></tr>
               </tbody>
             </table>
           </div>
-          <p>Keystore nằm ở <code>src-tauri/synabit-release-key.jks</code> — không
-          phải trong <code>gen/android/</code>; đường dẫn trong
-          <code>keystore.properties</code> là tương đối với thư mục gradle.</p>
-          <pre><code>base64 -i src-tauri/synabit-release-key.jks | tr -d '\n' | pbcopy</code></pre>
-          <p>Ba mật khẩu đọc từ <code>src-tauri/gen/android/keystore.properties</code>.
-          File đó gitignored và chưa từng bị commit — đã kiểm cả lịch sử git.</p>
+          <p>Restricted scope bắt Google verification riêng, thường kèm CASA
+          security assessment — hàng tuần tới hàng tháng, và có thể tốn tiền.</p>
+          <p>Mà tính năng đó <strong>đã hỏng</strong>, theo chính comment trong
+          <code>useGDrive.ts</code>: nó ghi vào bảng <code>files</code> cũ trong
+          khi màn hình đọc bảng <code>nodes</code>, nên “connecting only ever
+          produced an empty folder”. Trên Android còn hỏng sớm hơn: nút lưu PKCE
+          verifier dưới key <code>pkce_code_verifier_omnidrive</code>, nhưng
+          deep-link handler bỏ qua <code>state</code> và luôn gọi
+          <code>gdrive_auth_complete</code> — hàm này đọc
+          <code>pkce_code_verifier_vault</code>. Sai verifier, exchange không bao
+          giờ thành công.</p>
+          <div class="dep decision">
+            <span aria-hidden="true">✱</span>
+            <span><b>Đề xuất: ẩn nút đó trên mobile.</b> Một tính năng hỏng, tự
+            nhận là đã bỏ, đang kéo theo yêu cầu verification nặng nhất của cả
+            đợt phát hành. Ẩn đi thì app chỉ còn <code>drive.file</code> và
+            đường lên production ngắn đi đáng kể. Đây là quyết định sản phẩm nên
+            tao không tự làm.</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Play Console — tạo app, bật App Signing</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <ol class="substeps">
+            <li>Vào <span class="path">play.google.com/console</span> → <b>Create app</b>.</li>
+            <li>Điền: tên app, ngôn ngữ mặc định, chọn <b>App</b> (không phải Game), <b>Free</b>.
+              Tick hai khai báo về developer program policies và US export laws.</li>
+            <li>Vào <span class="path">Test and release → Setup → App integrity</span>, tab <b>App signing</b>.</li>
+            <li>Chép <b>SHA-1</b> ở mục <em>App signing key certificate</em>.
+              <ul>
+                <li>Nếu chưa thấy: khoá này do Google sinh và có thể chỉ xuất hiện
+                <b>sau lần upload AAB đầu tiên</b>. Trường hợp đó thì bỏ qua, quay
+                lại đây sau bước 5.</li>
+                <li>Đừng nhầm với <em>Upload key certificate</em> ngay bên dưới —
+                đó là khoá của mày, SHA-1 đã có sẵn ở bước 3.</li>
+              </ul>
+            </li>
+          </ol>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Google Cloud — OAuth client type Android</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <ol class="substeps">
+            <li>Vào <span class="path">console.cloud.google.com</span>, chọn đúng
+            project đang sở hữu <code>SYNABIT_GOOGLE_CLIENT_ID</code> của desktop.</li>
+            <li><span class="path">APIs &amp; Services → Credentials</span> →
+              <b>+ Create credentials</b> → <b>OAuth client ID</b>.</li>
+            <li>Application type: <b>Android</b>.</li>
+            <li>Điền:
+              <ul>
+                <li>Name: <code>Synabit Android (upload key)</code></li>
+                <li>Package name: <code>com.synabit.app</code></li>
+                <li>SHA-1: dán chuỗi bên dưới</li>
+              </ul>
+            </li>
+            <li><b>Create</b> → chép client id dạng <code>…apps.googleusercontent.com</code>.
+            Đó là <code>SYNABIT_ANDROID_CLIENT_ID</code>.</li>
+            <li>Lặp lại toàn bộ với SHA-1 của <b>app signing key</b> từ bước 2,
+            đặt tên <code>Synabit Android (Play signing)</code>.</li>
+            <li>Kiểm <span class="path">OAuth consent screen → Data access</span>:
+            scope phải khớp đúng quyết định ở bước 1.</li>
+          </ol>
+          <div class="fingerprint">F8:E9:B7:D4:43:50:C6:5F:5A:FF:23:65:80:33:4B:40:F8:6C:45:D6</div>
+          <div class="dep">
+            <span aria-hidden="true">⚠︎</span>
+            <span><b>Hai client, không phải một.</b> Google ký lại app bằng app
+            signing key trước khi phát hành. Chỉ khai upload key thì bản sideload
+            chạy còn bản tải từ Play hỏng Drive — lỗi chỉ lộ sau khi đã phát hành.</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>GitHub — điền 7 secret</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <ol class="substeps">
+            <li>Chạy lệnh này để đưa keystore đã encode vào clipboard:
+              <pre><code>base64 -i src-tauri/synabit-release-key.jks | tr -d '\n' | pbcopy</code></pre>
+            </li>
+            <li>Mở <code>src-tauri/gen/android/keystore.properties</code> để lấy hai mật khẩu.</li>
+            <li>Vào <span class="path">github.com/kid0604/synabit → Settings → Secrets and variables → Actions</span>.</li>
+            <li><b>New repository secret</b> cho từng dòng dưới đây.</li>
+          </ol>
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>Secret</th><th>Giá trị</th></tr></thead>
+              <tbody>
+                <tr><td><code>SYNABIT_GOOGLE_CLIENT_ID</code></td><td>đã có sẵn — kiểm lại cho chắc</td></tr>
+                <tr><td><code>SYNABIT_GOOGLE_CLIENT_SECRET</code></td><td>đã có sẵn — kiểm lại cho chắc</td></tr>
+                <tr><td><code>SYNABIT_ANDROID_CLIENT_ID</code></td><td>client id từ bước 3</td></tr>
+                <tr><td><code>ANDROID_KEYSTORE_BASE64</code></td><td>clipboard từ lệnh trên</td></tr>
+                <tr><td><code>ANDROID_KEYSTORE_PASSWORD</code></td><td><code>storePassword</code></td></tr>
+                <tr><td><code>ANDROID_KEY_ALIAS</code></td><td><code>upload_key</code></td></tr>
+                <tr><td><code>ANDROID_KEY_PASSWORD</code></td><td><code>keyPassword</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Keystore nằm ở <code>src-tauri/synabit-release-key.jks</code>, không
+          phải trong <code>gen/android/</code> — đường dẫn trong
+          <code>keystore.properties</code> tương đối với thư mục gradle.</p>
         </div>
       </article>
 
@@ -371,15 +445,21 @@
           <span class="pill ok who">tao làm được</span>
         </div>
         <div class="body">
-          <p>Có secret rồi thì <code>Build AAB</code> qua được preflight. Workflow
-          sẽ tự kiểm một thứ nữa: grep <code>mapping.txt</code> để chắc chắn R8
-          không xoá mất <code>SecureStore</code> và hai method JNI của nó — đúng
-          lỗi từng làm mọi bản release không đọc nổi khoá mã hoá của chính nó.</p>
+          <ol class="substeps">
+            <li><span class="path">Actions → Android → Run workflow</span> trên nhánh <code>main</code>.</li>
+            <li>Đợi ba job xanh. Job <code>Signed release AAB</code> tự kiểm
+            <code>mapping.txt</code> xem R8 có xoá mất <code>SecureStore</code>
+            và hai method JNI không — đúng lỗi từng khiến mọi bản release không
+            đọc nổi khoá mã hoá của chính nó.</li>
+            <li>Tải artifact <code>android-release</code>: chứa <code>.aab</code>,
+            <code>mapping.txt</code> và <code>build-info.txt</code>.</li>
+            <li>Cất <code>mapping.txt</code> ở nơi an toàn.</li>
+          </ol>
           <div class="dep">
             <span aria-hidden="true">⌁</span>
-            <span><b>Giữ <code>mapping.txt</code>.</b> R8 đổi tên mỗi lần build,
-            nên không có file này thì crash report từ Play đọc không ra gì. CI giữ
-            artifact 90 ngày.</span>
+            <span><b>Giữ <code>mapping.txt</code> chừng nào bản build còn nằm trên
+            máy ai đó.</b> R8 đổi tên mỗi lần build, nên không có file này thì
+            crash report từ Play đọc không ra gì. CI chỉ giữ artifact 90 ngày.</span>
           </div>
         </div>
       </article>
@@ -393,11 +473,21 @@
           <p>R8 <em>chỉ</em> chạy ở bản release, và đường JNI Rust→Java là thứ duy
           nhất R8 không nhìn thấy. Bản debug chạy được <strong>không chứng minh
           gì</strong> về bản release.</p>
+          <ol class="substeps">
+            <li>Tạo AVD mới hoàn toàn, hoặc <b>Wipe data</b> máy ảo đang có —
+            bản debug cũ ký khác key, cài đè sẽ báo signature mismatch.</li>
+            <li>AAB không cài thẳng được. Dùng bundletool để rút APK:
+              <pre><code>bundletool build-apks --bundle=app.aab --output=app.apks \
+  --ks=src-tauri/synabit-release-key.jks --ks-key-alias=upload_key
+bundletool install-apks --apks=app.apks</code></pre>
+            </li>
+            <li>Chạy hết checklist dưới đây.</li>
+          </ol>
           <ul class="check">
             <li><input type="checkbox" id="s1"><label for="s1">Cold start, không crash</label></li>
             <li><input type="checkbox" id="s2"><label for="s2">Tạo vault, viết note, kill từ Recents, mở lại → note còn</label></li>
             <li><input type="checkbox" id="s3"><label for="s3"><strong>Bật E2EE → tắt app → mở lại → khoá vẫn đọc được</strong> — đây là bài test R8/SecureStore</label></li>
-            <li><input type="checkbox" id="s4"><label for="s4">Kết nối Google Drive → quay về được app — bài test bước 2</label></li>
+            <li><input type="checkbox" id="s4"><label for="s4">Kết nối Google Drive → quay về được app — bài test bước 3</label></li>
             <li><input type="checkbox" id="s5"><label for="s5">Share text từ Chrome → cap xuất hiện trong QuickCap</label></li>
             <li><input type="checkbox" id="s6"><label for="s6">Gõ thẳng vào notification → cap xuất hiện</label></li>
             <li><input type="checkbox" id="s7"><label for="s7">Quick settings tile và widget → mở compose box</label></li>
@@ -410,13 +500,19 @@
 
       <article class="step">
         <div class="head">
-          <h2>Hoàn tất hồ sơ Play</h2>
+          <h2>Hoàn tất hồ sơ Play, mở closed testing</h2>
           <span class="pill idle who">mày làm</span>
         </div>
         <div class="body">
+          <ol class="substeps">
+            <li>Upload AAB vào <span class="path">Testing → Internal testing</span> trước — nhanh, không cần review.</li>
+            <li>Nếu bước 2 chưa lấy được SHA-1 app signing key thì <b>quay lại lấy bây giờ</b>, rồi tạo nốt OAuth client thứ hai.</li>
+            <li>Điền <span class="path">Policy → App content</span>: Data safety, privacy policy URL, content rating, target audience, ads (không có), data deletion.</li>
+            <li>Chuyển sang <span class="path">Testing → Closed testing</span> và mời tester.</li>
+          </ol>
           <ul class="check">
-            <li><input type="checkbox" id="r1"><label for="r1">Data Safety form — khai đúng <code>RECORD_AUDIO</code>, sync relay, license server. <code>legal/PRIVACY_POLICY.md</code> đã đủ chi tiết để điền</label></li>
-            <li><input type="checkbox" id="r2"><label for="r2">Privacy policy URL công khai</label></li>
+            <li><input type="checkbox" id="r1"><label for="r1">Data Safety — khai đúng <code>RECORD_AUDIO</code>, sync relay, license server. <code>legal/PRIVACY_POLICY.md</code> đã đủ chi tiết để điền</label></li>
+            <li><input type="checkbox" id="r2"><label for="r2">Privacy policy URL công khai, truy cập được</label></li>
             <li><input type="checkbox" id="r3"><label for="r3">Store listing, screenshots, feature graphic</label></li>
             <li><input type="checkbox" id="r4"><label for="r4">Content rating questionnaire</label></li>
             <li><input type="checkbox" id="r5"><label for="r5">Backup upload key ra ngoài máy cá nhân</label></li>
@@ -426,8 +522,9 @@
             <span><b>Mốc chặn có thể không phải code.</b> Nếu đây là personal
             developer account tạo sau 13/11/2023, Google bắt buộc closed testing
             với <b>12 tester trong 14 ngày liên tục</b> trước khi được apply
-            production access. Tính từ ngày bắt đầu closed test, không phải từ
-            hôm nay.</span>
+            production access. Đếm từ ngày bắt đầu closed test, không phải từ
+            hôm nay — nên mở closed testing càng sớm càng tốt, kể cả khi hồ sơ
+            chưa hoàn chỉnh.</span>
           </div>
         </div>
       </article>
