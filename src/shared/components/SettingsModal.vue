@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, Rss } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, Rss } from 'lucide-vue-next';
 import TrashPanel from './TrashPanel.vue';
 import { useSettings } from '../../composables/useSettings';
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
@@ -115,10 +115,8 @@ type TabType = 'general' | 'notes' | 'tasks' | 'security' | 'devices' | 'about' 
 const props = defineProps<{
   initialTab?: TabType;
   vaultPath: string;
-  vaultType: 'local' | 'gdrive';
-  activeSyncProvider: 'none' | 'local' | 'gdrive' | 'server';
-  gdriveConnected: boolean;
-  gdriveAuthLoading: boolean;
+  vaultType: 'local';
+  activeSyncProvider: 'none' | 'local' | 'server';
   syncing: boolean;
   syncError: string;
   lastSyncTime: string;
@@ -131,8 +129,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'clear-vault'): void;
   (e: 'sync-now'): void;
-  (e: 'disconnect-gdrive'): void;
-  (e: 'connect-gdrive'): void;
   (e: 'update:auto-sync-enabled', val: boolean): void;
   (e: 'update:auto-sync-interval', val: number): void;
   (e: 'show-setup-pin', mode: 'setup' | 'change'): void;
@@ -287,30 +283,22 @@ const serverConnecting = ref(false);
 // which is what every button in the template below writes to. This ref was
 // seeded from `props.initialTab` and then read by nothing.
 
-const activeSettingsProvider = ref<'none' | 'local' | 'gdrive' | 'server'>(props.activeSyncProvider);
+const activeSettingsProvider = ref<'none' | 'local' | 'server'>(props.activeSyncProvider);
 
 watch(() => props.activeSyncProvider, (val) => {
   activeSettingsProvider.value = val;
 });
 
-const showConfirmDisconnectGDrive = ref(false);
 const showConfirmDisconnectP2P = ref(false);
 const showConfirmDisconnectAll = ref(false);
 
-const handleConnectGDrive = () => {
-  if (props.activeSyncProvider === 'server') emit('disconnect-server');
-  emit('connect-gdrive');
-};
-
 const handleConnectP2P = (addr: string, id: string) => {
   serverConnecting.value = true;
-  if (props.gdriveConnected) emit('disconnect-gdrive');
   emit('connect-server', addr, id);
   setTimeout(() => { serverConnecting.value = false; }, 2000);
 };
 
 const handleDisconnectAll = () => {
-  if (props.gdriveConnected) emit('disconnect-gdrive');
   if (props.activeSyncProvider === 'server') emit('disconnect-server');
   activeSettingsProvider.value = 'none';
 };
@@ -603,72 +591,9 @@ const setupE2ee = () => {
                       </button>
                       <div v-if="activeSettingsProvider === 'none'" class="px-10 pb-4 pt-1 ml-4 border-t border-[#f0f0f0] dark:border-[#333] mt-1">
                         <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-3 mt-3">Your data will only be saved locally on this device. Synabit will not sync with any cloud providers.</p>
-                        <button v-if="gdriveConnected || activeSyncProvider === 'server'" @click="showConfirmDisconnectAll = true" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white dark:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm">
+                        <button v-if="activeSyncProvider === 'server'" @click="showConfirmDisconnectAll = true" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white dark:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm">
                           Disconnect active providers
                         </button>
-                      </div>
-                    </div>
-
-                    <!-- GOOGLE DRIVE -->
-                    <div class="rounded-lg overflow-hidden border border-transparent transition-colors" :class="activeSettingsProvider === 'gdrive' ? 'border-blue-400 dark:border-blue-600 bg-white dark:bg-[#2a2a2a] shadow-sm' : ''">
-                      <button @click="activeSettingsProvider = 'gdrive'" class="w-full px-3 py-2.5 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                        <div class="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors" :class="activeSettingsProvider === 'gdrive' ? 'border-blue-500' : 'border-gray-300 dark:border-gray-600'">
-                          <div v-if="activeSettingsProvider === 'gdrive'" class="w-2 h-2 rounded-full bg-blue-500"></div>
-                        </div>
-                        <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-blue-100 dark:bg-blue-900/20">
-                          <Cloud class="w-4 h-4 text-blue-500" />
-                        </div>
-                        <div class="flex-1 min-w-0">
-                          <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">Google Drive</p>
-                        </div>
-                        <span v-if="gdriveConnected" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
-                          <Check class="w-3 h-3" /> Connected
-                        </span>
-                      </button>
-                      
-                      <!-- GDrive Details -->
-                      <div v-if="activeSettingsProvider === 'gdrive'" class="px-3 md:px-10 pb-4 pt-1 ml-0 md:ml-4 border-t border-[#f0f0f0] dark:border-[#333] mt-1 space-y-4">
-                        <div class="flex items-center justify-between mt-3">
-                          <div class="flex items-center gap-2">
-                            <div :class="['w-2 h-2 rounded-full', gdriveConnected ? 'bg-green-500' : 'bg-red-500']"></div>
-                            <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ gdriveConnected ? $t('settings.general.connected') : $t('settings.general.disconnected') }}</p>
-                          </div>
-                          <button v-if="gdriveConnected" @click="emit('sync-now')" :disabled="syncing" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-60">
-                            <RefreshCw class="w-3.5 h-3.5" :class="syncing ? 'animate-spin' : ''" />
-                            {{ syncing ? $t('settings.general.syncing') : $t('settings.general.sync_now') }}
-                          </button>
-                          <button v-else @click="handleConnectGDrive" class="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white">
-                            <Cloud class="w-3.5 h-3.5" />
-                            {{ $t('settings.general.connect') }}
-                          </button>
-                        </div>
-                        
-                        <template v-if="gdriveConnected">
-                          <div v-if="lastSyncTime" class="flex items-center gap-2 text-[11px] text-gray-400">
-                            <span>{{ $t('settings.general.last_synced') }}: {{ lastSyncTime }}</span>
-                          </div>
-                          <div v-if="syncError" class="text-[11px] text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">
-                            ⚠️ {{ syncError }}
-                          </div>
-                          <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4">
-                            <div class="flex items-center justify-between mb-3">
-                              <p class="text-[12px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.periodic_auto_sync') }}</p>
-                              <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" :checked="autoSyncEnabled" @change="emit('update:auto-sync-enabled', ($event.target as HTMLInputElement).checked)" class="sr-only peer">
-                                <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-500"></div>
-                              </label>
-                            </div>
-                            <div v-if="autoSyncEnabled" class="flex items-center justify-between">
-                              <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ $t('settings.general.sync_interval') }}</p>
-                              <input type="number" :value="autoSyncInterval" @input="emit('update:auto-sync-interval', Number(($event.target as HTMLInputElement).value))" min="1" max="60" class="w-16 px-2 py-1 bg-white dark:bg-[#2a2a2a] border border-[#e6e6e6] dark:border-[#3a3a3a] rounded text-[12px] text-center text-[#1c1c1e] dark:text-[#f4f4f5] focus:outline-none focus:border-blue-500" />
-                            </div>
-                          </div>
-                          <div class="border-t border-[#e6e6e6] dark:border-[#2c2c2c] pt-4">
-                            <button @click="showConfirmDisconnectGDrive = true" class="px-4 py-2 rounded-lg text-[12px] font-medium border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all flex items-center gap-2">
-                              <CloudOff class="w-3.5 h-3.5" /> {{ $t('settings.general.disconnect_gdrive') }}
-                            </button>
-                          </div>
-                        </template>
                       </div>
                     </div>
 
@@ -1262,14 +1187,6 @@ const setupE2ee = () => {
     />
 
     <!-- Confirm Disconnect Modals -->
-    <ConfirmModal
-      :show="showConfirmDisconnectGDrive"
-      title="Disconnect Google Drive?"
-      message="Your data will remain safely stored on this device, but changes will no longer sync to your Google Drive account."
-      confirm-text="Disconnect"
-      @confirm="showConfirmDisconnectGDrive = false; emit('disconnect-gdrive')"
-      @cancel="showConfirmDisconnectGDrive = false"
-    />
       <ConfirmModal
         :show="showConfirmDisconnectP2P"
         title="Disconnect Sync Server?"

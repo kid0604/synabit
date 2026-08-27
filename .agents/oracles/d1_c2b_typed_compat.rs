@@ -1334,8 +1334,6 @@ async fn c2b_v3_pull_bootstrap_preflight_never_pushes_or_pulls() {
 
 #[tokio::test]
 async fn c2b_v3_provider_mappers_preserve_native_positions() {
-    use crate::sync::adapter::gdrive::tests::FakeGDriveBackend;
-    use crate::sync::adapter::gdrive::{encode_gdrive_operation, GoogleDriveAdapter};
     use crate::sync::protocol::{MailboxEntryV3, MailboxResponse, PullPageResult};
 
     let response = MailboxResponse::PullPageResult(PullPageResult {
@@ -1357,33 +1355,10 @@ async fn c2b_v3_provider_mappers_preserve_native_positions() {
     assert_eq!(server_page.entries[0].remote_position, "901");
     assert_eq!(server_page.entries[0].remote_seq, Some(901));
 
-    let operation = SyncOperation {
-        operation_id: [94; 16],
-        doc_hash: [95; 32],
-        entry_kind: SyncEntryKind::Upsert,
-        node_id: "gdrive-node".to_string(),
-        rel_path: "gdrive.md".to_string(),
-        encrypted_payload: vec![4, 5, 6],
-        payload_hash: [96; 32],
-        timestamp: NOW,
-        asset_chunks: Vec::new(),
-    };
-    let blob = encode_gdrive_operation(&operation).unwrap();
-    let backend = Arc::new(FakeGDriveBackend::new());
-    backend.files.lock().unwrap().push((
-        "native-gdrive-file-id".to_string(),
-        "op_0001.bin".to_string(),
-        Ok(blob),
-    ));
-    let gdrive = GoogleDriveAdapter::for_testing(backend, "oracle-folder".to_string());
-    let gdrive_page = gdrive.pull_page("", None, pull_limits()).await.unwrap();
-    assert_eq!(gdrive_page.entries.len(), 1);
-    assert_eq!(
-        gdrive_page.entries[0].remote_position,
-        "native-gdrive-file-id"
-    );
-    assert_eq!(gdrive_page.entries[0].remote_seq, None);
-    assert_eq!(gdrive_page.entries[0].operation_id, operation.operation_id);
+    // The Google Drive half of this oracle went with the provider it tested.
+    // It asserted that an opaque native position — a Drive file id, carrying no
+    // sequence — survived the mapper alongside the server's numeric one. The
+    // server assertions above still cover the mapper that still exists.
 }
 
 #[test]

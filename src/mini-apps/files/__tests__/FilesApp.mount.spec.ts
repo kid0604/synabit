@@ -40,10 +40,6 @@ vi.mock('@tauri-apps/api/core', () => ({
       case 'set_file_label':
       case 'watch_file_sources':
         return 0;
-      case 'is_gdrive_connected':
-        return false;
-      case 'get_gdrive_user_info':
-        return '';
       default:
         // Every listing command in this app returns an array.
         return [];

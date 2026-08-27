@@ -266,14 +266,14 @@
     <p class="lede">
       Mọi thứ trong repo đã xong và đã push. Những gì còn lại nằm ngoài repo —
       Play Console, Google Cloud, GitHub Secrets — và có ràng buộc thứ tự thật,
-      nên các bước dưới đây đánh số theo phụ thuộc chứ không phải theo ý thích. Bước đầu là một quyết định sản phẩm, và nó đứng đầu vì mọi bước sau đều đổi theo nó.
+      nên các bước dưới đây đánh số theo phụ thuộc chứ không phải theo ý thích.
     </p>
 
     <dl class="snapshot">
-      <div><dt>Nhánh main</dt><dd><code>8b84a88</code></dd></div>
+      <div><dt>Nhánh main</dt><dd><code>45dec39</code>+</dd></div>
       <div><dt>Phiên bản</dt><dd>0.9.7-3 · vc 9007</dd></div>
       <div><dt>CI job checks</dt><dd><span class="pill ok">xanh</span></dd></div>
-      <div><dt>CI job AAB</dt><dd><span class="pill bad">thiếu secret</span></dd></div>
+      <div><dt>CI job AAB</dt><dd><span class="pill bad">thiếu keystore</span></dd></div>
     </dl>
   </header>
 
@@ -302,48 +302,9 @@
   <hr>
 
   <section>
-    <h2>Bảy bước còn lại</h2>
+    <h2>Năm bước còn lại</h2>
 
     <div class="steps">
-
-      <article class="step">
-        <div class="head">
-          <h2>Quyết định: có giữ nút Drive trong app Files không</h2>
-          <span class="pill bad who">làm trước tiên</span>
-        </div>
-        <div class="body">
-          <p>Bước này đứng đầu vì nó quyết định mày khai scope nào ở bước 3 —
-          và scope sai có thể kéo dài đợt phát hành thêm hàng tháng.</p>
-          <div class="tablewrap">
-            <table>
-              <thead><tr><th>Nút</th><th>Scope</th><th>Google xếp loại</th></tr></thead>
-              <tbody>
-                <tr><td>Vault sync (App.vue)</td><td><code>drive.file</code></td><td>thường</td></tr>
-                <tr><td>Files → Connect Drive<br><span style="color:var(--ink-muted)"><code>FilesSidebar.vue:117</code></span></td><td><code>drive.readonly</code></td><td><span class="pill bad">restricted</span></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <p>Restricted scope bắt Google verification riêng, thường kèm CASA
-          security assessment — hàng tuần tới hàng tháng, và có thể tốn tiền.</p>
-          <p>Mà tính năng đó <strong>đã hỏng</strong>, theo chính comment trong
-          <code>useGDrive.ts</code>: nó ghi vào bảng <code>files</code> cũ trong
-          khi màn hình đọc bảng <code>nodes</code>, nên “connecting only ever
-          produced an empty folder”. Trên Android còn hỏng sớm hơn: nút lưu PKCE
-          verifier dưới key <code>pkce_code_verifier_omnidrive</code>, nhưng
-          deep-link handler bỏ qua <code>state</code> và luôn gọi
-          <code>gdrive_auth_complete</code> — hàm này đọc
-          <code>pkce_code_verifier_vault</code>. Sai verifier, exchange không bao
-          giờ thành công.</p>
-          <div class="dep decision">
-            <span aria-hidden="true">✱</span>
-            <span><b>Đề xuất: ẩn nút đó trên mobile.</b> Một tính năng hỏng, tự
-            nhận là đã bỏ, đang kéo theo yêu cầu verification nặng nhất của cả
-            đợt phát hành. Ẩn đi thì app chỉ còn <code>drive.file</code> và
-            đường lên production ngắn đi đáng kể. Đây là quyết định sản phẩm nên
-            tao không tự làm.</span>
-          </div>
-        </div>
-      </article>
 
       <article class="step">
         <div class="head">
@@ -356,11 +317,6 @@
             <li>Điền: tên app, ngôn ngữ mặc định, chọn <b>App</b> (không phải Game), <b>Free</b>.
               Tick hai khai báo về developer program policies và US export laws.</li>
             <li>Vào <span class="path">Test and release → Setup → App integrity</span>, tab <b>App signing</b>.</li>
-            <li>Chép <b>SHA-1</b> ở mục <em>App signing key certificate</em>.
-              <ul>
-                <li>Nếu chưa thấy: khoá này do Google sinh và có thể chỉ xuất hiện
-                <b>sau lần upload AAB đầu tiên</b>. Trường hợp đó thì bỏ qua, quay
-                lại đây sau bước 5.</li>
                 <li>Đừng nhầm với <em>Upload key certificate</em> ngay bên dưới —
                 đó là khoá của mày, SHA-1 đã có sẵn ở bước 3.</li>
               </ul>
@@ -371,43 +327,7 @@
 
       <article class="step">
         <div class="head">
-          <h2>Google Cloud — OAuth client type Android</h2>
-          <span class="pill idle who">mày làm</span>
-        </div>
-        <div class="body">
-          <ol class="substeps">
-            <li>Vào <span class="path">console.cloud.google.com</span>, chọn đúng
-            project đang sở hữu <code>SYNABIT_GOOGLE_CLIENT_ID</code> của desktop.</li>
-            <li><span class="path">APIs &amp; Services → Credentials</span> →
-              <b>+ Create credentials</b> → <b>OAuth client ID</b>.</li>
-            <li>Application type: <b>Android</b>.</li>
-            <li>Điền:
-              <ul>
-                <li>Name: <code>Synabit Android (upload key)</code></li>
-                <li>Package name: <code>com.synabit.app</code></li>
-                <li>SHA-1: dán chuỗi bên dưới</li>
-              </ul>
-            </li>
-            <li><b>Create</b> → chép client id dạng <code>…apps.googleusercontent.com</code>.
-            Đó là <code>SYNABIT_ANDROID_CLIENT_ID</code>.</li>
-            <li>Lặp lại toàn bộ với SHA-1 của <b>app signing key</b> từ bước 2,
-            đặt tên <code>Synabit Android (Play signing)</code>.</li>
-            <li>Kiểm <span class="path">OAuth consent screen → Data access</span>:
-            scope phải khớp đúng quyết định ở bước 1.</li>
-          </ol>
-          <div class="fingerprint">F8:E9:B7:D4:43:50:C6:5F:5A:FF:23:65:80:33:4B:40:F8:6C:45:D6</div>
-          <div class="dep">
-            <span aria-hidden="true">⚠︎</span>
-            <span><b>Hai client, không phải một.</b> Google ký lại app bằng app
-            signing key trước khi phát hành. Chỉ khai upload key thì bản sideload
-            chạy còn bản tải từ Play hỏng Drive — lỗi chỉ lộ sau khi đã phát hành.</span>
-          </div>
-        </div>
-      </article>
-
-      <article class="step">
-        <div class="head">
-          <h2>GitHub — điền 7 secret</h2>
+          <h2>GitHub — điền 4 secret</h2>
           <span class="pill idle who">mày làm</span>
         </div>
         <div class="body">
@@ -423,9 +343,6 @@
             <table>
               <thead><tr><th>Secret</th><th>Giá trị</th></tr></thead>
               <tbody>
-                <tr><td><code>SYNABIT_GOOGLE_CLIENT_ID</code></td><td>đã có sẵn — kiểm lại cho chắc</td></tr>
-                <tr><td><code>SYNABIT_GOOGLE_CLIENT_SECRET</code></td><td>đã có sẵn — kiểm lại cho chắc</td></tr>
-                <tr><td><code>SYNABIT_ANDROID_CLIENT_ID</code></td><td>client id từ bước 3</td></tr>
                 <tr><td><code>ANDROID_KEYSTORE_BASE64</code></td><td>clipboard từ lệnh trên</td></tr>
                 <tr><td><code>ANDROID_KEYSTORE_PASSWORD</code></td><td><code>storePassword</code></td></tr>
                 <tr><td><code>ANDROID_KEY_ALIAS</code></td><td><code>upload_key</code></td></tr>
@@ -487,7 +404,6 @@ bundletool install-apks --apks=app.apks</code></pre>
             <li><input type="checkbox" id="s1"><label for="s1">Cold start, không crash</label></li>
             <li><input type="checkbox" id="s2"><label for="s2">Tạo vault, viết note, kill từ Recents, mở lại → note còn</label></li>
             <li><input type="checkbox" id="s3"><label for="s3"><strong>Bật E2EE → tắt app → mở lại → khoá vẫn đọc được</strong> — đây là bài test R8/SecureStore</label></li>
-            <li><input type="checkbox" id="s4"><label for="s4">Kết nối Google Drive → quay về được app — bài test bước 3</label></li>
             <li><input type="checkbox" id="s5"><label for="s5">Share text từ Chrome → cap xuất hiện trong QuickCap</label></li>
             <li><input type="checkbox" id="s6"><label for="s6">Gõ thẳng vào notification → cap xuất hiện</label></li>
             <li><input type="checkbox" id="s7"><label for="s7">Quick settings tile và widget → mở compose box</label></li>
@@ -506,7 +422,6 @@ bundletool install-apks --apks=app.apks</code></pre>
         <div class="body">
           <ol class="substeps">
             <li>Upload AAB vào <span class="path">Testing → Internal testing</span> trước — nhanh, không cần review.</li>
-            <li>Nếu bước 2 chưa lấy được SHA-1 app signing key thì <b>quay lại lấy bây giờ</b>, rồi tạo nốt OAuth client thứ hai.</li>
             <li>Điền <span class="path">Policy → App content</span>: Data safety, privacy policy URL, content rating, target audience, ads (không có), data deletion.</li>
             <li>Chuyển sang <span class="path">Testing → Closed testing</span> và mời tester.</li>
           </ol>
@@ -537,6 +452,22 @@ bundletool install-apks --apks=app.apks</code></pre>
   <section>
     <h2>Bẫy đã biết</h2>
     <div class="traps">
+      <div class="trap">
+        <h3>Google Drive đã bị gỡ khỏi mọi nền tảng</h3>
+        <p>Vault sync qua Drive và trình duyệt Drive trong app Files đều đã đi.
+        Kéo theo: không còn OAuth client phải đăng ký, không còn consent screen
+        phải verify, <strong>không còn restricted scope</strong>, và không còn
+        biến môi trường nào — <code>SYNABIT_GOOGLE_CLIENT_ID</code>,
+        <code>SYNABIT_GOOGLE_CLIENT_SECRET</code>,
+        <code>SYNABIT_ANDROID_CLIENT_ID</code> đều biến mất. Build không cần
+        credential nào nữa.</p>
+        <p>Người dùng từng sync bằng Drive: vault của họ <strong>không hề bị
+        đụng vào</strong>. Cài đặt <code>vaultType</code> chỉ ghi nhận loại sync
+        chạy trên thư mục đó, còn thư mục là một thư mục bình thường họ tự chọn.
+        Nó lặng lẽ chuyển thành vault local; file dừng được sync chứ không dừng
+        là của họ.</p>
+      </div>
+
 
       <div class="trap">
         <h3>Hậu tố <code>-N</code> vô hình với Play</h3>

@@ -2,7 +2,6 @@ pub mod calendar;
 pub mod commands;
 pub mod db;
 pub mod error;
-pub mod gdrive;
 pub mod models;
 pub mod people;
 pub mod path_utils;
@@ -14,7 +13,6 @@ pub mod chat_engine;
 pub mod feed_engine;
 pub mod file_index;
 pub mod file_text;
-pub mod file_providers;
 pub mod secrets;
 pub mod syn;
 pub mod sync;
@@ -725,13 +723,6 @@ pub fn run() {
             commands::e2ee::setup_e2ee,
             commands::e2ee::restore_e2ee_from_phrase,
             commands::e2ee::get_recovery_phrase,
-            // Google Drive
-            gdrive::auth::gdrive_auth_start,
-            gdrive::auth::gdrive_auth_complete,
-            gdrive::auth::gdrive_auth_status,
-            gdrive::auth::gdrive_disconnect,
-            gdrive::sync::gdrive_sync_full,
-            gdrive::sync::migrate_gdrive_vault,
             // Vault location (mobile) + backup
             commands::vault::resolve_mobile_vault_path,
             commands::vault::export_vault_archive,
@@ -749,13 +740,6 @@ pub fn run() {
             whiteboards::update_whiteboard,
             whiteboards::delete_whiteboard,
             whiteboards::read_whiteboard,
-            // GDrive File Manager (OmniDrive — independent auth via Keychain)
-            gdrive::browse::is_gdrive_connected,
-            gdrive::browse::get_gdrive_user_info,
-            gdrive::browse::connect_gdrive,
-            gdrive::browse::connect_gdrive_complete,
-            gdrive::browse::disconnect_gdrive,
-            gdrive::browse::get_gdrive_files,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,

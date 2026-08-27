@@ -228,7 +228,7 @@ export interface WhiteboardMetadata {
 }
 
 // ──────────────────────────────────────────────
-// Google Drive Sync
+// Sync
 // ──────────────────────────────────────────────
 
 /// Mirrors `sync::core::types::SyncResult`. Every field is always present.

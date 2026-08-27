@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FolderOpen, FolderSync, X, Plus, Trash2, HardDrive, Camera, Cloud, Unlink, Bookmark,
+import { FolderOpen, FolderSync, X, Plus, Trash2, HardDrive, Camera, Bookmark,
   ImageIcon, Video, Music, Code, FileType, Copy, FilePlus2 } from 'lucide-vue-next';
 import type { useFileStore } from '../composables/useFileStore';
 
@@ -109,36 +109,6 @@ const catIcon = (t: string) => {
             {{ store.duplicateReport.value.total_groups }}
           </span>
         </button>
-      </div>
-
-      <!-- Cloud -->
-      <div>
-        <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 mb-2">{{ $t('file.cloud') }}</h3>
-        <button v-if="!store.isGDriveConnected.value" @click="store.connectGDrive"
-          class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all hover:bg-blue-50 dark:hover:bg-blue-500/10 text-blue-600 dark:text-blue-400 cursor-pointer">
-          <FolderSync v-if="store.isConnectingGDrive.value" class="w-4 h-4 animate-spin" />
-          <Cloud v-else class="w-4 h-4" />
-          {{ $t('file.gdrive_connect') }}
-        </button>
-        <div v-else class="group relative">
-          <button @click="store.activeSourceId.value = 'gdrive'; store.activeType.value = null; store.activeTag.value = null"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all cursor-pointer"
-            :class="store.activeSourceId.value === 'gdrive' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400'">
-            <Cloud class="w-4 h-4 shrink-0" />
-            <div class="flex flex-col items-start truncate pr-12">
-              <span class="font-medium truncate">Google Drive</span>
-              <span v-if="store.gdriveEmail.value" class="text-[10px] opacity-70 truncate">{{ store.gdriveEmail.value }}</span>
-            </div>
-          </button>
-          <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity">
-            <button @click.stop="store.syncGDrive" class="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-500 rounded-md cursor-pointer" :title="$t('file.gdrive_refresh')">
-              <FolderSync class="w-3.5 h-3.5" />
-            </button>
-            <button @click.stop="store.disconnectGDrive" class="p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md cursor-pointer" :title="$t('file.gdrive_disconnect')">
-              <Unlink class="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
       </div>
 
       <!-- Collections -->

@@ -2,10 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { isComposeUrl } from '../captureUrl';
 
 /**
- * The launcher shortcut fires this URL, and so will the desktop hotkey. It
- * shares a scheme with the Google Drive OAuth redirect and with capture URLs
- * that carry text, so being exact about which is which is what keeps a
- * shortcut from swallowing a sign-in.
+ * The launcher shortcut fires this URL, and so will the desktop hotkey. The
+ * `com.synabit.app` scheme also carries capture URLs holding text, so being
+ * exact about which is which is what keeps a shortcut from swallowing a cap.
  */
 describe('isComposeUrl', () => {
   it('recognises the URL the launcher shortcut fires', () => {

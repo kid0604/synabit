@@ -247,9 +247,9 @@ export function useFileStore(vaultPath: () => string) {
   /** Put the list back into the state a collection describes. */
   const applyCollection = (collection: { filter: Record<string, unknown> }) => {
     const f = collection.filter as Record<string, string | null>;
-    activeSourceId.value = f.sourceKind === 'gdrive'
-      ? 'gdrive'
-      : sources.value.find(s => s.path === f.sourcePath)?.id ?? null;
+    // A collection saved while Google Drive existed names a source that no
+    // longer resolves; it falls back to no source rather than to nothing at all.
+    activeSourceId.value = sources.value.find(s => s.path === f.sourcePath)?.id ?? null;
     activeTag.value = f.tag ?? null;
     activeCamera.value = f.camera ?? null;
     activeLabel.value = f.label ?? null;
@@ -272,72 +272,6 @@ export function useFileStore(vaultPath: () => string) {
   // Metadata only. What comes back is a listing, not a download: a Drive full
   // of holiday video is not something to copy onto a laptop because it appeared
   // in a list. Opening a cloud file opens its page.
-  const isGDriveConnected = ref(false);
-  const gdriveEmail = ref('');
-  const isConnectingGDrive = ref(false);
-  const gdriveFileCount = ref(0);
-
-  const checkGDriveStatus = async () => {
-    try {
-      isGDriveConnected.value = await invoke<boolean>('is_gdrive_connected', { vaultPath: vaultPath() });
-      if (isGDriveConnected.value) {
-        gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: vaultPath() });
-      }
-    } catch (e) {
-      logger.error("Failed to check Drive status", e);
-    }
-  };
-
-  const syncGDrive = async () => {
-    if (!isGDriveConnected.value) return;
-    isScanning.value = true;
-    try {
-      gdriveFileCount.value = await invoke<number>('get_gdrive_files', { vaultPath: vaultPath() });
-      await fetchFiles();
-    } catch (e) {
-      logger.error("Drive listing failed", e);
-      await message(String(e), { title: 'Google Drive', kind: 'error' });
-    } finally {
-      isScanning.value = false;
-    }
-  };
-
-  const connectGDrive = async () => {
-    if (isConnectingGDrive.value) return;
-    isConnectingGDrive.value = true;
-    try {
-      const response = await invoke<string>('connect_gdrive', { vaultPath: vaultPath() });
-      // The browser flow finishes through a deep link, not here.
-      if (response !== 'SUCCESS') return;
-      isGDriveConnected.value = true;
-      gdriveEmail.value = await invoke<string>('get_gdrive_user_info', { vaultPath: vaultPath() });
-      await syncGDrive();
-    } catch (e) {
-      logger.error("Failed to connect Drive", e);
-      await message(String(e), { title: 'Google Drive', kind: 'error' });
-    } finally {
-      isConnectingGDrive.value = false;
-    }
-  };
-
-  const disconnectGDrive = async () => {
-    const confirmed = await ask(t('file.gdrive_disconnect_body'), {
-      title: t('file.gdrive_disconnect_title'),
-      kind: 'warning',
-      okLabel: t('file.gdrive_disconnect'),
-      cancelLabel: t('file.cancel'),
-    });
-    if (!confirmed) return;
-    try {
-      await invoke('disconnect_gdrive', { vaultPath: vaultPath() });
-      isGDriveConnected.value = false;
-      gdriveEmail.value = '';
-      if (activeSourceId.value === 'gdrive') activeSourceId.value = null;
-      await fetchFiles();
-    } catch (e) {
-      logger.error("Failed to disconnect Drive", e);
-    }
-  };
 
   // ─── Sources & Files ───────────────────────────────────────
   const fetchSources = async () => {
@@ -739,8 +673,8 @@ export function useFileStore(vaultPath: () => string) {
     const tagQuery = query.startsWith('#') ? query.slice(1).toLowerCase() : null;
 
     return {
-      sourcePath: activeSourceId.value && activeSourceId.value !== 'gdrive' ? source?.path ?? null : null,
-      sourceKind: activeSourceId.value === 'gdrive' ? 'gdrive' : null,
+      sourcePath: activeSourceId.value ? source?.path ?? null : null,
+      sourceKind: null,
       extensions: activeType.value ? extensionsForGroup(activeType.value) : null,
       tag: tagQuery || activeTag.value,
       camera: activeCamera.value,
@@ -982,7 +916,6 @@ export function useFileStore(vaultPath: () => string) {
     await watchTextProgress();
     await fetchSources();
     void watchSourceFolders();
-    void checkGDriveStatus();
     void fetchCameras();
     void fetchCollections();
     await syncAllSources(); // index sources + fetch files
@@ -1012,8 +945,6 @@ export function useFileStore(vaultPath: () => string) {
     // Cameras
     cameras, fetchCameras,
     // A connected account
-    isGDriveConnected, gdriveEmail, isConnectingGDrive, gdriveFileCount,
-    connectGDrive, syncGDrive, disconnectGDrive,
     // Sources
     fetchSources, fetchFiles, syncAllSources, addNewSource, removeSource, importFiles, importPaths, importDroppedFiles,
     // File ops

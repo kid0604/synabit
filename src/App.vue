@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -18,13 +18,11 @@ const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2
 const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
-const GDriveMigrationModal = defineAsyncComponent(() => import('./shared/components/GDriveMigrationModal.vue'));
 const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
 const VaultBackupNotice = defineAsyncComponent(() => import('./shared/components/VaultBackupNotice.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
-import { useGDrive } from './composables/useGDrive';
 import { useSync } from './composables/useSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
@@ -241,17 +239,6 @@ watch(activeTool, (newTool) => {
 const floatingNoteId = ref<string | null>(null);
 const isFloatingView = ref(false);
 
-// ─── GDrive ─────────────────────────────────────────────────
-const gdrive = useGDrive(vaultPath, vaultType);
-const showGDriveMigrationModal = ref(false);
-
-const handleGDriveMigrated = async (newPath: string) => {
-    showGDriveMigrationModal.value = false;
-    await appStore.setVaultPath(newPath, 'local');
-
-    invoke('start_vault_watcher', { vaultPath: newPath }).catch(logger.error);
-    syncState.sync();
-};
 
 /**
  * How many caps are waiting to be turned into something.
@@ -323,7 +310,6 @@ useBackGuard(showLicenseModal, () => { showLicenseModal.value = false; });
 useBackGuard(showSetupPinModal, () => { showSetupPinModal.value = false; });
 const hiddenAppsGuard = useBackGuard(showHiddenAppsMenu, () => { showHiddenAppsMenu.value = false; });
 useBackGuard(showSyncConflicts, () => { showSyncConflicts.value = false; });
-useBackGuard(showGDriveMigrationModal, () => { showGDriveMigrationModal.value = false; });
 
 /**
  * Open an app the sidebar is not showing.
@@ -709,15 +695,10 @@ onMounted(async () => {
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
 
-  gdrive.checkGDriveAuth();
-  
   if (activeSyncProvider.value === 'server' && appStore.syncServerAddr) {
       invoke('sync_connect', { serverAddr: appStore.syncServerAddr, serverIdHex: appStore.syncServerIdHex }).catch(logger.error);
   }
 
-  if (vaultType.value === 'gdrive') {
-      showGDriveMigrationModal.value = true;
-  }
 
   // Anything that creates or retires a cap moves this number.
   bus.on('node:created', () => void refreshQuickCapCount());
@@ -927,19 +908,8 @@ onUnmounted(() => {
                 </div>
               </button>
               
-              <button @click="gdrive.connectGDrive()" :disabled="gdrive.gdriveAuthLoading.value" class="group flex flex-col items-center gap-3 p-6 w-48 rounded-2xl border-2 border-border dark:border-[#333] hover:border-blue-500 dark:hover:border-blue-400 bg-surface dark:bg-surface-dark transition-all hover:shadow-lg active:scale-[0.98] cursor-pointer disabled:opacity-60 disabled:pointer-events-none">
-                <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center group-hover:bg-blue-100 dark:group-hover:bg-blue-900/50 transition-colors">
-                  <Cloud v-if="!gdrive.gdriveAuthLoading.value" class="w-6 h-6 text-blue-500" />
-                  <RefreshCw v-else class="w-6 h-6 text-blue-500 animate-spin" />
-                </div>
-                <div>
-                  <p class="font-semibold text-sm">Google Drive</p>
-                  <p class="text-[11px] text-gray-400 mt-1">Sync across devices</p>
-                </div>
-              </button>
             </div>
             
-            <p v-if="gdrive.gdriveSyncError.value" class="text-red-500 text-xs px-4">{{ gdrive.gdriveSyncError.value }}</p>
         </div>
     </div>
 
@@ -1052,12 +1022,6 @@ onUnmounted(() => {
              
              <!-- Settings & Sync bottom icons for desktop -->
              <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
-                <button v-if="activeSyncProvider === 'gdrive'" @click="syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : gdrive.gdriveConnected.value ? 'text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `Last sync: ${appStore.syncLastSuccessful}` : 'Sync with Google Drive'">
-                   <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
-                   <CloudOff v-else-if="syncState.syncError.value" class="w-5 h-5" />
-                   <Cloud v-else class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
-                </button>
                 <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
                    <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
@@ -1100,11 +1064,6 @@ onUnmounted(() => {
             <!-- Conflict Toast -->
             <SyncConflictToast />
 
-            <!-- GDrive Migration Modal -->
-            <GDriveMigrationModal 
-              :show="showGDriveMigrationModal" 
-              @migrated="handleGDriveMigrated" 
-            />
         </div>
 
 
@@ -1114,8 +1073,6 @@ onUnmounted(() => {
             :vault-path="vaultPath"
             :vault-type="vaultType"
             :active-sync-provider="activeSyncProvider"
-            :gdrive-connected="gdrive.gdriveConnected.value"
-            :gdrive-auth-loading="gdrive.gdriveAuthLoading.value"
             :syncing="syncState.isSyncing.value"
             :sync-error="syncState.syncError.value"
             :last-sync-time="appStore.syncLastSuccessful"
@@ -1125,8 +1082,6 @@ onUnmounted(() => {
             :sync-server-id-hex="appStore.syncServerIdHex"
             @clear-vault="clearVault"
             @sync-now="syncState.sync()"
-            @connect-gdrive="gdrive.connectGDrive()"
-            @disconnect-gdrive="gdrive.disconnectGDrive()"
             @connect-server="(addr: string, id: string) => { appStore.syncServerAddr = addr; appStore.syncServerIdHex = id; invoke('sync_connect', { serverAddr: addr, serverIdHex: id }).then(() => appStore.activeSyncProvider = 'server').catch(logger.error); }"
             @disconnect-server="() => { invoke('sync_disconnect').then(() => appStore.activeSyncProvider = 'none').catch(logger.error); }"
             @update:auto-sync-enabled="appStore.syncAutoEnabled = $event"

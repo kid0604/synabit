@@ -3,7 +3,6 @@ use crate::sync::core::types::SyncOperation;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub mod gdrive;
 pub mod server;
 
 /// Core adapter trait — mọi sync target phải implement
@@ -219,9 +218,6 @@ mod tests {
     fn test_provider_ids_are_stable() {
         let dummy = DummyOpaqueAdapter;
         assert_eq!(dummy.adapter_id(), "dummy_id");
-
-        let gdrive = gdrive::GoogleDriveAdapter::for_testing_dummy();
-        assert_eq!(gdrive.adapter_id(), "gdrive");
     }
 
     #[tokio::test]

@@ -39,7 +39,6 @@ To operate the service and prevent abuse, the App transmits the following metada
 
 Depending on the features you use and the platform you are on, the App communicates with the following third-party processors:
 
-- **Google APIs (Optional)**: If you voluntarily connect Google Drive for vault sync, OAuth tokens are stored securely on your device. Your data travels directly between your device and Google's servers. We do not proxy or intercept this data.
 - **Mapping Providers (Optional)**: If you use map, geolocation, or routing features, your IP address and requested geographic coordinates are sent to OpenStreetMap (OSM), OSRM, or Nominatim to render map tiles and calculate routes.
 - **GitHub (Desktop Only)**: The desktop application checks GitHub for application updates, which exposes your IP address to GitHub's servers during the check.
 - **Payment Processors**: If you purchase a subscription, payments are processed by third parties (e.g., Stripe, Apple, Google). We do not store your payment details.
@@ -65,7 +64,6 @@ Because Synabit does not require a traditional user account to function, the del
 
 - **Your Local Content**: Stored entirely on your device. Delete your vault folder to remove all content.
 - **App Data & Settings**: Uninstall the App to remove all local cached data, search indices, and settings.
-- **Google Drive Tokens**: Disconnect from the App settings, or revoke access from your [Google Account security page](https://myaccount.google.com/permissions).
 - **License & Device Records**: We retain your hashed Hardware ID, Device Name, and associated license status on our license server to manage your subscription. To request the permanent deletion of your license records, please contact us at **privacy@synabit.net** with your License Key.
 
 ## 6. Children's Privacy
@@ -74,7 +72,7 @@ Synabit is not directed at children under 13. We do not knowingly collect inform
 
 ## 7. International Users
 
-If you use Google Drive sync or Mapping features, your data is subject to those providers' own privacy practices and data processing locations. Metadata processed by our servers (`sync.synabit.net` and `license.synabit.net`) may be transferred to and processed in regions outside your country of residence.
+If you use Mapping features, your data is subject to those providers' own privacy practices and data processing locations. Metadata processed by our servers (`sync.synabit.net` and `license.synabit.net`) may be transferred to and processed in regions outside your country of residence.
 
 ## 8. Changes to This Policy
 
@@ -89,4 +87,4 @@ If you have questions or deletion requests regarding this Privacy Policy:
 
 ---
 
-*This Privacy Policy is provided in compliance with the Google API Services User Data Policy, Google Play Developer Policies, and applicable data protection regulations.*
+*This Privacy Policy is provided in compliance with the Google Play Developer Policies and applicable data protection regulations.*

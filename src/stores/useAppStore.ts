@@ -5,7 +5,7 @@ import { load, Store } from '@tauri-apps/plugin-store';
 export const useAppStore = defineStore('app', () => {
   // Vault & Sync
   const vaultPath = ref<string>('');
-  const vaultType = ref<'local' | 'gdrive'>('local');
+  const vaultType = ref<'local'>('local');
   const taskArchiveDays = ref<number>(30);
   /**
    * How much a task delete asks before it happens.
@@ -47,7 +47,7 @@ export const useAppStore = defineStore('app', () => {
     const appLanguage = ref<'en' | 'vi'>('en');
     
     // Unified Sync Settings
-    const activeSyncProvider = ref<'none' | 'local' | 'gdrive' | 'server'>('none');
+    const activeSyncProvider = ref<'none' | 'local' | 'server'>('none');
     const syncAutoEnabled = ref<boolean>(true);
     const syncAutoInterval = ref<number>(5);
     const syncLastAttempted = ref<string>('');
@@ -72,7 +72,12 @@ export const useAppStore = defineStore('app', () => {
       
       // Read values
       vaultPath.value = (await storeInstance.get('vaultPath') as string) || '';
-      vaultType.value = (await storeInstance.get('vaultType') as 'local' | 'gdrive') || 'local';
+      // A vault saved as 'gdrive' by an older build becomes a plain local one.
+      // Nothing moves: that setting only ever named which sync ran over the
+      // folder, and the folder is an ordinary directory the user chose. Google
+      // Drive is gone, so the files simply stop being synced — they do not stop
+      // being theirs, and they stay exactly where they are.
+      vaultType.value = 'local';
       
       themeMode.value = (await storeInstance.get('themeMode') as 'light' | 'dark' | 'system') || 'system';
       
@@ -129,7 +134,6 @@ export const useAppStore = defineStore('app', () => {
       const hasOldProvider = await storeInstance.has('activeSyncProvider');
       if (!hasOldProvider) {
         // Assume default provider logic based on old config presence
-        const hasGDrive = await storeInstance.has('gdriveLastSyncTime');
         const hasP2P = await storeInstance.has('p2pServerAddr');
         
         if (hasP2P) {
@@ -151,19 +155,10 @@ export const useAppStore = defineStore('app', () => {
           const p2pCellPolicy = await storeInstance.get('p2pCellularPolicy');
           if (p2pCellPolicy) syncCellularPolicy.value = p2pCellPolicy as any;
           
-        } else if (hasGDrive) {
-          activeSyncProvider.value = 'gdrive';
-          
-          // Migrate GDrive settings
-          const autoSync = await storeInstance.get('gdriveAutoSyncEnabled');
-          if (autoSync !== null) syncAutoEnabled.value = autoSync as boolean;
-          const syncInt = await storeInstance.get('gdriveAutoSyncInterval');
-          if (syncInt) syncAutoInterval.value = Number(syncInt);
-          const lastAtt = await storeInstance.get('syncLastAttempted');
-          const lastSucc = await storeInstance.get('syncLastSuccessful');
-          if (lastAtt) syncLastAttempted.value = lastAtt as string;
-          if (lastSucc) syncLastSuccessful.value = lastSucc as string;
         } else {
+          // An install that used to sync over Drive lands here rather than in a
+          // branch of its own, and ends up with no sync provider. That is the
+          // honest outcome: the provider it had no longer exists.
           activeSyncProvider.value = 'none';
         }
         didMigrate = true;
@@ -298,7 +293,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   // Setters wrapper that automatically persist to Tauri Store
-  async function setVaultPath(path: string, type: 'local' | 'gdrive') {
+  async function setVaultPath(path: string, type: 'local') {
     vaultPath.value = path;
     vaultType.value = type;
     if (storeInstance) {

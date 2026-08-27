@@ -13,7 +13,7 @@ By downloading, installing, or using the App, you agree to be bound by these Ter
 
 ## 2. Description of Service
 
-Synabit is a local-first productivity workspace that includes note-taking, task management, calendar, file management, and other productivity tools. The App stores your data locally on your device, with optional Google Drive synchronization.
+Synabit is a local-first productivity workspace that includes note-taking, task management, calendar, file management, and other productivity tools. The App stores your data locally on your device, with optional end-to-end encrypted synchronization between your own devices.
 
 ## 3. Account & Subscription
 
@@ -72,21 +72,7 @@ The App, including its source code, design, documentation, trademarks, and brand
 
 You retain all rights to the content you create using the App. We do not claim any ownership over your notes, tasks, files, or other data. Your content is stored locally on your device and is not accessible to us.
 
-## 6. Google Drive Integration
-
-### 6.1 Third-Party Service
-
-Google Drive integration is provided as a convenience feature. Your use of Google Drive is subject to Google's own Terms of Service and Privacy Policy.
-
-### 6.2 Data Responsibility
-
-You are responsible for the data you sync to Google Drive. We are not responsible for data loss, corruption, or unauthorized access resulting from Google Drive service issues.
-
-### 6.3 Sync Conflicts
-
-The App includes conflict resolution for sync operations. However, we do not guarantee zero data loss in all edge cases. We recommend maintaining local backups of important data.
-
-## 7. Disclaimers
+## 6. Disclaimers
 
 ### 7.1 "AS IS" Basis
 
@@ -100,31 +86,31 @@ We do not guarantee that the App will be error-free, uninterrupted, or free of h
 
 WHILE WE DESIGN THE APP TO HANDLE YOUR DATA WITH CARE, WE ARE NOT RESPONSIBLE FOR ANY DATA LOSS RESULTING FROM SOFTWARE BUGS, DEVICE FAILURES, OR USER ERROR. YOU ARE SOLELY RESPONSIBLE FOR MAINTAINING BACKUPS OF YOUR DATA.
 
-## 8. Limitation of Liability
+## 7. Limitation of Liability
 
 TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL SYNABIT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, DATA, USE, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF THE APP.
 
 OUR TOTAL LIABILITY FOR ANY CLAIM ARISING FROM THESE TERMS OR YOUR USE OF THE APP SHALL NOT EXCEED THE AMOUNT YOU PAID TO US IN THE 12 MONTHS PRECEDING THE CLAIM.
 
-## 9. Modifications
+## 8. Modifications
 
 We reserve the right to modify these Terms at any time. We will provide notice of material changes through the App or via email. Your continued use of the App after such changes constitutes acceptance of the modified Terms.
 
-## 10. Termination
+## 9. Termination
 
 - We may suspend or terminate your access to the App if you violate these Terms.
 - Upon termination, your right to use the distributed version of the App ceases.
 - Your locally stored data remains on your device and is not affected by termination.
 
-## 11. Governing Law
+## 10. Governing Law
 
 These Terms shall be governed by and construed in accordance with the laws of Vietnam, without regard to its conflict of law provisions.
 
-## 12. Dispute Resolution
+## 11. Dispute Resolution
 
 Any disputes arising from these Terms shall first be attempted to be resolved through good-faith negotiation. If negotiation fails, disputes shall be submitted to the competent courts of Vietnam.
 
-## 13. Contact
+## 12. Contact
 
 For questions about these Terms:
 

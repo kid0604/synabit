@@ -83,17 +83,6 @@ jobs:
 
       - name: Rust tests
         working-directory: src-tauri
-        env:
-          # Placeholders, deliberately not secrets. gdrive/mod.rs resolves these
-          # with `env!`, so the crate does not compile without them and a fresh
-          # checkout has no .env — it is ignored. Nothing under test calls
-          # Google, so the values only have to exist and be non-empty.
-          #
-          # Hard-coding them also keeps this job working for a pull request from
-          # a fork, which is given no secrets at all. The real credentials are
-          # needed only where a shippable artifact is produced, in the aab job.
-          SYNABIT_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
-          SYNABIT_GOOGLE_CLIENT_SECRET: ci-placeholder
         run: cargo test --lib
 
       # The protocol crate lives in its own workspace, so `cargo test` from the
@@ -165,29 +154,7 @@ jobs:
           EOF
 
       - name: Build AAB
-        env:
-          # The Android client is the one that matters here: the mobile flow
-          # redirects to a custom scheme, which Google accepts only from a
-          # client of type Android. Absent, the build fails outright rather
-          # than producing an AAB whose Drive integration is dead on arrival —
-          # see the comment on CLIENT_ID in src-tauri/src/gdrive/mod.rs.
-          #
-          # Its fingerprint must be the Play App Signing key, not the upload
-          # key, or Drive works when sideloaded and fails once Play re-signs.
-          SYNABIT_ANDROID_CLIENT_ID: ${{ secrets.SYNABIT_ANDROID_CLIENT_ID }}
-          # Still read by the desktop-only arms of gdrive/, which are compiled
-          # out here but must exist for the crate to build.
-          SYNABIT_GOOGLE_CLIENT_ID: ${{ secrets.SYNABIT_GOOGLE_CLIENT_ID }}
-          SYNABIT_GOOGLE_CLIENT_SECRET: ${{ secrets.SYNABIT_GOOGLE_CLIENT_SECRET }}
         run: |
-          # Checked here as well as in Rust, only because the Rust error
-          # arrives several minutes into the build and this one arrives now.
-          # An unset secret expands to an empty string, so -z is the test that
-          # matters; `env!` alone would accept it.
-          if [ -z "$SYNABIT_ANDROID_CLIENT_ID" ]; then
-            echo "::error::SYNABIT_ANDROID_CLIENT_ID is not set. Android needs its own Google OAuth client (type: Android), registered against the Play App Signing fingerprint. See .env.example."
-            exit 1
-          fi
           # Resolve the NDK from whichever variable the setup action exported.
           export NDK_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk/27.1.12297006"
           test -d "$NDK_HOME" || { echo "::error::NDK not found at $NDK_HOME"; exit 1; }

@@ -6,7 +6,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { logger } from '../utils/logger';
 import { usePlatform } from './usePlatform';
 
-export type SyncAdapterId = 'none' | 'local' | 'gdrive' | 'server';
+export type SyncAdapterId = 'none' | 'local' | 'server';
 export type SyncTriggerReason = 'manual' | 'server_push' | 'periodic_timer' | 'app_foreground' | 'initial_connect' | 'watcher_create_delete' | 'watcher_modified' | 'queued_retry';
 
 export type SyncPhase = 'checking' | 'pulling' | 'applying' | 'pushing' | 'assets' | 'complete' | 'error';
@@ -213,16 +213,13 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       }, 60000);
     });
 
-    // Each provider has its own registered command; there is no single
-    // dispatching command on the Rust side.
-    const syncPromise =
-      vType === 'gdrive'
-        ? invoke<SyncResult>('gdrive_sync_full', { vaultPath: vPath })
-        : invoke<SyncResult>('sync_full', {
-            vaultPath: vPath,
-            isCellular,
-            triggerReason,
-          });
+    // One command now that Drive is gone. It used to branch on the provider
+    // because Drive had a sync entry point of its own.
+    const syncPromise = invoke<SyncResult>('sync_full', {
+      vaultPath: vPath,
+      isCellular,
+      triggerReason,
+    });
 
     const result = await Promise.race([syncPromise, timeoutPromise]);
     

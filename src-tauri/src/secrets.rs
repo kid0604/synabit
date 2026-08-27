@@ -10,7 +10,12 @@ pub struct AppSecrets {
     pub e2ee_password: Option<String>, // KEEP for migration
     #[serde(default)]
     pub e2ee_key: Option<String>, // NEW: base64-encoded 32-byte key
+    /// Google Drive's OAuth tokens and sync config, kept as fields so that an
+    /// existing secrets blob still deserializes after Drive was removed. Never
+    /// read, never written; they fall away the next time secrets are saved.
+    #[serde(default, skip_serializing)]
     pub global_sync_config: Option<String>,
+    #[serde(default, skip_serializing)]
     pub vault_tokens: HashMap<String, String>,
     #[serde(default)]
     pub app_lock_hash: Option<String>, // Argon2id PHC hash string
@@ -364,77 +369,11 @@ impl SecretManager {
         Self::get_e2ee_key(app_handle).is_some()
     }
 
-    // ──────────────────────────────────────────────
-    // Vault Sync Config
-    // ──────────────────────────────────────────────
-    pub fn get_vault_sync_config(app_handle: Option<&tauri::AppHandle>) -> Option<String> {
-        Self::load_secrets(app_handle).global_sync_config
-    }
 
-    pub fn set_vault_sync_config(
-        app_handle: Option<&tauri::AppHandle>,
-        config: String,
-    ) -> Result<(), String> {
-        let mut secrets = Self::load_secrets(app_handle);
-        secrets.global_sync_config = Some(config);
-        Self::save_secrets(app_handle, &secrets)
-    }
 
-    pub fn clear_vault_sync_config(app_handle: Option<&tauri::AppHandle>) -> Result<(), String> {
-        let mut secrets = Self::load_secrets(app_handle);
-        secrets.global_sync_config = None;
-        Self::save_secrets(app_handle, &secrets)
-    }
 
-    // ──────────────────────────────────────────────
-    // Vault Tokens (GDrive OAuth)
-    // ──────────────────────────────────────────────
-    pub fn get_vault_token(
-        app_handle: Option<&tauri::AppHandle>,
-        key: &str,
-        vault_path: &str,
-    ) -> Option<String> {
-        let map_key = format!(
-            "{}_{}",
-            key,
-            vault_path.replace("/", "_").replace("\\\\", "_")
-        );
-        Self::load_secrets(app_handle)
-            .vault_tokens
-            .get(&map_key)
-            .cloned()
-    }
 
-    pub fn set_vault_token(
-        app_handle: Option<&tauri::AppHandle>,
-        key: &str,
-        vault_path: &str,
-        token: String,
-    ) -> Result<(), String> {
-        let mut secrets = Self::load_secrets(app_handle);
-        let map_key = format!(
-            "{}_{}",
-            key,
-            vault_path.replace("/", "_").replace("\\\\", "_")
-        );
-        secrets.vault_tokens.insert(map_key, token);
-        Self::save_secrets(app_handle, &secrets)
-    }
 
-    pub fn delete_vault_token(
-        app_handle: Option<&tauri::AppHandle>,
-        key: &str,
-        vault_path: &str,
-    ) -> Result<(), String> {
-        let mut secrets = Self::load_secrets(app_handle);
-        let map_key = format!(
-            "{}_{}",
-            key,
-            vault_path.replace("/", "_").replace("\\\\", "_")
-        );
-        secrets.vault_tokens.remove(&map_key);
-        Self::save_secrets(app_handle, &secrets)
-    }
 
     // ──────────────────────────────────────────────
     // App Lock
