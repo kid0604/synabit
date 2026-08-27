@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
+import { routeForNode } from '../../shared/nodeRoutes';
 import { Loader2, Settings, Download, ChevronLeft, Zap } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
@@ -23,27 +24,28 @@ const emit = defineEmits(['open-node']);
 const { t } = useI18n();
 
 const handleOpenSource = (source: { id: string; title: string; node_type: string }) => {
-  const typeMap: Record<string, string> = {
-    note: 'note',
-    task: 'task',
-    event: 'calendar',
-    quickcap: 'quickcap',
-    person: 'person',
-    finance_month: 'finance_month',
-    whiteboard: 'whiteboard',
-    feed_source: 'feed_source',
-    project: 'project',
-  };
-  const mappedType = typeMap[source.node_type] || 'note';
-  emit('open-node', source.id, mappedType);
+  const route = routeForNode(source.node_type, source.id);
+  if (!route) {
+    logger.warn(`MessagesApp: no app owns node type '${source.node_type}' (${source.id})`);
+    return;
+  }
+  emit('open-node', source.id, route);
 };
 
 const handleNotificationAction = (notification: any) => {
   const targetId = notification.content?.metadata?.target_id;
-  const targetType = notification.content?.metadata?.target_type || 'note';
-  if (targetId) {
-    emit('open-node', targetId, targetType);
+  if (!targetId) return;
+
+  // `target_type` is written by `chat_engine.rs`. Notifications already sitting
+  // in the vault from before it was have only the id, so the path stands in —
+  // a task lives under `Tasks/`. What this must not do is fall back to `note`,
+  // which is what sent every task and event reminder into the note editor.
+  const route = routeForNode(notification.content?.metadata?.target_type, targetId);
+  if (!route) {
+    logger.warn(`MessagesApp: notification points at '${targetId}' with no usable type`);
+    return;
   }
+  emit('open-node', targetId, route);
 };
 
 // Composables
@@ -64,7 +66,6 @@ const {
   pullingModel,
   pullProgress,
   pullError,
-  isPolling,
   checkStatus,
   fetchModels,
   pullModel,
@@ -397,6 +398,7 @@ defineExpose({ refresh, fetchNotifications });
                   :format-size="formatModelSize"
                   :pulling-model="pullingModel"
                   :pull-progress="pullProgress"
+                  :pull-error="pullError"
                   @pull-model="handlePullModel"
                 />
 

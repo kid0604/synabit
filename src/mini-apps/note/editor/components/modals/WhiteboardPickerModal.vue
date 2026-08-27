@@ -26,7 +26,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <div v-if="show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[420px] max-w-[95vw] max-h-[520px] flex flex-col overflow-hidden" @keydown.esc="emit('close')">
+      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[95vw] max-w-[420px] max-w-[95vw] max-h-[520px] flex flex-col overflow-hidden" @keydown.esc="emit('close')">
         <!-- Header -->
         <div class="flex items-center gap-2 p-4 pb-0">
           <PenToolIcon class="w-4 h-4 text-violet-500" />

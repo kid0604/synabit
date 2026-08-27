@@ -1537,3 +1537,668 @@ async fn a_hostile_entry_does_not_stop_the_healthy_ones_behind_it() {
         settled.errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// Frontmatter under a text CRDT
+// ---------------------------------------------------------------------------
+
+const TASK: &str = "Tasks/probe.md";
+
+fn task_file(status: &str, due: &str) -> String {
+    format!("---\ntitle: Probe\ntype: task\nstatus: {status}\npriority: P3\ndue_date: {due}\n---\nthe body\n")
+}
+
+fn frontmatter_field(text: &str, key: &str) -> Option<String> {
+    gray_matter::Matter::<gray_matter::engine::YAML>::new()
+        .parse::<serde_json::Value>(text)
+        .ok()
+        .and_then(|p| p.data)
+        .and_then(|d| d.get(key).and_then(|v| v.as_str()).map(str::to_string))
+}
+
+/// Two fields, two devices, no overlap. This is the case the text CRDT is
+/// good at, and it is worth pinning: any move to a field-level document must
+/// keep it working, not merely fix the case below.
+#[tokio::test]
+async fn two_devices_editing_different_fields_keep_both_edits() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(TASK, &task_file("todo", "2026-08-01"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // A finishes it; B, not having seen that, pushes the date out.
+    a.write(TASK, &task_file("done", "2026-08-01"));
+    b.write(TASK, &task_file("todo", "2026-09-15"));
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let merged = a.read(TASK).expect("A has the task");
+    assert_eq!(merged, b.read(TASK).expect("B has the task"), "devices disagree");
+    assert_eq!(frontmatter_field(&merged, "status").as_deref(), Some("done"));
+    assert_eq!(frontmatter_field(&merged, "due_date").as_deref(), Some("2026-09-15"));
+}
+
+/// One field, two devices, two different values.
+///
+/// This used to be a known defect. The whole file lived in one `LoroText`, so
+/// a merge was character-level, and two devices editing the same frontmatter
+/// line did not resolve to one value — their characters interleaved. `done`
+/// against `in_progress` came out as `in_pronegress`: valid YAML, meaning
+/// nothing, and the task appeared in a column nobody put it in.
+///
+/// Frontmatter now lives in a `LoroMap`, one entry per field, where concurrent
+/// writes resolve to one of them. See `sync/core/node_document.rs`.
+///
+/// The assertion is deliberately loose about *which* side wins. That is the
+/// CRDT's business and depends on peer ids; what matters is that the answer is
+/// one of the two values a device actually wrote.
+#[tokio::test]
+async fn two_devices_editing_the_same_field_resolve_to_one_of_the_two_values() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(TASK, &task_file("todo", "2026-08-01"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(TASK, &task_file("done", "2026-08-01"));
+    b.write(TASK, &task_file("in_progress", "2026-08-01"));
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let merged = a.read(TASK).expect("A has the task");
+    let status = frontmatter_field(&merged, "status");
+    assert!(
+        matches!(status.as_deref(), Some("done") | Some("in_progress")),
+        "the merge invented a status neither device wrote: {status:?}\n{merged}"
+    );
+}
+
+/// A vault written before the frontmatter moved out of the text.
+///
+/// The migration has to be able to happen on any device at any time without
+/// coordination, because there is no version in `DocSyncPayload` to coordinate
+/// with. What makes that safe is that migrating is a *deletion* from the text
+/// plus a map write, and both are idempotent under concurrency: two devices
+/// stripping the same frontmatter block independently both arrive at the body,
+/// where two devices *inserting* the same repair would arrive at it twice.
+#[tokio::test]
+async fn a_document_written_the_old_way_still_reads_and_syncs() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(TASK, &task_file("todo", "2026-08-01"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let arrived = b.read(TASK).expect("B has the task");
+    assert_eq!(frontmatter_field(&arrived, "status").as_deref(), Some("todo"));
+    assert!(arrived.contains("the body"), "the body was lost:\n{arrived}");
+}
+
+/// The body still merges the way prose should.
+///
+/// Splitting the document must not cost the thing the text CRDT was there for:
+/// two devices adding a line each still end up with both lines.
+#[tokio::test]
+async fn splitting_the_document_does_not_cost_the_body_merge() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(TASK, &task_file("todo", "2026-08-01"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(TASK, &task_file("todo", "2026-08-01").replace("the body", "the body\nfrom A"));
+    b.write(TASK, &task_file("todo", "2026-08-01").replace("the body", "the body\nfrom B"));
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let merged = a.read(TASK).expect("A has the task");
+    assert_eq!(merged, b.read(TASK).expect("B has the task"), "devices disagree");
+    for line in ["from A", "from B"] {
+        assert!(merged.contains(line), "the body merge lost '{line}':\n{merged}");
+    }
+}
+
+/// Syncing an unchanged file must not rewrite it.
+///
+/// The frontmatter is rebuilt from the map on every read, so if the rebuild
+/// disagreed with what is on disk by so much as a key order, every device would
+/// see a change, publish it, and receive the other's — a loop with no user in
+/// it. This pins that a round trip through the split document is a no-op.
+#[tokio::test]
+async fn a_quiet_file_is_not_rewritten_by_syncing() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(TASK, &task_file("todo", "2026-08-01"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let settled = b.read(TASK).expect("B has the task");
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+    assert_eq!(b.read(TASK).as_deref(), Some(settled.as_str()), "syncing kept rewriting a file nobody touched");
+    assert_eq!(a.read(TASK).as_deref(), Some(settled.as_str()), "the two devices settled on different bytes");
+}
+
+// ---------------------------------------------------------------------------
+// Whiteboards
+// ---------------------------------------------------------------------------
+
+const BOARD: &str = "Whiteboards/plan.whiteboard.json";
+
+/// A board file as the whiteboard app writes one, reduced to the parts sync
+/// looks at: the stamp it resolves conflicts by, and something to tell two
+/// versions apart.
+fn board_file(stamp: &str, label: &str) -> String {
+    format!(
+        r#"{{
+  "title": "Plan",
+  "tags": [],
+  "created_at": "2026-01-01T00:00:00.000Z",
+  "metadata": {{ "updated_at": "{stamp}" }},
+  "viewport": {{ "x": 0, "y": 0, "zoom": 1 }},
+  "nodes": [
+    {{ "id": "n1", "type": "text", "position": {{ "x": 0, "y": 0 }}, "data": {{ "label": "{label}" }} }}
+  ],
+  "edges": []
+}}"#
+    )
+}
+
+/// A board is not text, so it cannot be merged: one of the two versions wins
+/// whole. Which one is decided by `metadata.updated_at`, and boards did not
+/// write one — so both sides read as the empty string, `remote >= local` held,
+/// and the copy that arrived replaced the copy that was here no matter which
+/// was newer. This pins that the later edit survives regardless of who pulls
+/// last.
+#[tokio::test]
+async fn the_later_edit_of_a_board_survives_whichever_device_pulls_last() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(BOARD, &board_file("2026-01-01T00:00:00.000Z", "seed"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // B edits first and publishes; A edits afterwards and publishes second,
+    // so A's copy is the newer of the two on every measure.
+    b.write(BOARD, &board_file("2026-01-01T00:00:10.000Z", "from B"));
+    b.sync_ok().await;
+
+    a.write(BOARD, &board_file("2026-01-01T00:00:20.000Z", "from A"));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let a_board = a.read(BOARD).expect("A has the board");
+    let b_board = b.read(BOARD).expect("B has the board");
+
+    assert!(
+        a_board.contains("from A"),
+        "A's own later edit was replaced by B's older one:\n{a_board}"
+    );
+    assert!(
+        b_board.contains("from A"),
+        "B kept its older edit instead of taking the later one:\n{b_board}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Finance: a ledger two people keep at once
+// ═══════════════════════════════════════════════════════════
+
+const LEDGER: &str = "Finance/2026-08.json";
+
+/// A month of the ledger as Finance writes one.
+///
+/// `financeSchema` and the minor-unit amounts are what the app stores today;
+/// `updated_at` is the stamp whole-file conflict resolution reads.
+fn month_file(stamp: &str, rows: &[(&str, i64, &str)]) -> String {
+    let transactions: Vec<String> = rows
+        .iter()
+        .map(|(id, amount, note)| {
+            format!(
+                r#"      {{
+        "accountId": "acc-1",
+        "amount": {amount},
+        "category": "Food & Dining",
+        "date": "2026-08-15T10:00:00.000Z",
+        "id": "{id}",
+        "note": "{note}",
+        "type": "expense"
+      }}"#
+            )
+        })
+        .collect();
+
+    format!(
+        r#"{{
+  "content": "",
+  "metadata": {{
+    "created_at": "2026-08-01T00:00:00.000Z",
+    "financeSchema": 2,
+    "transactions": [
+{}
+    ],
+    "updated_at": "{stamp}"
+  }},
+  "title": "Month 08/2026",
+  "type": "finance_month"
+}}"#,
+        transactions.join(",\n")
+    )
+}
+
+/// Which transactions a device can see in its copy of the month.
+fn transaction_ids(device: &HarnessDevice) -> Vec<String> {
+    let text = device.read(LEDGER).expect("the device has the ledger");
+    let file: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("the ledger stopped being JSON: {e}\n{text}"));
+
+    let mut ids: Vec<String> = file["metadata"]["transactions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no transactions array:\n{text}"))
+        .iter()
+        .filter_map(|tx| tx["id"].as_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// The scenario the whole of Finance rests on.
+///
+/// Two people share a vault, or one person has a laptop and a phone. Each
+/// records a purchase while the other is offline. Both purchases happened, so
+/// both have to survive — and the month they land in is one file, which is
+/// where a whole-file merge loses one of them without saying so.
+#[tokio::test]
+async fn two_devices_recording_a_purchase_at_once_keep_both() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(LEDGER, &month_file("2026-08-01T00:00:00.000Z", &[]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // Offline, each records their own purchase into the same month.
+    a.write(
+        LEDGER,
+        &month_file("2026-08-15T10:00:00.000Z", &[("tx-from-a", 4500, "lunch")]),
+    );
+    b.write(
+        LEDGER,
+        &month_file("2026-08-15T11:00:00.000Z", &[("tx-from-b", 12000, "petrol")]),
+    );
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    for (name, device) in [("A", a), ("B", b)] {
+        let ids = transaction_ids(device);
+        assert!(
+            ids.iter().any(|id| id == "tx-from-a"),
+            "{name} lost the purchase recorded on A: {ids:?}"
+        );
+        assert!(
+            ids.iter().any(|id| id == "tx-from-b"),
+            "{name} lost the purchase recorded on B: {ids:?}"
+        );
+    }
+
+    assert_eq!(
+        transaction_ids(a),
+        transaction_ids(b),
+        "the two devices disagree about what is in the ledger"
+    );
+}
+
+/// A row deleted on one device must not be brought back by the other.
+///
+/// This is the half of the design that a "keep everything" merge gets wrong.
+/// Two devices adding rows both win; a device *removing* a row has to win too,
+/// or deleting a mistaken purchase would undo itself on the next sync.
+#[tokio::test]
+async fn a_deleted_transaction_does_not_come_back() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    let seeded = month_file(
+        "2026-08-01T00:00:00.000Z",
+        &[("tx-1", 4500, "lunch"), ("tx-2", 12000, "petrol")],
+    );
+    a.write(LEDGER, &seeded);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // A deletes the mistaken row; B, offline, records something new.
+    a.write(
+        LEDGER,
+        &month_file("2026-08-15T10:00:00.000Z", &[("tx-2", 12000, "petrol")]),
+    );
+    b.write(
+        LEDGER,
+        &month_file(
+            "2026-08-15T11:00:00.000Z",
+            &[("tx-1", 4500, "lunch"), ("tx-2", 12000, "petrol"), ("tx-3", 800, "coffee")],
+        ),
+    );
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    for (name, device) in [("A", a), ("B", b)] {
+        let ids = transaction_ids(device);
+        assert!(!ids.iter().any(|id| id == "tx-1"), "{name} resurrected the deleted row: {ids:?}");
+        assert!(ids.iter().any(|id| id == "tx-2"), "{name} lost the untouched row: {ids:?}");
+        assert!(ids.iter().any(|id| id == "tx-3"), "{name} lost B's new row: {ids:?}");
+    }
+}
+
+/// Editing one transaction on two devices resolves to one of the two, whole.
+///
+/// A transaction is not prose. Merging two versions of one purchase letter by
+/// letter is how you get an amount neither device entered, which is the failure
+/// `node_document` was written to avoid for frontmatter and this avoids here.
+#[tokio::test]
+async fn the_same_transaction_edited_twice_stays_one_of_the_two() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(LEDGER, &month_file("2026-08-01T00:00:00.000Z", &[("tx-1", 4500, "lunch")]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(LEDGER, &month_file("2026-08-15T10:00:00.000Z", &[("tx-1", 5000, "lunch for two")]));
+    b.write(LEDGER, &month_file("2026-08-15T11:00:00.000Z", &[("tx-1", 4700, "lunch plus tip")]));
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let settled = a.read(LEDGER).expect("A has the ledger");
+    assert_eq!(settled, b.read(LEDGER).unwrap(), "the devices did not converge");
+
+    let file: serde_json::Value = serde_json::from_str(&settled).expect("still JSON");
+    let rows = file["metadata"]["transactions"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "one edit became two rows: {settled}");
+
+    let amount = rows[0]["amount"].as_i64().unwrap();
+    assert!(
+        amount == 5000 || amount == 4700,
+        "the amount is neither device's: {amount}"
+    );
+}
+
+/// Settings are separate entries, so two devices changing two of them agree.
+///
+/// Before this, adding a category on the laptop while adding an account on the
+/// phone meant one of the two changes was discarded whole — the config is one
+/// file, and one file had one winner.
+#[tokio::test]
+async fn a_new_category_and_a_new_account_both_survive() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    let config = |stamp: &str, categories: &str, accounts: &str| {
+        format!(
+            r#"{{
+  "content": "",
+  "metadata": {{
+    "accounts": [{accounts}],
+    "currency": "USD",
+    "expenseCategories": [{categories}],
+    "financeSchema": 2,
+    "updated_at": "{stamp}"
+  }},
+  "title": "Finance Config",
+  "type": "finance_config"
+}}"#
+        )
+    };
+
+    const CONFIG: &str = "Finance/Config.json";
+    let cash = r#"{"id":"acc-1","name":"Cash","initialBalance":0}"#;
+    let bank = r#"{"id":"acc-2","name":"Bank","initialBalance":0}"#;
+
+    a.write(CONFIG, &config("2026-08-01T00:00:00.000Z", r#""Food""#, cash));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(CONFIG, &config("2026-08-15T10:00:00.000Z", r#""Food","Books""#, cash));
+    b.write(
+        CONFIG,
+        &config("2026-08-15T11:00:00.000Z", r#""Food""#, &format!("{cash},{bank}")),
+    );
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    for (name, device) in [("A", a), ("B", b)] {
+        let text = device.read(CONFIG).expect("has the config");
+        let file: serde_json::Value = serde_json::from_str(&text).expect("still JSON");
+
+        let categories = file["metadata"]["expenseCategories"].to_string();
+        let accounts = file["metadata"]["accounts"].to_string();
+
+        assert!(categories.contains("Books"), "{name} lost the category A added: {categories}");
+        assert!(accounts.contains("acc-2"), "{name} lost the account B added: {accounts}");
+    }
+}
+
+/// Three devices, three purchases, one month.
+#[tokio::test]
+async fn three_devices_recording_at_once_all_end_up_with_all_three() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b", "c"]);
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    a.write(LEDGER, &month_file("2026-08-01T00:00:00.000Z", &[]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+    c.sync_ok().await;
+
+    a.write(LEDGER, &month_file("2026-08-15T10:00:00.000Z", &[("tx-a", 100, "a")]));
+    b.write(LEDGER, &month_file("2026-08-15T11:00:00.000Z", &[("tx-b", 200, "b")]));
+    c.write(LEDGER, &month_file("2026-08-15T12:00:00.000Z", &[("tx-c", 300, "c")]));
+
+    for _ in 0..2 {
+        for device in [a, b, c] {
+            device.sync_ok().await;
+        }
+    }
+
+    for (name, device) in [("A", a), ("B", b), ("C", c)] {
+        let ids = transaction_ids(device);
+        assert_eq!(
+            ids,
+            vec!["tx-a".to_string(), "tx-b".to_string(), "tx-c".to_string()],
+            "{name} does not have all three purchases"
+        );
+    }
+}
+
+/// The ledger has to stay a file the app can open, not only a file that merged.
+#[tokio::test]
+async fn a_merged_ledger_is_still_the_shape_finance_reads() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(LEDGER, &month_file("2026-08-01T00:00:00.000Z", &[]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(LEDGER, &month_file("2026-08-15T10:00:00.000Z", &[("tx-a", 4500, "lunch")]));
+    b.write(LEDGER, &month_file("2026-08-15T11:00:00.000Z", &[("tx-b", 12000, "petrol")]));
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+
+    let text = a.read(LEDGER).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&text).expect("still JSON");
+
+    assert_eq!(file["type"], "finance_month");
+    assert_eq!(file["title"], "Month 08/2026");
+    assert_eq!(file["content"], "");
+    assert_eq!(
+        file["metadata"]["financeSchema"], 2,
+        "the amounts stopped saying which units they are in: {text}"
+    );
+    assert!(
+        file["metadata"]["created_at"].is_string(),
+        "a metadata key went missing: {text}"
+    );
+
+    let row = &file["metadata"]["transactions"][0];
+    for key in ["id", "amount", "type", "accountId", "category", "date", "note"] {
+        assert!(!row[key].is_null(), "the row lost its {key}: {row}");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Interactions: why they are files rather than a list
+// ═══════════════════════════════════════════════════════════
+
+/// The person's file as it used to be written, with the list inside it.
+fn person_with_interactions(entries: &[(&str, &str)]) -> String {
+    let mut text = String::from("---\ntitle: An Nguyễn\ntype: person\ncontact_frequency: monthly\ninteractions:\n");
+    for (date, note) in entries {
+        text.push_str(&format!("  - type: coffee\n    date: {}\n    note: {}\n", date, note));
+    }
+    text.push_str("---\n\n");
+    text
+}
+
+#[tokio::test]
+async fn two_devices_recording_a_coffee_at_once_keep_both() {
+    // The reason interactions are their own files.
+    //
+    // A `.md` file is merged character by character, which is right for prose
+    // and wrong for a list of objects in YAML: two devices appending to the
+    // same list produce an interleave that is neither version and need not
+    // parse. A person's frontmatter was the largest such list in the app and
+    // grew with every recorded coffee.
+    //
+    // One file each has nothing to merge. Both arrive, whole.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("People/an.md", "---\ntitle: An Nguyễn\ntype: person\n---\n\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // Both go offline and each records a meeting with the same person.
+    a.write(
+        "People/Interactions/from-a.md",
+        "---\ntitle: Coffee · An Nguyễn\ntype: interaction\ndate: 2026-08-20\n---\n\nTalked about the new job.\n",
+    );
+    b.write(
+        "People/Interactions/from-b.md",
+        "---\ntitle: Call · An Nguyễn\ntype: interaction\ndate: 2026-08-21\n---\n\nQuick catch-up before the trip.\n",
+    );
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+
+    for device in [a, b] {
+        assert!(
+            device.exists("People/Interactions/from-a.md"),
+            "one device's coffee went missing"
+        );
+        assert!(
+            device.exists("People/Interactions/from-b.md"),
+            "the other device's call went missing"
+        );
+    }
+    assert!(a
+        .body("People/Interactions/from-b.md")
+        .unwrap()
+        .contains("Quick catch-up before the trip."));
+    assert!(b
+        .body("People/Interactions/from-a.md")
+        .unwrap()
+        .contains("Talked about the new job."));
+
+    // And the person's own file is untouched by either — it does not grow, and
+    // there is nothing in it for the two of them to disagree about.
+    assert!(
+        !a.read("People/an.md").unwrap().contains("interactions"),
+        "the person should carry no list: {:?}",
+        a.read("People/an.md")
+    );
+}
+
+#[tokio::test]
+async fn a_list_inside_one_file_is_merged_by_character_not_by_entry() {
+    // Kept as evidence for why interactions moved out.
+    //
+    // Two devices appending to the same YAML list inside one file is exactly
+    // what a character-level merge cannot do safely: it converges — the engine
+    // is doing its job — but on a result assembled from both texts rather than
+    // on a list holding both entries. What comes out is not "A's entry then
+    // B's"; it is whatever the diff made of two overlapping edits.
+    //
+    // Nothing here asserts corruption, because the exact outcome depends on the
+    // diff. What it does assert is the part that matters: the merged file is
+    // not simply both entries, so a list kept this way cannot be trusted to
+    // hold what was put in it.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write("People/an.md", &person_with_interactions(&[("2026-08-01", "the first one")]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    a.write(
+        "People/an.md",
+        &person_with_interactions(&[("2026-08-01", "the first one"), ("2026-08-20", "coffee from A")]),
+    );
+    b.write(
+        "People/an.md",
+        &person_with_interactions(&[("2026-08-01", "the first one"), ("2026-08-21", "call from B")]),
+    );
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let merged = a.read("People/an.md").unwrap();
+    assert_eq!(
+        merged,
+        b.read("People/an.md").unwrap(),
+        "the devices should at least converge on the same text"
+    );
+
+    let both_intact = merged.contains("note: coffee from A") && merged.contains("note: call from B");
+    let expected = person_with_interactions(&[
+        ("2026-08-01", "the first one"),
+        ("2026-08-20", "coffee from A"),
+        ("2026-08-21", "call from B"),
+    ]);
+    assert!(
+        !both_intact || merged.trim() != expected.trim(),
+        "if this ever produces exactly the list both devices meant, the \
+         argument for moving interactions out has weakened and this test \
+         should be revisited:\n{merged}"
+    );
+}

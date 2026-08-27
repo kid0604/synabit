@@ -6,6 +6,31 @@ import { useEventBus } from './useEventBus';
 import { invoke } from '@tauri-apps/api/core';
 import { i18n } from '../i18n';
 
+/**
+ * Translate the tray menu.
+ *
+ * The tray is drawn by the operating system, so it is the one piece of the
+ * app's own wording that vue-i18n cannot reach on its own — the same gap the
+ * Android text-selection label had. Rust builds the menu in English at
+ * startup and this replaces the text once the user's language is known, and
+ * again whenever they change it.
+ *
+ * Mobile has no tray; the command does not exist there, so a failure is
+ * expected rather than a problem.
+ */
+async function translateTrayMenu() {
+  try {
+    await invoke('set_tray_labels', {
+      capture: i18n.global.t('tray.tray_capture'),
+      open: i18n.global.t('tray.tray_open'),
+      quit: i18n.global.t('tray.tray_quit'),
+    });
+  } catch {
+    // No tray on this platform.
+  }
+}
+
+
 // UI State (singleton)
 const showSettingsModal = ref(false);
 const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security' | 'devices' | 'license'>('general');
@@ -18,7 +43,7 @@ export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
   const { 
-    themeMode, appLanguage, taskArchiveDays, enableDailyNotes, dailyNoteFormat, 
+    themeMode, appLanguage, taskArchiveDays, taskDeleteConfirm, taskListSort, taskListGroup, enableDailyNotes, dailyNoteFormat, 
     dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps,
     codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
   } = storeToRefs(appStore);
@@ -59,6 +84,7 @@ export function useSettings() {
 
     // Sync initial language
     i18n.global.locale.value = appLanguage.value as any;
+    void translateTrayMenu();
 
     // Watch for theme changes to apply class
     watch(themeMode, () => {
@@ -68,6 +94,7 @@ export function useSettings() {
     // Watch for language changes to update i18n
     watch(appLanguage, (newLang) => {
       i18n.global.locale.value = newLang as any;
+      void translateTrayMenu();
     });
 
     // Watch for code block theme changes
@@ -112,6 +139,9 @@ export function useSettings() {
     appLanguage,
     applyTheme,
     taskArchiveDays,
+    taskDeleteConfirm,
+    taskListSort,
+    taskListGroup,
     enableDailyNotes,
     dailyNoteFormat,
     dailyNoteTag,

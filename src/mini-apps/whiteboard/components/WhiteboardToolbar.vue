@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { onClickOutside } from '@vueuse/core';
-import { MousePointer2, Hand, Pencil, Shapes, Type, Network, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square } from 'lucide-vue-next';
+import { MousePointer2, Hand, Pencil, Shapes, Type, Network, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square, Image as ImageIcon } from 'lucide-vue-next';
 import { SHAPES } from '../shapes';
 import type { ToolMode, DrawSubTool } from '../composables/useWhiteboardStore';
 
@@ -25,6 +25,7 @@ const emit = defineEmits<{
   (e: 'undo'): void;
   (e: 'redo'): void;
   (e: 'export'): void;
+  (e: 'add-image'): void;
   (e: 'update:backgroundPattern', pattern: 'dots' | 'lines' | 'none'): void;
   (e: 'update:backgroundColor', color: string): void;
 }>();
@@ -259,6 +260,14 @@ function selectDrawSub(sub: DrawSubTool) {
       :title="$t('whiteboard.text_tool')"
     >
       <Type class="w-4 h-4" />
+    </button>
+
+    <button
+      @click="$emit('add-image')"
+      class="wb-toolbar-btn"
+      :title="$t('whiteboard.image_tool')"
+    >
+      <ImageIcon class="w-4 h-4" />
     </button>
 
     <div class="wb-toolbar-divider" />

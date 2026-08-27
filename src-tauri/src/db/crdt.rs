@@ -2,6 +2,19 @@ use super::DbBridge;
 use crate::error::{AppError, AppResult};
 use rusqlite::params;
 
+/// Milliseconds of quiet before consecutive local edits become separate
+/// versions.
+///
+/// Milliseconds because that is what Loro compares against, and the crate is
+/// not consistent about saying so: `Change::timestamp` is documented as
+/// seconds, while `get_sys_timestamp` — the function that fills it in — returns
+/// `as_millis()`. The unit the code uses is the one that counts, and reading
+/// the field doc instead cost an interval a thousand times shorter than
+/// intended, which would have made a version out of nearly every autosave.
+///
+/// Read by `commands::versions` too, which describes the list this produces.
+pub const VERSION_MERGE_INTERVAL_MS: i64 = 5 * 60 * 1000;
+
 impl DbBridge {
     /// Get or create a stable device peer ID for CRDT operations.
     pub fn get_or_create_peer_id(&self) -> AppResult<u64> {
@@ -21,7 +34,29 @@ impl DbBridge {
         }
     }
 
+    /// The document behind a path, rebuilt from its snapshot and update log.
     pub fn get_crdt_doc(&self, vault_id: &str, doc_id: &str) -> AppResult<loro::LoroDoc> {
+        self.get_crdt_doc_grouped(vault_id, doc_id, VERSION_MERGE_INTERVAL_MS)
+    }
+
+    /// The same document, with the grouping of its history spelled out.
+    ///
+    /// Loro folds consecutive local changes into one when they are less than
+    /// `merge_interval_ms` apart, and it does that **as the log is replayed**
+    /// — so how many versions a note appears to have is decided here, on read,
+    /// not when the edits were made. The operations underneath are untouched
+    /// either way; only their grouping moves.
+    ///
+    /// One exception, and it is worth knowing: `compact_crdt_history` exports
+    /// a snapshot of a document loaded this way, which writes the grouping
+    /// into the snapshot. Whatever was folded before a compaction stays
+    /// folded.
+    pub fn get_crdt_doc_grouped(
+        &self,
+        vault_id: &str,
+        doc_id: &str,
+        merge_interval_ms: i64,
+    ) -> AppResult<loro::LoroDoc> {
         if vault_id.trim().is_empty() || doc_id.trim().is_empty() {
             return Err(AppError::General(
                 "vault_id and doc_id cannot be empty".into(),
@@ -31,6 +66,26 @@ impl DbBridge {
         let peer_id = self.get_or_create_peer_id()?;
         doc.set_peer_id(peer_id)
             .map_err(|e| AppError::General(format!("Failed to set Loro peer_id: {:?}", e)))?;
+
+        // Loro does not record when a change happened unless asked, and the
+        // whole operation log was being kept without a single timestamp in it.
+        // The history was there and unreadable: every version of every note
+        // claimed to have been written at the start of 1970.
+        //
+        // This only fixes it going forward. Changes already in the log have no
+        // time in them and never will, so `list_node_versions` reports those as
+        // undated rather than inventing one.
+        doc.set_record_timestamp(true);
+
+        // How far apart two local edits must be before they count as separate
+        // versions. This has to be set before the import below, which is where
+        // the folding happens.
+        //
+        // Loro's default is a little under seventeen minutes, long enough that
+        // a morning's writing would arrive as one or two entries. Five minutes
+        // is the span a person recognises as a sitting, and is where comparable
+        // history features land.
+        doc.set_change_merge_interval(merge_interval_ms);
 
         let mut stmt = self
             .conn
@@ -165,13 +220,22 @@ impl DbBridge {
         Ok(())
     }
 
+    /// Collapse a document's update log into a single snapshot.
+    ///
+    /// Loaded with no grouping at all, which is deliberate. A snapshot records
+    /// the changes as they stand in the document it was exported from, so
+    /// whatever this fold together is folded for good — and a note that had
+    /// been compacted would show one version for the whole month while an
+    /// identical note that had not showed one per sitting. Keeping the finest
+    /// grouping on disk leaves how many versions to *show* a question the
+    /// reader's own load answers, every time, the same way.
     pub fn compact_crdt_history(&mut self, vault_id: &str, doc_id: &str) -> AppResult<()> {
         if vault_id.trim().is_empty() || doc_id.trim().is_empty() {
             return Err(AppError::General(
                 "vault_id and doc_id cannot be empty".into(),
             ));
         }
-        let doc = self.get_crdt_doc(vault_id, doc_id)?;
+        let doc = self.get_crdt_doc_grouped(vault_id, doc_id, 0)?;
         let snapshot = doc.export_snapshot();
         self.replace_crdt_snapshot(vault_id, doc_id, &snapshot)?;
         Ok(())
@@ -197,9 +261,15 @@ impl DbBridge {
                      GROUP BY doc_id
                      HAVING COUNT(*) > ?2 OR SUM(LENGTH(delta)) > ?3",
                 )
-                .map_err(|e| AppError::General(format!("DB Error getting docs for compaction: {}", e)))?;
+                .map_err(|e| {
+                    AppError::General(format!("DB Error getting docs for compaction: {}", e))
+                })?;
             let mut rows = stmt
-                .query(params![vault_id, COMPACT_AFTER_UPDATES, COMPACT_AFTER_BYTES])
+                .query(params![
+                    vault_id,
+                    COMPACT_AFTER_UPDATES,
+                    COMPACT_AFTER_BYTES
+                ])
                 .map_err(|e| AppError::General(e.to_string()))?;
             let mut list = Vec::new();
             while let Some(row) = rows.next().map_err(|e| AppError::General(e.to_string()))? {
@@ -1459,9 +1529,12 @@ mod compaction_tests {
         let mut db = db_with_doc();
 
         let doc = loro::LoroDoc::new();
-        doc.get_text("content").insert(0, &"x".repeat(400_000)).unwrap();
+        doc.get_text("content")
+            .insert(0, &"x".repeat(400_000))
+            .unwrap();
         doc.commit();
-        db.save_crdt_delta("v1", "doc", doc.export_snapshot()).unwrap();
+        db.save_crdt_delta("v1", "doc", doc.export_snapshot())
+            .unwrap();
 
         let before: i64 = db
             .conn
@@ -1492,7 +1565,8 @@ mod compaction_tests {
         let doc = loro::LoroDoc::new();
         doc.get_text("content").insert(0, "small").unwrap();
         doc.commit();
-        db.save_crdt_delta("v1", "doc", doc.export_snapshot()).unwrap();
+        db.save_crdt_delta("v1", "doc", doc.export_snapshot())
+            .unwrap();
 
         db.compact_all_crdt("v1").unwrap();
 

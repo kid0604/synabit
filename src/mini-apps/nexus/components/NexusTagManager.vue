@@ -260,7 +260,7 @@ onMounted(() => {
                               type="text" 
                               autoFocus
                               class="w-full px-3 py-1.5 bg-white/50 dark:bg-black/20 border-2 border-indigo-500 rounded-xl text-sm font-semibold focus:outline-none backdrop-blur-md"
-                          />
+                          aria-label="Tag name" />
                           <div class="flex gap-2">
                              <button @click="saveEdit(tag.name)" class="flex-1 py-1.5 bg-indigo-500 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors shadow-md">Save</button>
                              <button @click="editingTag = null" class="py-1.5 px-3 bg-white/50 dark:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-bold hover:bg-white/80 dark:hover:bg-white/20 transition-colors">Cancel</button>

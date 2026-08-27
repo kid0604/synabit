@@ -16,7 +16,7 @@ Whether you are a developer, student, or professional, Synabit keeps you focused
 - **Note Vault**: A robust, block-based Markdown knowledge base with a rich-text editor for deep work.
 - **QuickCap**: A lightning-fast, masonry-layout tool for capturing fleeting ideas, images, and links instantly.
 - **Whiteboard**: An infinite canvas for drawing, architecture diagrams, and visual thinking.
-- **Task Management**: Comprehensive task tracking with Kanban boards, Gantt charts, and Eisenhower matrices.
+- **Task Management**: Tasks in four views — list, Kanban board, table and an Eisenhower matrix — with due times, repeats, reminders, subtasks and per-project budgets.
 - **Smart Mini-Apps**: Built-in modules for managing RSS Feeds, Calendar, People (Contacts), and Personal Finance.
 - **Drive / Files**: Integrated local file manager with Google Drive backup support.
 

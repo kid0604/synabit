@@ -76,7 +76,11 @@ mod desktop {
         {
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            crate::error::logged("record vault path", "vault_path", db.set_kv("vault_path", &vault_path));
+            crate::error::logged(
+                "record vault path",
+                "vault_path",
+                db.set_kv("vault_path", &vault_path),
+            );
         }
 
         let emit_handle = app_handle.clone();
@@ -173,6 +177,113 @@ mod desktop {
         Ok(())
     }
 
+    /// Watching the folders the Files app was pointed at.
+    ///
+    /// Separate from the vault watcher above, and deliberately so. That one
+    /// emits `vault-file-*`, which everything downstream resolves relative to
+    /// the vault root; a source folder is somewhere else entirely, so putting
+    /// its events on the same channel would have them interpreted as vault
+    /// paths and resolved to the wrong files.
+    ///
+    /// This one says only that a folder changed. What to do about it — rescan
+    /// that folder, re-identify what moved — belongs to the Files app, which is
+    /// the only thing that knows what the folder is for.
+    #[derive(Default)]
+    pub struct SourceWatcherState {
+        watchers: Mutex<Vec<RecommendedWatcher>>,
+    }
+
+    /// Watch every registered source folder, replacing whatever was watched
+    /// before.
+    ///
+    /// Called when the list of sources changes, which is rare, so rebuilding
+    /// the whole set is simpler than reconciling it and costs nothing.
+    #[tauri::command]
+    pub fn watch_file_sources(
+        app_handle: AppHandle,
+        state: tauri::State<'_, SourceWatcherState>,
+        paths: Vec<String>,
+    ) -> AppResult<usize> {
+        let mut held = state.watchers.lock().unwrap_or_else(|e| e.into_inner());
+        held.clear();
+
+        // One debounce shared by every folder: a copy into one of them lands as
+        // a burst of events, and re-scanning once after the burst is what the
+        // reader wants rather than once per file.
+        let quiet = Arc::new(Mutex::new(SourceDebounce::default()));
+        let poll = quiet.clone();
+        let poll_handle = app_handle.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(200));
+            let mut state = poll.lock().unwrap_or_else(|e| e.into_inner());
+            if state.shutdown {
+                break;
+            }
+            let Some(last) = state.last else { continue };
+            if last.elapsed() < Duration::from_secs(2) {
+                continue;
+            }
+            let changed: Vec<String> = state.folders.drain().collect();
+            state.last = None;
+            drop(state);
+            if !changed.is_empty() {
+                let _ = poll_handle.emit("file-source-changed", changed);
+            }
+        });
+
+        for path in &paths {
+            let root = PathBuf::from(path);
+            if !root.is_dir() {
+                continue;
+            }
+            let folder = path.clone();
+            let debounce = quiet.clone();
+            let mut watcher = match notify::recommended_watcher(
+                move |res: Result<Event, notify::Error>| {
+                    let Ok(event) = res else { return };
+                    if event
+                        .paths
+                        .iter()
+                        .all(|p| should_ignore(&p.to_string_lossy()))
+                    {
+                        return;
+                    }
+                    if !matches!(
+                        event.kind,
+                        EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_)
+                    ) {
+                        return;
+                    }
+                    let mut state = debounce.lock().unwrap_or_else(|e| e.into_inner());
+                    state.folders.insert(folder.clone());
+                    state.last = Some(Instant::now());
+                },
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::warn!("cannot watch {path}: {e}");
+                    continue;
+                }
+            };
+
+            if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
+                log::warn!("cannot watch {path}: {e}");
+                continue;
+            }
+            held.push(watcher);
+        }
+
+        log::info!("watching {} source folder(s)", held.len());
+        Ok(held.len())
+    }
+
+    #[derive(Default)]
+    struct SourceDebounce {
+        last: Option<Instant>,
+        folders: HashSet<String>,
+        shutdown: bool,
+    }
+
     #[derive(Default)]
     struct DebounceState {
         last_create_delete: Option<Instant>,
@@ -207,6 +318,19 @@ pub mod mobile_stub {
         }
     }
 
+    /// No-op on mobile, for the reason at the top of this file: `notify` has no
+    /// Android or iOS backend. Source folders are re-scanned on resume instead.
+    #[derive(Default)]
+    pub struct SourceWatcherState;
+
+    #[tauri::command]
+    pub fn watch_file_sources(
+        _state: tauri::State<'_, SourceWatcherState>,
+        _paths: Vec<String>,
+    ) -> AppResult<usize> {
+        Ok(0)
+    }
+
     #[tauri::command]
     pub fn start_vault_watcher(
         app_handle: tauri::AppHandle,
@@ -226,11 +350,18 @@ pub mod mobile_stub {
         {
             let db_state = app_handle.state::<crate::db::DbState>();
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-            crate::error::logged("record vault path", "vault_path", db.set_kv("vault_path", &vault_path));
+            crate::error::logged(
+                "record vault path",
+                "vault_path",
+                db.set_kv("vault_path", &vault_path),
+            );
         }
 
-        // On mobile, file watching is a no-op.
-        // The frontend re-scans on app resume instead.
+        // On mobile, file watching is a no-op: `notify` has no Android or iOS
+        // backend. The frontend re-scans when the app returns to the
+        // foreground instead — see `rescanOnResume` in App.vue, which is
+        // registered on `visibilitychange` and is what actually keeps the
+        // index in step with the vault on a phone.
         Ok(())
     }
 }

@@ -1,12 +1,25 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { Wallet, Check, Plus, Trash2 } from 'lucide-vue-next';
-import type { FinanceAccount } from './types';
+import type { FinanceAccount, Category } from './types';
 import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES } from './types';
+import { toCategories } from './categories';
+import { COMMON_CURRENCIES, allCurrencies, formatAmountInput, formatMinorForInput, parseAmountInput } from './currency';
 
 const emit = defineEmits<{
-  (e: 'complete', config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[] }): void;
+  (e: 'complete', config: { incomeCategories: Category[], expenseCategories: Category[], accounts: FinanceAccount[], currency: string }): void;
 }>();
+
+/**
+ * Asked rather than assumed.
+ *
+ * The currency decides how many digits every stored amount has, so a vault
+ * that guesses wrong has to be rescaled later. It used to default to US
+ * dollars in the interface and to đồng in the assistant, which meant the two
+ * halves of the app disagreed about what the numbers meant.
+ */
+const currency = ref('USD');
+const otherCurrencies = allCurrencies().filter(c => !COMMON_CURRENCIES.includes(c));
 
 const accounts = ref<FinanceAccount[]>([
     { id: `acc-${Date.now()}-1`, name: 'Cash', initialBalance: 0 },
@@ -16,12 +29,9 @@ const accounts = ref<FinanceAccount[]>([
 const newAccountName = ref('');
 const newAccountBalance = ref('');
 
-// Format number input with commas
-const formatAmount = (val: string) => {
-    const num = val.replace(/\D/g, '');
-    if (!num) return '';
-    return Number(num).toLocaleString('en-US');
-};
+// Grouped the way the chosen currency groups numbers. A negative opening
+// balance is allowed and meant: that is what a credit card starts at.
+const formatAmount = (val: string) => formatAmountInput(val, currency.value);
 
 const handleBalanceInput = (e: Event) => {
     const target = e.target as HTMLInputElement;
@@ -30,7 +40,7 @@ const handleBalanceInput = (e: Event) => {
 
 const addAccount = () => {
     const name = newAccountName.value.trim();
-    const balanceNum = Number(newAccountBalance.value.replace(/\D/g, '')) || 0;
+    const balanceNum = parseAmountInput(newAccountBalance.value, currency.value);
     
     if (name) {
         if (!accounts.value.some(a => a.name === name)) {
@@ -54,16 +64,17 @@ const updateBalance = (idx: number, e: Event) => {
     const target = e.target as HTMLInputElement;
     const formatted = formatAmount(target.value);
     target.value = formatted;
-    accounts.value[idx].initialBalance = Number(formatted.replace(/\D/g, '')) || 0;
+    accounts.value[idx].initialBalance = parseAmountInput(formatted, currency.value);
 };
 
 const finish = () => {
     if (accounts.value.length === 0) return;
     
     emit('complete', {
-        incomeCategories: [...DEFAULT_INCOME_CATEGORIES],
-        expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
-        accounts: accounts.value
+        incomeCategories: toCategories(DEFAULT_INCOME_CATEGORIES),
+        expenseCategories: toCategories(DEFAULT_EXPENSE_CATEGORIES),
+        accounts: accounts.value,
+        currency: currency.value
     });
 };
 </script>
@@ -81,6 +92,17 @@ const finish = () => {
           </div>
           
           <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-3xl p-6 shadow-xl">
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Currency</label>
+              <select v-model="currency" class="w-full bg-gray-50 dark:bg-gray-800/50 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm font-medium text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2">
+                  <optgroup label="Common">
+                      <option v-for="c in COMMON_CURRENCIES" :key="c" :value="c">{{ c }}</option>
+                  </optgroup>
+                  <optgroup label="All">
+                      <option v-for="c in otherCurrencies" :key="c" :value="c">{{ c }}</option>
+                  </optgroup>
+              </select>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-6">Every amount is stored in this currency. You can change it later, but existing amounts are not converted.</p>
+
               <h2 class="text-lg font-bold text-text dark:text-text-dark mb-4">{{ $t('finance.declare_assets') }}</h2>
               
               <div class="space-y-3 mb-6">
@@ -88,7 +110,7 @@ const finish = () => {
                       <div class="flex-1">
                           <input type="text" v-model="acc.name" class="w-full bg-transparent border-none font-medium text-text dark:text-text-dark focus:outline-none focus:ring-0 p-0 mb-1 text-sm" placeholder="Account Name" />
                           <div class="relative">
-                              <input type="text" inputmode="numeric" :value="acc.initialBalance.toLocaleString('en-US')" @input="updateBalance(idx, $event)" class="w-full bg-transparent border-none text-xl font-bold text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-0 p-0" placeholder="0" />
+                              <input type="text" inputmode="decimal" :value="formatMinorForInput(acc.initialBalance, currency)" @input="updateBalance(idx, $event)" class="w-full bg-transparent border-none text-xl font-bold text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-0 p-0" placeholder="0" />
                               <span class="absolute left-0 bottom-full text-[10px] uppercase text-gray-400 font-bold tracking-wider">Balance</span>
                           </div>
                       </div>
@@ -103,7 +125,7 @@ const finish = () => {
                   <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.add_another_acc')" />
                   <div class="flex gap-2">
                       <div class="relative flex-1">
-                          <input type="text" inputmode="numeric" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.current_balance_ph')" />
+                          <input type="text" inputmode="decimal" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.current_balance_ph')" />
                       </div>
                       <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50" aria-label="Add Account">
                           <Plus class="w-4 h-4" />

@@ -10,6 +10,7 @@ import {
   Link2 as EmbedIcon,
   BookOpen as BookOpenIcon,
   Network as MarkmapIcon,
+  Table as SearchIcon,
   ChevronRight as ChevronRightIcon
 } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
@@ -111,6 +112,22 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
       icon: Code2,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setCodeBlock().run();
+      },
+    },
+    {
+      title: 'Query',
+      description: 'A live table of notes matching a filter',
+      icon: SearchIcon,
+      command: ({ editor, range }: any) => {
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .setCodeBlock({ language: 'query' })
+          // A starting point that returns something on any vault, so the block
+          // is never simply blank while somebody works out the syntax.
+          .insertContent('is:note sort:-updated_at columns:title,updated_at limit:10')
+          .run();
       },
     },
     {

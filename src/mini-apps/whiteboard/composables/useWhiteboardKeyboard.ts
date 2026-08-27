@@ -8,7 +8,6 @@ export function useWhiteboardKeyboard(ctx: {
   syncToVueFlow: () => void;
   scheduleSave: () => void;
   copySelected: () => void;
-  pasteClipboard: () => void;
   focusMindmapNode: (id: string) => void;
   handleMindmapAddChild: (params: { parentId: string; direction: 'right' | 'left' }) => void;
   handleMindmapAddSibling: (id: string) => void;
@@ -80,12 +79,11 @@ export function useWhiteboardKeyboard(ctx: {
       return;
     }
 
-    // Ctrl+V → paste copied node with offset
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V') && !e.shiftKey) {
-      e.preventDefault();
-      ctx.pasteClipboard();
-      return;
-    }
+    // Ctrl+V is deliberately not here. Cancelling the key stops the browser
+    // from raising the `paste` event that carries the clipboard's contents,
+    // and a picture can only be reached through that event — so the canvas
+    // listens for the paste itself and decides there between a picture and
+    // the board's own copied item.
 
     // Ctrl+G → group selected nodes
     if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G') && !e.shiftKey) {

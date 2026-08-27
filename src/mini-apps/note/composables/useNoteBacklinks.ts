@@ -2,9 +2,32 @@ import { ref, computed, watch } from 'vue';
 import type { Ref, ComputedRef } from 'vue';
 import type { NoteItem } from '../helpers';
 import { buildNotePayload } from '../helpers';
+import { resolveNoteId } from '../resolveNoteId';
 import type { NodeMetadata } from '../../../types/ipc';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../../utils/logger';
+
+/**
+ * The links out of a note, read the way the backend reads them.
+ *
+ * The destination runs to the closing bracket of the markdown link, not to the
+ * first space. Note paths contain spaces — `Notes/công ty cổ phần.md` — and
+ * stopping at one captured `Notes/công`, which matched nothing, so a note with
+ * a Vietnamese title had no outgoing links at all. This mirrors `MD_LINK_RE`
+ * on the Rust side, which is what actually decides the graph.
+ */
+const OUTGOING_LINK_RE = /\[[^\]]*\]\(synabit:\/\/note\/([^)]+)\)/g;
+
+/** Percent-decode a link target, or leave it alone if it is not encoded. */
+const decodeTarget = (raw: string): string => {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    // A stray `%` is not an encoding, and is no reason to drop the link.
+    return raw;
+  }
+};
+
 
 export function useNoteBacklinks(
   notes: Ref<NoteItem[]>,
@@ -12,19 +35,24 @@ export function useNoteBacklinks(
   currentContent: ComputedRef<string>,
   ns: any,
   scanVault: () => Promise<void>,
+  /** See `useNoteTags`: unlinking rewrites the body, so it must be current. */
+  flushEditor: () => void = () => {},
 ) {
   const currentBacklinks = ref<NodeMetadata[]>([]);
 
   const currentOutgoingLinks = computed(() => {
     if (!currentContent.value) return [];
-    const regex = /synabit:\/\/note\/([^\s\)"']+)/g;
     const links = new Set<string>();
+    OUTGOING_LINK_RE.lastIndex = 0;
     let m;
-    while ((m = regex.exec(currentContent.value)) !== null) {
-        const targetFilename = decodeURIComponent(m[1]);
-        const targetNote = notes.value.find(n => n.path.endsWith(targetFilename));
-        if (targetNote) links.add(targetNote.id);
-        else links.add(targetFilename);
+    while ((m = OUTGOING_LINK_RE.exec(currentContent.value)) !== null) {
+        const target = decodeTarget(m[1]);
+
+        // The same question the navigation code answers, answered the same
+        // way — one link should not open one note and be drawn against
+        // another. A target that resolves to nothing is kept as written, so a
+        // broken link is drawn as a ghost rather than quietly disappearing.
+        links.add(resolveNoteId(notes.value, target)?.id ?? target);
     }
     return Array.from(links);
   });
@@ -53,6 +81,7 @@ export function useNoteBacklinks(
         note.linked_projects = note.linked_projects.filter((l: string) => l !== linkToRemove);
         currentBacklinks.value = currentBacklinks.value.filter(bl => bl.id !== projectId);
         
+        flushEditor();
         await ns.writeNode(buildNotePayload(note, currentContent.value));
         scanVault();
     }

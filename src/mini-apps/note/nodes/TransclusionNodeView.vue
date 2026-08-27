@@ -95,9 +95,10 @@ const loadBlock = async () => {
       return;
     }
 
-    // Resolve title for display
-    const allNodes = await invoke<any[]>('get_all_nodes');
-    const sourceNode = allNodes.find((n: any) => n.id === nodeId);
+    // One node, fetched by its id. This used to load every node in the vault —
+    // each with its full body — and then `find` the single one it wanted, and
+    // it did that once per embed on the page.
+    const sourceNode = await invoke<any | null>('get_node', { id: nodeId });
     if (sourceNode) resolvedTitle.value = sourceNode.title || nodeId;
 
     const blockId = target.value.split('#')[1] || null;
@@ -147,8 +148,7 @@ const reloadContent = async () => {
       if (blockContent) content.value = blockContent;
     } else {
       // Full-note embed — reload
-      const allNodes = await invoke<any[]>('get_all_nodes');
-      const sourceNode = allNodes.find((n: any) => n.id === nodeId);
+      const sourceNode = await invoke<any | null>('get_node', { id: nodeId });
       if (sourceNode) {
         content.value = stripFrontmatter(sourceNode.content);
         if (sourceNode.title) resolvedTitle.value = sourceNode.title;

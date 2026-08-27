@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, toRef, provide, inject, onActivated, onDeactivated } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, toRef, provide, inject, onActivated, onDeactivated } from 'vue';
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
-import { PenTool } from 'lucide-vue-next';
+import { FileWarning, PenTool } from 'lucide-vue-next';
 
 // ── Existing Components ─────────────────────────────────────
 import EdgeMenu from './components/EdgeMenu.vue';
@@ -15,12 +15,14 @@ import StrokeNode from './nodes/StrokeNode.vue';
 import MindmapNode from './nodes/MindmapNode.vue';
 import TextNode from './nodes/TextNode.vue';
 import NoteCardNode from './nodes/NoteCardNode.vue';
+import ImageNode from './nodes/ImageNode.vue';
 import WaypointEdge from './components/WaypointEdge.vue';
 import WhiteboardToolbar from './components/WhiteboardToolbar.vue';
 
 // ── New Extracted Components ────────────────────────────────
 import WhiteboardSidebar from './components/WhiteboardSidebar.vue';
 import WhiteboardTitleBar from './components/WhiteboardTitleBar.vue';
+import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 
 // ── Composables ─────────────────────────────────────────────
 import { useWhiteboardStore } from './composables/useWhiteboardStore';
@@ -38,6 +40,16 @@ import { useWhiteboardKeyboard } from './composables/useWhiteboardKeyboard';
 import type { WBNode, WBEdge } from './composables/useWhiteboardStore';
 import { SHAPES_MAP } from './shapes';
 import { useEventBus } from '../../composables/useEventBus';
+import { forgetViewport, recallViewport, rememberViewport } from './viewportMemory';
+import {
+  assetUrl,
+  fitWithin,
+  importImagePath,
+  naturalSize,
+  naturalSizeOfUrl,
+  saveImageToVault,
+} from './imageAssets';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../utils/logger';
 import type { NavEntry } from '../../stores/useNavigationStore';
@@ -60,20 +72,29 @@ const skipNavPush = false;
 
 const isMobile = ref(window.innerWidth < 768);
 
-const switchBoard = (boardId: string) => {
+const switchBoard = async (boardId: string) => {
   if (boardId !== store.currentBoardId.value && store.currentBoardId.value && !skipNavPush) {
     pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
   }
+  // The board being left may still have a change waiting on the save timer,
+  // and loading the next one over the top of it is how that change is lost.
+  await flushSave();
   store.loadBoardData(boardId);
 };
 
 // ── Keep-alive tracking ─────────────────────────────────────
 const isAppActive = ref(true);
 onActivated(() => { isAppActive.value = true; });
-onDeactivated(() => { isAppActive.value = false; });
+onDeactivated(() => { isAppActive.value = false; void flushSave(); });
 
 // ── VueFlow Core ────────────────────────────────────────────
-const { viewport, screenToFlowCoordinate, addSelectedNodes, fitView } = useVueFlow({ id: 'whiteboard-flow' });
+const {
+  viewport,
+  screenToFlowCoordinate,
+  addSelectedNodes,
+  fitView,
+  setViewport,
+} = useVueFlow({ id: 'whiteboard-flow' });
 
 const vfNodes = ref<any[]>([]);
 const vfEdges = ref<any[]>([]);
@@ -81,14 +102,48 @@ const canvasRef = ref<HTMLElement | null>(null);
 const vueFlowRef = ref<HTMLElement | null>(null);
 
 // ── Auto-save ───────────────────────────────────────────────
+// A board is written two seconds after the last change. That delay is what
+// keeps a drag from writing the file sixty times, and it is also a two-second
+// window in which the work exists only in memory — so every way out of this
+// component closes the window rather than dropping it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { store.saveCurrentBoard(); }, 2000);
+  saveTimer = setTimeout(() => { saveTimer = null; store.saveCurrentBoard(); }, 2000);
+}
+
+/**
+ * Write the pending change now. No-op when there is nothing waiting.
+ *
+ * Awaitable, and worth awaiting before the open board is swapped: the save
+ * reads which board it is writing when it starts, so a swap that does not
+ * wait can hand one board's title to another board's row.
+ */
+async function flushSave() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  await store.saveCurrentBoard();
+}
+
+/**
+ * Forget the pending change without writing it.
+ *
+ * Only for the case where what is in memory is about to be replaced by what
+ * is on disk: letting the timer fire afterwards would write the copy the
+ * reload just discarded, back over the one it just read.
+ */
+function cancelPendingSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) void flushSave();
 }
 
 // ── Composable Wiring ───────────────────────────────────────
-const { computeShapeZIndex, deleteNodes, updateNodeData, buildVfEdge } =
+const { applySize, computeShapeZIndex, deleteNodes, updateNodeData, buildVfEdge } =
   useNodeOperations(store, vfNodes, vfEdges, scheduleSave);
 
 const {
@@ -98,6 +153,8 @@ const {
 } = useEdgeMenu(store, vfEdges, vfNodes, buildVfEdge, scheduleSave);
 
 provide('updateEdgeWaypoints', updateEdgeWaypoints);
+// Pictures hold a path inside the vault and need to know which vault.
+provide('whiteboardVaultPath', vaultPathRef);
 
 const {
   selectedShapeNodeId, shapeMenuPos, selectedShapeData,
@@ -136,12 +193,7 @@ function syncToVueFlow() {
       data: { ...n.data },
       draggable: true,
     };
-    if (n.type === 'shape') {
-      const w = n.data.width || 160;
-      const h = n.data.height || 80;
-      node.style = { width: `${w}px`, height: `${h}px` };
-      node.zIndex = computeShapeZIndex(w, h);
-    }
+    applySize(node, n.data.width, n.data.height);
     return node;
   });
   vfEdges.value = store.currentBoardData.value.edges.map((e: WBEdge) =>
@@ -149,14 +201,55 @@ function syncToVueFlow() {
   );
 }
 
-watch(() => store.currentBoardId.value, () => {
+watch(() => store.currentBoardId.value, (boardId) => {
   syncToVueFlow();
+
+  // Where this board was left, on this device. `default-viewport` only
+  // applies to the first board the canvas ever shows, so switching boards
+  // needs the camera moved by hand.
+  const remembered = boardId ? recallViewport(boardId) : null;
+  if (remembered) {
+    // After the swapped-in nodes are in the document, so the canvas is
+    // moving a board it already has rather than an empty one. The very first
+    // board of the session is placed by `default-viewport` instead, which
+    // avoids a visible jump on open.
+    nextTick(() => setViewport(remembered));
+    return;
+  }
+  // Never opened here: fit the whole board on a phone, where the file's own
+  // viewport is likely to have been written on a much wider screen.
   if (isMobile.value) {
     setTimeout(() => {
       fitView({ padding: 0.1, duration: 500 });
     }, 150);
   }
 });
+
+/**
+ * Remember the camera when the user stops moving it.
+ *
+ * `move-end` is one event per gesture — the end of a drag, or of a burst of
+ * wheel zooming — rather than one per frame.
+ */
+/**
+ * Where the canvas should sit the moment it appears.
+ *
+ * Only read at mount, which is why switching boards needs `setViewport` as
+ * well — but reading it here is what keeps the first board of the session
+ * from opening at the origin and sliding into place afterwards.
+ */
+const initialViewport = computed(() => {
+  const boardId = store.currentBoardId.value;
+  return (
+    (boardId ? recallViewport(boardId) : null) ??
+    store.currentBoardData.value?.viewport ?? { x: 0, y: 0, zoom: 1 }
+  );
+});
+
+function handleMoveEnd() {
+  const boardId = store.currentBoardId.value;
+  if (boardId) rememberViewport(boardId, { ...viewport.value });
+}
 
 // ── VueFlow Change Handlers ─────────────────────────────────
 function handleNodesChange(changes: any[]) {
@@ -165,7 +258,11 @@ function handleNodesChange(changes: any[]) {
   for (const change of changes) {
     if (change.type === 'position' && change.position) {
       const wbNode = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === change.id);
-      if (wbNode) { wbNode.position = { x: change.position.x, y: change.position.y }; dirty = true; }
+      if (wbNode) {
+        wbNode.position = { x: change.position.x, y: change.position.y };
+        store.stampNode(change.id);
+        dirty = true;
+      }
     } else if (change.type === 'remove') {
       store.currentBoardData.value.nodes = store.currentBoardData.value.nodes.filter((n: WBNode) => n.id !== change.id);
       store.currentBoardData.value.edges = store.currentBoardData.value.edges.filter((e: WBEdge) => e.source !== change.id && e.target !== change.id);
@@ -202,12 +299,7 @@ function handleConnect(params: any) {
 function addNodeToCanvas(node: WBNode) {
   store.addNode(node);
   const vfNode: any = { ...node, position: { ...node.position }, data: { ...node.data }, draggable: true };
-  if (node.type === 'shape') {
-    const w = node.data.width || 160;
-    const h = node.data.height || 80;
-    vfNode.style = { width: `${w}px`, height: `${h}px` };
-    vfNode.zIndex = computeShapeZIndex(w, h);
-  }
+  applySize(vfNode, node.data.width, node.data.height);
   vfNodes.value = [...vfNodes.value, vfNode];
   scheduleSave();
 }
@@ -241,6 +333,116 @@ function handlePaneClick(event: any) {
   }
 }
 
+// ── Pictures ────────────────────────────────────────────────
+// Where the pointer was last seen over the canvas, so a pasted picture lands
+// under it rather than in the middle of wherever the user happens to be
+// looking. Deliberately not a ref: it is written on every pointer move and
+// nothing renders from it.
+let lastCanvasPointer: { x: number; y: number } | null = null;
+
+/** Board coordinates for something the user is adding without a drop point. */
+function placementPoint(): { x: number; y: number } {
+  if (lastCanvasPointer) return screenToFlowCoordinate(lastCanvasPointer);
+  const rect = (document.querySelector('.vue-flow') as HTMLElement | null)?.getBoundingClientRect();
+  if (!rect) return { x: 0, y: 0 };
+  return screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+}
+
+/**
+ * Copy pictures into the vault and put them on the board.
+ *
+ * One at a time and offset from each other, so a multiple selection does not
+ * arrive as one stack the user has to pull apart.
+ */
+async function addImageFiles(files: File[], at: { x: number; y: number }) {
+  const images = files.filter((f) => f.type.startsWith('image/'));
+  if (!images.length || !props.vaultPath) return;
+
+  let offset = 0;
+  for (const file of images) {
+    try {
+      // Measured from the bytes already in hand. Reading the file back out
+      // of the vault to measure it would be a round trip for something that
+      // is right here.
+      const size = fitWithin(await naturalSize(file));
+      const assetPath = await saveImageToVault(props.vaultPath, file);
+      addNodeToCanvas({
+        id: store.generateId('img'),
+        type: 'image',
+        position: { x: at.x + offset, y: at.y + offset },
+        data: { assetPath, alt: file.name || '', width: size.width, height: size.height },
+      });
+      offset += 24;
+    } catch (err) {
+      logger.error('Failed to put an image on the board', err as string);
+    }
+  }
+}
+
+/**
+ * Choose pictures from disk.
+ *
+ * Paste and drop are how most pictures will arrive, and neither is visible:
+ * this is the toolbar's answer to "can I put a picture on here at all". The
+ * file is copied by path rather than read into the page first, so a photo
+ * straight off a camera does not cross the bridge as a list of numbers.
+ */
+async function pickImages() {
+  if (!props.vaultPath) return;
+  try {
+    const chosen = await openFileDialog({
+      multiple: true,
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp'] }],
+    });
+    const paths = Array.isArray(chosen) ? chosen : chosen ? [chosen] : [];
+    if (!paths.length) return;
+
+    const at = placementPoint();
+    let offset = 0;
+    for (const sourcePath of paths) {
+      const assetPath = await importImagePath(props.vaultPath, sourcePath);
+      const size = fitWithin(await naturalSizeOfUrl(assetUrl(props.vaultPath, assetPath)));
+      addNodeToCanvas({
+        id: store.generateId('img'),
+        type: 'image',
+        position: { x: at.x + offset, y: at.y + offset },
+        data: { assetPath, alt: sourcePath.split(/[\\/]/).pop() || '', width: size.width, height: size.height },
+      });
+      offset += 24;
+    }
+  } catch (err) {
+    logger.error('Failed to import images', err as string);
+  }
+}
+
+/**
+ * A paste on the board.
+ *
+ * The clipboard may hold a picture from anywhere, or the board's own copied
+ * item, and only this event can tell — which is why `Ctrl+V` is not in the
+ * keyboard handler: cancelling the key there would stop this event from ever
+ * arriving. A paste inside a text field is the field's business.
+ */
+function handlePaste(event: ClipboardEvent) {
+  if (!isAppActive.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+    return;
+  }
+
+  const files = Array.from(event.clipboardData?.items ?? [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => !!file);
+
+  event.preventDefault();
+  if (files.length) {
+    void addImageFiles(files, placementPoint());
+    return;
+  }
+  pasteClipboard();
+}
+
 function handleDragOver(event: DragEvent) {
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
@@ -249,6 +451,15 @@ function handleDragOver(event: DragEvent) {
 function handleDrop(event: DragEvent) {
   event.preventDefault();
   if (!event.dataTransfer) return;
+
+  // Picture files from outside the app — a screenshot, a photo, a folder
+  // full of both.
+  const dropped = Array.from(event.dataTransfer.files ?? []);
+  if (dropped.some((f) => f.type.startsWith('image/'))) {
+    void addImageFiles(dropped, screenToFlowCoordinate({ x: event.clientX, y: event.clientY }));
+    return;
+  }
+
   const noteId = event.dataTransfer.getData('application/synabit-note-id');
   const noteTitle = event.dataTransfer.getData('application/synabit-note-title');
   const blockId = event.dataTransfer.getData('application/synabit-block-id');
@@ -278,15 +489,25 @@ const freeDrawing = useFreeDrawing({
   },
 });
 
+// Open while an eraser gesture is in progress, so that the batch is closed by
+// whichever of pointerup or pointerleave arrives — and by neither twice.
+let eraseBatchOpen = false;
+
 function handleCanvasPointerDown(e: PointerEvent) {
   if (store.activeTool.value !== 'draw') return;
-  if (store.drawSubTool.value === 'eraser') { isErasing.value = true; eraseStrokesNear(e); return; }
+  if (store.drawSubTool.value === 'eraser') {
+    isErasing.value = true;
+    if (!eraseBatchOpen) { store.beginUndoBatch(); eraseBatchOpen = true; }
+    eraseStrokesNear(e);
+    return;
+  }
   const vfEl = document.querySelector('.vue-flow') as HTMLElement | null;
   if (!vfEl) return;
   freeDrawing.startDraw(e, vfEl.getBoundingClientRect(), viewport.value);
 }
 
 function handleCanvasPointerMove(e: PointerEvent) {
+  lastCanvasPointer = { x: e.clientX, y: e.clientY };
   if (store.activeTool.value !== 'draw') return;
   if (store.drawSubTool.value === 'eraser') {
     eraserPos.value = { x: e.clientX, y: e.clientY };
@@ -299,6 +520,7 @@ function handleCanvasPointerMove(e: PointerEvent) {
 }
 
 function handleCanvasPointerUp() {
+  if (eraseBatchOpen) { store.endUndoBatch(); eraseBatchOpen = false; }
   if (store.activeTool.value !== 'draw') return;
   if (store.drawSubTool.value === 'eraser') { isErasing.value = false; return; }
   freeDrawing.endDraw();
@@ -334,17 +556,68 @@ function handleNodeClick({ node, event }: any) {
   }
 }
 
+/**
+ * A picture being resized, then the resize itself.
+ *
+ * While the pointer is down this writes one property on one node and stops.
+ * That is the whole budget: the canvas is a component tree, and anything more
+ * — replacing the node list, or writing the same node twice through two
+ * different doors — is another full pass over it, several times per frame,
+ * which is seen as the picture shivering rather than turning.
+ *
+ * `useMindmapDrag` has done it this way all along: move the canvas node
+ * during the drag, write the board when it stops.
+ */
+function handleNodeBoxUpdate(
+  nodeId: string,
+  box: { x: number; y: number; width: number; height: number },
+  final: boolean
+) {
+  const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
+  if (vfNode) {
+    // In place, property by property. Handing out fresh objects here makes
+    // the canvas rebuild what it holds for the node.
+    vfNode.position.x = box.x;
+    vfNode.position.y = box.y;
+    vfNode.data.width = box.width;
+    vfNode.data.height = box.height;
+  }
+  if (!final) return;
+
+  const wbNode = store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === nodeId);
+  if (!wbNode) return;
+
+  // One step to undo, one save, one stamp — for the gesture, not the frame.
+  store.pushUndoState();
+  wbNode.position = { x: box.x, y: box.y };
+  wbNode.data = { ...wbNode.data, width: box.width, height: box.height };
+  store.stampNode(nodeId);
+  // Smaller sits on top: worth redoing now the size has settled.
+  if (vfNode) vfNode.zIndex = computeShapeZIndex(box.width, box.height);
+  scheduleSave();
+}
+
+/** The angle of a picture. Same division of labour as the box above. */
+function handleImageRotation(nodeId: string, degrees: number, final: boolean) {
+  const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
+  if (vfNode) vfNode.data.rotation = degrees;
+  if (!final) return;
+
+  const wbNode = store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === nodeId);
+  if (!wbNode) return;
+
+  store.pushUndoState();
+  wbNode.data = { ...wbNode.data, rotation: degrees };
+  store.stampNode(nodeId);
+  scheduleSave();
+}
+
 function handleNodeDataUpdate(nodeId: string, data: any) {
   store.updateNodeData(nodeId, data);
   const vfNode = vfNodes.value.find((n: any) => n.id === nodeId);
   if (vfNode) {
     vfNode.data = { ...vfNode.data, ...data };
-    if (vfNode.type === 'shape' && (data.width || data.height)) {
-      const w = data.width || vfNode.data.width || 160;
-      const h = data.height || vfNode.data.height || 80;
-      vfNode.style = { ...vfNode.style, width: `${w}px`, height: `${h}px` };
-      vfNode.zIndex = computeShapeZIndex(w, h);
-    }
+    if (data.width || data.height) applySize(vfNode, data.width, data.height);
     vfNodes.value = [...vfNodes.value];
   }
   scheduleSave();
@@ -385,6 +658,9 @@ function focusMindmapNode(nodeId: string) {
 // ── Node Drag (delegates to mindmap drag) ───────────────────
 function handleNodeDragStart(event: any) {
   const { node } = event;
+  // Before anything moves. A drag reports a position per frame, so the step
+  // to come back to is the one recorded here, once, at the start of it.
+  store.pushUndoState();
   if (node.data?.groupId) {
     const groupMembers = vfNodes.value.filter((n: any) => n.data?.groupId === node.data.groupId && n.id !== node.id);
     if (groupMembers.length > 0) addSelectedNodes(groupMembers);
@@ -393,14 +669,14 @@ function handleNodeDragStart(event: any) {
 }
 
 // ── Clipboard & Export ──────────────────────────────────────
-const { copySelected, pasteClipboard, exportPng } =
-  useClipboardExport(store, vfNodes, vfEdges, addNodeToCanvas, scheduleSave);
+const { copySelected, pasteClipboard, exportPng, isExporting } =
+  useClipboardExport(store, vfNodes, vfEdges, addNodeToCanvas, scheduleSave, vaultPathRef);
 
 // ── Keyboard Shortcuts ──────────────────────────────────────
 const { handleKeydown } = useWhiteboardKeyboard({
   store, vfNodes, vfEdges,
   deleteNodes, syncToVueFlow, scheduleSave,
-  copySelected, pasteClipboard,
+  copySelected,
   focusMindmapNode, handleMindmapAddChild, handleMindmapAddSibling, handleMindmapRemoveNode,
   handleMultiGroup, handleMultiUngroup,
   closeEdgeMenu, closeShapeMenu, closeTextMenu,
@@ -430,6 +706,25 @@ function handleRemoveTag(tag: string) {
 const sidebarRef = ref<InstanceType<typeof WhiteboardSidebar> | null>(null);
 const whiteboardNotes = ref<any[]>([]);
 
+// ── Deleting a board ────────────────────────────────────────
+// The delete icon sits inside each row in the sidebar and appears on hover,
+// which is about as easy to hit by accident as a control gets. Ask first: a
+// board is hours of work, and the answer to "where did it go" has to be a
+// place rather than an apology.
+const pendingDeleteBoardId = ref<string | null>(null);
+const pendingDeleteBoard = computed(() =>
+  store.boards.value.find((b: any) => b.id === pendingDeleteBoardId.value) || null
+);
+
+function confirmDeleteBoard() {
+  const id = pendingDeleteBoardId.value;
+  pendingDeleteBoardId.value = null;
+  if (!id) return;
+  if (id === store.currentBoardId.value) cancelPendingSave();
+  forgetViewport(id);
+  store.deleteBoard(id);
+}
+
 // ── Lifecycle ───────────────────────────────────────────────
 onMounted(async () => {
   await store.loadBoards();
@@ -450,14 +745,34 @@ onMounted(async () => {
   window.addEventListener('resize', handleResize);
   window.addEventListener('keydown', handleKeydown);
 
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('paste', handlePaste);
+
   bus.on('vault:file-modified', () => { store.loadBoards(); });
   bus.on('vault:file-created-deleted', () => { store.loadBoards(); });
-  bus.on('vault:sync-completed', () => { store.loadBoards(); });
+
+  // A pull rewrites the board's file on disk. Refreshing only the list left
+  // the open board held in memory as it was before the pull, and the next
+  // edit wrote that copy back over what had just arrived — the other device's
+  // work, gone, with nothing on screen to say so. Read the board again when
+  // it is one of the files that changed.
+  bus.on('vault:sync-completed', (payload: any) => {
+    const pulled = payload?.pulled_files as string[] | undefined;
+    const openId = store.currentBoardId.value;
+    store.loadBoards().then(() => {
+      if (openId && pulled?.includes(openId)) {
+        cancelPendingSave();
+        store.loadBoardData(openId);
+      }
+    });
+  });
 });
 
 onUnmounted(() => {
-  if (saveTimer) clearTimeout(saveTimer);
+  void flushSave();
   window.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('paste', handlePaste);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 
 // ── Expose ──────────────────────────────────────────────────
@@ -465,6 +780,7 @@ async function openBoardById(boardId: string, _skipNavPush = false) {
   if (!_skipNavPush && store.currentBoardId.value && store.currentBoardId.value !== boardId && !skipNavPush) {
     pushNavigation?.({ app: 'whiteboard', itemId: store.currentBoardId.value });
   }
+  await flushSave();
   if (!store.boards.value.length || !store.boards.value.find((b: any) => b.id === boardId)) {
     await store.loadBoards();
   }
@@ -487,7 +803,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
       :notes="whiteboardNotes"
       @switch-board="switchBoard"
       @create-board="store.createBoard()"
-      @delete-board="store.deleteBoard($event)"
+      @delete-board="pendingDeleteBoardId = $event"
       @note-drag-start="() => {}"
     />
 
@@ -521,11 +837,12 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
             store.activeTool.value === 'draw' && store.drawSubTool.value === 'eraser' && 'wb-cursor-eraser',
             store.activeTool.value === 'eraser' && 'wb-cursor-eraser',
           ]"
-          :default-viewport="store.currentBoardData.value.viewport"
+          :default-viewport="initialViewport"
           :snap-to-grid="true"
           :snap-grid="[10, 10]"
+          :only-render-visible-elements="!isExporting"
           :connection-mode="ConnectionMode.Loose"
-          :delete-key-code="'Delete'"
+          :delete-key-code="['Delete', 'Backspace']"
           :pan-on-drag="store.activeTool.value === 'pan' || (isMobile && store.activeTool.value === 'select') ? [0, 1, 2] : (store.activeTool.value === 'select' ? [1, 2] : false)"
           :selection-on-drag="!isMobile && store.activeTool.value === 'select'"
           :pan-on-scroll="true"
@@ -534,6 +851,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           :nodes-draggable="store.activeTool.value === 'select'"
           :nodes-connectable="store.activeTool.value === 'select'"
           :elevate-edges-on-select="true"
+          @move-end="handleMoveEnd"
           @pane-click="handlePaneClick"
           @node-click="handleNodeClick"
           @node-drag-start="handleNodeDragStart"
@@ -556,6 +874,13 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           </template>
           <template #node-text="nodeProps"><TextNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" /></template>
           <template #node-note="nodeProps"><NoteCardNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" /></template>
+          <template #node-image="nodeProps">
+            <ImageNode
+              v-bind="nodeProps"
+              @update:box="(b: any, final: boolean) => handleNodeBoxUpdate(nodeProps.id, b, final)"
+              @update:rotation="(deg: number, final: boolean) => handleImageRotation(nodeProps.id, deg, final)"
+            />
+          </template>
 
           <Background v-if="store.backgroundPattern.value === 'dots'" variant="dots" :gap="20" :size="1" pattern-color="currentColor" class="text-[#a1a1aa] dark:text-[#52525b]" />
           <template v-if="store.backgroundPattern.value === 'lines'">
@@ -617,6 +942,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           @undo="() => { store.undo(); syncToVueFlow(); scheduleSave(); }"
           @redo="() => { store.redo(); syncToVueFlow(); scheduleSave(); }"
           @export="exportPng"
+          @add-image="pickImages"
         />
 
         <!-- Property Menus (Teleported) -->
@@ -634,17 +960,38 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         </Teleport>
       </template>
 
+      <!-- Written by a newer build: shown, not opened, and never saved over -->
+      <div v-else-if="store.currentBoardUnsupported.value" class="flex-1 flex items-center justify-center h-full p-6">
+        <div class="text-center max-w-sm">
+          <FileWarning class="w-12 h-12 mx-auto mb-3 opacity-30 text-text-secondary dark:text-text-secondary-dark" />
+          <p class="text-sm font-semibold text-text dark:text-text-dark mb-1">{{ $t('whiteboard.too_new_title') }}</p>
+          <p class="text-xs text-muted dark:text-muted-dark leading-relaxed">{{ $t('whiteboard.too_new_body') }}</p>
+        </div>
+      </div>
+
       <!-- No board selected -->
       <div v-else class="flex-1 flex items-center justify-center h-full">
         <div class="text-center text-muted dark:text-muted-dark">
           <PenTool class="w-12 h-12 mx-auto mb-3 opacity-20" />
           <p class="text-sm mb-3">{{ $t('whiteboard.select_to_start') }}</p>
           <button @click="store.createBoard()" class="px-4 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer">
-            New Board
+            {{ $t('whiteboard.new_board') }}
           </button>
         </div>
       </div>
     </div>
+
+    <!-- Deleting a board: where it goes, before it goes -->
+    <ConfirmModal
+      :show="!!pendingDeleteBoardId"
+      :title="$t('whiteboard.delete_board_title', { title: pendingDeleteBoard?.title || '' })"
+      :message="$t('whiteboard.delete_board_body')"
+      :confirmText="$t('whiteboard.delete_board_confirm')"
+      :cancelText="$t('whiteboard.delete_board_cancel')"
+      isDestructive
+      @confirm="confirmDeleteBoard"
+      @cancel="pendingDeleteBoardId = null"
+    />
   </div>
 </template>
 

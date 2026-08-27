@@ -60,10 +60,10 @@ const colorMap: Record<string, string> = {
   <div class="w-72 xl:w-80 flex-shrink-0 bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur-xl border-l border-gray-200/50 dark:border-white/5 flex flex-col">
     <!-- Header -->
     <div class="h-12 px-4 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
-      <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Annotations</h3>
+      <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('file.annotations') }}</h3>
       <div class="flex items-center gap-1">
         <button @click="emit('export-note')" :disabled="annotations.length === 0"
-          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 disabled:opacity-30 cursor-pointer transition-colors" title="Export to Note">
+          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 disabled:opacity-30 cursor-pointer transition-colors" :title="$t('file.export_to_note')">
           <FileText class="w-3.5 h-3.5" />
         </button>
       </div>
@@ -75,8 +75,8 @@ const colorMap: Record<string, string> = {
         <div class="w-12 h-12 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-3">
           <FileText class="w-5 h-5 text-gray-300 dark:text-gray-600" />
         </div>
-        <p class="text-xs text-gray-400 dark:text-gray-500">No annotations yet</p>
-        <p class="text-[10px] text-gray-300 dark:text-gray-600 mt-1">Select text and highlight to start</p>
+        <p class="text-xs text-gray-400 dark:text-gray-500">{{ $t('file.no_annotations') }}</p>
+        <p class="text-[10px] text-gray-300 dark:text-gray-600 mt-1">{{ $t('file.start_annotating') }}</p>
       </div>
     </div>
 
@@ -109,7 +109,7 @@ const colorMap: Record<string, string> = {
               <button
                 @click.stop="requestDelete(ann.id)"
                 class="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-surface dark:hover:bg-surface-dark text-red-500 transition-all focus:opacity-100 cursor-pointer"
-                title="Delete highlight"
+                :title="$t('file.delete_highlight')"
               >
                 <Trash2 class="w-3.5 h-3.5" />
               </button>
@@ -131,7 +131,7 @@ const colorMap: Record<string, string> = {
 
     <ConfirmModal
       :show="showConfirmDelete"
-      title="Delete Highlight"
+      :title="$t('file.delete_highlight')"
       message="Are you sure you want to delete this highlight? This action cannot be undone."
       confirm-text="Delete"
       :is-destructive="true"

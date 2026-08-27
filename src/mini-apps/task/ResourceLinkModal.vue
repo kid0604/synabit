@@ -58,7 +58,7 @@
               <FileText v-else class="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </div>
             <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ node.title || (node.node_type === 'whiteboard' ? 'Untitled Whiteboard' : node.node_type === 'file' ? 'Unnamed File' : 'Untitled Note') }}</div>
+              <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ node.title || (node.node_type === 'whiteboard' ? $t('task.untitled_whiteboard') : node.node_type === 'file' ? $t('task.unnamed_file') : $t('task.untitled_note')) }}</div>
               <div class="text-xs text-gray-400 truncate mt-0.5" v-if="node.node_type === 'file'">
                   {{ node.id }}
               </div>

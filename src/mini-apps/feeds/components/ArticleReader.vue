@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ArrowLeft, Rss } from 'lucide-vue-next';
+import { ArrowLeft, Rss, Highlighter, Trash2 } from 'lucide-vue-next';
+import { logger } from '../../../utils/logger';
 import ReaderToolbar from './ReaderToolbar.vue';
 import { useArticleService } from '../composables/useArticleService';
+import { useImageCache } from '../composables/useImageCache';
+import { applyHighlights, findMark, occurrenceOfSelection } from '../composables/useHighlights';
+import type { Highlight } from '../types/feed.types';
 import type { CachedArticle, FeedConfig, FeedSource } from '../types/feed.types';
 
 const props = defineProps<{
@@ -14,6 +18,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  'highlights-to-note': [article: CachedArticle, highlights: Highlight[]];
   'toggle-star': [id: string];
   'toggle-read-later': [id: string];
   'clip-to-note': [article: CachedArticle];
@@ -25,13 +30,229 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const feedService = useArticleService();
+const imageCache = useImageCache();
 const contentRef = ref<HTMLElement | null>(null);
+
+/**
+ * The article body with its images pointed at the local cache.
+ *
+ * Held separately from `article.content` because the rewrite is asynchronous —
+ * the pictures have to be fetched before their paths exist — and rendering the
+ * original markup in the meantime would send the very requests this avoids.
+ */
+const renderedContent = ref('');
+const renderingContent = ref(false);
+
+// ── Highlights ───────────────────────────────────────────────────────
+const highlights = ref<Highlight[]>([]);
+
+/** Where to put the little toolbar, and what it would act on. */
+const selection = ref<{ text: string; occurrence: number; x: number; y: number } | null>(null);
+
+const loadHighlights = async () => {
+  const article = props.article;
+  if (!article) {
+    highlights.value = [];
+    return;
+  }
+  try {
+    const found = await feedService.getHighlights(article.id);
+    if (props.article?.id === article.id) highlights.value = found;
+  } catch (e) {
+    logger.error('Failed to load highlights', e);
+  }
+};
+
+/**
+ * Draw the stored highlights over the article that is on screen.
+ *
+ * Runs after every render of the body, because `v-html` rebuilds the markup
+ * from scratch each time — which is also what clears the previous marks, so
+ * there is nothing to undo first.
+ */
+const paintHighlights = () => {
+  if (contentRef.value && highlights.value.length > 0) {
+    applyHighlights(contentRef.value, highlights.value);
+  }
+};
+
+const clearSelection = () => {
+  selection.value = null;
+};
+
+/**
+ * Offer to highlight whatever was just selected.
+ *
+ * The offer is anchored to the end of the selection rather than the middle of
+ * it: a paragraph-long highlight would otherwise put the button somewhere the
+ * pointer is not.
+ */
+const handleSelectionChange = () => {
+  const active = window.getSelection();
+  if (!active || active.isCollapsed || active.rangeCount === 0) {
+    clearSelection();
+    return;
+  }
+
+  const range = active.getRangeAt(0);
+  const root = contentRef.value;
+  if (!root || !root.contains(range.commonAncestorContainer)) {
+    clearSelection();
+    return;
+  }
+
+  const text = active.toString().trim();
+  if (text.length < 2) {
+    clearSelection();
+    return;
+  }
+
+  const rects = range.getClientRects();
+  const last = rects[rects.length - 1];
+  if (!last) {
+    clearSelection();
+    return;
+  }
+
+  selection.value = {
+    text,
+    occurrence: occurrenceOfSelection(root, range, text),
+    x: last.right,
+    y: last.bottom,
+  };
+};
+
+const saveHighlight = async () => {
+  const pending = selection.value;
+  const article = props.article;
+  if (!pending || !article) return;
+  clearSelection();
+  window.getSelection()?.removeAllRanges();
+
+  try {
+    const created = await feedService.addHighlight(article.id, pending.text, pending.occurrence);
+    highlights.value = [...highlights.value, created];
+    paintHighlights();
+  } catch (e) {
+    logger.error('Failed to save highlight', e);
+  }
+};
+
+/** Clicking a mark takes it away again. */
+const removeHighlightAt = async (target: HTMLElement) => {
+  const id = target.dataset.highlightId;
+  if (!id) return;
+  try {
+    await feedService.removeHighlight(id);
+    highlights.value = highlights.value.filter(h => h.id !== id);
+    // Unwrap in place rather than re-rendering the whole article, then heal
+    // the seam: an unwrapped mark leaves the sentence split across sibling
+    // text nodes, and a passage spanning that seam would stop being findable.
+    const parent = target.parentNode;
+    target.replaceWith(...Array.from(target.childNodes));
+    parent?.normalize();
+  } catch (e) {
+    logger.error('Failed to remove highlight', e);
+  }
+};
+
+/** Removing from the list below, where there is no mark to click. */
+const removeHighlightById = async (id: string) => {
+  try {
+    await feedService.removeHighlight(id);
+    highlights.value = highlights.value.filter(h => h.id !== id);
+    const mark = contentRef.value ? findMark(contentRef.value, id) : null;
+    if (mark) {
+      const parent = mark.parentNode;
+      mark.replaceWith(...Array.from(mark.childNodes));
+      parent?.normalize();
+    }
+  } catch (e) {
+    logger.error('Failed to remove highlight', e);
+  }
+};
+
+const sendHighlightsToNote = () => {
+  if (props.article && highlights.value.length > 0) {
+    emit('highlights-to-note', props.article, highlights.value);
+  }
+};
+
+const updateRenderedContent = async () => {
+  const article = props.article;
+  const source = article?.content || article?.summary || '';
+  if (!source) {
+    renderedContent.value = '';
+    return;
+  }
+  renderingContent.value = true;
+  try {
+    const rewritten = await imageCache.rewriteImages(source);
+    // Another article may have been opened while the images were fetched.
+    if (props.article?.id === article?.id) {
+      renderedContent.value = rewritten;
+      nextTick(paintHighlights);
+    }
+  } finally {
+    if (props.article?.id === article?.id) renderingContent.value = false;
+  }
+};
+
+// Watches the body rather than the id: extracting the full text replaces the
+// content of the article already on screen.
+watch(() => [props.article?.id, props.article?.content, props.article?.summary], updateRenderedContent, {
+  immediate: true,
+});
 const readingProgress = ref(0);
 const loadingContent = ref(false);
 
-const sourceName = computed(() => {
-  if (!props.article) return '';
-  return props.sources.find(s => s.id === props.article!.feedSourceId)?.title || '';
+const articleSource = computed(() =>
+  props.article ? props.sources.find(s => s.id === props.article!.feedSourceId) ?? null : null
+);
+
+const sourceName = computed(() => articleSource.value?.title || '');
+
+/**
+ * Whether to go and fetch the article's own page.
+ *
+ * An article with no body has nothing to show and must be fetched. An article
+ * with a body is only worth re-fetching if its feed is one of the many that
+ * publish a teaser, and the reader has said so. `full-text` is the mark left
+ * by a previous attempt — successful or not — and stops the reader trying
+ * again on every open.
+ */
+/** An `<img>` with no source at all — a picture the article cannot show. */
+const IMAGE_WITHOUT_SOURCE = /<img(?![^>]*\ssrc=)[^>]*>/i;
+
+/**
+ * Articles already re-fetched in this session in the hope of repairing them.
+ *
+ * The repair is driven by a condition the article itself still satisfies if
+ * the second extraction is no better — a page behind a paywall, say — so
+ * without this it would fetch the page again every time the article was
+ * opened. Once per session is enough to find out.
+ */
+const repairAttempted = new Set<string>();
+
+const needsExtraction = computed(() => {
+  const article = props.article;
+  if (!article) return false;
+
+  // Articles extracted before lazy-loaded images were understood have figures
+  // with captions and no picture. That is detectable, and re-extracting fixes
+  // it — so an article repairs itself the first time it is opened, once, and
+  // only if it is actually affected.
+  if (
+    article.content &&
+    !repairAttempted.has(article.id) &&
+    IMAGE_WITHOUT_SOURCE.test(article.content)
+  ) {
+    return true;
+  }
+
+  if (article.contentType === 'full-text') return false;
+  if (!article.content) return true;
+  return !!articleSource.value?.fullTextFetch;
 });
 
 const formattedDate = computed(() => {
@@ -41,11 +262,25 @@ const formattedDate = computed(() => {
   });
 });
 
+/**
+ * Where the reader had got to in each article, for this session.
+ *
+ * Going back to something half-read and landing at the top again is the small
+ * indignity every reader without this has. Module-level so it survives the
+ * component being torn down and rebuilt when the layout switches between the
+ * desktop and mobile panes.
+ */
+const readingPositions = new Map<string, number>();
+
 const handleScroll = () => {
   if (!contentRef.value) return;
   const el = contentRef.value;
   const scrollable = el.scrollHeight - el.clientHeight;
   readingProgress.value = scrollable > 0 ? Math.min(100, (el.scrollTop / scrollable) * 100) : 100;
+  if (props.article) readingPositions.set(props.article.id, el.scrollTop);
+  // The offer is anchored to a place on screen; scrolling moves the words out
+  // from under it.
+  if (selection.value) clearSelection();
 };
 
 const openOriginal = () => {
@@ -66,6 +301,13 @@ const openExternal = async (url: string) => {
 
 // Intercept link clicks in article content
 const handleContentClick = (e: MouseEvent) => {
+  const mark = (e.target as HTMLElement)?.closest('mark[data-highlight-id]');
+  if (mark) {
+    e.preventDefault();
+    removeHighlightAt(mark as HTMLElement);
+    return;
+  }
+
   const target = (e.target as HTMLElement)?.closest('a');
   if (!target) return;
   const href = target.getAttribute('href');
@@ -78,26 +320,40 @@ const handleContentClick = (e: MouseEvent) => {
 
 
 
-watch(() => props.article?.id, async () => {
+watch(() => props.article?.id, async id => {
   readingProgress.value = 0;
+  const resume = id ? readingPositions.get(id) ?? 0 : 0;
   nextTick(() => {
-    if (contentRef.value) contentRef.value.scrollTop = 0;
+    if (contentRef.value) contentRef.value.scrollTop = resume;
   });
 
-  // Lazy-load content for scrape-type articles
-  if (props.article && !props.article.content && (props.article.contentType as string) === 'scrape') {
-    loadingContent.value = true;
-    try {
-      const updated = await feedService.fetchArticleContent(props.article.id);
-      // Update the article data reactively
-      emit('article-updated', updated);
-    } catch (e) {
-      console.error('Failed to fetch article content:', e);
-    } finally {
-      loadingContent.value = false;
-    }
+  clearSelection();
+  await loadHighlights();
+  nextTick(paintHighlights);
+  // Force when the body is already there but unusable: the plain path leaves
+  // an article that has content alone.
+  if (needsExtraction.value) {
+    const repairing = !!props.article?.content;
+    if (repairing && props.article) repairAttempted.add(props.article.id);
+    await extractArticle(repairing);
   }
 });
+
+const extractArticle = async (force: boolean) => {
+  const article = props.article;
+  if (!article || loadingContent.value) return;
+  loadingContent.value = true;
+  try {
+    emit('article-updated', await feedService.fetchArticleContent(article.id, force));
+  } catch (e) {
+    logger.error('Failed to fetch article content', e);
+  } finally {
+    loadingContent.value = false;
+  }
+};
+
+/** The reader asking for the full article by hand, whatever the feed sent. */
+const fetchFullText = () => extractArticle(true);
 </script>
 
 <template>
@@ -121,7 +377,7 @@ watch(() => props.article?.id, async () => {
       <!-- Toolbar -->
       <div class="shrink-0 border-b border-border dark:border-border-dark">
         <div class="flex items-center gap-2 px-4 py-2">
-          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1" aria-label="More Options">
+          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1" :aria-label="t('feeds.a11y_back_to_list')">
             <ArrowLeft class="w-5 h-5" />
           </button>
           <ReaderToolbar
@@ -132,12 +388,21 @@ watch(() => props.article?.id, async () => {
             @quick-capture="emit('quick-capture', article)"
             @create-task="emit('create-task', article)"
             @open-original="openOriginal"
+            :fetching-full-text="loadingContent"
+            @fetch-full-text="fetchFullText"
           />
         </div>
       </div>
 
       <!-- Content -->
-      <div ref="contentRef" @scroll="handleScroll" @click="handleContentClick" class="flex-1 overflow-y-auto hidden-scrollbar select-text">
+      <div
+        ref="contentRef"
+        @scroll="handleScroll"
+        @click="handleContentClick"
+        @mouseup="handleSelectionChange"
+        @keyup="handleSelectionChange"
+        class="flex-1 overflow-y-auto hidden-scrollbar select-text"
+      >
         <article class="mx-auto py-8 px-6" :style="{ maxWidth: config.readingMaxWidth + 'px' }">
           <!-- Header -->
           <h1 class="text-2xl font-bold leading-tight text-text dark:text-text-dark mb-3" :style="{ fontSize: (config.readingFontSize + 8) + 'px' }">
@@ -162,9 +427,58 @@ watch(() => props.article?.id, async () => {
             <p class="text-sm text-gray-400">{{ t('feeds.loading_content') }}</p>
           </div>
           <!-- Article body -->
-          <div v-else class="article-prose" :style="{ fontSize: config.readingFontSize + 'px' }" v-html="article.content || article.summary || ''"></div>
+          <div v-else class="article-prose" :style="{ fontSize: config.readingFontSize + 'px' }" v-html="renderedContent"></div>
+
+          <!--
+            The highlights are kept on this device; the note is the durable
+            copy, so the way out to one sits with them rather than in a menu.
+          -->
+          <section v-if="highlights.length > 0" class="mt-10 pt-6 border-t border-border dark:border-border-dark">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <h2 class="text-sm font-semibold text-text dark:text-text-dark">
+                {{ t('feeds.highlights_count', { count: highlights.length }) }}
+              </h2>
+              <button
+                @click="sendHighlightsToNote"
+                class="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-medium hover:bg-orange-600 transition-colors shadow-sm"
+              >
+                {{ t('feeds.highlights_to_note') }}
+              </button>
+            </div>
+            <ul class="space-y-2">
+              <li
+                v-for="highlight in highlights"
+                :key="highlight.id"
+                class="group flex items-start gap-2 px-3 py-2 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark"
+              >
+                <span class="flex-1 min-w-0 text-[13px] leading-relaxed text-gray-600 dark:text-gray-300">{{ highlight.text }}</span>
+                <button
+                  @click="removeHighlightById(highlight.id)"
+                  class="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                  :aria-label="t('feeds.highlight_remove')"
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
+                </button>
+              </li>
+            </ul>
+          </section>
         </article>
       </div>
+      <!--
+        Offered where the selection ends, so a long highlight does not put the
+        button somewhere the pointer never was.
+      -->
+      <Teleport to="body">
+        <button
+          v-if="selection"
+          @mousedown.prevent="saveHighlight"
+          class="fixed z-[400] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1e] text-white text-[13px] font-medium shadow-xl hover:bg-black transition-colors"
+          :style="{ left: selection.x + 'px', top: selection.y + 8 + 'px' }"
+        >
+          <Highlighter class="w-3.5 h-3.5" />
+          {{ t('feeds.highlight') }}
+        </button>
+      </Teleport>
     </template>
   </div>
 </template>
@@ -249,6 +563,18 @@ watch(() => props.article?.id, async () => {
 
 .article-prose :deep(figure) {
   margin: 1.5rem 0;
+}
+
+.article-prose :deep(mark.feed-highlight) {
+  background: rgba(249, 115, 22, 0.22);
+  color: inherit;
+  border-radius: 0.2rem;
+  padding: 0.05em 0.1em;
+  cursor: pointer;
+}
+
+.article-prose :deep(mark.feed-highlight:hover) {
+  background: rgba(249, 115, 22, 0.38);
 }
 
 .article-prose :deep(figcaption) {

@@ -177,9 +177,19 @@ impl DbBridge {
         let mut param_values: Vec<String> = Vec::new();
         let mut param_idx: usize = 1;
 
-        // Query matches title (filename) via LIKE
+        // Matches the filename, or the words inside the document.
+        //
+        // The second half is what changed when files started giving up their
+        // contents: asking the assistant about a clause in a contract used to
+        // require knowing what the contract had been called, because a
+        // filename was the only thing there was to match on.
         if !query.is_empty() {
-            conditions.push(format!("title LIKE ?{}", param_idx));
+            conditions.push(format!(
+                "(title LIKE ?{idx} OR EXISTS (
+                    SELECT 1 FROM file_text ft WHERE ft.node_id = nodes.id AND ft.text LIKE ?{idx}
+                 ))",
+                idx = param_idx
+            ));
             param_values.push(format!("%{}%", query));
             param_idx += 1;
         }

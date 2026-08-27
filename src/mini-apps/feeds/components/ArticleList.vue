@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Search, RefreshCw, CheckCheck, Rss, LayoutList, LayoutGrid, List } from 'lucide-vue-next';
+import { Search, RefreshCw, CheckCheck, Rss, LayoutList, LayoutGrid, List, ArrowDownWideNarrow, ArrowUpWideNarrow } from 'lucide-vue-next';
 import ArticleCard from './ArticleCard.vue';
-import type { CachedArticle, FeedSource } from '../types/feed.types';
+import type { CachedArticle, FeedSource, SortOrder } from '../types/feed.types';
 
 const props = defineProps<{
   articles: CachedArticle[];
@@ -13,6 +13,10 @@ const props = defineProps<{
   currentView: string;
   refreshing: boolean;
   viewMode?: 'magazine' | 'cards' | 'titles';
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  sortOrder?: SortOrder;
+  markReadOnScroll?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +25,9 @@ const emit = defineEmits<{
   'update:view-mode': [mode: 'magazine' | 'cards' | 'titles'];
   'mark-all-read': [];
   'refresh': [];
+  'load-more': [];
+  'update:sort-order': [sort: SortOrder];
+  'mark-read': [articleId: string];
 }>();
 
 const { t } = useI18n();
@@ -32,6 +39,86 @@ const getSourceName = (sourceId: string) => {
 const hasUnread = computed(() => props.articles.some(a => !a.isRead));
 
 const activeViewMode = computed(() => props.viewMode || 'magazine');
+
+// Load the next page when the end of the list comes into view. The observer
+// watches a sentinel rather than the scroll position, so it costs nothing
+// while the reader is anywhere above the bottom.
+const sentinel = ref<HTMLElement | null>(null);
+let observer: IntersectionObserver | null = null;
+
+const disconnect = () => {
+  observer?.disconnect();
+  observer = null;
+};
+
+watch(sentinel, el => {
+  disconnect();
+  if (!el) return;
+  observer = new IntersectionObserver(
+    entries => {
+      if (entries.some(entry => entry.isIntersecting)) emit('load-more');
+    },
+    // Start fetching a screenful early, so the list rarely runs out under
+    // the reader's thumb.
+    { rootMargin: '400px' },
+  );
+  observer.observe(el);
+});
+
+onBeforeUnmount(disconnect);
+
+// The first screenful is rendered eagerly; everything after it can wait until
+// it is scrolled near.
+const EAGER_ROWS = 12;
+
+const nextSort = computed<SortOrder>(() => (props.sortOrder === 'oldest' ? 'newest' : 'oldest'));
+
+// ── Marking rows read as they scroll past ────────────────────────────
+//
+// "Read" here means the row has left the top of the list, not that it came
+// into view: something you have scrolled up past is something you have been
+// given the chance to read, and something merely visible at the bottom is not.
+const scrollRef = ref<HTMLElement | null>(null);
+let readObserver: IntersectionObserver | null = null;
+
+const disconnectReadObserver = () => {
+  readObserver?.disconnect();
+  readObserver = null;
+};
+
+const observeRows = () => {
+  disconnectReadObserver();
+  if (!props.markReadOnScroll || !scrollRef.value) return;
+
+  const root = scrollRef.value;
+  readObserver = new IntersectionObserver(
+    entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) continue;
+        // Only rows that went off the *top*; rows below the fold are simply
+        // not read yet.
+        const rootTop = entry.rootBounds?.top ?? 0;
+        if (entry.boundingClientRect.bottom > rootTop) continue;
+
+        const id = (entry.target as HTMLElement).dataset.articleId;
+        if (id) emit('mark-read', id);
+      }
+    },
+    { root, threshold: 0 },
+  );
+
+  for (const row of root.querySelectorAll('[data-article-id]')) {
+    readObserver.observe(row);
+  }
+};
+
+watch(
+  () => [props.markReadOnScroll, props.articles.length, props.viewMode],
+  () => nextTick(observeRows),
+  { immediate: true },
+);
+
+onBeforeUnmount(disconnectReadObserver);
 </script>
 
 <template>
@@ -71,23 +158,46 @@ const activeViewMode = computed(() => props.viewMode || 'magazine');
           </button>
         </div>
 
+        <button
+          @click="emit('update:sort-order', nextSort)"
+          class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          :title="sortOrder === 'oldest' ? t('feeds.sort_oldest') : t('feeds.sort_newest')"
+        >
+          <ArrowUpWideNarrow v-if="sortOrder === 'oldest'" class="w-4 h-4" />
+          <ArrowDownWideNarrow v-else class="w-4 h-4" />
+        </button>
+
         <span class="flex-1"></span>
         <span class="text-xs text-gray-400">{{ articles.length }} {{ t('feeds.articles') }}</span>
       </div>
     </div>
 
     <!-- Article list -->
-    <div class="flex-1 overflow-y-auto hidden-scrollbar">
-      <div v-if="articles.length > 0" :class="activeViewMode === 'cards' ? 'grid grid-cols-2 gap-3 p-3' : 'divide-y divide-border dark:divide-border-dark'">
+    <div ref="scrollRef" class="flex-1 overflow-y-auto hidden-scrollbar">
+      <div
+        v-if="articles.length > 0"
+        role="listbox"
+        :aria-label="t('feeds.article_list')"
+        :class="activeViewMode === 'cards' ? 'grid grid-cols-2 gap-3 p-3' : 'divide-y divide-border dark:divide-border-dark'"
+      >
         <ArticleCard
-          v-for="article in articles"
+          v-for="(article, index) in articles"
           :key="article.id"
           :article="article"
           :is-selected="selectedArticle?.id === article.id"
           :source-name="getSourceName(article.feedSourceId)"
           :view-mode="activeViewMode"
+          :deferred="index >= EAGER_ROWS"
           @select="emit('select-article', article)"
         />
+      </div>
+
+      <!-- Where the next page comes from -->
+      <div v-if="articles.length > 0 && hasMore" ref="sentinel" class="py-4 flex items-center justify-center">
+        <div v-if="loadingMore" class="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+        <button v-else @click="emit('load-more')" class="text-xs text-gray-400 hover:text-orange-500 transition-colors">
+          {{ t('feeds.load_more') }}
+        </button>
       </div>
 
       <!-- Empty state -->

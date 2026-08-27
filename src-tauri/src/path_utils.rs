@@ -28,6 +28,42 @@ pub fn is_safe_filename(filename: &str) -> bool {
     !filename.contains('/') && !filename.contains('\\')
 }
 
+/// A title turned into something that can be a filename.
+///
+/// Titles come from documents and from people, so they carry separators,
+/// colons and the occasional newline — all of which either break a path or,
+/// worse, change which directory it points at. Everything unsafe becomes a
+/// hyphen rather than being dropped, so two titles that differ only in
+/// punctuation do not collapse into one name.
+pub fn sanitise_for_filename(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|c| match c {
+            // The Windows-reserved set, plus the separators, plus anything a
+            // terminal or a filesystem would rather not see.
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+
+    // Collapse the runs the substitution creates, and trim the leading dots
+    // that would otherwise hide the file from the vault scanner.
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim_matches(|c| c == '.' || c == '-' || c == ' ');
+
+    if trimmed.is_empty() {
+        return "Untitled".to_string();
+    }
+    // Filesystems cap a single component around 255 bytes; leave room for the
+    // extension and for the counter a name collision adds.
+    let mut end = trimmed.len().min(180);
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    trimmed[..end].to_string()
+}
+
 pub fn enforce_no_traversal(path: &str) -> Result<(), crate::error::AppError> {
     if path.contains("..") {
         return Err(crate::error::AppError::InvalidPath(
@@ -135,6 +171,42 @@ mod tests {
     }
     use super::*;
     use std::path::PathBuf;
+
+    // ── sanitise_for_filename ─────────────────────
+
+    #[test]
+    fn a_title_with_separators_cannot_change_directory() {
+        assert_eq!(sanitise_for_filename("Notes/../etc/passwd"), "Notes-..-etc-passwd");
+        assert_eq!(sanitise_for_filename("a\\b"), "a-b");
+        assert!(is_safe_filename(&sanitise_for_filename("Trích dẫn — Hợp đồng 2026/07")));
+    }
+
+    /// Substituting rather than dropping keeps two titles that differ only in
+    /// punctuation from collapsing onto one filename.
+    #[test]
+    fn punctuation_becomes_a_hyphen_rather_than_vanishing() {
+        assert_ne!(
+            sanitise_for_filename("Báo cáo: quý 4"),
+            sanitise_for_filename("Báo cáo quý 4")
+        );
+    }
+
+    /// A leading dot would hide the file from the vault scanner entirely, so a
+    /// note exported under such a title would simply never appear.
+    #[test]
+    fn a_name_never_begins_with_a_dot() {
+        assert_eq!(sanitise_for_filename("...ẩn"), "ẩn");
+        assert_eq!(sanitise_for_filename("   "), "Untitled");
+        assert_eq!(sanitise_for_filename("///"), "Untitled");
+    }
+
+    #[test]
+    fn a_very_long_title_is_cut_without_splitting_a_character() {
+        let long = "đ".repeat(400);
+        let cut = sanitise_for_filename(&long);
+        assert!(cut.len() <= 180);
+        assert!(long.starts_with(&cut), "the cut must land on a character boundary");
+    }
 
     // ── is_safe_filename ──────────────────────────
 

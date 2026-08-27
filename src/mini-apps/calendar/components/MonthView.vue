@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { ref, computed, nextTick } from 'vue';
 import { CheckSquare } from 'lucide-vue-next';
 import type { EventMetadata, TaskMetadata } from '../types';
 import { dayNamesShort, formatDateString, isSameDay } from '../helpers';
+import { i18n } from '../../../i18n';
 
-defineProps<{
+const props = defineProps<{
     calendarDays: { date: Date; inMonth: boolean }[];
     selectedDate: Date;
     getEventsForDate: (dateStr: string) => EventMetadata[];
@@ -13,24 +15,117 @@ defineProps<{
 
 const emit = defineEmits<{
     (e: 'click-day', date: Date): void;
+    (e: 'focus-day', date: Date): void;
     (e: 'edit-event', ev: EventMetadata, dateStr: string): void;
     (e: 'toggle-task', task: { id: string; status: string }): void;
     (e: 'open-task', id: string): void;
 }>();
+
+/**
+ * The month grid, reachable by keyboard.
+ *
+ * It was forty-two `<div>`s with a click handler — the default view of the
+ * app, and no way into it without a mouse. What it is now is the pattern a
+ * grid of dates is supposed to be: one cell in the tab order at a time, and
+ * the arrow keys moving between them.
+ *
+ * A roving `tabindex` rather than forty-two tab stops: nobody wants to press
+ * Tab six times to leave a month.
+ */
+const cells = ref<HTMLElement[]>([]);
+/**
+ * Null until the grid has been moved through, not zero.
+ *
+ * Zero is a cell — the first one — so `active || tabStop` sent the tab stop
+ * back to the selected day the moment somebody arrowed onto Sunday of the
+ * leading week, and tabbing away and back returned them somewhere else.
+ */
+const active = ref<number | null>(null);
+
+/** The cell that holds the tab stop — the selected day, or the first one. */
+const tabStop = computed(() => {
+    const chosen = props.calendarDays.findIndex(d => isSameDay(d.date, props.selectedDate));
+    return chosen >= 0 ? chosen : 0;
+});
+
+const focusCell = async (index: number) => {
+    const clamped = Math.max(0, Math.min(props.calendarDays.length - 1, index));
+    active.value = clamped;
+    await nextTick();
+    cells.value[clamped]?.focus();
+    // Moving through the grid moves the selection with it, the way arrowing
+    // through a list of files selects as it goes.
+    emit('focus-day', props.calendarDays[clamped].date);
+};
+
+const onKey = (e: KeyboardEvent, index: number) => {
+    const step: Record<string, number> = {
+        ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7,
+    };
+    if (e.key in step) {
+        e.preventDefault();
+        focusCell(index + step[e.key]);
+        return;
+    }
+    if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        // The start or end of the week this cell is in.
+        const weekStart = index - (index % 7);
+        focusCell(e.key === 'Home' ? weekStart : weekStart + 6);
+    }
+};
+
+/**
+ * What a screen reader says about a day.
+ *
+ * The date on its own is not enough — the whole reason to move through a
+ * month is to find the days with something on them, and a grid of forty-two
+ * bare numbers hides exactly that.
+ */
+const cellLabel = (date: Date) => {
+    const dateStr = formatDateString(date);
+    const written = date.toLocaleDateString(i18n.global.locale.value, {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+    const events = props.getEventsForDate(dateStr).length;
+    const tasks = props.getTasksForDate(dateStr).length;
+    if (!events && !tasks) return written;
+
+    // Counted separately and only when there is something to count: "1 events,
+    // 0 tasks" is worse than saying nothing.
+    const parts = [written];
+    // Named values first, plural count second. The other argument order —
+    // `t(key, plural, named)` — reads more naturally but is not one of `t`'s
+    // signatures: the third parameter there is `TranslateOptions`, so `{ n }`
+    // matched nothing and the call fell through to the wrong overload.
+    if (events) parts.push(i18n.global.t('calendar.cell_events', { n: events }, events));
+    if (tasks) parts.push(i18n.global.t('calendar.cell_tasks', { n: tasks }, tasks));
+    return parts.join(', ');
+};
 </script>
 
 <template>
     <div class="h-full flex flex-col select-none">
         <div class="grid grid-cols-7 mb-2 flex-shrink-0 border-b border-[#e6e6e6] dark:border-[#333] pb-2 px-1">
-            <div v-for="day in dayNamesShort" :key="day" class="text-center text-xs font-bold uppercase tracking-wider text-[#8b8b8b] dark:text-[#71717a]">
+            <div v-for="(day, di) in dayNamesShort()" :key="'d'+di" aria-hidden="true" class="text-center text-xs font-bold uppercase tracking-wider text-[#8b8b8b] dark:text-[#71717a]">
                 {{ day }}
             </div>
         </div>
         <div class="flex-1 overflow-y-auto no-scrollbar pb-2 px-1">
-            <div class="grid grid-cols-7 grid-rows-6 gap-2 min-h-[500px] md:min-h-[650px] h-full">
-            <div v-for="(dayObj, idx) in calendarDays" :key="idx" 
+            <div role="grid" :aria-label="$t('calendar.month_grid')"
+                 class="grid grid-cols-7 grid-rows-6 gap-2 min-h-[500px] md:min-h-[650px] h-full">
+            <div v-for="(dayObj, idx) in calendarDays" :key="idx"
+                 ref="cells"
+                 role="gridcell"
+                 :tabindex="idx === (active ?? tabStop) ? 0 : -1"
+                 :aria-selected="isSameDay(dayObj.date, selectedDate)"
+                 :aria-label="cellLabel(dayObj.date)"
                  @click="emit('click-day', dayObj.date)"
-                 class="relative flex flex-col rounded-xl border border-[#ececeb] dark:border-[#2f2f2f] cursor-pointer transition-all duration-200 overflow-hidden group hover:border-[#d4d4d8] dark:hover:border-[#4f4f4f] hover:shadow-sm"
+                 @keydown="onKey($event, idx)"
+                 @keydown.enter.prevent="emit('click-day', dayObj.date)"
+                 @keyup.space.prevent="emit('click-day', dayObj.date)"
+                 @focus="active = idx"
+                 class="relative flex flex-col rounded-xl border border-[#ececeb] dark:border-[#2f2f2f] cursor-pointer transition-all duration-200 overflow-hidden group hover:border-[#d4d4d8] dark:hover:border-[#4f4f4f] hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-500 focus-visible:outline-offset-2"
                  :class="[
                      dayObj.inMonth ? 'bg-white dark:bg-[#262626]' : 'bg-gray-50/50 dark:bg-[#1f1f1f]',
                      isSameDay(dayObj.date, selectedDate) ? 'ring-2 ring-purple-500 border-transparent dark:border-transparent' : '',

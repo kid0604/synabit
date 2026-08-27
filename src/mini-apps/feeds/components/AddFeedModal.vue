@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useFocusTrap } from '../composables/useFocusTrap';
 import { useI18n } from 'vue-i18n';
 import { X, Search, Rss, Plus, Loader2, Check, FolderPlus, Globe } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
@@ -16,6 +17,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const feedService = useArticleService();
+
+const dialog = ref<HTMLElement | null>(null);
+useFocusTrap(dialog);
 
 // State
 const url = ref('');
@@ -116,7 +120,7 @@ const handleKeydown = (e: KeyboardEvent) => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[200] flex items-center justify-center" @keydown="handleKeydown">
+  <div ref="dialog" class="fixed inset-0 z-[200] flex items-center justify-center" role="dialog" aria-modal="true" :aria-label="t('feeds.add_feed_title')" tabindex="-1" @keydown="handleKeydown">
     <!-- Backdrop -->
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="emit('close')"></div>
     
@@ -128,7 +132,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           <Rss class="w-5 h-5 text-orange-500" />
           {{ t('feeds.add_feed_title') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.a11y_close')">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -261,7 +265,7 @@ const handleKeydown = (e: KeyboardEvent) => {
                 @click="newCategoryColor = color"
                 class="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
                 :style="{ backgroundColor: color, borderColor: newCategoryColor === color ? '#fff' : 'transparent', boxShadow: newCategoryColor === color ? '0 0 0 2px ' + color : 'none' }"
-               aria-label="New Category Color = color"></button>
+               :aria-label="color"></button>
             </div>
           </div>
         </div>

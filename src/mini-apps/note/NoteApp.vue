@@ -1,27 +1,33 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject, defineAsyncComponent, toRef } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download } from 'lucide-vue-next';
+import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download, History, Copy, Trash2 } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
+import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask, message } from '@tauri-apps/plugin-dialog';
 
 import TiptapEditor from './TiptapEditor.vue';
 import NoteGraph from './NoteGraph.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import NoteExportModal from './NoteExportModal.vue';
+import NoteHistoryModal from './NoteHistoryModal.vue';
 import NoteListItem from './components/NoteListItem.vue';
 import NoteContextMenu from './components/NoteContextMenu.vue';
+import NoteUndoToast from './components/NoteUndoToast.vue';
+import NoteDuplicatesModal from './NoteDuplicatesModal.vue';
 
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
 import { logger } from '../../utils/logger';
+import { routeForNode } from '../../shared/nodeRoutes';
 import type { NavEntry } from '../../stores/useNavigationStore';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useLicenseStore } from '../../stores/useLicenseStore';
 
 import type { NoteItem } from './helpers';
-import { formatDate, buildNotePayload } from './helpers';
+import { formatDate, buildNotePayload, rememberRecentNotes, RECENT_NOTES_KEY } from './helpers';
+import { resolveNoteId } from './resolveNoteId';
 
 // ── Composables ─────────────────────────────────────────────
 import { useSidebarResize } from './composables/useSidebarResize';
@@ -34,11 +40,14 @@ import { useNoteSearch } from './composables/useNoteSearch';
 import { useNoteManager } from './composables/useNoteManager';
 import { useNoteBacklinks } from './composables/useNoteBacklinks';
 import { useNoteRename } from './composables/useNoteRename';
+import { useNoteDelete } from './composables/useNoteDelete';
+import { useNoteSelection } from './composables/useNoteSelection';
 
 const LockScreenComponent = defineAsyncComponent(() => import('../../shared/components/LockScreen.vue'));
 
 // ── Props & Services ────────────────────────────────────────
 const emit = defineEmits(['open-node']);
+const { t } = useI18n();
 const bus = useEventBus();
 const ns = useNodeService();
 
@@ -64,7 +73,7 @@ const currentNoteId = ref<string | null>(null);
 
 const recentNoteIds = ref<string[]>([]);
 try {
-    const stored = localStorage.getItem('synabit_recent_notes');
+    const stored = localStorage.getItem(RECENT_NOTES_KEY);
     if (stored) recentNoteIds.value = JSON.parse(stored);
 } catch (e) {}
 
@@ -73,7 +82,7 @@ const updateRecentNote = (id: string) => {
     arr.unshift(id);
     if (arr.length > 50) arr = arr.slice(0, 50);
     recentNoteIds.value = arr;
-    localStorage.setItem('synabit_recent_notes', JSON.stringify(arr));
+    rememberRecentNotes(arr);
 };
 
 watch(currentNoteId, (newId) => {
@@ -97,13 +106,121 @@ const save = useNoteSave(notes, currentNoteId, tabs.tabContents, tabs.renamedTab
 
 const lock = useNoteLock(appLockStore, handleNoteSelect);
 
-const tags = useNoteTags(notes, currentNoteId, tabs.currentContent, ns, scanVault);
+const tags = useNoteTags(notes, currentNoteId, tabs.currentContent, ns, scanVault, () => flushActiveEditor());
 
 const search = useNoteSearch(notes, recentNoteIds, tags.selectedTags, vaultPathRef);
 
 const manager = useNoteManager(notes, search.isCaseSensitiveSearch, vaultPathRef);
 
-const backlinks = useNoteBacklinks(notes, currentNoteId, tabs.currentContent, ns, scanVault);
+/**
+ * Make the open editor finish turning the document into markdown.
+ *
+ * The editor defers that by a fifth of a second so typing stays smooth, which
+ * means anything reading the note's text right after a keystroke — exporting
+ * it, above all — has to ask first or it reads a slightly older note.
+ */
+const flushActiveEditor = () => {
+    const id = currentNoteId.value;
+    if (!id) return;
+    const refs = save.editorRefs.value || save.editorRefs;
+    (refs as Record<string, { flushSerialize?: () => void }>)[id]?.flushSerialize?.();
+};
+
+const backlinks = useNoteBacklinks(notes, currentNoteId, tabs.currentContent, ns, scanVault, () => flushActiveEditor());
+
+/**
+ * Deleting a note, held back long enough to take it back.
+ *
+ * The confirmation dialog that used to guard this is gone on purpose. A dialog
+ * asks people to be careful beforehand, which mostly teaches them to click
+ * through it; an undo lets them be careless and still be fine. Only one of the
+ * two has ever saved a note.
+ */
+const del = useNoteDelete({
+    notes, currentNoteId, recentNoteIds,
+    tabContents: tabs.tabContents,
+    activeTabs: tabs.activeTabs,
+    tabAccessTime: tabs.tabAccessTime,
+    saveTimeouts: save.saveTimeouts,
+    ns, scanVault,
+    onFailed: (note) => {
+        void message(t('note.delete_failed'), { title: note.title, kind: 'error' });
+    },
+});
+
+const deleteNote = async (id: string) => {
+    activeContextMenu.value = null;
+
+    // Asked for, and then held back anyway. The two are not the same guard: a
+    // dialog catches the click somebody did not mean to make, and the undo
+    // window catches the one they meant at the time and regretted a second
+    // later. Neither has to be traded for the other.
+    const confirmed = await ask(t('note.delete_body'), {
+        title: t('note.delete_title'),
+        kind: 'warning',
+        okLabel: t('note.delete_confirm'),
+        cancelLabel: t('note.cancel'),
+    });
+    if (!confirmed) return;
+
+    return del.deleteNote(id);
+};
+
+// ─── Selecting several notes in the manager ───────────────
+const selection = useNoteSelection();
+
+/** The rows a click can currently reach — one page, under one filter. */
+const visibleManagerIds = computed(() => manager.managerPaginatedNotes.value.map((n) => n.id));
+
+/**
+ * Anything that changes which rows are on screen drops the selection.
+ *
+ * A selection the reader cannot see is one they cannot check before pressing
+ * delete, and this is the one button in the app where being wrong costs
+ * something. Turning a page is cheap; deleting nine notes you had forgotten
+ * were ticked two pages back is not.
+ */
+watch(
+    [manager.viewMode, manager.managerFilter, manager.managerSearchQuery, manager.managerCurrentPage],
+    () => selection.clear(),
+);
+
+/**
+ * Open the note, or tick it when a selection is already under way.
+ *
+ * Once one row is ticked the list is being used to pick things out rather than
+ * to read them, and a click that opened a note there would throw the whole
+ * selection away to show something nobody asked for.
+ */
+const handleManagerRowClick = (id: string, event: MouseEvent) => {
+    if (!selection.active.value) {
+        handleNoteSelect(id);
+        return;
+    }
+    selection.toggle(id, visibleManagerIds.value, event.shiftKey);
+};
+
+const deleteSelected = async () => {
+    const ids = selection.ids.value;
+    if (ids.length === 0) return;
+
+    const confirmed = await ask(
+        ids.length > 1 ? t('note.delete_many_body') : t('note.delete_body'),
+        {
+            title: ids.length > 1 ? t('note.delete_many_title', { count: ids.length }) : t('note.delete_title'),
+            kind: 'warning',
+            okLabel: t('note.delete_confirm'),
+            cancelLabel: t('note.cancel'),
+        },
+    );
+    if (!confirmed) return;
+
+    // Cleared before the delete, not after: the rows are gone from the list
+    // either way, and a selection still holding their ids would put the
+    // action bar back on screen offering to delete nothing.
+    selection.clear();
+    await del.deleteNotes(ids);
+};
 
 const noteExport = useNoteExport({
     notes, currentNoteId,
@@ -116,6 +233,46 @@ const rename = useNoteRename(
     tabs.tabAccessTime, tabs.renamedTabs, tabs.focusedTitles, recentNoteIds,
     save.saveTimeouts, save.saveNoteForTab, scanVault, save.editorRefs,
 );
+
+// ── Duplicate notes ─────────────────────────────────────────
+const duplicatesModalVisible = ref(false);
+
+// ── Version History ─────────────────────────────────────────
+/**
+ * Which note the history panel is showing, or null when it is closed.
+ *
+ * A note of its own rather than just `currentNoteId`, because the panel is
+ * reachable from each row's context menu as well as from the toolbar — and on
+ * a phone the context menu is the *only* way in, since the toolbar button is
+ * desktop-only.
+ */
+const historyNoteId = ref<string | null>(null);
+
+const openHistory = (id: string) => {
+    historyNoteId.value = id;
+    activeContextMenu.value = null;
+};
+
+const historyNote = computed(() => notes.value.find(n => n.id === historyNoteId.value) || null);
+
+/**
+ * Take the restored text back into the open tab.
+ *
+ * The restore has already written the file and brought the database in line,
+ * so this is only about the copy the editor is holding. Without it the editor
+ * would still show the old text and the next autosave — 600ms after the next
+ * keystroke — would write it straight back over the restore.
+ */
+const onVersionRestored = (content: string) => {
+    const id = historyNoteId.value;
+    // Only the tab actually holding this note needs telling. Restoring from a
+    // context menu can target a note that is not open, and the file plus the
+    // database are already in line by the time this runs.
+    if (!id || tabs.tabContents.value[id] === undefined) { scanVault(); return; }
+    tabs.tabContents.value[id] = content;
+    bus.emit('note:updated-external', { id, content });
+    scanVault();
+};
 
 // ── Zen Mode ────────────────────────────────────────────────
 const zenMode = ref(false);
@@ -189,6 +346,7 @@ const editorFullWidth = computed({
         const note = notes.value.find(n => n.id === currentNoteId.value);
         if (note) {
             note.full_width = val;
+            flushActiveEditor();
             await ns.writeNode(buildNotePayload(note, tabs.currentContent.value));
         }
     }
@@ -203,6 +361,7 @@ const togglePin = async (id: string) => {
         // the moment it is clicked, and only for this one note. Fetching it
         // here rather than holding every note's body in the list is both
         // cheaper and fresher than the copy the last scan left behind.
+        if (id === currentNoteId.value) flushActiveEditor();
         let body = tabs.tabContents.value[id];
         if (body === undefined) {
             const full = await ns.getNode(id);
@@ -212,29 +371,6 @@ const togglePin = async (id: string) => {
         await ns.writeNode(buildNotePayload(note, body));
         scanVault();
     } catch(e) { logger.error('Pin fail:', e); }
-};
-
-const deleteNote = async (id: string) => {
-    const isConfirmed = await ask('This note will be permanently deleted. This action cannot be undone.', {
-        title: 'Delete this note?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel'
-    });
-    if (!isConfirmed) return;
-    try {
-        if (save.saveTimeouts.has(id)) {
-            clearTimeout(save.saveTimeouts.get(id)!);
-            save.saveTimeouts.delete(id);
-        }
-        await ns.deleteNode({ relPath: id });
-        delete tabs.tabContents.value[id];
-        tabs.activeTabs.value = tabs.activeTabs.value.filter(t => t !== id);
-        tabs.tabAccessTime.delete(id);
-        if (currentNoteId.value === id) { currentNoteId.value = null; }
-        if (recentNoteIds.value.includes(id)) {
-            recentNoteIds.value = recentNoteIds.value.filter(x => x !== id);
-            localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
-        }
-        scanVault();
-    } catch(e) { logger.error('Delete fail:', e); }
 };
 
 const openInNewWindow = async (id: string) => {
@@ -274,16 +410,22 @@ async function scanVault() {
             return {
                 id: n.id, title: n.title,
                 date: n.updated_at || n.created_at, path: n.id, tags: noteTags,
+                node_id: typeof n.properties?.node_id === 'string' ? n.properties.node_id : undefined,
+                created_at: n.created_at,
                 pinned: !!n.properties?.pinned, full_width: !!n.properties?.full_width,
                 linked_projects: Array.isArray(n.properties?.linked_projects) ? n.properties.linked_projects : [],
                 summary: (n.preview || '').trim()
             };
         });
-        notes.value = scannedNotes;
-        tags.buildTagTree(scannedNotes);
-        if (scannedNotes.length > 0 && !currentNoteId.value) {
-            currentNoteId.value = scannedNotes[0].id;
-        } else if (scannedNotes.length === 0) {
+        // A note waiting out its undo window is still on disk, and the file
+        // watcher triggers plenty of rescans. Without this it would reappear in
+        // the sidebar underneath the toast offering to undo its deletion.
+        const visible = scannedNotes.filter(n => !del.isHidden(n.id));
+        notes.value = visible;
+        tags.buildTagTree(visible);
+        if (visible.length > 0 && !currentNoteId.value) {
+            currentNoteId.value = visible[0].id;
+        } else if (visible.length === 0) {
             currentNoteId.value = null;
         }
     } catch(e) { logger.error("Failed to scan vault:", e); }
@@ -302,8 +444,7 @@ const handleOpenInternalNote = (data: any) => {
     const noteId = typeof data === 'string' ? data : data.id;
     const type = typeof data === 'string' ? 'note' : data.type;
     if (type === 'note' || type === 'node') {
-        const exists = notes.value.find(n => n.id === noteId);
-        const resolved = exists || notes.value.find(n => n.id.endsWith(noteId));
+        const resolved = resolveNoteId(notes.value, noteId);
         if (resolved) {
             if (resolved.id !== currentNoteId.value && currentNoteId.value && !skipNavPush) {
                 pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
@@ -317,30 +458,43 @@ const handleOpenInternalNote = (data: any) => {
 
 // ── Public API ──────────────────────────────────────────────
 const openNoteById = async (id: string, _skipNavPush = false) => {
+    if (notes.value.length === 0) { await scanVault(); }
+
+    const exists = resolveNoteId(notes.value, id);
+
+    // Something that is not a note goes to the app that owns it, and this app
+    // is left exactly as it was. Checked before `currentNoteId` and the editor
+    // view are set, so a mis-routed task does not flash up as an open note on
+    // the way past — and never reaches the editor that would save it as one.
+    if (!exists) {
+        const node = await ns.getNode(id).catch(() => null);
+        const route = node && node.node_type !== 'note' ? routeForNode(node.node_type, id) : null;
+        if (route) {
+            emit('open-node', id, route);
+            return;
+        }
+    }
+
     if (!_skipNavPush && currentNoteId.value && currentNoteId.value !== id && !skipNavPush) {
         pushNavigation?.({ app: 'note', itemId: currentNoteId.value });
     }
-    currentNoteId.value = id;
+    const finalId = exists ? exists.id : id;
+    currentNoteId.value = finalId;
     manager.viewMode.value = 'editor';
-    if (notes.value.length === 0) { await scanVault(); }
-    let finalId = id;
-    const exists = notes.value.find(n => n.id === id) || notes.value.find(n => n.id.endsWith(id));
-    if (exists) {
-        finalId = exists.id;
-        currentNoteId.value = finalId;
-    }
     await tabs.loadNoteFile(finalId);
 };
-defineExpose({ openNoteById, scanVault, notes, tabContents: tabs.tabContents, loadNoteFile: tabs.loadNoteFile, currentNoteId });
+defineExpose({ openNoteById, scanVault, notes, tabContents: tabs.tabContents, loadNoteFile: tabs.loadNoteFile, currentNoteId, deleteNote });
 
 // ── Lifecycle ───────────────────────────────────────────────
 const onClickOutside = () => { activeContextMenu.value = null; };
 
 const onSynabitNavigate = (e: Event) => {
     const detail = (e as CustomEvent).detail;
-    if (detail?.type === 'note' && detail?.id) {
-        handleOpenInternalNote({ id: detail.id, type: 'note' });
-    }
+    if (!detail?.id) return;
+    // Any node type, not just notes: a query table lists tasks and events too,
+    // and `handleOpenInternalNote` already knows to hand those to whichever
+    // mini-app owns them.
+    handleOpenInternalNote({ id: detail.id, type: detail.type || 'note' });
 };
 
 onUnmounted(() => {
@@ -460,7 +614,7 @@ onMounted(async () => {
                  <NoteListItem v-for="note in search.topPinnedNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="true"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @delete="deleteNote"
+                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
                  />
                  <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showNoteSidebar.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
                      {{ $t('note.show_more', { count: search.allPinnedNotes.value.length - 5 }) }}
@@ -499,7 +653,7 @@ onMounted(async () => {
                  <NoteListItem v-for="note in search.recentNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="false"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @delete="deleteNote"
+                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
                  />
              </div>
              <div v-if="search.recentNotes.value.length === 0" class="p-8 text-center text-sm text-[#52525b] dark:text-[#a1a1aa]">
@@ -533,6 +687,9 @@ onMounted(async () => {
                   <ArrowLeft class="w-3 h-3" />
                   <ArrowRight class="w-3 h-3" />
                 </div>
+              </button>
+              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="openHistory(currentNoteId)" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="$t('note.history_title')">
+                <History class="w-4 h-4" />
               </button>
               <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="noteExport.exportModalVisible.value = true" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="$t('note.export_note')">
                 <Download class="w-4 h-4" />
@@ -611,6 +768,20 @@ onMounted(async () => {
                         {{ manager.managerFilter.value === 'tags' && !manager.managerSearchQuery.value ? tags.allTags.value.length : manager.managerFilteredNotes.value.length }}
                       </span>
                    </h1>
+                   <!--
+                     Kept in the manager rather than on the editor toolbar: this
+                     is a question about the vault as a whole, and this is the
+                     screen someone is already on when they are looking at it
+                     that way.
+                   -->
+                   <button
+                     @click="duplicatesModalVisible = true"
+                     class="ml-auto flex items-center gap-2 px-3 py-1.5 text-[13px] rounded-lg text-gray-500 hover:text-[#1c1c1e] dark:hover:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors"
+                     :title="$t('note.duplicates_hint')"
+                   >
+                     <Copy class="w-4 h-4" />
+                     <span class="hidden sm:inline">{{ $t('note.duplicates_title') }}</span>
+                   </button>
                 </div>
              </div>
 
@@ -639,11 +810,35 @@ onMounted(async () => {
 
                  <!-- Notes Table View -->
                  <div v-else class="w-full">
+                   <!--
+                     Only on screen while something is ticked. A bar that is
+                     always there, greyed out, teaches people to stop reading it.
+                   -->
+                   <div v-if="selection.active.value" class="mb-3 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200/70 dark:border-blue-800/50">
+                      <span class="text-[13px] font-medium text-blue-900 dark:text-blue-100">{{ $t('note.selected_count', { count: selection.count.value }) }}</span>
+                      <button @click="deleteSelected" class="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-white bg-red-500 hover:bg-red-600 transition-colors">
+                         <Trash2 class="w-3.5 h-3.5" />
+                         {{ $t('note.delete_selected') }}
+                      </button>
+                      <button @click="selection.clear()" class="px-3 py-1.5 rounded-lg text-[13px] font-medium text-blue-900 dark:text-blue-100 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                         {{ $t('note.clear_selection') }}
+                      </button>
+                   </div>
                    <div class="bg-white dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333] rounded-xl overflow-hidden shadow-sm">
                       <table class="w-full text-left border-collapse">
                          <thead>
                             <tr class="bg-gray-50 dark:bg-[#1a1a1a] border-b border-[#e6e6e6] dark:border-[#333]">
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-8"></th>
+                               <th class="py-2.5 px-4 w-8">
+                                  <input
+                                     type="checkbox"
+                                     class="w-3.5 h-3.5 align-middle accent-blue-500 cursor-pointer"
+                                     :checked="selection.allVisibleSelected(visibleManagerIds)"
+                                     :indeterminate="selection.someVisibleSelected(visibleManagerIds)"
+                                     :aria-label="$t('note.select_all_on_page')"
+                                     :title="$t('note.select_all_on_page')"
+                                     @click="selection.toggleAll(visibleManagerIds)"
+                                  />
+                               </th>
                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-5/12">{{ $t('note.title_col') }}</th>
                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('note.tags_col') }}</th>
                                <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase whitespace-nowrap text-right">{{ $t('note.modified_col') }}</th>
@@ -651,10 +846,28 @@ onMounted(async () => {
                             </tr>
                          </thead>
                          <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
-                            <tr v-for="note in manager.managerPaginatedNotes.value" :key="note.id" @click="handleNoteSelect(note.id)" class="hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer transition-colors group">
-                               <td class="py-3 px-4 w-8">
-                                  <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20" />
-                                  <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50" />
+                            <tr v-for="note in manager.managerPaginatedNotes.value" :key="note.id" @click="handleManagerRowClick(note.id, $event)" class="cursor-pointer transition-colors group"
+                                :class="selection.isSelected(note.id) ? 'bg-blue-50/70 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-[#2a2a2a]'">
+                               <!--
+                                 One cell, two things. The tick takes over from
+                                 the icon on hover, or as soon as anything is
+                                 selected — so the column costs nothing while
+                                 the reader is only reading, and is already
+                                 under the pointer when they are not.
+                               -->
+                               <td class="py-3 px-4 w-8" @click.stop>
+                                  <div class="relative w-3.5 h-3.5">
+                                     <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20 transition-opacity group-hover:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
+                                     <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50 transition-opacity group-hover:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
+                                     <input
+                                        type="checkbox"
+                                        class="absolute inset-0 w-3.5 h-3.5 accent-blue-500 cursor-pointer opacity-0 transition-opacity group-hover:opacity-100"
+                                        :class="{ '!opacity-100': selection.active.value }"
+                                        :checked="selection.isSelected(note.id)"
+                                        :aria-label="$t('note.select_note')"
+                                        @click.stop="selection.toggle(note.id, visibleManagerIds, $event.shiftKey)"
+                                     />
+                                  </div>
                                </td>
                                <td class="py-3 px-4 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}</td>
                                <td class="py-3 px-4">
@@ -672,6 +885,7 @@ onMounted(async () => {
                                      </button>
                                      <NoteContextMenu v-if="activeContextMenu === 'manager_'+note.id" :note-id="note.id" :is-pinned="note.pinned" variant="manager"
                                         @pin="togglePin($event); activeContextMenu = null;"
+                                        @history="openHistory"
                                         @delete="deleteNote($event); activeContextMenu = null;"
                                      />
                                   </div>
@@ -737,7 +951,7 @@ onMounted(async () => {
       <div v-if="rename.renameModal.value.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="rename.renameModal.value.show = false">
         <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-80 border border-[#e6e6e6] dark:border-[#3a3a3a]">
           <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">{{ $t('note.rename_note') }}</h3>
-          <input v-model="rename.renameModal.value.value" type="text" class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20" @keydown.enter="rename.confirmRename" autofocus />
+          <input v-model="rename.renameModal.value.value" type="text" class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20" @keydown.enter="rename.confirmRename" autofocus :aria-label="$t('note.rename_note')" />
           <div class="flex justify-end gap-2 mt-4">
             <button @click="rename.renameModal.value.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">{{ $t('note.cancel') }}</button>
             <button @click="rename.confirmRename" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">{{ $t('note.rename') }}</button>
@@ -746,11 +960,36 @@ onMounted(async () => {
       </div>
     </Teleport>
 
+    <!-- Notes that exist twice -->
+    <NoteDuplicatesModal
+      v-if="duplicatesModalVisible"
+      :vault-path="vaultPath"
+      @close="duplicatesModalVisible = false"
+      @changed="scanVault"
+    />
+
+    <!-- Undo window on a deleted note -->
+    <NoteUndoToast
+      :pending="del.pending.value"
+      :seconds="7"
+      @undo="del.undoDelete"
+    />
+
+    <!-- Version History -->
+    <NoteHistoryModal
+      v-if="historyNoteId"
+      :vault-path="vaultPath"
+      :note-id="historyNoteId"
+      :note-title="historyNote?.title || $t('note.untitled_note')"
+      @close="historyNoteId = null"
+      @restored="onVersionRestored"
+    />
+
     <!-- Export Modal -->
     <NoteExportModal
       v-if="noteExport.exportModalVisible.value"
       @close="noteExport.exportModalVisible.value = false"
-      @export="noteExport.handleExportOption"
+      @export="(o: any) => { flushActiveEditor(); noteExport.handleExportOption(o); }"
     />
 
     <!-- Per-Note Lock Screen -->

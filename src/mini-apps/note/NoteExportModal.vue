@@ -47,7 +47,7 @@ const handleExport = () => {
 
 <template>
   <div class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-    <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl w-[400px] border border-[#e6e6e6] dark:border-[#3a3a3a] overflow-hidden flex flex-col">
+    <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl w-[95vw] max-w-[400px] border border-[#e6e6e6] dark:border-[#3a3a3a] overflow-hidden flex flex-col">
       <!-- Header -->
       <div class="flex items-center justify-between px-5 py-4 border-b border-[#e6e6e6] dark:border-[#3a3a3a]">
         <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">

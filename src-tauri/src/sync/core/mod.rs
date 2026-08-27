@@ -1,6 +1,8 @@
-pub mod asset_sync;
-pub mod asset;
+pub mod finance_document;
+pub mod node_document;
 pub mod apply;
+pub mod asset;
+pub mod asset_sync;
 pub mod change;
 pub mod crdt;
 pub mod crypto;

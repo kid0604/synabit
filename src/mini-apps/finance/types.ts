@@ -3,7 +3,20 @@ export type TransactionType = 'income' | 'expense' | 'transfer';
 export interface Transaction {
   id: string;
   type: TransactionType;
+  /** In the vault currency's minor units. See `currency.ts`. */
   amount: number;
+  /**
+   * The **id** of a category, not its name.
+   *
+   * For every category that existed before categories had ids, the two are the
+   * same string — that is what the migration chose, precisely so that no
+   * transaction had to be rewritten to gain one. Renaming a category changes
+   * its `name` and leaves this alone, which is how a year of history stays
+   * attached to a category the user decided to call something else.
+   *
+   * Read it through `categoryName`; falling back to the id itself displays the
+   * original name, which is the right answer for a category that is gone.
+   */
   category: string;
   accountId: string;
   toAccountId?: string;
@@ -15,6 +28,16 @@ export interface Transaction {
   originalCurrency?: string;
   originalAmount?: number;
   exchangeRate?: number;
+  /** The repeating rule that produced this, if one did. See `recurring.ts`. */
+  recurringRuleId?: string;
+  /**
+   * A photo of the receipt, as a vault-relative `assets/…` path.
+   *
+   * Stored in the vault's own assets folder rather than as a path to wherever
+   * the picture happened to be, because that folder is what sync carries. A
+   * receipt that lives in Downloads is a receipt only one device has.
+   */
+  receipt?: string;
 }
 
 export interface Debt {
@@ -58,18 +81,46 @@ export interface FinanceMonth {
   };
 }
 
+/**
+ * What kind of thing an account is.
+ *
+ * Absent means nobody has said. The app shipped a default account called
+ * "Credit Card" with no concept of a credit card behind it, and guessing the
+ * kind back from the name would be the same kind of guess that used to decide
+ * whether a transaction was a debt.
+ */
+export type AccountType = 'cash' | 'bank' | 'credit' | 'investment' | 'other';
+
+export const ACCOUNT_TYPES: AccountType[] = ['cash', 'bank', 'credit', 'investment', 'other'];
+
 export interface FinanceAccount {
   id: string;
   name: string;
+  /** In minor units, and allowed to be negative — a credit card starts there. */
   initialBalance: number;
+  type?: AccountType;
+}
+
+/**
+ * A category, as something that can be renamed.
+ *
+ * Categories used to be bare strings, which meant a transaction referred to one
+ * by its name. Renaming "Food & Dining" to "Ăn uống" therefore did not rename
+ * anything: it removed one category and added another, and every transaction
+ * ever filed under the old name stopped appearing in any breakdown while still
+ * counting towards the totals beside it.
+ */
+export interface Category {
+  id: string;
+  name: string;
 }
 
 export interface FinanceConfig {
   title: string;
   type: 'finance_config';
   metadata: {
-    incomeCategories: string[];
-    expenseCategories: string[];
+    incomeCategories: Category[];
+    expenseCategories: Category[];
     accounts: FinanceAccount[];
     budgets?: Budget[];
     currency?: string;

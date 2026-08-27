@@ -112,12 +112,12 @@ const clearAll = () => {
     <!-- Eraser toggle button -->
     <div v-if="active" class="absolute top-2 left-2 z-30 flex gap-1 pointer-events-auto">
       <button @click="isErasing = !isErasing" :class="isErasing ? 'bg-red-100 dark:bg-red-500/20 text-red-500' : 'bg-white/80 dark:bg-black/40 text-gray-500'"
-        class="p-1.5 rounded-md shadow-sm text-xs transition-colors cursor-pointer" title="Eraser">
+        class="p-1.5 rounded-md shadow-sm text-xs transition-colors cursor-pointer" :title="$t('file.eraser')">
         <Eraser class="w-3.5 h-3.5" />
       </button>
       <button v-if="strokes.length > 0" @click="clearAll"
         class="px-2 py-1 rounded-md bg-white/80 dark:bg-black/40 shadow-sm text-[10px] font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer">
-        Clear
+        {{ $t('file.clear_drawing') }}
       </button>
     </div>
 

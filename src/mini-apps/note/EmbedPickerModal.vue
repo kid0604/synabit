@@ -34,7 +34,10 @@
         <div class="max-h-80 overflow-y-auto">
           <!-- Step 1: Note list -->
           <template v-if="step === 'notes'">
-            <div v-if="filteredNotes.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
+            <div v-if="loadingNotes && filteredNotes.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
+              Searching…
+            </div>
+            <div v-else-if="filteredNotes.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
               No notes found
             </div>
             <button
@@ -48,7 +51,7 @@
               </div>
               <div class="min-w-0 flex-1">
                 <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ note.title }}</div>
-                <div class="text-xs text-gray-400 truncate mt-0.5">{{ note.content?.substring(0, 60) || 'Empty note' }}</div>
+                <div class="text-xs text-gray-400 truncate mt-0.5">{{ note.preview.substring(0, 60) || 'Empty note' }}</div>
               </div>
             </button>
           </template>
@@ -101,12 +104,14 @@
 import { ref, computed, watch, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { Link as LinkIcon, Search, X, FileText, ArrowLeft, Loader2 } from 'lucide-vue-next';
+import { logger } from '../../utils/logger';
+import { looseIncludes } from '../../utils/diacritics';
 
 interface NoteItem {
   id: string;
   title: string;
-  content?: string;
-  node_type?: string;
+  /** The opening of the body, for the second line of each row. */
+  preview: string;
 }
 
 interface BlockItem {
@@ -119,7 +124,6 @@ interface BlockItem {
 
 const props = defineProps<{
   show: boolean;
-  notes: NoteItem[];
   vaultPath: string;
 }>();
 
@@ -142,24 +146,58 @@ watch(() => props.show, (val) => {
     searchQuery.value = '';
     selectedNoteId.value = '';
     blocks.value = [];
+    void loadNotes('');
     nextTick(() => searchInput.value?.focus());
   }
 });
 
-const filteredNotes = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim();
-  const noteList = props.notes.filter(n => n.node_type === 'note');
-  if (!q) return noteList.slice(0, 50);
-  return noteList.filter(n =>
-    n.title.toLowerCase().includes(q) ||
-    (n.content && n.content.toLowerCase().includes(q))
-  ).slice(0, 50);
+/**
+ * Notes matching what has been typed, found through the search index.
+ *
+ * This used to be handed every node in the vault, bodies included, and filter
+ * it here with `String.includes`. The list is at most fifty rows either way;
+ * the difference is whether opening this picker moves the whole vault across
+ * the IPC boundary first.
+ */
+const filteredNotes = ref<NoteItem[]>([]);
+const loadingNotes = ref(false);
+let noteSearchToken = 0;
+
+const loadNotes = async (query: string) => {
+  const token = ++noteSearchToken;
+  loadingNotes.value = true;
+  try {
+    const response = await invoke<{ results: { id: string; title: string; snippet: string }[] }>(
+      'search_notes',
+      { vaultPath: props.vaultPath, query }
+    );
+    // A slower earlier request must not overwrite a later one's results.
+    if (token !== noteSearchToken) return;
+    filteredNotes.value = response.results.slice(0, 50).map((r) => ({
+      id: r.id,
+      title: r.title,
+      preview: r.snippet.replace(/<\/?mark>/g, '').trim(),
+    }));
+  } catch (e) {
+    if (token !== noteSearchToken) return;
+    logger.error('Could not look up notes to embed', e);
+    filteredNotes.value = [];
+  } finally {
+    if (token === noteSearchToken) loadingNotes.value = false;
+  }
+};
+
+let noteSearchTimer: ReturnType<typeof setTimeout>;
+watch(searchQuery, (q) => {
+  if (step.value !== 'notes') return;
+  clearTimeout(noteSearchTimer);
+  noteSearchTimer = setTimeout(() => loadNotes(q.trim()), 150);
 });
 
 const filteredBlocks = computed(() => {
   const q = searchQuery.value.toLowerCase().trim();
   if (!q) return blocks.value;
-  return blocks.value.filter(b => b.content_preview.toLowerCase().includes(q));
+  return blocks.value.filter(b => looseIncludes(b.content_preview, q));
 });
 
 const selectNote = async (note: NoteItem) => {

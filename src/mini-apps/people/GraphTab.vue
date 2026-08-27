@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as d3 from 'd3';
+import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
 import { Share2, Users, X, Edit2, Expand, Shrink } from 'lucide-vue-next';
 
@@ -46,6 +47,17 @@ let currentNodes: GraphNode[] = [];
 let currentLinks: GraphLink[] = [];
 let dragSubject: GraphNode | null = null;
 
+/**
+ * How much the picture can hold before it stops being one.
+ *
+ * A force simulation settles every body every frame. Past a couple of hundred
+ * that is a solid disc that reads as nothing and costs a frame to draw, so
+ * the graph shows the nearest and says how many it left out rather than
+ * drawing everything badly.
+ */
+const MAX_PEOPLE_NODES = 60;
+const MAX_ACTIVITY_NODES = 80;
+
 const colorMap: Record<string, string> = {
     center: '#8b5cf6',   // violet
     person: '#f97316',   // orange
@@ -54,6 +66,17 @@ const colorMap: Record<string, string> = {
     quickcap: '#eab308', // yellow
     event: '#f43f5e',    // rose
 };
+
+/**
+ * What to call the person on the other end of a connection.
+ *
+ * The live title wins. A connection also carries the name as it stood when
+ * the link was made, and reading that back is why renaming somebody left the
+ * old name showing in everybody else's graph. It survives only as a fallback
+ * for links written before this, and for a person no longer in the vault.
+ */
+const connectionLabel = (conn: { person_id: string; name?: string }): string =>
+    props.allPeople.find(p => p.id === conn.person_id)?.title || conn.name || 'Unknown';
 
 const RELATION_LABELS: Record<string, string> = {
     friend: '👫', family: '👨‍👩‍👧', colleague: '💼', partner: '❤️',
@@ -90,17 +113,17 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
     nodeMap.set(centerNode.id, centerNode);
 
     // Person connections
-    const connections: Array<{ person_id: string; name: string; relation_type: string }> = props.person?.properties?.connections || [];
+    const personLinks = connections.value;
     
     // Store 1st degree persons to process their connections later if needed
     const firstDegreeNodes: { id: string, node: GraphNode, data: any }[] = [];
     
-    for (const conn of connections) {
+    for (const conn of personLinks.slice(0, MAX_PEOPLE_NODES)) {
         if (nodeMap.has(conn.person_id)) continue;
         const personData = props.allPeople.find(p => p.id === conn.person_id);
         const pNode: GraphNode = {
             id: conn.person_id,
-            label: conn.name,
+            label: connectionLabel(conn),
             type: 'person',
             relation: conn.relation_type,
             avatar: personData?.properties?.avatar,
@@ -121,7 +144,10 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
     // 2nd degree connections
     if (showSecondDegree.value) {
         for (const fd of firstDegreeNodes) {
-            const fdConnections: Array<{ person_id: string; name: string; relation_type: string }> = fd.data.properties?.connections || [];
+            // Second degree still reads the stored list: resolving every one
+            // of them would be a query per person on every redraw. The names
+            // are looked up live below, so a rename still shows.
+            const fdConnections: Array<{ person_id: string; name?: string; relation_type: string }> = fd.data.properties?.connections || [];
             for (const conn of fdConnections) {
                 // Don't link back to center node if already linked
                 if (conn.person_id === centerNode.id) continue;
@@ -131,7 +157,7 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
                     const personData = props.allPeople.find(p => p.id === conn.person_id);
                     targetNode = {
                         id: conn.person_id,
-                        label: conn.name,
+                        label: connectionLabel(conn),
                         type: 'person',
                         relation: conn.relation_type,
                         avatar: personData?.properties?.avatar,
@@ -159,7 +185,13 @@ const buildGraphData = (): { nodes: GraphNode[]; links: GraphLink[] } => {
     }
 
     // Linked activity nodes (notes, tasks, etc.)
-    for (const node of linkedNodes.value) {
+    //
+    // Capped. A person with a thousand notes about them is a person whose
+    // graph is a solid disc: the force simulation has a thousand bodies to
+    // settle every frame, and nothing in the picture can be read. The newest
+    // are kept, because `getLinkedNodes` returns them newest first and recent
+    // work is what somebody opening this is looking for.
+    for (const node of linkedNodes.value.slice(0, MAX_ACTIVITY_NODES)) {
         if (nodeMap.has(node.id)) continue;
         const nType = node.node_type || 'note';
         if (!['note', 'task', 'quickcap', 'event'].includes(nType)) continue;
@@ -388,9 +420,59 @@ const draw = (ctx: CanvasRenderingContext2D) => {
 };
 
 // --- Connections list ---
-const connections = computed(() => {
-    return (props.person?.properties?.connections || []) as Array<{ person_id: string; name: string; relation_type: string }>;
-});
+/**
+ * Who this person is linked to, as the vault understands it right now.
+ *
+ * Read from the edge index rather than from the person's own frontmatter.
+ * The frontmatter holds an identity and a relationship; the name and the path
+ * come from the other person's own row, so a rename shows up here at once and
+ * somebody deleted stops appearing at all. Reading the stored copy is what
+ * left old names in everybody else's graph.
+ */
+const connections = ref<Array<{ person_id: string; name: string; relation_type: string }>>([]);
+
+/**
+ * How the person on screen knows somebody else.
+ *
+ * The question a graph is for and a list cannot answer. Only worth asking
+ * since links became identities that are cleared when removed — before that a
+ * route could run through people who had been deleted or renamed away.
+ */
+const pathTarget = ref<string>('');
+const pathFound = ref<Array<{ person_id: string; name: string; relation_type: string }> | null>(null);
+
+const findPath = async () => {
+    if (!pathTarget.value || !props.person?.id) { pathFound.value = null; return; }
+    try {
+        pathFound.value = await invoke('path_between_people', {
+            from: props.person.id,
+            to: pathTarget.value,
+        });
+    } catch (e) {
+        pathFound.value = [];
+    }
+};
+
+/** How many links the picture had to leave out to stay readable. */
+const hiddenCount = computed(() =>
+    Math.max(0, connections.value.length - MAX_PEOPLE_NODES) +
+    Math.max(0, linkedNodes.value.length - MAX_ACTIVITY_NODES));
+
+/** Everybody else, for the "how do I know…" picker. */
+const others = computed(() =>
+    props.allPeople
+        .filter(p => p.id !== props.person?.id && !p.properties?.is_owner)
+        .slice()
+        .sort((a, b) => a.title.localeCompare(b.title)));
+
+const loadConnections = async () => {
+    if (!props.person?.id) { connections.value = []; return; }
+    try {
+        connections.value = await invoke('person_connections', { personId: props.person.id });
+    } catch (e) {
+        connections.value = [];
+    }
+};
 
 
 // --- Lifecycle ---
@@ -423,7 +505,10 @@ const initGraph = async () => {
     cleanupObserver = () => observer.disconnect();
 };
 
-watch([() => props.person?.id, () => props.person?.properties?.connections?.length], () => {
+watch([() => props.person?.id, () => props.person?.properties?.connections?.length], async () => {
+    await loadConnections();
+    pathTarget.value = '';
+    pathFound.value = null;
     if (simulation) {
         simulation.stop();
         simulation = null;
@@ -439,7 +524,8 @@ watch(() => showSecondDegree.value, () => {
     initGraph();
 });
 
-onMounted(() => {
+onMounted(async () => {
+    await loadConnections();
     setTimeout(() => initGraph(), 150);
 });
 
@@ -454,7 +540,7 @@ onUnmounted(() => {
         <!-- Connections Summary -->
         <div v-if="connections.length > 0" class="flex-shrink-0 px-1 pb-3">
             <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Users class="w-3.5 h-3.5" /> Connections ({{ connections.length }})
+                <Users class="w-3.5 h-3.5" /> {{ $t('people.connections_count', { count: connections.length }) }}
             </h3>
             <div class="flex flex-wrap gap-1.5">
                 <div v-for="conn in connections" :key="conn.person_id"
@@ -462,17 +548,46 @@ onUnmounted(() => {
                     @click="() => { const p = allPeople.find(pp => pp.id === conn.person_id); if (p) emit('select-person', p); }"
                 >
                     <span class="text-xs">{{ RELATION_LABELS[conn.relation_type] || '🔗' }}</span>
-                    <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ conn.name }}</span>
+                    <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ connectionLabel(conn) }}</span>
                     <button @click.stop="emit('edit-link', conn.person_id)"
-                        class="p-0.5 opacity-0 group-hover:opacity-100 text-blue-400 hover:text-blue-600 transition-all" title="Edit link">
+                        class="p-0.5 opacity-0 group-hover:opacity-100 text-blue-400 hover:text-blue-600 transition-all" :title="$t('people.edit_link')">
                         <Edit2 class="w-3 h-3" />
                     </button>
                     <button @click.stop="emit('unlink', conn.person_id)"
-                        class="p-0.5 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all" title="Remove link">
+                        class="p-0.5 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all" :title="$t('people.remove_link')">
                         <X class="w-3 h-3" />
                     </button>
                 </div>
             </div>
+        </div>
+
+        <p v-if="hiddenCount > 0" class="flex-shrink-0 px-1 pb-2 text-[11px] text-gray-400">
+            {{ $t('people.graph_trimmed', { count: hiddenCount }) }}
+        </p>
+
+        <!-- How do I know… -->
+        <div v-if="others.length > 0" class="flex-shrink-0 px-1 pb-3">
+            <div class="flex items-center gap-2 flex-wrap">
+                <label for="path-target" class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.how_do_i_know') }}</label>
+                <select id="path-target" v-model="pathTarget" @change="findPath"
+                    class="px-2 py-1 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-xs focus:ring-2 focus:ring-blue-500/40 outline-none max-w-[12rem]">
+                    <option value="">{{ $t('people.pick_someone') }}</option>
+                    <option v-for="p in others" :key="p.id" :value="p.id">{{ p.title }}</option>
+                </select>
+            </div>
+            <p v-if="pathFound && pathFound.length > 1" class="mt-2 text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 flex-wrap">
+                <template v-for="(step, i) in pathFound" :key="step.person_id">
+                    <span v-if="i > 0" class="text-gray-400">→</span>
+                    <button @click="() => { const p = allPeople.find(pp => pp.id === step.person_id); if (p) emit('select-person', p); }"
+                        class="font-medium hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                        {{ step.name }}
+                    </button>
+                    <span v-if="step.relation_type" class="text-[10px] text-gray-400">({{ step.relation_type }})</span>
+                </template>
+            </p>
+            <p v-else-if="pathFound && pathFound.length <= 1 && pathTarget" class="mt-2 text-xs text-gray-500">
+                {{ $t('people.no_route') }}
+            </p>
         </div>
 
         <!-- Graph Canvas -->
@@ -486,7 +601,7 @@ onUnmounted(() => {
                 </div>
                 <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ $t('people.no_connections') }}</h3>
                 <p class="text-xs text-gray-400 dark:text-gray-500 text-center max-w-[200px]">
-                    Use the <strong>Link Person</strong> button above to connect contacts and build your relationship map.
+                    {{ $t('people.use_the') }} <strong>{{ $t('people.link_person') }}</strong> {{ $t('people.link_desc') }}
                 </p>
             </div>
 
@@ -505,10 +620,10 @@ onUnmounted(() => {
 
                 <!-- Legend -->
                 <div class="flex items-center gap-3 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-[10px] shadow-sm">
-                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-500"></span> Current</span>
-                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> People</span>
-                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Notes</span>
-                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Tasks</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-500"></span> {{ $t('people.current') }}</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> {{ $t('people.people') }}</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> {{ $t('people.notes') }}</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> {{ $t('people.tasks') }}</span>
                 </div>
             </div>
         </div>

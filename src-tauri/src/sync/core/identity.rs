@@ -71,46 +71,133 @@ pub fn write_vault_metadata_atomically(
         AppError::General(format!("Failed to sync temp vault metadata file: {}", e))
     })?;
 
-    let outcome = match std::fs::hard_link(&temp_path, &vault_json_path) {
-        Ok(()) => {
-            std::fs::remove_file(&temp_path).map_err(|e| {
-                AppError::General(format!("Failed to remove temp vault.json file: {}", e))
-            })?;
-            VaultMetadataPublishOutcome::Published(metadata.clone())
-        }
-        Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            if temp_path.exists() {
-                std::fs::remove_file(&temp_path).map_err(|e| {
-                    AppError::General(format!("Failed to remove temp vault.json file: {}", e))
-                })?;
-            }
-            let existing = read_and_parse_vault_metadata(&vault_json_path)?;
-            VaultMetadataPublishOutcome::Existing(existing)
-        }
-        Err(e) => {
-            if temp_path.exists() {
-                std::fs::remove_file(&temp_path).map_err(|cleanup_err| {
-                    AppError::General(format!("Failed cleanup: {}", cleanup_err))
-                })?;
-            }
-            return Err(AppError::General(format!(
-                "Failed to publish vault metadata via hard_link: {}",
-                e
-            )));
+    let claim = claim_vault_json(&temp_path, &vault_json_path, json_bytes.as_bytes());
+
+    // The temp file has done its job either way, and leaving it behind would
+    // accumulate one per launch.
+    if temp_path.exists() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    let outcome = match claim? {
+        VaultJsonClaim::Won => VaultMetadataPublishOutcome::Published(metadata.clone()),
+        VaultJsonClaim::Lost => {
+            VaultMetadataPublishOutcome::Existing(read_and_parse_vault_metadata(&vault_json_path)?)
         }
     };
 
-    let parent_dir_file = File::open(&synabit_dir).map_err(|e| {
-        AppError::General(format!("Failed to open .synabit directory for sync: {}", e))
-    })?;
-    parent_dir_file
-        .sync_all()
-        .map_err(|e| AppError::General(format!("Failed to sync .synabit directory: {}", e)))?;
+    // Best effort, deliberately. Syncing the directory makes the *name* survive
+    // a power cut; the file's own contents were already synced above. Some
+    // filesystems — and some Android configurations — refuse to open a
+    // directory for this at all, and refusing to register the vault over a
+    // durability nicety would take the whole of sync down with it.
+    match File::open(&synabit_dir).and_then(|dir| dir.sync_all()) {
+        Ok(()) => {}
+        Err(e) => log::warn!(
+            "could not flush the .synabit directory entry, so a power loss in the \
+             next moment could lose it: {e}"
+        ),
+    }
 
     Ok(outcome)
 }
 
-fn read_and_parse_vault_metadata(vault_json_path: &Path) -> AppResult<VaultMetadata> {
+/// Which side of the race for `vault.json` we ended up on.
+enum VaultJsonClaim {
+    /// We created it, and it holds our metadata.
+    Won,
+    /// Somebody else got there first; theirs stands.
+    Lost,
+}
+
+/// Publish `vault.json` exactly once, without overwriting a copy that is
+/// already there.
+///
+/// `hard_link` is the preferred route because it is the only way to get a
+/// file that is *complete the instant it is visible*: the link either appears
+/// whole or fails with `AlreadyExists`, so no reader can catch it half-written.
+///
+/// Android refuses it. Creating a hard link inside app-private storage comes
+/// back as `Permission denied` (errno 13), and there is no configuration that
+/// changes that — it is how the platform is. Every sync on Android failed here
+/// before reaching any sync code at all.
+///
+/// The fallback keeps the property that actually matters. `create_new` is
+/// `O_CREAT|O_EXCL`, which is equally race-free about *claiming the name*; what
+/// it gives up is that the file is briefly empty between being created and
+/// being written. That window is handled where it lands, in
+/// [`claim_by_create_new`].
+fn claim_vault_json(
+    temp_path: &Path,
+    vault_json_path: &Path,
+    bytes: &[u8],
+) -> AppResult<VaultJsonClaim> {
+    match std::fs::hard_link(temp_path, vault_json_path) {
+        Ok(()) => Ok(VaultJsonClaim::Won),
+        Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(VaultJsonClaim::Lost),
+        Err(_) => claim_by_create_new(vault_json_path, bytes).map_err(|e| {
+            AppError::General(format!(
+                "Failed to publish vault metadata to '{}': {}",
+                vault_json_path.display(),
+                e
+            ))
+        }),
+    }
+}
+
+/// Claim `vault.json` with `O_CREAT|O_EXCL` and fill it in.
+///
+/// A zero-length `vault.json` is reclaimed rather than reported as corrupt. It
+/// cannot be a real publish — a valid one is never empty — so it can only be
+/// this function interrupted between creating the file and writing it. Left
+/// alone it would fail to parse on every launch afterwards, and on Android the
+/// user cannot reach the file to delete it, so sync would be wedged for good.
+///
+/// After writing, the file is read back and checked to be ours. Two processes
+/// racing here would both believe they had won otherwise, and would then
+/// disagree about the vault's identity. That race needs a second process, which
+/// is a desktop situation — and on desktop `hard_link` succeeds and this
+/// function never runs — but the check costs one read and removes the need to
+/// reason about that at all.
+fn claim_by_create_new(vault_json_path: &Path, bytes: &[u8]) -> std::io::Result<VaultJsonClaim> {
+    for attempt in 0..2 {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(vault_json_path)
+        {
+            Ok(mut file) => {
+                file.write_all(bytes)?;
+                file.sync_all()?;
+                let landed = std::fs::read(vault_json_path)?;
+                return Ok(if landed == bytes {
+                    VaultJsonClaim::Won
+                } else {
+                    VaultJsonClaim::Lost
+                });
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let torn = std::fs::metadata(vault_json_path)
+                    .map(|m| m.len() == 0)
+                    .unwrap_or(false);
+                if torn && attempt == 0 {
+                    log::warn!(
+                        "'{}' is empty, which means an earlier attempt to write it was \
+                         interrupted; replacing it",
+                        vault_json_path.display()
+                    );
+                    std::fs::remove_file(vault_json_path)?;
+                    continue;
+                }
+                return Ok(VaultJsonClaim::Lost);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(VaultJsonClaim::Lost)
+}
+
+pub(crate) fn read_and_parse_vault_metadata(vault_json_path: &Path) -> AppResult<VaultMetadata> {
     let content = std::fs::read_to_string(vault_json_path)
         .map_err(|e| AppError::General(format!("Failed to read vault metadata file: {}", e)))?;
 
@@ -350,9 +437,9 @@ pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<St
         let meta = root_obj
             .entry("metadata".to_string())
             .or_insert_with(|| Value::Object(serde_json::Map::new()));
-        let meta_obj = meta.as_object_mut().ok_or_else(|| {
-            AppError::General("JSON metadata field is not an object".to_string())
-        })?;
+        let meta_obj = meta
+            .as_object_mut()
+            .ok_or_else(|| AppError::General("JSON metadata field is not an object".to_string()))?;
         meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
 
         let rendered = serde_json::to_string_pretty(&json_val)
@@ -380,6 +467,135 @@ fn inject_markdown_id(content: &str, node_id: &str) -> String {
     } else {
         // No frontmatter, prepend it
         format!("---\nnode_id: {}\n---\n\n{}", node_id, content)
+    }
+}
+
+/// The route taken when the platform refuses `hard_link`.
+///
+/// Android does exactly that inside app-private storage, and every sync there
+/// failed on it. These drive the fallback directly, because there is no
+/// portable way to make `hard_link` fail on demand in a test.
+#[cfg(test)]
+mod create_new_claim_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn vault_json(dir: &TempDir) -> PathBuf {
+        dir.path().join("vault.json")
+    }
+
+    #[test]
+    fn an_unclaimed_name_is_won_and_holds_what_we_wrote() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_json(&dir);
+
+        let claim = claim_by_create_new(&path, b"{\"vaultId\":\"ours\"}").unwrap();
+
+        assert!(matches!(claim, VaultJsonClaim::Won));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"vaultId\":\"ours\"}");
+    }
+
+    #[test]
+    fn a_name_somebody_else_holds_is_lost_and_left_untouched() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_json(&dir);
+        std::fs::write(&path, b"{\"vaultId\":\"theirs\"}").unwrap();
+
+        let claim = claim_by_create_new(&path, b"{\"vaultId\":\"ours\"}").unwrap();
+
+        assert!(matches!(claim, VaultJsonClaim::Lost));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"{\"vaultId\":\"theirs\"}",
+            "losing the race must never overwrite the winner"
+        );
+    }
+
+    /// The one case the fallback introduces that `hard_link` could not: the
+    /// file exists but was never written. Reporting it as corrupt would wedge
+    /// sync permanently, and on Android the file is out of the user's reach.
+    #[test]
+    fn an_empty_file_is_an_interrupted_write_and_is_reclaimed() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_json(&dir);
+        std::fs::write(&path, b"").unwrap();
+
+        let claim = claim_by_create_new(&path, b"{\"vaultId\":\"ours\"}").unwrap();
+
+        assert!(matches!(claim, VaultJsonClaim::Won));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"vaultId\":\"ours\"}");
+    }
+
+    /// Reclaiming happens once. A file that keeps coming back empty is
+    /// something other than an interrupted write, and retrying forever would
+    /// spin rather than report.
+    #[test]
+    fn reclaiming_is_attempted_only_once() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_json(&dir);
+        std::fs::write(&path, b"").unwrap();
+
+        // Winning writes real content, so a second call sees a non-empty file
+        // and must lose rather than reclaim again.
+        claim_by_create_new(&path, b"{\"vaultId\":\"ours\"}").unwrap();
+        let second = claim_by_create_new(&path, b"{\"vaultId\":\"other\"}").unwrap();
+
+        assert!(matches!(second, VaultJsonClaim::Lost));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"vaultId\":\"ours\"}");
+    }
+
+    /// Publishing twice through the front door must agree with itself: the
+    /// second call reports the first one's metadata rather than replacing it.
+    #[test]
+    fn publishing_twice_reports_the_first_identity() {
+        let dir = TempDir::new().unwrap();
+        let first = VaultMetadata {
+            schema_version: VAULT_METADATA_SCHEMA_VERSION,
+            vault_id: uuid::Uuid::new_v4(),
+        };
+        let second = VaultMetadata {
+            schema_version: VAULT_METADATA_SCHEMA_VERSION,
+            vault_id: uuid::Uuid::new_v4(),
+        };
+
+        let a = write_vault_metadata_atomically(dir.path(), &first).unwrap();
+        let b = write_vault_metadata_atomically(dir.path(), &second).unwrap();
+
+        assert!(matches!(a, VaultMetadataPublishOutcome::Published(_)));
+        match b {
+            VaultMetadataPublishOutcome::Existing(found) => {
+                assert_eq!(found.vault_id, first.vault_id)
+            }
+            VaultMetadataPublishOutcome::Published(_) => {
+                panic!("the second publish overwrote the first")
+            }
+        }
+    }
+
+    /// No temp file may be left behind, on either side of the race. One per
+    /// launch would accumulate in a directory the user cannot see on Android.
+    #[test]
+    fn no_temp_files_are_left_behind() {
+        let dir = TempDir::new().unwrap();
+        let metadata = VaultMetadata {
+            schema_version: VAULT_METADATA_SCHEMA_VERSION,
+            vault_id: uuid::Uuid::new_v4(),
+        };
+
+        write_vault_metadata_atomically(dir.path(), &metadata).unwrap();
+        write_vault_metadata_atomically(dir.path(), &metadata).unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path().join(".synabit"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains(".tmp."))
+            .collect();
+
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
     }
 }
 
@@ -654,12 +870,18 @@ pub mod tests {
         let id = get_or_assign_node_id_with_hint(vault_path, &path, Some("known-id")).unwrap();
         assert_eq!(id, "known-id");
         assert!(
-            std::fs::read_to_string(&path).unwrap().contains("node_id: known-id"),
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("node_id: known-id"),
             "the known id should be written back into the file"
         );
 
         // And a file that still carries its own id keeps it, hint or not.
-        let id_again = get_or_assign_node_id_with_hint(vault_path, &path, Some("other-id")).unwrap();
-        assert_eq!(id_again, "known-id", "an existing id must win over the hint");
+        let id_again =
+            get_or_assign_node_id_with_hint(vault_path, &path, Some("other-id")).unwrap();
+        assert_eq!(
+            id_again, "known-id",
+            "an existing id must win over the hint"
+        );
     }
 }

@@ -1,13 +1,24 @@
+pub mod calendar_subs;
+pub mod capture;
 pub mod chat;
+pub mod diagnostics;
 pub mod e2ee;
+pub mod finance;
 pub mod files;
 pub mod nexus;
 
 pub mod app_lock;
 pub mod feeds;
 pub mod license_cmds;
+pub mod migration;
 pub mod nodes;
+pub mod people;
 pub mod syn;
 pub mod sync;
 pub mod tags;
+pub mod thumbnails;
+pub mod trash;
+pub mod vault;
+pub mod vault_health;
+pub mod versions;
 pub mod whiteboards;

@@ -21,21 +21,43 @@ import { useAppStore } from '../stores/useAppStore';
 import { useEventBus } from './useEventBus';
 
 import { storeToRefs } from 'pinia';
-import type { NodeSummary } from '../types/ipc';
+import type { NodeSummary, EventSummary, EventsInRange } from '../types/ipc';
+import { localTimeZone } from '../mini-apps/calendar/timezone';
 
 // ─── Types ──────────────────────────────────────────────────
 
 export type NodeType =
-  | 'note' | 'task' | 'project' | 'event' | 'person'
+  | 'note' | 'task' | 'project' | 'event' | 'person' | 'interaction'
   | 'quickcap' | 'finance_month' | 'finance_config' | 'finance_debts'
-  | 'pdf_highlight' | 'pdf_drawing' | 'file';
+  | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter';
 
 export interface WriteNodeParams {
   relPath: string;
   nodeType: NodeType;
   title: string;
+  /**
+   * The frontmatter keys this write is changing — a patch, not the whole file.
+   *
+   * Keys named here are set. Keys not named are left exactly as they are on
+   * disk, which is what lets a screen that knows about four fields save without
+   * deleting the `aliases` someone typed into the file by hand.
+   *
+   * To remove a key, name it with a value of `null`. Leaving it out means "I
+   * have nothing to say about this one", which is not the same thing, and the
+   * backend can only tell the two apart if you say which you meant.
+   */
   properties: Record<string, unknown>;
-  content: string;
+  /**
+   * The new body, or omitted to leave the body already on disk alone.
+   *
+   * Omit it for a property-only write — ticking a task off, dragging a card
+   * between columns. Those callers hold whatever body was loaded with the
+   * list, which after a sync or an edit in another window is no longer what is
+   * on disk; sending it back reverts the file to the version the list happened
+   * to have. Omitting says "I have nothing to say about the body", and the
+   * backend keeps what is there. Same distinction as `properties`, one level up.
+   */
+  content?: string;
   /** Skip event bus emission (e.g., internal migrations, batch ops) */
   silent?: boolean;
   /** Override event type. Auto-defaults to 'updated'. */
@@ -70,12 +92,25 @@ export function useNodeService() {
 
   /** Write (create or update) a node file */
   async function writeNode(params: WriteNodeParams): Promise<void> {
+    // A caller reading the path off a field the backend does not send hands us
+    // `undefined`, and the IPC layer reports only "missing required key
+    // relPath" — nothing about which node, or which caller. Say it here, where
+    // the title is still in hand.
+    if (!params.relPath) {
+      throw new Error(
+        `writeNode called without a relPath (title: "${params.title}", type: ${params.nodeType}). ` +
+        `A node's path is its \`id\` — the backend sends no \`rel_path\` field.`
+      );
+    }
+
     const args: Record<string, unknown> = {
       vaultPath: vaultPath.value,
       relPath: params.relPath,
       nodeType: params.nodeType,
       title: params.title,
       properties: params.properties,
+      // `undefined` reaches the backend as `None`, which is the "keep the body"
+      // case. Passing an empty string would empty the file instead.
       content: params.content,
     };
     await invoke('write_node_file', args);
@@ -113,7 +148,42 @@ export function useNodeService() {
 
   // ─── Delete ─────────────────────────────────────────────
 
-  /** Delete a node file */
+  /**
+   * Move a node into the vault's `.trash/`, and report where it landed.
+   *
+   * This is what a user-facing delete should call. `deleteNode` unlinks the
+   * file, which is the right primitive and the wrong default: a note is
+   * usually the only copy of something, and the gesture that loses it is a
+   * mis-aimed click on a small icon in a context menu.
+   *
+   * The move is a rename within one filesystem, so it is atomic — the note is
+   * never in neither place — and the vault scanner already skips dot
+   * directories, so the note leaves the index by itself.
+   */
+  async function trashNode(params: DeleteNodeParams): Promise<string> {
+    const trashedTo = await invoke<string>('trash_node_file', {
+      vaultPath: vaultPath.value,
+      relPath: params.relPath,
+    });
+
+    if (!params.silent) {
+      bus.emit('node:deleted', {
+        nodeType: '',
+        id: params.relPath,
+      });
+    }
+
+    return trashedTo;
+  }
+
+  /**
+   * Unlink a node file outright.
+   *
+   * Prefer `trashNode` for anything the user asked for. This exists for the
+   * cases where the file is genuinely disposable — something the app itself
+   * wrote and is now cleaning up — where filling the trash with it would only
+   * be a slow disk leak.
+   */
   async function deleteNode(params: DeleteNodeParams): Promise<void> {
     await invoke('delete_node_file', {
       vaultPath: vaultPath.value,
@@ -157,6 +227,44 @@ export function useNodeService() {
     return await invoke<NodeSummary[]>('get_node_summaries', { nodeType });
   }
 
+  /**
+   * The events landing on each day between `from` and `to`, already expanded.
+   *
+   * Recurrence lives in Rust — `src-tauri/src/calendar/recurrence.rs` — and
+   * this is how the calendar asks it. Do not re-derive which days a series
+   * falls on here; that split is what let the grid and the reminder loop
+   * disagree.
+   */
+  async function getEventsInRange(from: string, to: string): Promise<EventsInRange> {
+    // The reader's zone by name, which only the front end knows. Rust expands
+    // each series in its own zone and converts the result into this one.
+    const viewerTz = localTimeZone();
+    return await invoke<EventsInRange>('get_events_in_range', { from, to, viewerTz });
+  }
+
+  /**
+   * Read a wall clock in one zone off a clock in another.
+   *
+   * The time grid works in the reader's zone, so a drag that lands an event
+   * living in another one has to be turned back before it is stored. The
+   * conversion has two genuinely awkward hours a year, so there is one
+   * implementation of it and it is in Rust.
+   */
+  async function convertEventTime(stamps: string[], fromTz: string, toTz: string): Promise<string[]> {
+    if (!fromTz || !toTz || fromTz === toTz) return stamps;
+    return await invoke<string[]>('convert_event_time', { stamps, fromTz, toTz });
+  }
+
+  /** The tasks due on the days between `from` and `to`. */
+  async function getTasksInRange(from: string, to: string): Promise<NodeSummary[]> {
+    return await invoke<NodeSummary[]>('get_tasks_in_range', { from, to });
+  }
+
+  /** A recurring event and every node split off from it, wherever they fall. */
+  async function getEventSeries(rootId: string): Promise<EventSummary[]> {
+    return await invoke<EventSummary[]>('get_event_series', { rootId });
+  }
+
   /** Fetch a single node by ID */
   async function getNode(id: string): Promise<any | null> {
     return await invoke<any>('get_node', { id });
@@ -190,10 +298,15 @@ export function useNodeService() {
   return {
     writeNode,
     createNode,
+    trashNode,
     deleteNode,
     renameNode,
     getNodes,
     getNodeSummaries,
+    getEventsInRange,
+    getTasksInRange,
+    getEventSeries,
+    convertEventTime,
     getNode,
     getLinkedNodes,
     updateFileNodeProperties,

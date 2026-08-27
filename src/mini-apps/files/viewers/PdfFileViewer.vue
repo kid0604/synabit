@@ -13,7 +13,7 @@ import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 import {
   ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Moon, Sun,
   Highlighter, PenTool, PanelRightOpen, PanelRightClose,
-  FileDown, RotateCcw
+  FileDown, RotateCcw, NotebookPen
 } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
 import { useNodeService } from '../../../composables/useNodeService';
@@ -22,6 +22,13 @@ const props = defineProps<{
   fileId: string;
   filePath: string;
   vaultPath: string;
+  /**
+   * Where a search says the reader wants to be.
+   *
+   * Applied once the document reports how many pages it has, because scrolling
+   * to page 34 before page 34 exists in the DOM does nothing at all.
+   */
+  initialPage?: number;
 }>();
 
 const renderer = usePdfRenderer();
@@ -151,6 +158,13 @@ watch(() => renderer.totalPages.value, async (total) => {
   if (total > 0) {
     renderedPages.clear(); renderQueue = []; visiblePages.clear();
     await precomputePageSizes(); await nextTick(); setupObserver();
+
+    // Now that the pages exist, go to the one the search asked for.
+    const wanted = props.initialPage;
+    if (wanted && wanted >= 1 && wanted <= total) {
+      await nextTick();
+      scrollToPage(wanted);
+    }
   }
 });
 
@@ -331,6 +345,31 @@ const handleGoToAnnotation = (ann: PdfAnnotation) => {
   scrollToPage(ann.page);
 };
 
+/**
+ * Send the highlights out as a note.
+ *
+ * The annotated-PDF export beside this produces a file to hand to somebody
+ * else. This produces something to keep: the highlights become a note in the
+ * vault, searchable with everything else, and it links back to the PDF by
+ * identity so the file's "used by" panel shows it.
+ */
+const isExportingNote = ref(false);
+const exportHighlightsToNote = async () => {
+  if (isExportingNote.value) return;
+  isExportingNote.value = true;
+  try {
+    const relPath = await invoke<string>('export_highlights_to_note', {
+      vaultPath: props.vaultPath,
+      nodeId: props.fileId,
+    });
+    logger.info('Highlights exported to note:', relPath);
+  } catch (e) {
+    logger.error('Failed to export highlights to a note:', e);
+  } finally {
+    isExportingNote.value = false;
+  }
+};
+
 // ─── Export annotated PDF ────────────────────────────────────
 const isExporting = ref(false);
 const exportAnnotatedPdf = async () => {
@@ -391,58 +430,64 @@ const handleResetPdf = async () => {
       <!-- Toolbar -->
       <div class="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2 md:px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
         <!-- Navigation -->
-        <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" aria-label="Prev Page"><ChevronLeft class="w-4 h-4" /></button>
+        <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" :aria-label="$t('file.prev_page')"><ChevronLeft class="w-4 h-4" /></button>
         <span class="text-xs font-mono text-gray-500 min-w-[50px] md:min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
         <button @click="nextPage" :disabled="renderer.currentPage.value >= renderer.totalPages.value" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronRight class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Zoom -->
-        <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom Out"><ZoomOut class="w-4 h-4" /></button>
+        <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_out')"><ZoomOut class="w-4 h-4" /></button>
         <span class="text-xs font-mono text-gray-500 w-10 text-center">{{ zoomPercent() }}%</span>
-        <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Zoom In"><ZoomIn class="w-4 h-4" /></button>
+        <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_in')"><ZoomIn class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Dark mode -->
-        <button @click="darkMode = !darkMode" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" aria-label="Dark Mode = !dark Mode">
+        <button @click="darkMode = !darkMode" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.toggle_dark')">
           <Moon v-if="!darkMode" class="w-4 h-4" /><Sun v-else class="w-4 h-4" />
         </button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Annotation Tools -->
-        <button @click="toggleHighlight" :class="highlightMode ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" title="Highlight mode">
+        <button @click="toggleHighlight" :class="highlightMode ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" :title="$t('file.highlight_mode')">
           <Highlighter class="w-4 h-4" />
         </button>
-        <button @click="toggleDraw" :class="drawMode ? 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" title="Draw mode">
+        <button @click="toggleDraw" :class="drawMode ? 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" :title="$t('file.draw_mode')">
           <PenTool class="w-4 h-4" />
         </button>
 
         <!-- Draw options (visible only in draw mode) -->
         <template v-if="drawMode">
           <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-0.5" />
-          <input v-model="drawColor" type="color" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" title="Pen color" />
+          <input v-model="drawColor" type="color" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" :title="$t('file.pen_colour')" />
           <select v-model.number="drawSize" class="text-xs bg-gray-100 dark:bg-white/10 rounded px-1.5 py-1 text-gray-600 dark:text-gray-300 border-0 cursor-pointer">
-            <option :value="2">Thin</option>
-            <option :value="3">Normal</option>
-            <option :value="5">Thick</option>
-            <option :value="8">Bold</option>
+            <option :value="2">{{ $t('file.pen_thin') }}</option>
+            <option :value="3">{{ $t('file.pen_normal') }}</option>
+            <option :value="5">{{ $t('file.pen_thick') }}</option>
+            <option :value="8">{{ $t('file.pen_bold') }}</option>
           </select>
         </template>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Reset -->
         <button @click="showConfirmReset = true" :disabled="annotations.annotations.value.length === 0 && annotations.drawings.value.length === 0"
-          class="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-500/20 text-gray-600 dark:text-gray-300 hover:text-red-500 dark:hover:text-red-400 disabled:opacity-30 cursor-pointer" title="Clear all annotations">
+          class="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-500/20 text-gray-600 dark:text-gray-300 hover:text-red-500 dark:hover:text-red-400 disabled:opacity-30 cursor-pointer" :title="$t('file.clear_annotations')">
           <RotateCcw class="w-4 h-4" />
         </button>
 
         <!-- Export -->
         <button @click="exportAnnotatedPdf" :disabled="isExporting || annotations.annotations.value.length === 0"
-          class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" title="Export annotated PDF">
+          class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" :title="$t('file.export_annotated')">
           <FileDown class="w-4 h-4" />
         </button>
 
+        <!-- Highlights as a note -->
+        <button @click="exportHighlightsToNote" :disabled="isExportingNote || annotations.annotations.value.length === 0"
+          class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" :title="$t('file.export_highlights')">
+          <NotebookPen class="w-4 h-4" />
+        </button>
+
         <!-- Sidebar toggle -->
-        <button @click="showSidebar = !showSidebar" :class="showSidebar ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" title="Annotation panel">
+        <button @click="showSidebar = !showSidebar" :class="showSidebar ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" :title="$t('file.annotation_panel')">
           <PanelRightClose v-if="showSidebar" class="w-4 h-4" />
           <PanelRightOpen v-else class="w-4 h-4" />
         </button>
@@ -453,7 +498,7 @@ const handleResetPdf = async () => {
         <div v-if="renderer.isLoading.value" class="flex items-center justify-center h-full">
           <div class="flex flex-col items-center gap-3">
             <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span class="text-sm text-gray-500">Loading PDF…</span>
+            <span class="text-sm text-gray-500">{{ $t('file.loading_pdf') }}</span>
           </div>
         </div>
         <div v-else-if="renderer.error.value" class="flex items-center justify-center h-full">
@@ -518,7 +563,7 @@ const handleResetPdf = async () => {
     <!-- Reset Confirm Modal -->
     <ConfirmModal
       :show="showConfirmReset"
-      title="Reset PDF"
+      :title="$t('file.reset_pdf')"
       message="Are you sure you want to clear all annotations and drawings for this PDF? This action cannot be undone."
       confirm-text="Clear All"
       :is-destructive="true"

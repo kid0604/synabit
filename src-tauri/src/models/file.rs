@@ -12,6 +12,15 @@ pub struct FileMetadata {
     pub tags: Vec<String>,
     pub people: Vec<String>,
     pub source_type: String, // e.g., "local"
+    /// What a camera wrote into the picture, when there was one. Read in the
+    /// front end from bytes it was already holding — see `src/shared/exif.ts`.
+    pub camera: Option<String>,
+    pub shot_at: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    /// A colour mark — a rating without words, for sorting a shoot before you
+    /// know what to call any of it.
+    pub label: Option<String>,
 }
 
 impl FileMetadata {
@@ -20,7 +29,15 @@ impl FileMetadata {
         let props = &node.properties;
         Some(FileMetadata {
             id: node.id.clone(),
-            path: props.get("path")?.as_str()?.to_string(),
+            // Absent on a node that arrived through sync, which carries no
+            // paths by design — see `publish_file_metadata`. The caller listing
+            // files fills it in from `file_locations`; a file with no location
+            // on this device has no path here and is not something to open.
+            path: props
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
             filename: node.title.clone(),
             extension: props
                 .get("extension")
@@ -53,6 +70,11 @@ impl FileMetadata {
                 .and_then(|v| v.as_str())
                 .unwrap_or("local")
                 .to_string(),
+            camera: props.get("camera").and_then(|v| v.as_str()).map(String::from),
+            shot_at: props.get("shot_at").and_then(|v| v.as_str()).map(String::from),
+            width: props.get("width").and_then(|v| v.as_i64()),
+            height: props.get("height").and_then(|v| v.as_i64()),
+            label: props.get("label").and_then(|v| v.as_str()).map(String::from),
         })
     }
 

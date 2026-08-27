@@ -1,45 +1,49 @@
 import { ref, computed, watch, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { type TaskMetadata, getTodayStr } from '../types';
+import { translateTaskQuery } from '../query';
 
-export function useTaskSearch(tasks: Ref<TaskMetadata[]>, vaultPath: Ref<string>) {
+/**
+ * `vaultPath` used to be a parameter. `run_node_query` reads the index rather
+ * than the folder, so there is nothing left to point it at.
+ */
+export function useTaskSearch(tasks: Ref<TaskMetadata[]>) {
   const searchQuery = ref('');
   const activeCategory = ref<string>('today');
   const backendSearchIds = ref<string[] | null>(null);
   let taskSearchTimeout: ReturnType<typeof setTimeout>;
 
-  // Extract only the free-text portion from a task search query (strip domain-specific filters)
-  function extractTextQuery(query: string): string {
-    return query
-      .replace(/is:[^\s]+/g, '')
-      .replace(/not:[^\s]+/g, '')
-      .replace(/(?:p|priority):[1-4]/g, '')
-      .replace(/status:[a-z_]+/g, '')
-      .replace(/(?:#|tag:)[^\s]+/g, '')
-      .replace(/@[^\s]+/g, '')
-      .replace(/prop:[^:=\s]+(?:=[^\s]+)?/g, '')
-      .trim();
-  }
-
-  // Debounced backend search for Tasks
+  /**
+   * Ask the vault's query engine, and keep what it answers.
+   *
+   * `run_node_query` is the same engine the query blocks inside notes use, so
+   * a search here understands everything one of those does: dates, comparisons
+   * like `due_date:<2026-09-01`, sorting, limits. The Tasks app used to send
+   * the bare words to the text index and drop every token on the floor, which
+   * is why a note could ask what was overdue and this screen could not.
+   *
+   * `translateTaskQuery` decides the split. What it hands back as `backend` is
+   * the engine's business; the filters further down still read the raw string
+   * for the shorthands the engine has no word for.
+   */
   watch(searchQuery, (q) => {
     clearTimeout(taskSearchTimeout);
-    const textPart = extractTextQuery(q.toLowerCase());
-    if (!textPart) {
+    const { backend } = translateTaskQuery(q);
+    if (!backend) {
       backendSearchIds.value = null;
       return;
     }
     taskSearchTimeout = setTimeout(async () => {
       try {
-        const resp = await invoke<{ results: { id: string }[], total_count: number, query_time_ms: number }>('search_tasks', {
-          vaultPath: vaultPath.value,
-          query: textPart
-        });
-        if (extractTextQuery(searchQuery.value.toLowerCase()) === textPart) {
-          backendSearchIds.value = resp.results.map(r => r.id);
+        const resp = await invoke<{ rows: { id: string }[] }>('run_node_query', { query: backend });
+        // Dropped if the box moved on while this was in flight, so a slow
+        // answer cannot narrow the list to a query nobody is looking at.
+        if (translateTaskQuery(searchQuery.value).backend === backend) {
+          backendSearchIds.value = resp.rows.map(r => r.id);
         }
       } catch (e) {
-        console.error('Task backend search error', e);
+        console.error('Task query error', e);
+        backendSearchIds.value = null;
       }
     }, 200);
   });
@@ -49,21 +53,28 @@ export function useTaskSearch(tasks: Ref<TaskMetadata[]>, vaultPath: Ref<string>
     
     if (searchQuery.value.trim()) {
       const query = searchQuery.value.toLowerCase();
-      const textQuery = extractTextQuery(query);
-      
-      // Layer 1: Backend FTS5 text search (tokenized, BM25 ranked)
-      if (textQuery && backendSearchIds.value !== null) {
+      const { backend } = translateTaskQuery(searchQuery.value);
+
+      // Layer 1: whatever the query engine narrowed it to, in its order.
+      if (backend && backendSearchIds.value !== null) {
         const idSet = new Set(backendSearchIds.value);
         result = result.filter(t => idSet.has(t.id));
         const orderMap = new Map(backendSearchIds.value.map((id, i) => [id, i]));
         result = result.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
-      } else if (textQuery && backendSearchIds.value === null) {
-        // Fallback: local text search while backend is loading
-        result = result.filter(t =>
-          t.title.toLowerCase().includes(textQuery) || 
-          t.content.toLowerCase().includes(textQuery) ||
-          t.tags.some(tag => tag.toLowerCase().includes(textQuery))
-        );
+      } else if (backend && backendSearchIds.value === null) {
+        // The engine has not answered yet. A rough local match beats an empty
+        // list for the fraction of a second before it does.
+        const words = searchQuery.value.toLowerCase()
+          .replace(/\b[a-z_]+:[^\s]+/gi, ' ')
+          .replace(/(?:^|\s)[#@-][^\s]+/g, ' ')
+          .trim();
+        if (words) {
+          result = result.filter(t =>
+            t.title.toLowerCase().includes(words) ||
+            t.preview.toLowerCase().includes(words) ||
+            t.tags.some(tag => tag.toLowerCase().includes(words))
+          );
+        }
       }
       
       // Layer 2: Local domain-specific post-filters
@@ -153,7 +164,10 @@ export function useTaskSearch(tasks: Ref<TaskMetadata[]>, vaultPath: Ref<string>
     const today = getTodayStr();
     
     return searchedTasks.value.filter(t => {
-      if (activeCategory.value === 'all') return true;
+      // A saved search covers the whole vault; its query is what narrows it,
+      // and that has already been applied above. Bucketing it further would
+      // silently drop results the query asked for.
+      if (activeCategory.value === 'all' || activeCategory.value.startsWith('filter:')) return true;
 
       if (activeCategory.value.startsWith('project:')) {
         const projId = activeCategory.value.substring(8);

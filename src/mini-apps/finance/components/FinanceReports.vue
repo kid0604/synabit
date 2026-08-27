@@ -1,27 +1,32 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import type { Transaction, FinanceAccount } from '../types';
+import type { Transaction, FinanceAccount, Category } from '../types';
 import FinanceChart from './FinanceChart.vue';
 import { Filter, Calendar, Wallet } from 'lucide-vue-next';
-import { formatCurrency } from '../currency';
+import { formatCompact, formatCurrency } from '../currency';
+import { isDebtTransaction } from '../calc';
+import { categoryName } from '../categories';
 
 const props = defineProps<{
     months: { id: string, label: string, date: Date, node: any }[];
-    globalNetWorth: number;
+    /**
+     * What the accounts hold right now — the point the trend below walks
+     * backwards from. Not net worth: this line moves with cash flowing in and
+     * out, and debts do not flow, so starting it from a figure that includes
+     * them would put every historical point out by whatever is outstanding.
+     */
+    accountsTotal: number;
+    /** Every category, for turning the ids on transactions into names. */
+    categories?: Category[];
     accounts: FinanceAccount[];
     accountBalances: { id: string, name: string, balance: number }[];
 }>();
 
 // formatCurrency is imported from ../currency
 
-const formatShort = (val: number) => {
-    const abs = Math.abs(val);
-    if (abs >= 1000000) return (val / 1000000).toFixed(1) + 'M';
-    if (abs >= 1000) return (val / 1000).toFixed(0) + 'K';
-    return val.toString();
-};
+/** Abbreviated for an axis tick. Whole units, never minor ones. */
+const formatShort = (val: number) => formatCompact(val);
 
-import { SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from '../types';
 
 // --- Filters State ---
 const timeRange = ref<'all' | 'this_month' | 'last_3' | 'last_6' | 'this_year' | 'custom'>('last_6');
@@ -102,12 +107,10 @@ const filteredTransactions = computed(() => {
         if (selectedAccount.value !== 'all') {
             if (tx.accountId !== selectedAccount.value && tx.toAccountId !== selectedAccount.value) return false;
         }
-        if (excludeDebts.value) {
-            const isSystemDebt = SYSTEM_INCOME_CATEGORIES.includes(tx.category) || SYSTEM_EXPENSE_CATEGORIES.includes(tx.category);
-            const catLower = tx.category.toLowerCase();
-            const hasDebtKeyword = ['vay', 'nợ', 'borrow', 'lend', 'debt', 'trả', 'thu', 'mượn', 'loan'].some(k => catLower.includes(k));
-            if (isSystemDebt || hasDebtKeyword) return false;
-        }
+        // Money moving on or off a debt is not spending, so it is left out of
+        // the spending report. Recognised by the link the transaction carries;
+        // reading the category name for "lend" also matched "Calendar".
+        if (excludeDebts.value && isDebtTransaction(tx)) return false;
         return true;
     });
 });
@@ -154,7 +157,7 @@ const maxCashFlow = computed(() => {
 const netWorthTrendData = computed(() => {
     let runningNetWorth = 0;
     if (selectedAccount.value === 'all') {
-        runningNetWorth = props.globalNetWorth;
+        runningNetWorth = props.accountsTotal;
     } else {
         const acc = props.accountBalances.find(a => a.id === selectedAccount.value);
         if (acc) runningNetWorth = acc.balance;
@@ -235,8 +238,10 @@ const pieChartData = computed(() => {
         }
     });
     
+    // Grouped by id and labelled by name: a category renamed last month has a
+    // year of history behind it, and all of it belongs under the new name.
     return Object.keys(data)
-        .map(label => ({ label, value: data[label] }))
+        .map(id => ({ label: categoryName(props.categories ?? [], id), value: data[id] }))
         .sort((a, b) => b.value - a.value);
 });
 
@@ -360,12 +365,12 @@ const pieChartTotal = computed(() => {
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden relative shrink-0">
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/10">
                 <div>
-                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.net_worth_trend') }}</h3>
-                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.net_worth_desc') }}</p>
+                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.balance_trend') }}</h3>
+                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.balance_trend_desc') }}</p>
                 </div>
                 <div class="text-right">
-                    <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(globalNetWorth) }}</p>
-                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider mt-0.5">Current</p>
+                    <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(accountsTotal) }}</p>
+                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider mt-0.5">{{ $t('finance.in_accounts') }}</p>
                 </div>
             </div>
             

@@ -1,6 +1,6 @@
 [package]
 name = "synabit"
-version = "0.9.4"
+version = "0.9.7-3"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"
@@ -20,7 +20,7 @@ tauri-build = { version = "2.0.1", features = [] }
 dotenvy = "0.15"
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "test"] }
+tauri = { version = "2", features = ["protocol-asset", "test", "tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -84,9 +84,18 @@ tauri-plugin-process = "2"
 sysinfo = "0.33.0"
 ed25519-dalek = { version = "2.2.0" }
 lz4_flex = "0.13.1"
+chrono-tz = "0.10.4"
+iana-time-zone = "0.1.65"
+time = { version = "0.3.55", features = ["formatting"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 machine-uid = "0.6.0"
+# A hotkey that works while another app is focused only exists on desktop;
+# phones have share sheets and widgets instead.
+tauri-plugin-global-shortcut = "2"
+# Starting with the machine is what makes the hotkey available without the
+# user having launched anything first.
+tauri-plugin-autostart = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1.1"
@@ -99,3 +108,8 @@ tempfile = "3"
 [features]
 default = []
 official-build = []
+
+[profile.dev]
+debug = 1
+strip = "debuginfo"
+

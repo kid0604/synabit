@@ -11,6 +11,15 @@ export function useEraser(
   const isErasing = ref(false);
   const eraserPos = ref<{ x: number; y: number } | null>(null);
 
+  /**
+   * Erase along the pointer.
+   *
+   * Called on every pointer move while the eraser is down, and each call can
+   * remove a stroke and rebuild what is left of it — several operations, all
+   * part of one wipe. The caller opens a batch for the gesture so that the
+   * whole wipe is a single step back; without it a wipe across a drawing
+   * pushed dozens of entries and emptied the history behind them.
+   */
   function eraseStrokesNear(e: PointerEvent) {
     const canvasEl = document.querySelector('.vue-flow') as HTMLElement | null;
     if (!canvasEl) return;

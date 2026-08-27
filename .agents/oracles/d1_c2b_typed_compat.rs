@@ -896,7 +896,10 @@ async fn c2b_v3_pull_corrupt_middle_is_quarantined_and_later_members_still_apply
         &mut result,
     )
     .await;
-    assert!(result.is_ok(), "a corrupt entry must not fail the whole pull");
+    assert!(
+        result.is_ok(),
+        "a corrupt entry must not fail the whole pull"
+    );
     assert_eq!(
         applier.snapshots.lock().unwrap().as_slice(),
         &[vec![4], vec![6]],
@@ -1178,7 +1181,11 @@ fn c2b_v3_pull_asset_is_set_aside_while_delete_applies() {
             "/tmp",
             &mut result,
         );
-        assert_eq!(outcome.is_err(), expect_err, "unexpected outcome: {outcome:?}");
+        assert_eq!(
+            outcome.is_err(),
+            expect_err,
+            "unexpected outcome: {outcome:?}"
+        );
         let record = db_state
             .lock()
             .unwrap()

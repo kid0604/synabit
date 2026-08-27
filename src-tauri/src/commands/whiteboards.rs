@@ -191,20 +191,23 @@ pub fn update_whiteboard(
     Ok(())
 }
 
+/// Delete a board the way every other node is deleted: by moving it aside.
+///
+/// This used to call `fs::remove_file`, which is the one delete in the app
+/// that could not be taken back — a board is hours of work behind a single
+/// hover-revealed icon, and notes, captures and tasks all go to `.trash/`
+/// instead. Returns where the file went, so the caller can say so.
 #[tauri::command]
 pub fn delete_whiteboard(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
     path: String,
-) -> AppResult<()> {
-    let abs_path = path_utils::resolve_safe_path(&vault_path, &path)?;
-    fs::remove_file(&abs_path)?;
-
+) -> AppResult<String> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    forget_board(&db, &path);
-
-    Ok(())
+    // The same three deletes `forget_board` does — row, links, search entry —
+    // and the move itself, in the order that has been tested.
+    crate::commands::trash::apply_trash(&db, &vault_path, &path)
 }
 
 #[tauri::command]

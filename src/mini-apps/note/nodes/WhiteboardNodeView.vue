@@ -8,6 +8,9 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { SHAPES_MAP } from '../../whiteboard/shapes';
+import { readBoardFile } from '../../whiteboard/boardFile';
+import { assetUrl, rotatedOverhang } from '../../whiteboard/imageAssets';
+import type { WBNode, WhiteboardData } from '../../whiteboard/boardFile';
 import { logger } from '../../../utils/logger';
 
 const props = defineProps<{
@@ -23,30 +26,11 @@ const props = defineProps<{
 const vaultPath = computed(() => props.editor?.storage?.whiteboard?.vaultPath || '');
 
 // --- Board data ---
-interface WBNode {
-  id: string;
-  type: 'shape' | 'stroke' | 'mindmap' | 'text';
-  position: { x: number; y: number };
-  data: Record<string, any>;
-}
-
-interface WBEdge {
-  id: string;
-  source: string;
-  sourceHandle?: string;
-  target: string;
-  targetHandle?: string;
-  type: string;
-  data?: Record<string, any>;
-}
-
-interface BoardData {
-  title: string;
-  tags: string[];
-  nodes: WBNode[];
-  edges: WBEdge[];
-  viewport: { x: number; y: number; zoom: number };
-}
+// The same reader the whiteboard app uses. This preview had its own copy of
+// the file's shape, which had already drifted — it did not know about note
+// cards — and its own `JSON.parse`, which meant a board from a newer build
+// rendered here as whichever parts happened to still be recognisable.
+type BoardData = WhiteboardData;
 
 const boardData = ref<BoardData | null>(null);
 const loading = ref(true);
@@ -77,7 +61,16 @@ const loadBoard = async () => {
     loading.value = true;
     error.value = '';
     const raw = await invoke<string>('read_whiteboard', { vaultPath: vp, path });
-    boardData.value = JSON.parse(raw);
+    const read = readBoardFile(raw);
+    if (!read.ok) {
+      boardData.value = null;
+      error.value =
+        read.reason === 'too-new'
+          ? 'This board was made by a newer version of Synabit'
+          : 'Failed to load whiteboard';
+      return;
+    }
+    boardData.value = read.data;
   } catch (e: any) {
     error.value = 'Failed to load whiteboard';
     logger.error('WhiteboardNodeView: load failed', e);
@@ -197,6 +190,14 @@ function getNodeBounds(node: WBNode): { x: number; y: number; w: number; h: numb
   }
   if (node.type === 'text') {
     return { x, y, w: getTextNodeWidth(node), h: getTextNodeHeight(node) };
+  }
+  if (node.type === 'image' || node.type === 'note') {
+    const w = node.data.width || 320;
+    const h = node.data.height || 240;
+    // A turned picture reaches past its box, and the preview is cropped to
+    // these bounds.
+    const over = node.type === 'image' ? rotatedOverhang(w, h, node.data.rotation || 0) : 0;
+    return { x: x - over, y: y - over, w: w + over * 2, h: h + over * 2 };
   }
   // stroke
   return { x, y, w: 100, h: 100 };
@@ -567,6 +568,22 @@ function getShapeTransform(node: WBNode): string {
               fill="currentColor"
               class="wb-svg-text"
             >{{ node.data.label }}</text>
+          </template>
+
+          <!-- Image Nodes -->
+          <template v-for="node in boardData.nodes.filter(n => n.type === 'image')" :key="node.id">
+            <image
+              v-if="node.data.assetPath && vaultPath"
+              :x="node.position.x"
+              :y="node.position.y"
+              :width="node.data.width || 320"
+              :height="node.data.height || 240"
+              :href="assetUrl(vaultPath, node.data.assetPath)"
+              :transform="node.data.rotation
+                ? `rotate(${node.data.rotation}, ${node.position.x + (node.data.width || 320) / 2}, ${node.position.y + (node.data.height || 240) / 2})`
+                : undefined"
+              preserveAspectRatio="xMidYMid meet"
+            />
           </template>
 
           <!-- Stroke Nodes (freehand drawings) -->

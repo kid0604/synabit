@@ -47,6 +47,15 @@
     <!-- Code Block Content -->
     <pre v-show="displayMode !== 'preview'" class="!mt-0 !rounded-t-none border border-gray-200 dark:border-[#3f3f46]"><node-view-content as="code" :class="languageClass" /></pre>
 
+    <!-- Query results -->
+    <div
+      v-if="isQuery && displayMode !== 'code'"
+      class="mt-2 rounded-lg border border-gray-200 dark:border-[#3f3f46] bg-white dark:bg-[#1e1e1e] overflow-hidden"
+      contenteditable="false"
+    >
+      <QueryResultTable :query="props.node.textContent" />
+    </div>
+
     <!-- Mermaid Preview -->
     <div v-if="selectedLanguage === 'mermaid' && displayMode !== 'code'" class="mermaid-preview mt-2 p-4 rounded-lg border border-gray-200 dark:border-[#3f3f46] bg-white dark:bg-[#1e1e1e] flex flex-col items-center justify-center min-h-[100px]" contenteditable="false">
       <div v-if="mermaidError" class="text-red-500 text-xs w-full overflow-x-auto p-2 bg-red-50 dark:bg-red-900/20 rounded font-mono border border-red-100 dark:border-red-900/50">{{ mermaidError }}</div>
@@ -77,6 +86,7 @@ let renderPromise = Promise.resolve();
 import { NodeViewWrapper, NodeViewContent, nodeViewProps } from '@tiptap/vue-3';
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import mermaid from 'mermaid';
+import QueryResultTable from './QueryResultTable.vue';
 import { Transformer } from 'markmap-lib';
 import { Markmap, deriveOptions } from 'markmap-view';
 import { Toolbar } from 'markmap-toolbar';
@@ -99,8 +109,13 @@ const languageClass = computed(() => {
 });
 
 const isDiagramLanguage = computed(() => {
-  return selectedLanguage.value === 'mermaid' || selectedLanguage.value === 'markmap';
+  return selectedLanguage.value === 'mermaid'
+    || selectedLanguage.value === 'markmap'
+    || selectedLanguage.value === 'query';
 });
+
+/** A saved query, which renders as a table of the notes it matches. */
+const isQuery = computed(() => selectedLanguage.value === 'query');
 
 const isDarkMode = ref(document.documentElement.classList.contains('dark'));
 
@@ -147,9 +162,16 @@ const renderMermaid = () => {
       mermaidSvg.value = svg;
     } catch (err: any) {
       mermaidError.value = err.message || 'Syntax Error in Mermaid graph';
-      // Remove the error SVG that mermaid sometimes injects into the body
-      const errorEl = document.querySelector(`#${err.hash || id}`);
-      if (errorEl) errorEl.remove();
+      // Mermaid renders into a throwaway element of its own and leaves it in
+      // the body when the parse fails — which, mid-edit, is most of the time.
+      // It names that element after the id we handed it, with a `d` in front.
+      //
+      // This used to look for `#${err.hash}`: a parser error's hash is not a
+      // selector, so `querySelector` threw, the throw was swallowed by the
+      // chain below, and nothing was ever cleaned up. A session's worth of
+      // half-typed diagrams stayed in the document until the window closed.
+      document.getElementById(`d${id}`)?.remove();
+      document.getElementById(id)?.remove();
     }
   }).catch(() => {});
 };

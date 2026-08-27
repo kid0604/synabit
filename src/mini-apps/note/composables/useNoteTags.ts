@@ -17,6 +17,16 @@ export function useNoteTags(
   currentContent: ComputedRef<string>,
   ns: any,
   scanVault: () => Promise<void>,
+  /**
+   * Make the editor finish serialising before the body is read.
+   *
+   * Adding a tag rewrites the whole note, body included, and the body comes
+   * from `currentContent` — which the editor now fills in a fifth of a second
+   * after the last keystroke rather than immediately. Without this, tagging a
+   * note the instant after typing into it would save the note as it stood
+   * before those last few characters.
+   */
+  flushEditor: () => void = () => {},
 ) {
   const newTagInput = ref('');
   const tagTree = ref<TagNode[]>([]);
@@ -36,6 +46,7 @@ export function useNoteTags(
         if (note && !note.tags.includes(newTagInput.value.trim())) {
             note.tags.push(newTagInput.value.trim());
             newTagInput.value = '';
+            flushEditor();
             await ns.writeNode(buildNotePayload(note, currentContent.value));
             scanVault();
         }
@@ -46,6 +57,7 @@ export function useNoteTags(
     const note = notes.value.find(n => n.id === currentNoteId.value);
     if (note) {
         note.tags = note.tags.filter(t => t !== tagToRemove);
+        flushEditor();
         await ns.writeNode(buildNotePayload(note, currentContent.value));
         scanVault();
     }

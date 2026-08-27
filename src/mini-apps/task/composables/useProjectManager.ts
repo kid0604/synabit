@@ -2,9 +2,13 @@ import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { type TaskMetadata, formatNumber } from '../types';
-import type { Transaction, FinanceAccount } from '../../finance/types';
+import type { Transaction, FinanceAccount, Category } from '../../finance/types';
 import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS } from '../../finance/types';
+import { toCategories } from '../../finance/categories';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
+
+const t = i18n.global.t;
 
 export function useProjectManager(
   activeCategory: Ref<string>,
@@ -26,8 +30,12 @@ export function useProjectManager(
   const showEmptyAddMenu = ref(false);
 
   const showTxModal = ref(false);
-  const incomeCategories = ref<string[]>([...DEFAULT_INCOME_CATEGORIES]);
-  const expenseCategories = ref<string[]>([...DEFAULT_EXPENSE_CATEGORIES]);
+  // `toCategories`, not the bare constants: DEFAULT_*_CATEGORIES are lists of
+  // names, and the transaction form needs `{ id, name }`. Seeded with strings,
+  // a project in a vault with no Finance config opened a category dropdown of
+  // blank rows. See `finance/categories.ts`.
+  const incomeCategories = ref<Category[]>(toCategories(DEFAULT_INCOME_CATEGORIES));
+  const expenseCategories = ref<Category[]>(toCategories(DEFAULT_EXPENSE_CATEGORIES));
   const accounts = ref<FinanceAccount[]>([...DEFAULT_ACCOUNTS]);
 
   const activeProject = computed(() => {
@@ -152,7 +160,7 @@ export function useProjectManager(
     try {
       if (newProjectDraft.value) {
         // Create new project
-        if (!updatedProject.title.trim()) updatedProject.title = 'Untitled Project';
+        if (!updatedProject.title.trim()) updatedProject.title = t('task.untitled_project');
         const relPath = `Projects/${crypto.randomUUID()}.md`;
         await ns.writeNode({
           relPath: relPath,
@@ -207,21 +215,22 @@ export function useProjectManager(
     if (!activeProject.value) return;
     let isConfirmed = false;
     try {
-      isConfirmed = await ask('This action cannot be undone. The project will be permanently deleted. Tasks under it will NOT be deleted.', { 
-        title: 'Delete this project?', 
+      isConfirmed = await ask(t('task.delete_project_body'), {
+        title: t('task.delete_project_title'),
         kind: 'warning',
-        okLabel: 'Delete',
-        cancelLabel: 'Cancel'
+        okLabel: t('task.delete_confirm'),
+        cancelLabel: t('task.delete_cancel')
       });
     } catch (e) {
       logger.warn("Tauri confirm failed, falling back to window.confirm", e);
-      isConfirmed = window.confirm('Delete this project?');
+      isConfirmed = window.confirm(t('task.delete_project_title'));
     }
     
     if (!isConfirmed) return;
     
     try {
-      await ns.deleteNode({ relPath: activeProject.value.path });
+      // The trash, not an unlink — see `deleteTask`.
+      await ns.trashNode({ relPath: activeProject.value.path });
       showProjectEditModal.value = false;
       activeCategory.value = 'all';
       await loadTasks();
@@ -271,7 +280,7 @@ export function useProjectManager(
           propsObj.linked_projects = projectsArray;
           
           await ns.writeNode({
-            relPath: node.rel_path,
+            relPath: node.id,
             title: node.title,
             nodeType: 'note',
             properties: propsObj,
@@ -301,7 +310,10 @@ export function useProjectManager(
         title: title,
         type: 'whiteboard',
         metadata: {
-          linked_projects: [projectLink]
+          linked_projects: [projectLink],
+          // Sync settles two copies of a board by this stamp; a board that
+          // reaches another device without one cannot win a comparison.
+          updated_at: new Date().toISOString(),
         },
         tags: [],
         created_at: new Date().toISOString(),
@@ -345,10 +357,10 @@ export function useProjectManager(
     try {
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
       
-      if (node.node_type === 'whiteboard' && node.rel_path.endsWith('.json')) {
+      if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
         const rawContent = await invoke<string>('read_whiteboard', {
           vaultPath: vaultPath.value,
-          path: node.rel_path
+          path: node.id
         });
         const data = JSON.parse(rawContent);
         if (data.metadata?.linked_projects && Array.isArray(data.metadata.linked_projects)) {
@@ -356,7 +368,7 @@ export function useProjectManager(
           
           await invoke('update_whiteboard', {
             vaultPath: vaultPath.value,
-            path: node.rel_path,
+            path: node.id,
             title: data.title,
             tags: data.tags || [],
             content: JSON.stringify(data, null, 2)
@@ -405,10 +417,10 @@ export function useProjectManager(
       isLinkingResource.value = true;
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
       
-      if (node.node_type === 'whiteboard' && node.rel_path.endsWith('.json')) {
+      if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
         const rawContent = await invoke<string>('read_whiteboard', {
           vaultPath: vaultPath.value,
-          path: node.rel_path
+          path: node.id
         });
         const data = JSON.parse(rawContent);
         if (!data.metadata) data.metadata = {};
@@ -420,7 +432,7 @@ export function useProjectManager(
           
           await invoke('update_whiteboard', {
             vaultPath: vaultPath.value,
-            path: node.rel_path,
+            path: node.id,
             title: data.title,
             tags: data.tags || [],
             content: JSON.stringify(data, null, 2)
@@ -454,7 +466,7 @@ export function useProjectManager(
             propsObj.linked_projects = projectsArray;
             
             await ns.writeNode({
-              relPath: node.rel_path,
+              relPath: node.id,
               title: fullNode.title,
               nodeType: fullNode.node_type || 'note',
               properties: propsObj,
@@ -478,10 +490,10 @@ export function useProjectManager(
         const configNode = configs[0];
         if (configNode.properties) {
           if (configNode.properties.incomeCategories) {
-            incomeCategories.value = configNode.properties.incomeCategories;
+            incomeCategories.value = toCategories(configNode.properties.incomeCategories);
           }
           if (configNode.properties.expenseCategories) {
-            expenseCategories.value = configNode.properties.expenseCategories;
+            expenseCategories.value = toCategories(configNode.properties.expenseCategories);
           }
           if (configNode.properties.accounts) {
             accounts.value = configNode.properties.accounts;

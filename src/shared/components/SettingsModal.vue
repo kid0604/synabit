@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, CloudOff, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, Rss } from 'lucide-vue-next';
+import TrashPanel from './TrashPanel.vue';
 import { useSettings } from '../../composables/useSettings';
-import { ref, onMounted, watch, defineAsyncComponent } from 'vue';
+import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
 
 const LockScreenVerify = defineAsyncComponent(() => import('./LockScreen.vue'));
 const DeviceManager = defineAsyncComponent(() => import('./DeviceManager.vue'));
@@ -11,9 +12,14 @@ const ConfirmModal = defineAsyncComponent(() => import('./ConfirmModal.vue'));
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { type } from '@tauri-apps/plugin-os';
+import { useI18n } from 'vue-i18n';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppUpdate } from '../../composables/useAppUpdate';
+import { appInPlatformScope, isMobileOS } from '../platformScope';
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
+import { useVaultArchive, formatBytes } from '../../composables/useVaultArchive';
 
 const LicenseModal = defineAsyncComponent(() => import('./LicenseModal.vue'));
 const showLicenseModal = ref(false);
@@ -22,6 +28,7 @@ const {
   showSettingsModal, settingsTab, showE2eeOnboarding,
   themeMode, appLanguage, defaultApp,
   taskArchiveDays,
+  taskDeleteConfirm,
   enableDailyNotes, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
   nestedNumberListStyle, hiddenSidebarApps, codeBlockTabSize,
   codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
@@ -36,9 +43,21 @@ const {
   checkForUpdates, downloadAndInstall,
 } = useAppUpdate();
 
-const availableApps = [
+/**
+ * The mini-apps these settings can talk about.
+ *
+ * Two corrections were folded in here. The list said `chat`, which is not a
+ * mini-app id — the router only redirects `/chat` to `/messages` — so that
+ * toggle wrote a value into `hiddenSidebarApps` that matched nothing and
+ * quietly did nothing. And `feeds` was missing, so it could be neither hidden
+ * nor protected by the app lock. Both now match the ids the app actually uses.
+ *
+ * Filtered by platform: offering to hide, or to lock, an app that this build
+ * does not ship is a setting with nothing behind it.
+ */
+const ALL_SETTABLE_APPS = [
   { id: 'nexus', name: 'Nexus', icon: Globe },
-  { id: 'chat', name: 'Chat', icon: MessageSquare },
+  { id: 'messages', name: 'Messages', icon: MessageSquare },
   { id: 'quickcap', name: 'QuickCap', icon: Zap },
   { id: 'note', name: 'Notes', icon: FileText },
   { id: 'task', name: 'Tasks', icon: CheckSquare },
@@ -47,7 +66,10 @@ const availableApps = [
   { id: 'whiteboard', name: 'Whiteboard', icon: Palette },
   { id: 'people', name: 'People', icon: Users },
   { id: 'finance', name: 'Finance', icon: Wallet },
+  { id: 'feeds', name: 'Feeds', icon: Rss },
 ];
+
+const availableApps = computed(() => ALL_SETTABLE_APPS.filter(a => appInPlatformScope(a.id)));
 
 const toggleAppVisibility = (appId: string) => {
   if (defaultApp.value === appId) return;
@@ -62,6 +84,7 @@ const appVersion = ref('');
 const isDesktop = ref(true);
 
 onMounted(async () => {
+  void readAutostart();
   try {
     appVersion.value = await getVersion();
     const osType = type();
@@ -117,13 +140,152 @@ const emit = defineEmits<{
   (e: 'disconnect-server'): void;
 }>();
 
+/** The vault-wide trash, opened from the General tab. */
+const showTrash = ref(false);
+
+const { t } = useI18n();
+
+/**
+ * Where the legal documents live.
+ *
+ * The repository here used to be `synabit/synabit`, which is not where this
+ * project is published — the updater endpoint in tauri.conf.json points at
+ * `kid0604/synabit`, and that is the one that exists. The link therefore led
+ * to a 404 for anybody who managed to open it at all.
+ */
+const LEGAL_BASE = 'https://github.com/kid0604/synabit/blob/main/legal';
+
+async function openLegal(file: string) {
+  try {
+    await openUrl(`${LEGAL_BASE}/${file}`);
+  } catch (e) {
+    logger.error('Could not open the legal document', e);
+  }
+}
+
+
+
+// ─── Vault backup ─────────────────────────────────────────
+//
+// The vault lives in app storage on Android, which the operating system
+// deletes when the app is uninstalled. Sync covers anybody who turned it on;
+// this is the answer for everybody else, and for a phone that is the only
+// device there has ever been.
+//
+// The dialog returns an ordinary path on desktop and a content:// URI on
+// Android. Both are passed through untouched — the Rust side resolves either.
+/**
+ * Whether Synabit starts with the machine.
+ *
+ * The operating system is the only source of truth here, deliberately: a
+ * stored copy would drift the moment somebody removed the entry from their
+ * own login items, and the switch would then be lying about the state of
+ * their computer. So this reads the real thing and writes the real thing,
+ * and keeps nothing.
+ */
+const autostartOn = ref(false);
+const autostartBusy = ref(false);
+
+const readAutostart = async () => {
+  try {
+    autostartOn.value = await isAutostartEnabled();
+  } catch {
+    // No login items on this platform.
+  }
+};
+
+const toggleAutostart = async () => {
+  if (autostartBusy.value) return;
+  autostartBusy.value = true;
+  try {
+    if (autostartOn.value) {
+      await disableAutostart();
+    } else {
+      await enableAutostart();
+    }
+  } catch (e) {
+    logger.error('Could not change the login item', e);
+  } finally {
+    // Read back rather than assume: the request can be refused, and showing
+    // a switch that disagrees with the system is worse than showing none.
+    await readAutostart();
+    autostartBusy.value = false;
+  }
+};
+
+const archiveMessage = ref('');
+const archiveError = ref('');
+const diagnosticsAvailable = ref(false);
+
+// Shared with the reminder banner so an export done from either one is the
+// same event, and the reminder does not keep firing after the user has acted.
+const { busy: archiveBusy, exportVault, importVault, exportDiagnostics } = useVaultArchive();
+
+onMounted(async () => {
+  try {
+    const info = await invoke<{ available: boolean }>('diagnostics_info');
+    diagnosticsAvailable.value = info.available;
+  } catch (e) {
+    logger.warn('Could not check for a log file', e);
+  }
+});
+
+async function runExport() {
+  archiveMessage.value = '';
+  archiveError.value = '';
+  try {
+    const summary = await exportVault(props.vaultPath);
+    if (!summary) return; // dialog closed; not a failure
+    archiveMessage.value = t('settings.general.backup_exported', {
+      files: summary.files,
+      size: formatBytes(summary.bytes),
+    });
+  } catch (e) {
+    archiveError.value = String(e);
+    logger.error('Vault export failed', e);
+  }
+}
+
+async function runImport() {
+  archiveMessage.value = '';
+  archiveError.value = '';
+  try {
+    const summary = await importVault(props.vaultPath);
+    if (!summary) return;
+    archiveMessage.value = summary.rejected.length
+      ? t('settings.general.backup_imported_partial', {
+          files: summary.files,
+          skipped: summary.rejected.length,
+        })
+      : t('settings.general.backup_imported', { files: summary.files });
+  } catch (e) {
+    archiveError.value = String(e);
+    logger.error('Vault import failed', e);
+  }
+}
+
+async function runDiagnosticsExport() {
+  archiveMessage.value = '';
+  archiveError.value = '';
+  try {
+    const bytes = await exportDiagnostics();
+    if (bytes === null) return;
+    archiveMessage.value = t('settings.general.diagnostics_saved', { size: formatBytes(bytes) });
+  } catch (e) {
+    archiveError.value = String(e);
+    logger.error('Diagnostics export failed', e);
+  }
+}
+
 // Server Sync form state
 const p2pFormAddr = ref('');
 const p2pFormId = ref('');
 const p2pServerMode = ref<'none' | 'official' | 'custom'>('none');
 const serverConnecting = ref(false);
 
-const activeTab = ref<TabType>(props.initialTab || 'general');
+// No local tab state here: the open tab is `settingsTab` on the shared store,
+// which is what every button in the template below writes to. This ref was
+// seeded from `props.initialTab` and then read by nothing.
 
 const activeSettingsProvider = ref<'none' | 'local' | 'gdrive' | 'server'>(props.activeSyncProvider);
 
@@ -233,22 +395,21 @@ interface E2eeStatus {
   key_available: boolean;
   needs_setup: boolean;
 }
-interface SetupResult {
-  recovery_phrase: string;
-}
 
 const e2eeStatus = ref<E2eeStatus>({ key_available: false, needs_setup: true });
-const restorePhrase = ref('');
-const showRestoreForm = ref(false);
 const e2eeError = ref('');
-const e2eeSuccess = ref('');
-const e2eeLoading = ref(false);
 
 const checkE2eeStatus = async () => {
   try {
     e2eeStatus.value = await invoke<E2eeStatus>('check_e2ee_status');
+    e2eeError.value = '';
   } catch (e) {
     logger.error("Failed to check E2EE status", e);
+    // Said on screen as well as in the log. A failed check leaves `e2eeStatus`
+    // at its defaults, which paint the panel as "not set up yet" — the one
+    // reading most likely to make somebody generate a second key for a vault
+    // that already has one.
+    e2eeError.value = String(e);
   }
 };
 
@@ -257,26 +418,12 @@ const setupE2ee = () => {
   showE2eeOnboarding.value = true;
 };
 
-const restoreFromPhrase = async () => {
-  e2eeError.value = '';
-  if (!restorePhrase.value.trim()) {
-    e2eeError.value = 'Please enter your Recovery Phrase';
-    return;
-  }
-  e2eeLoading.value = true;
-  try {
-    await invoke('restore_e2ee_from_phrase', { phrase: restorePhrase.value.trim().toLowerCase() });
-    e2eeStatus.value.key_available = true;
-    e2eeStatus.value.needs_setup = false;
-    showRestoreForm.value = false;
-    restorePhrase.value = '';
-    e2eeSuccess.value = 'Restored successfully! You can sync now.';
-  } catch (err) {
-    e2eeError.value = String(err);
-  } finally {
-    e2eeLoading.value = false;
-  }
-};
+// The recovery-phrase restore that used to live here is gone, not lost: it is
+// `restoreFromPhrase` in E2eeOnboarding.vue, wired to a button, and `setupE2ee`
+// above is what opens that screen. The copy here had lost its form in the
+// template and kept only its script half, so nothing could ever call it — along
+// with `restorePhrase` and `showRestoreForm`, which by then were read by nothing
+// but the dead function itself.
 </script>
 
 <template>
@@ -314,7 +461,13 @@ const restoreFromPhrase = async () => {
                 <Lock class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.security') }}</span>
               </button>
-              <button @click="settingsTab = 'license'" 
+              <!--
+                Absent on mobile. The Android build is free — see
+                check_license_status in license.rs — and this tab is the only
+                route to a "buy a key" link, which Play's payments policy does
+                not allow for an app that unlocks digital features.
+              -->
+              <button v-if="!isMobileOS" @click="settingsTab = 'license'" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'license' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
                 <Shield class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">License</span>
@@ -361,6 +514,69 @@ const restoreFromPhrase = async () => {
                     <button @click="emit('clear-vault')" class="mt-3 px-4 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm flex items-center gap-2">
                       <FolderOpen class="w-3.5 h-3.5" /> {{ $t('settings.general.switch_vault') }}
                     </button>
+                  </div>
+                </section>
+
+                <!--
+                  The trash belongs to the vault, not to any one mini-app:
+                  `.trash/` holds notes, whiteboards, people and captures
+                  beside tasks. It sits here so it is reachable from anywhere
+                  and implies nothing about which app put things in it.
+                -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">{{ $t('trash.title') }}</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center gap-3">
+                    <div class="flex-1 min-w-0">
+                      <p class="text-[12px] text-gray-500 dark:text-gray-400">{{ $t('trash.purge_note') }}</p>
+                    </div>
+                    <button @click="showTrash = true" class="shrink-0 px-4 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm flex items-center gap-2">
+                      <Trash2 class="w-3.5 h-3.5" /> {{ $t('trash.a11y_open_trash') }}
+                    </button>
+                  </div>
+                </section>
+
+                <!-- Backup -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">{{ $t('settings.general.backup') }}</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-3">{{ $t('settings.general.backup_hint') }}</p>
+
+                    <div class="flex flex-wrap gap-2">
+                      <button @click="runExport" :disabled="archiveBusy"
+                              class="px-4 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-[12px] font-medium transition-all shadow-sm flex items-center gap-2 disabled:opacity-50">
+                        <HardDrive class="w-3.5 h-3.5" /> {{ $t('settings.general.backup_export') }}
+                      </button>
+                      <button @click="runImport" :disabled="archiveBusy"
+                              class="px-4 py-2 border border-gray-300 dark:border-[#3a3a3a] hover:bg-gray-100 dark:hover:bg-[#2a2a2a] rounded-lg text-[12px] font-medium transition-all flex items-center gap-2 disabled:opacity-50">
+                        <FolderOpen class="w-3.5 h-3.5" /> {{ $t('settings.general.backup_import') }}
+                      </button>
+                    </div>
+
+                    <p v-if="archiveBusy" class="mt-3 text-[12px] text-gray-500 dark:text-gray-400">
+                      {{ $t('settings.general.backup_working') }}
+                    </p>
+                    <p v-else-if="archiveMessage" class="mt-3 text-[12px] text-green-700 dark:text-green-400">
+                      {{ archiveMessage }}
+                    </p>
+                    <p v-else-if="archiveError" class="mt-3 text-[12px] text-red-600 dark:text-red-400 break-words">
+                      {{ archiveError }}
+                    </p>
+                  </div>
+                </section>
+
+                <!-- Diagnostics -->
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">{{ $t('settings.general.diagnostics') }}</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
+                    <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-2">{{ $t('settings.general.diagnostics_hint') }}</p>
+                    <p class="text-[12px] text-amber-700 dark:text-amber-500 mb-3">{{ $t('settings.general.diagnostics_privacy') }}</p>
+                    <button @click="runDiagnosticsExport" :disabled="archiveBusy || !diagnosticsAvailable"
+                            class="px-4 py-2 border border-gray-300 dark:border-[#3a3a3a] hover:bg-gray-100 dark:hover:bg-[#2a2a2a] rounded-lg text-[12px] font-medium transition-all flex items-center gap-2 disabled:opacity-50">
+                      <HardDrive class="w-3.5 h-3.5" /> {{ $t('settings.general.diagnostics_export') }}
+                    </button>
+                    <p v-if="!diagnosticsAvailable" class="mt-3 text-[12px] text-gray-500 dark:text-gray-400">
+                      {{ $t('settings.general.diagnostics_empty') }}
+                    </p>
                   </div>
                 </section>
 
@@ -663,6 +879,25 @@ const restoreFromPhrase = async () => {
                           <option value="vi">Tiếng Việt</option>
                         </select>
                       </div>
+
+                      <!-- Login item. Desktop only: phones have no such thing. -->
+                      <div v-if="isDesktop" class="flex items-center justify-between pt-4 border-t border-[#e6e6e6] dark:border-[#2c2c2c]">
+                        <div class="pr-4">
+                          <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.general.start_with_system') }}</p>
+                          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">{{ $t('settings.general.start_with_system_desc') }}</p>
+                        </div>
+                        <button
+                          @click="toggleAutostart"
+                          :disabled="autostartBusy"
+                          class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none transition-colors duration-200 ease-in-out disabled:opacity-50"
+                          :class="autostartOn ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'"
+                          :aria-label="$t('settings.general.start_with_system')"
+                          role="switch"
+                          :aria-checked="autostartOn"
+                        >
+                          <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="autostartOn ? 'translate-x-2' : '-translate-x-2'"></span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -763,6 +998,22 @@ const restoreFromPhrase = async () => {
               
               <!-- === TASKS TAB === -->
               <div v-else-if="settingsTab === 'tasks'" class="space-y-6">
+                <section>
+                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">{{ $t('settings.tasks.delete_confirm_label') }}</h4>
+                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] space-y-2">
+                    <label
+                      v-for="option in (['dialog', 'inline', 'undo'] as const)"
+                      :key="option"
+                      class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors"
+                      :class="taskDeleteConfirm === option ? 'bg-white dark:bg-[#2a2a2a] shadow-sm' : 'hover:bg-white/60 dark:hover:bg-[#252525]'"
+                    >
+                      <input type="radio" :value="option" v-model="taskDeleteConfirm" class="w-4 h-4 text-blue-500 focus:ring-blue-500 cursor-pointer" />
+                      <span class="text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('settings.tasks.delete_confirm_' + option) }}</span>
+                    </label>
+                    <p class="text-[11px] text-gray-400 dark:text-gray-500 px-3 pt-1">{{ $t('settings.tasks.delete_confirm_hint') }}</p>
+                  </div>
+                </section>
+
                 <section>
                   <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">{{ $t('settings.tasks.auto_archive') }}</h4>
                   <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
@@ -889,9 +1140,13 @@ const restoreFromPhrase = async () => {
                       <p class="text-[12px] text-green-600 dark:text-green-400 font-medium">{{ $t('settings.security.key_stored_securely') }}</p>
                     </div>
 
-                    <!-- Messages -->
+                    <!--
+                      The success line that sat here was written only by the
+                      restore that now lives in E2eeOnboarding, so it could
+                      never appear. The error line stays and finally has a
+                      writer: a failed status check.
+                    -->
                     <p v-if="e2eeError" class="mt-4 text-[12px] text-red-500 font-medium p-2 bg-red-50 dark:bg-red-900/20 rounded">{{ e2eeError }}</p>
-                    <p v-if="e2eeSuccess" class="mt-4 text-[12px] text-green-600 dark:text-green-400 font-medium p-2 bg-green-50 dark:bg-green-900/20 rounded">{{ e2eeSuccess }}</p>
                   </div>
                 </section>
               </div>
@@ -902,7 +1157,10 @@ const restoreFromPhrase = async () => {
               </div>
               
               <!-- === LICENSE TAB === -->
-              <div v-if="settingsTab === 'license'" class="space-y-6">
+              <!-- Guarded as well as the tab button: settingsTab can also be set
+                   by the initialTab prop, and the panel is what actually holds
+                   the purchase link. -->
+              <div v-if="settingsTab === 'license' && !isMobileOS" class="space-y-6">
                  <section>
                   <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">License & Subscription</h4>
                   <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] text-center">
@@ -928,9 +1186,19 @@ const restoreFromPhrase = async () => {
                     <p class="text-[12px] text-gray-400 dark:text-gray-500 mt-1">{{ $t('settings.about.version') }} {{ appVersion || '...' }}</p>
                     <p class="text-[12px] text-gray-500 dark:text-gray-400 mt-4 max-w-xs mx-auto leading-relaxed">{{ $t('settings.about.desc') }}</p>
                     
-                    <a href="https://github.com/synabit/synabit/blob/main/legal/PRIVACY_POLICY.md" target="_blank" class="text-[12px] text-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline mt-4 block font-medium">
+                    <!--
+                      A button rather than a link, and openUrl rather than
+                      target="_blank": a webview does not hand a plain external
+                      anchor to the system browser, so this did nothing when
+                      clicked. Everywhere else in the app already uses openUrl.
+
+                      Google Play checks that the privacy policy is reachable
+                      from inside the app, so a link that silently fails is a
+                      review finding as well as a broken control.
+                    -->
+                    <button @click="openLegal('PRIVACY_POLICY.md')" class="text-[12px] text-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline mt-4 block font-medium mx-auto">
                       Privacy Policy
-                    </a>
+                    </button>
                     
                     <div v-if="isDesktop" class="mt-8 flex flex-col items-center gap-3">
                       <!-- Check for Updates -->
@@ -1016,6 +1284,8 @@ const restoreFromPhrase = async () => {
 
     <LicenseModal :is-open="showLicenseModal" @close="showLicenseModal = false" />
   </Teleport>
+  <TrashPanel :show="showTrash" :vaultPath="vaultPath" @close="showTrash = false" />
+
 </template>
 
 <style scoped>

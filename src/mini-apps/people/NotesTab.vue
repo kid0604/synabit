@@ -112,11 +112,11 @@ const renderPreview = (content: string) => {
 
 <template>
     <div class="space-y-8">
-        <!-- Personal Notes -->
+        <!-- {{ $t('people.personal_notes') }} -->
         <div v-if="person.content && person.content.trim() !== ''" class="bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/30 rounded-xl p-5">
             <h3 class="text-sm font-semibold text-yellow-800 dark:text-yellow-500 mb-2 flex items-center gap-2">
                 <FileText class="w-4 h-4" />
-                Personal Notes
+                {{ $t('people.personal_notes') }}
             </h3>
             <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono">{{ person.content }}</div>
         </div>
@@ -125,7 +125,7 @@ const renderPreview = (content: string) => {
         <div>
             <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
                 <LinkIcon class="w-4 h-4 text-orange-500" />
-                Linked Nodes
+                {{ $t('people.linked_nodes') }}
             </h2>
 
             <div v-if="loadingLinks" class="flex justify-center py-8">
@@ -134,7 +134,7 @@ const renderPreview = (content: string) => {
 
             <div v-else-if="linkedNodes.length === 0" class="text-center py-8 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
                 <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_linked_activity') }}</p>
-                <p class="text-xs text-gray-400 mt-1">Mention <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{person.title}}]]</code> in any Note or Task to see it here.</p>
+                <p class="text-xs text-gray-400 mt-1">{{ $t('people.mention') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{person.title}}]]</code> {{ $t('people.mention_desc') }}</p>
             </div>
 
             <div v-else class="space-y-6">

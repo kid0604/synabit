@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
+import { appInPlatformScope } from '../shared/platformScope';
 
 // Mini App Components — lazy loaded for code splitting
 const NoteApp = () => import('../mini-apps/note/NoteApp.vue');
@@ -35,6 +36,26 @@ const router = createRouter({
   // and history mode might face issues with deep linking / page reloads
   history: createWebHashHistory(),
   routes,
+});
+
+/**
+ * Keep the platform's scope closed.
+ *
+ * Hiding an app from the navigation is not the same as it being absent. Routes
+ * stay reachable by deep link, by a restored session, and by `defaultApp` when
+ * a user who set Finance as their landing screen on the desktop opens the app
+ * on their phone. Any of those would drop them into a screen built for a mouse
+ * with no way back that makes sense.
+ *
+ * Redirecting rather than refusing: the destination does not exist here, so the
+ * honest answer is the one screen that always does.
+ */
+router.beforeEach((to) => {
+  const name = to.name as string | undefined;
+  if (name && !appInPlatformScope(name)) {
+    return { name: 'nexus' };
+  }
+  return true;
 });
 
 export default router;

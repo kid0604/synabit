@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Merged into the macOS bundle's own Info.plist by Tauri.
+
+  macOS refuses microphone access outright, with no prompt and no error the
+  app can see, unless the binary carries a usage description. Voice capture
+  would simply never start, and the failure would look like a bug in the
+  recorder rather than a missing string.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Synabit records voice notes into your vault. Audio stays on this device.</string>
+</dict>
+</plist>

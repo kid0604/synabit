@@ -1,17 +1,46 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useNodeService } from '../../composables/useNodeService';
-import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus } from 'lucide-vue-next';
+import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus, Bell, Repeat, CornerDownRight, TriangleAlert } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
+import { getTodayStr, REMINDER_PRESETS, isValidReminder } from './types';
+import { RECURRENCE_OPTIONS } from './recurrence';
+import type { FieldIssue } from './validation';
+import type { Backlink } from './composables/useTaskBacklinks';
+import TaskBacklinks from './components/TaskBacklinks.vue';
+import { eligibleParents } from './subtasks';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
     task: any;
     vaultPath?: string;
     showActions?: boolean;
     projects?: any[];
+    /** Every task, so the parent picker can offer them and exclude descendants. */
+    allTasks?: any[];
+    /**
+     * Fields the file holds a nonsense value for; see `validation.ts`.
+     *
+     * Named here rather than read off `task`, because `task` is the flattened
+     * form state and the guards have already replaced the values it carries.
+     */
+    issues?: FieldIssue[];
+    /**
+     * The edited task's own id.
+     *
+     * Separate from `task`, which is the flattened form state and carries no
+     * id — without this the parent picker cannot tell which task is being
+     * edited, and would happily offer the task itself and its own children,
+     * which is exactly the cycle it exists to prevent.
+     */
+    taskId?: string;
+    /** What else in the vault points at this task. */
+    backlinks?: Backlink[];
+    backlinksLoading?: boolean;
 }>();
 
-const emit = defineEmits(['save', 'close', 'delete']);
+const emit = defineEmits(['save', 'close', 'delete', 'open-node']);
+const { t } = useI18n();
 const ns = useNodeService();
 
 // Create a reactive clone of the passed task params
@@ -24,18 +53,90 @@ const editingTaskParams = ref({
     priority: props.task?.priority || '',
     start_date: props.task?.start_date || '',
     due_date: props.task?.due_date || '',
+    due_time: props.task?.due_time || '',
+    reminders: [...(props.task?.reminders || [])] as string[],
+    recurrence: props.task?.recurrence || 'none',
+    recurrence_end_at: props.task?.recurrence_end_at || '',
+    parent_id: props.task?.parent_id || '',
     comment: props.task?.comment || '',
     tags: props.task?.tags || '',
     status: props.task?.status || 'todo',
     project_id: props.task?.project_id || ''
 });
 
-const getTodayStr = () => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-};
+// Imported rather than redefined: the local copy used `toISOString`, so in
+// UTC+7 this form labelled tomorrow's date "Today" for the whole evening.
 
 const activeDropdown = ref<string | null>(null);
+
+// ── Reminders ──────────────────────────────────────────────────────
+const reminderPreset = ref('');
+const customReminder = ref('');
+const reminderError = ref('');
+
+const addReminder = () => {
+    const raw = reminderPreset.value === 'custom' ? customReminder.value : reminderPreset.value;
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    if (!isValidReminder(value)) {
+        // Shown in the panel rather than through `alert`, which is what the
+        // Calendar's copy of this does — a modal dialog on top of a modal
+        // dismisses the dropdown behind it and loses what was typed.
+        reminderError.value = t('task.reminder_invalid');
+        return;
+    }
+    if (!editingTaskParams.value.reminders.includes(value)) {
+        editingTaskParams.value.reminders.push(value);
+    }
+    reminderPreset.value = '';
+    customReminder.value = '';
+    reminderError.value = '';
+};
+
+const removeReminder = (idx: number) => {
+    editingTaskParams.value.reminders.splice(idx, 1);
+};
+
+/**
+ * A reminder with no deadline to count back from never fires, and the loop in
+ * `chat_engine.rs` only ever looks at tasks that have a `due_date`. Saying so
+ * beats letting the user set one that silently does nothing.
+ */
+const remindersNeedDueDate = computed(
+    () => editingTaskParams.value.reminders.length > 0 && !editingTaskParams.value.due_date,
+);
+
+// ── Repeat ─────────────────────────────────────────────────────────
+const isRepeating = computed(() => editingTaskParams.value.recurrence !== 'none');
+
+/**
+ * A repeat counts forward from a date. With neither a start nor a due date
+ * there is nothing to count from, and `advanceRecurrence` finishes the task
+ * instead of moving it on — so the repeat would silently do nothing.
+ */
+const repeatNeedsDate = computed(
+    () => isRepeating.value && !editingTaskParams.value.due_date && !editingTaskParams.value.start_date,
+);
+
+// ── Parent ─────────────────────────────────────────────────────────
+/**
+ * The task itself and everything under it are excluded, because either would
+ * make a cycle. This picker is the only place a cycle could be created on
+ * purpose, so it is the place to prevent one.
+ */
+const parentOptions = computed(() => {
+    const all = (props.allTasks || []) as any[];
+    if (!all.length) return [];
+    // A task being created has no id yet and no children, so nothing to exclude.
+    return eligibleParents({ id: props.taskId || '' } as any, all as any);
+});
+
+const parentTitle = computed(() => {
+    const id = editingTaskParams.value.parent_id;
+    if (!id) return '';
+    const found = (props.allTasks || []).find((t: any) => t.id === id);
+    return found?.title || id.split('/').pop() || id;
+});
 
 const handleGlobalClick = () => {
     activeDropdown.value = null;
@@ -161,6 +262,12 @@ onUnmounted(() => {
 });
 
 const save = () => {
+    // A time with no date is not a deadline, and the reminder loop would never
+    // look at it. Clearing the date clears the time with it rather than leaving
+    // an orphan in the frontmatter that reappears the next time a date is set.
+    if (!editingTaskParams.value.due_date) {
+        editingTaskParams.value.due_time = '';
+    }
     if (editingTaskParams.value.is_transferred && !editingTaskParams.value.transferred_to.trim()) {
         editingTaskParams.value.is_transferred = false;
         editingTaskParams.value.track_progress = false;
@@ -198,7 +305,7 @@ const handleBackgroundClick = () => {
               
               <!-- Title & Checkbox -->
               <div class="flex items-start gap-4 mb-3">
-                   <button @click="editingTaskParams.status = (editingTaskParams.status === 'done' ? 'todo' : 'done')" class="shrink-0 mt-0.5 cursor-pointer" aria-label="More Options">
+                   <button @click="editingTaskParams.status = (editingTaskParams.status === 'done' ? 'todo' : 'done')" class="shrink-0 mt-0.5 cursor-pointer" :aria-label="$t('task.a11y_toggle_status')">
                        <div v-if="editingTaskParams.status === 'done'" class="w-5 h-5 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-[#2c2c2c] flex items-center justify-center">
                            <div class="w-2.5 h-2.5 bg-gray-400 dark:bg-gray-500 rounded-sm"></div>
                        </div>
@@ -227,6 +334,32 @@ const handleBackgroundClick = () => {
               
           </div>
           
+          <!--
+            What the file says where the form cannot show it. The value is
+            printed verbatim so the user can recognise their own two edits
+            inside it, and saving the form writes a clean value over the top.
+          -->
+          <div v-if="issues?.length" class="mx-5 mb-3 px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50">
+            <p class="flex items-center gap-1.5 text-[12px] font-semibold text-amber-800 dark:text-amber-300 mb-1">
+              <TriangleAlert class="w-3.5 h-3.5 shrink-0" /> {{ t('task.field_issues_title') }}
+            </p>
+            <p v-for="issue in issues" :key="issue.field" class="text-[11px] text-amber-700 dark:text-amber-400/90 leading-relaxed">
+              {{ t('task.field_issue_detail', { field: issue.field, value: issue.value }) }}
+            </p>
+          </div>
+
+          <!--
+            Only for a task that exists. A task being created has no identity
+            for anything to point at yet, and an empty panel on the create
+            screen is a promise the form cannot keep.
+          -->
+          <TaskBacklinks
+            v-if="taskId"
+            :backlinks="backlinks || []"
+            :loading="!!backlinksLoading"
+            @open="(id, nodeType) => emit('open-node', id, nodeType)"
+          />
+
           <!-- Footer Meta Bar -->
           <div class="px-5 pt-3 border-t border-gray-50 dark:border-[#2c2c2c] bg-white dark:bg-[#1c1c1e] flex items-center justify-start gap-2 flex-wrap relative" :style="!props.showActions ? 'padding-bottom: max(env(safe-area-inset-bottom), 12px);' : 'padding-bottom: 12px;'">
               <!-- Dates -->
@@ -241,17 +374,98 @@ const handleBackgroundClick = () => {
                           {{ editingTaskParams.start_date === getTodayStr() ? 'Today' : editingTaskParams.start_date }}
                       </template>
                       <template v-else-if="editingTaskParams.due_date">
-                          Due: {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}
+                          Due: {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}<template v-if="editingTaskParams.due_time"> {{ editingTaskParams.due_time }}</template>
                       </template>
                   </span>
                   
                   <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'dates' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
                       <div class="w-48 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
                           <label class="block text-xs font-semibold text-gray-500 mb-1">Start Date</label>
-                          <input type="date" v-model="editingTaskParams.start_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
+                          <input type="date" v-model="editingTaskParams.start_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Start date" />
                           
                           <label class="block text-xs font-semibold text-gray-500 mb-1">Due Date</label>
-                          <input type="date" v-model="editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
+                          <input type="date" v-model="editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Due date" />
+
+                          <label class="block text-xs font-semibold text-gray-500 mb-1">{{ t('task.due_time_label') }}</label>
+                          <input type="time" v-model="editingTaskParams.due_time" :disabled="!editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed" :aria-label="t('task.due_time_label')" />
+                          <p class="text-[10px] text-gray-400 mt-1">{{ t('task.due_time_hint') }}</p>
+                      </div>
+                  </div>
+              </div>
+
+              <!-- Repeat -->
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="isRepeating ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.repeat')" @click.stop="activeDropdown = activeDropdown === 'repeat' ? null : 'repeat'">
+                  <Repeat class="w-[18px] h-[18px]" :class="isRepeating ? (repeatNeedsDate ? 'text-amber-500 mr-2' : 'text-teal-500 mr-2') : ''" />
+
+                  <span v-if="isRepeating" class="text-xs font-semibold">{{ t('task.' + editingTaskParams.recurrence) }}</span>
+
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'repeat' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-56 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 mb-1">{{ t('task.repeat') }}</label>
+                          <select v-model="editingTaskParams.recurrence" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer text-[#1c1c1e] dark:text-[#f4f4f5]" :aria-label="t('task.repeat')">
+                              <option v-for="option in RECURRENCE_OPTIONS" :key="option" :value="option">
+                                  {{ option === 'none' ? t('task.does_not_repeat') : t('task.' + option) }}
+                              </option>
+                          </select>
+
+                          <template v-if="isRepeating">
+                              <label class="block text-xs font-semibold text-gray-500 mb-1 mt-3">{{ t('task.repeat_until') }}</label>
+                              <input type="date" v-model="editingTaskParams.recurrence_end_at" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-teal-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" :aria-label="t('task.repeat_until')" />
+                              <p class="text-[10px] text-gray-400 mt-1">{{ t('task.repeat_until_hint') }}</p>
+                              <p v-if="repeatNeedsDate" class="text-[10px] text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.repeat_needs_date') }}</p>
+                          </template>
+                      </div>
+                  </div>
+              </div>
+
+              <!-- Parent task -->
+              <div v-if="parentOptions.length" class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.parent_id ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.parent_task')">
+                  <CornerDownRight class="w-[18px] h-[18px]" :class="editingTaskParams.parent_id ? 'text-sky-500 mr-2' : ''" />
+
+                  <span v-if="editingTaskParams.parent_id" class="text-xs font-semibold max-w-[120px] truncate text-sky-600 dark:text-sky-400">{{ parentTitle }}</span>
+
+                  <select v-model="editingTaskParams.parent_id" class="absolute inset-0 opacity-0 cursor-pointer z-10" :aria-label="t('task.parent_task')">
+                      <option value="">{{ t('task.no_parent') }}</option>
+                      <option v-for="candidate in parentOptions" :key="candidate.id" :value="candidate.id">{{ candidate.title }}</option>
+                  </select>
+              </div>
+
+              <!-- Reminders -->
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.reminders.length > 0 ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.reminders')" @click.stop="activeDropdown = activeDropdown === 'reminders' ? null : 'reminders'">
+                  <Bell class="w-[18px] h-[18px]" :class="editingTaskParams.reminders.length > 0 ? (remindersNeedDueDate ? 'text-amber-500 mr-2' : 'text-purple-500 mr-2') : ''" />
+
+                  <span v-if="editingTaskParams.reminders.length > 0" class="text-xs font-semibold max-w-[150px] truncate">{{ editingTaskParams.reminders.join(', ') }}</span>
+
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'reminders' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-64 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 mb-2">{{ t('task.reminders') }}</label>
+
+                          <div v-if="editingTaskParams.reminders.length" class="flex items-center gap-1.5 flex-wrap mb-2">
+                              <span v-for="(rem, idx) in editingTaskParams.reminders" :key="rem" class="flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-1 rounded-md text-xs font-medium">
+                                  <Bell class="w-3 h-3" />
+                                  {{ rem }}
+                                  <button @click="removeReminder(idx)" class="hover:text-purple-900 dark:hover:text-purple-100 ml-0.5 cursor-pointer" :aria-label="t('task.a11y_remove_reminder')">
+                                      <X class="w-3 h-3" />
+                                  </button>
+                              </span>
+                          </div>
+
+                          <select v-model="reminderPreset" @change="reminderPreset !== 'custom' && addReminder()" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer text-[#1c1c1e] dark:text-[#f4f4f5]" :aria-label="t('task.add_reminder')">
+                              <option value="">{{ t('task.add_reminder') }}</option>
+                              <option value="0m">{{ t('task.reminder_at_due') }}</option>
+                              <option v-for="preset in REMINDER_PRESETS" :key="preset" :value="preset">{{ t('task.reminder_before', { value: preset }) }}</option>
+                              <option value="custom">{{ t('task.reminder_custom') }}</option>
+                          </select>
+
+                          <div v-if="reminderPreset === 'custom'" class="flex items-center gap-1.5 mt-2">
+                              <input v-model="customReminder" @keyup.enter="addReminder" type="text" :placeholder="t('task.reminder_custom_placeholder')" class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                              <button @click="addReminder" class="bg-purple-600 hover:bg-purple-700 text-white p-1.5 rounded-md transition-colors cursor-pointer shrink-0" :aria-label="t('task.a11y_add_reminder')">
+                                  <Plus class="w-4 h-4" />
+                              </button>
+                          </div>
+
+                          <p v-if="reminderError" class="text-[10px] text-red-500 mt-1.5">{{ reminderError }}</p>
+                          <p v-else-if="remindersNeedDueDate" class="text-[10px] text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.reminders_need_due_date') }}</p>
                       </div>
                   </div>
               </div>

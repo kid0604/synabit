@@ -1,29 +1,31 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Calendar, Star, BookmarkPlus, Inbox, ChevronRight, Rss, FileText } from 'lucide-vue-next';
-import type { FeedSource, FeedCategory } from '../types/feed.types';
+import { Calendar, Circle, Star, BookmarkPlus, Inbox, ChevronRight, Rss, FileText } from 'lucide-vue-next';
+import type { FeedSource, FeedCategory, ViewCounts, FeedView } from '../types/feed.types';
 import FeedSourceItem from './FeedSourceItem.vue';
 
 const props = defineProps<{
   sources: FeedSource[];
   categories: FeedCategory[];
   unreadCounts: Record<string, number>;
-  totalUnread: number;
+  viewCounts: ViewCounts;
   selectedSourceId: string | null;
   selectedCategoryId: string | null;
-  currentView: 'today' | 'all' | 'starred' | 'read-later' | 'unread';
+  currentView: FeedView;
 }>();
 
 const emit = defineEmits<{
   'select-source': [id: string | null];
   'select-category': [id: string | null];
-  'select-view': [view: 'today' | 'all' | 'starred' | 'read-later' | 'unread'];
+  'select-view': [view: FeedView];
   'remove-source': [id: string];
   'rename-source': [id: string, newTitle: string];
   'open-opml': [];
   'pause-source': [id: string];
   'mark-source-read': [id: string];
+  'toggle-full-text': [id: string];
+  'set-scrape-container': [id: string, selector: string];
 }>();
 
 const { t } = useI18n();
@@ -46,11 +48,18 @@ const getCategoryUnread = (catId: string) => {
   return getSourcesForCategory(catId).reduce((sum, s) => sum + (props.unreadCounts[s.id] || 0), 0);
 };
 
+// Today and Unread count what is waiting to be read; the orange badge is a
+// call for attention and should only appear where there is something to do.
+// Starred and read-later count everything they hold — starring usually happens
+// after reading, so an unread count there would sit at zero — and are shown in
+// the same quiet style as the category counts. "Today" used to show the unread
+// total of every feed regardless of date, and the other two were always zero.
 const smartViews = computed(() => [
-  { id: 'today' as const, label: t('feeds.today'), icon: Calendar, count: props.totalUnread },
-  { id: 'starred' as const, label: t('feeds.starred'), icon: Star, count: 0 },
-  { id: 'read-later' as const, label: t('feeds.read_later'), icon: BookmarkPlus, count: 0 },
-  { id: 'all' as const, label: t('feeds.all_articles'), icon: Inbox, count: 0 },
+  { id: 'today' as const, label: t('feeds.today'), icon: Calendar, count: props.viewCounts.today, muted: false },
+  { id: 'unread' as const, label: t('feeds.unread'), icon: Circle, count: props.viewCounts.unread, muted: false },
+  { id: 'starred' as const, label: t('feeds.starred'), icon: Star, count: props.viewCounts.starred, muted: true },
+  { id: 'read-later' as const, label: t('feeds.read_later'), icon: BookmarkPlus, count: props.viewCounts.readLater, muted: true },
+  { id: 'all' as const, label: t('feeds.all_articles'), icon: Inbox, count: 0, muted: true },
 ]);
 
 </script>
@@ -72,7 +81,15 @@ const smartViews = computed(() => [
       >
         <component :is="view.icon" class="w-4 h-4 shrink-0" />
         <span class="flex-1 text-left truncate">{{ view.label }}</span>
-        <span v-if="view.count > 0" class="min-w-[20px] h-5 px-1.5 bg-orange-500 text-white text-[11px] font-bold rounded-full flex items-center justify-center">{{ view.count > 99 ? '99+' : view.count }}</span>
+        <span
+          v-if="view.count > 0"
+          :class="[
+            'min-w-[20px] h-5 px-1.5 text-[11px] rounded-full flex items-center justify-center',
+            view.muted
+              ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-semibold'
+              : 'bg-orange-500 text-white font-bold'
+          ]"
+        >{{ view.count > 99 ? '99+' : view.count }}</span>
       </button>
     </div>
 
@@ -111,6 +128,8 @@ const smartViews = computed(() => [
             @rename-source="(newTitle: string) => emit('rename-source', source.id, newTitle)"
             @pause-source="emit('pause-source', source.id)"
             @mark-source-read="emit('mark-source-read', source.id)"
+            @toggle-full-text="emit('toggle-full-text', source.id)"
+            @set-scrape-container="(selector: string) => emit('set-scrape-container', source.id, selector)"
           />
         </div>
       </div>
@@ -129,6 +148,8 @@ const smartViews = computed(() => [
           @rename-source="(newTitle: string) => emit('rename-source', source.id, newTitle)"
           @pause-source="emit('pause-source', source.id)"
           @mark-source-read="emit('mark-source-read', source.id)"
+          @toggle-full-text="emit('toggle-full-text', source.id)"
+          @set-scrape-container="(selector: string) => emit('set-scrape-container', source.id, selector)"
         />
       </div>
 

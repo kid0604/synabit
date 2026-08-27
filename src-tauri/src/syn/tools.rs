@@ -156,6 +156,51 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 }),
             },
         },
+        // person_brief — everything about one person, in one answer
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "person_brief".to_string(),
+                description: "Everything the vault knows about one person: when they were last in touch, whether that is overdue, their next meeting, open tasks about them, their birthday, and the balance of gifts and money between you. Use this for any question about a specific person — 'what should I know before I see Nam', 'when did I last speak to An', 'do I owe Bình anything'.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["person"],
+                    "properties": {
+                        "person": {
+                            "type": "string",
+                            "description": "The person's name, or their vault path if known"
+                        }
+                    }
+                }),
+            },
+        },
+        // find_people — who to get back to
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "find_people".to_string(),
+                description: "Find people by how the relationship stands rather than by name. Use for 'who have I not spoken to in a while', 'whose birthday is coming up', 'who are my colleagues'.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "description": "Only people whose relationship is in this state",
+                            "enum": ["overdue", "due_soon", "on_track", "thriving", "unknown"]
+                        },
+                        "birthday_within_days": {
+                            "type": "integer",
+                            "description": "Only people whose birthday falls within this many days"
+                        },
+                        "relationship": {
+                            "type": "string",
+                            "description": "Only people with this relationship, e.g. colleague, family"
+                        },
+                        "limit": { "type": "integer", "description": "Default 20" }
+                    }
+                }),
+            },
+        },
         // 8. get_all_tags — Tag overview
         ToolDefinition {
             tool_type: "function".to_string(),
@@ -209,13 +254,13 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "search_files".to_string(),
-                description: "Search files in the vault's Files app by filename, extension, tags, or linked people. Use this when the user asks about files, images, documents, PDFs, or any file-related queries. The 'query' parameter searches both filenames AND linked people names. Returns file metadata including path, size, extension, tags, and people.".to_string(),
+                description: "Search files in the vault's Files app by their contents, filename, extension, tags, or linked people. Use this when the user asks about files, images, documents, PDFs, or anything they believe is written inside a document. The 'query' parameter searches the text inside documents (PDF, Word, PowerPoint, spreadsheets, EPUB, HTML, plain text and code) as well as filenames and linked people names. Returns file metadata including path, size, extension, tags, people, and an 'excerpt' quoting the passage that matched when the match came from inside the document.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search term to match against filenames AND linked people names (case-insensitive). Use this for person names like 'Lê Anh Khôi'."
+                            "description": "Search term to match against the text inside documents, filenames, AND linked people names (case-insensitive). Use a distinctive phrase the user remembers from a document, or a person name like 'Lê Anh Khôi'."
                         },
                         "extension": {
                             "type": "string",
@@ -365,7 +410,11 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "recurrence": {
                             "type": "string",
                             "enum": ["none", "daily", "weekly", "monthly", "yearly"],
-                            "description": "Recurrence pattern. Defaults to 'none' (no repeat)."
+                            "description": "Simple recurrence. Use `rrule` instead for anything with an interval, specific weekdays, or an end."
+                        },
+                        "rrule": {
+                            "type": "string",
+                            "description": "An RFC 5545 recurrence rule, for repeats the simple options cannot express. Supported parts: FREQ (DAILY, WEEKLY, MONTHLY, YEARLY), INTERVAL, BYDAY (weekly only), COUNT, UNTIL. Examples: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' for every other Tuesday, 'FREQ=WEEKLY;BYDAY=MO,WE,FR' for Mondays, Wednesdays and Fridays, 'FREQ=MONTHLY;COUNT=6' for six months."
                         },
                         "reminders": {
                             "type": "array",
@@ -486,6 +535,8 @@ pub fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> AppResult<St
         "search_feed_articles" => tool_search_feed_articles(ctx.db, args),
         "get_nodes_by_tag" => tool_get_nodes_by_tag(ctx.db, args),
         "get_linked_nodes" => tool_get_linked_nodes(ctx.db, args),
+        "person_brief" => tool_person_brief(ctx.db, args),
+        "find_people" => tool_find_people(ctx.db, args),
         "get_all_tags" => tool_get_all_tags(ctx.db),
         "get_node_edges" => tool_get_node_edges(ctx.db, args),
         "search_finance" => tool_search_finance(ctx.db, args),
@@ -513,6 +564,98 @@ pub fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> AppResult<St
 // ═══════════════════════════════════════════════════════════════
 //  TOOL IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════
+
+/// Everything about one person, named the way somebody would name them.
+fn tool_person_brief(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let wanted = args
+        .get("person")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: person".to_string()))?
+        .trim();
+
+    let Some(person_id) = resolve_person(db, wanted)? else {
+        return Ok(serde_json::json!({
+            "found": false,
+            "note": format!("Nobody in the vault matches '{}'.", wanted)
+        })
+        .to_string());
+    };
+
+    let today = chrono::Local::now().date_naive();
+    match db.person_brief(&person_id, today)? {
+        Some(brief) => Ok(serde_json::to_string(&brief)?),
+        None => Ok(serde_json::json!({ "found": false }).to_string()),
+    }
+}
+
+/// A person's vault path, from a name or a path.
+///
+/// An exact name first, so two people whose names overlap — "An" and "An
+/// Nguyễn" — do not answer for each other.
+fn resolve_person(db: &DbBridge, wanted: &str) -> AppResult<Option<String>> {
+    let people = db.get_nodes_by_type("person")?;
+    if let Some(exact) = people
+        .iter()
+        .find(|p| p.id == wanted || p.title.eq_ignore_ascii_case(wanted))
+    {
+        return Ok(Some(exact.id.clone()));
+    }
+    let lower = wanted.to_lowercase();
+    Ok(people
+        .iter()
+        .find(|p| p.title.to_lowercase().contains(&lower))
+        .map(|p| p.id.clone()))
+}
+
+/// People filtered by how the relationship stands, not by name.
+fn tool_find_people(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let status = args.get("status").and_then(|v| v.as_str());
+    let relationship = args
+        .get("relationship")
+        .and_then(|v| v.as_str())
+        .map(str::to_lowercase);
+    let within = args.get("birthday_within_days").and_then(|v| v.as_i64());
+    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).max(1) as usize;
+
+    let today = chrono::Local::now().date_naive();
+    let mut found = Vec::new();
+
+    for person in db.get_nodes_by_type("person")? {
+        if person.properties.get("is_owner") == Some(&serde_json::Value::Bool(true)) {
+            continue;
+        }
+        let Some(brief) = db.person_brief(&person.id, today)? else {
+            continue;
+        };
+        if status.is_some_and(|wanted| brief.status != wanted) {
+            continue;
+        }
+        if let Some(wanted) = &relationship {
+            if !brief
+                .relationships
+                .iter()
+                .any(|r| r.to_lowercase().contains(wanted))
+            {
+                continue;
+            }
+        }
+        if let Some(within) = within {
+            match brief.days_until_birthday {
+                Some(days) if days <= within => {}
+                _ => continue,
+            }
+        }
+        found.push(brief);
+        if found.len() >= limit {
+            break;
+        }
+    }
+
+    // Whoever has waited longest first, which is the order the question is
+    // nearly always asked in.
+    found.sort_by(|a, b| b.days_since_contact.cmp(&a.days_since_contact));
+    Ok(serde_json::json!({ "count": found.len(), "people": found }).to_string())
+}
 
 /// 1. search_vault — Universal FTS5 search
 fn tool_search_vault(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -906,6 +1049,10 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
                 .cloned()
                 .unwrap_or(serde_json::json!([]));
 
+            // Why this file matched, when the reason was something written
+            // inside it rather than what it was called.
+            let excerpt = db.file_text_excerpt(&n.id, query, 120);
+
             serde_json::json!({
                 "id": n.id,
                 "filename": n.title,
@@ -915,6 +1062,7 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
                 "tags": tags,
                 "people": people,
                 "updated_at": n.updated_at,
+                "excerpt": excerpt,
             })
         })
         .collect();
@@ -932,6 +1080,15 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
 // ═══════════════════════════════════════════════════════════════
 
 /// Helper: Create a node file on disk + upsert into DB + update search index.
+///
+/// The write goes through the same helpers as [`write_node_file`], deliberately.
+/// This path used to build its own frontmatter and write straight to
+/// `{subdir}/{title}.md`, so a title that matched a note already in the vault
+/// destroyed it. Two writers of the same files have to agree on what a write
+/// means, and the answer the app settled on lives over there:
+/// [`free_node_path`] for the name, [`resolve_properties`] for the keys.
+///
+/// [`write_node_file`]: crate::commands::nodes::write_node_file
 fn write_tool_node(
     ctx: &ToolContext,
     node_type: &str,
@@ -939,6 +1096,10 @@ fn write_tool_node(
     content: &str,
     properties: serde_json::Value,
 ) -> AppResult<(String, String)> {
+    use crate::commands::nodes::{
+        existing_properties, free_node_path, markdown_with_frontmatter, resolve_properties,
+    };
+
     let now = chrono::Utc::now();
     let timestamp_str = now.to_rfc3339();
     let timestamp = now.timestamp_millis();
@@ -970,47 +1131,29 @@ fn write_tool_node(
             }
         })
         .collect();
-    let safe_title = safe_title.trim().to_string();
-    let rel_path = format!("{}/{}.md", subdir, safe_title);
-
-    // Build YAML frontmatter using serde_yaml (matches CalendarApp's write_node_file pipeline)
-    let mut props_map = serde_yaml::Mapping::new();
-    props_map.insert(
-        serde_yaml::Value::String("title".to_string()),
-        serde_yaml::Value::String(title.to_string()),
-    );
-    props_map.insert(
-        serde_yaml::Value::String("type".to_string()),
-        serde_yaml::Value::String(node_type.to_string()),
-    );
-
-    // Merge all properties (handles Bool, Number, Array, String correctly)
-    if let Some(obj) = properties.as_object() {
-        for (key, val) in obj {
-            if key == "title" || key == "type" || key == "updated_at" {
-                continue;
-            }
-            if let Ok(yaml_val) = serde_yaml::to_value(val) {
-                props_map.insert(serde_yaml::Value::String(key.clone()), yaml_val);
-            }
-        }
+    let mut safe_title = safe_title.trim().to_string();
+    // A leading dot makes a dotfile, and the vault walk skips those — the note
+    // would be written, indexed, and then vanish on the next scan. Same
+    // underscore the other unsafe characters get.
+    if safe_title.starts_with('.') {
+        safe_title.replace_range(0..1, "_");
+    }
+    if safe_title.is_empty() {
+        safe_title = "Untitled".to_string();
     }
 
-    props_map.insert(
-        serde_yaml::Value::String("created_at".to_string()),
-        serde_yaml::Value::String(timestamp_str.clone()),
-    );
-    props_map.insert(
-        serde_yaml::Value::String("updated_at".to_string()),
-        serde_yaml::Value::String(timestamp_str.clone()),
-    );
+    let vault = std::path::Path::new(ctx.vault_path);
+    let rel_path = free_node_path(vault, &format!("{}/{}.md", subdir, safe_title));
+    let full_path = vault.join(&rel_path);
 
-    let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
-    let yaml_str = frontmatter.trim_start_matches("---\n");
-    let file_content = format!("---\n{}---\n{}", yaml_str, content);
+    // Fold into whatever is on disk rather than rebuilding from the arguments,
+    // matching the main write path. Normally there is nothing there and this
+    // is the caller's properties unchanged; when there is, its frontmatter
+    // survives a write it did not ask for.
+    let properties = resolve_properties(existing_properties(&full_path, "md"), &properties);
+    let file_content = markdown_with_frontmatter(title, node_type, &properties, content);
 
     // Write file to disk
-    let full_path = std::path::Path::new(ctx.vault_path).join(&rel_path);
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1321,10 +1464,19 @@ fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
     };
 
     let location = args.get("location").and_then(|v| v.as_str()).unwrap_or("");
-    let recurrence = args
-        .get("recurrence")
-        .and_then(|v| v.as_str())
-        .unwrap_or("none");
+    // Whatever the model expressed, one shape reaches the vault. A bare
+    // `recurrence` is promoted rather than stored beside a rule, because two
+    // places recording the same thing is how they end up disagreeing.
+    let rrule = {
+        let given = args.get("rrule").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let parsed = if given.is_empty() {
+            let legacy = args.get("recurrence").and_then(|v| v.as_str()).unwrap_or("none");
+            crate::calendar::rrule::RRule::from_legacy(legacy, "")
+        } else {
+            crate::calendar::rrule::RRule::parse(given)
+        };
+        parsed.map(|r| r.to_rrule_string()).unwrap_or_default()
+    };
     let reminders: Vec<String> = args
         .get("reminders")
         .and_then(|v| v.as_array())
@@ -1350,7 +1502,7 @@ fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
         "start_at": start_at,
         "end_at": end_at,
         "location": location,
-        "recurrence": recurrence,
+        "rrule": rrule,
         "reminders": reminders,
         "tags": tags,
     });
@@ -1946,10 +2098,55 @@ fn format_number_with_separator(n: i64) -> String {
 mod tests {
     use super::*;
 
+    /// Every tool offered to the model is one it can understand.
+    ///
+    /// This used to assert a count, which said nothing about whether the
+    /// tools were usable and had to be edited every time one was added. A
+    /// definition with an empty description is a tool the model never picks;
+    /// one with a malformed schema is a tool it calls wrongly.
     #[test]
-    fn test_tool_definitions_count() {
+    fn every_tool_is_described_well_enough_to_be_picked() {
+        for definition in get_tool_definitions() {
+            let name = &definition.function.name;
+            assert!(!name.trim().is_empty(), "a tool has no name");
+            assert!(
+                definition.function.description.len() > 20,
+                "'{name}' is not described well enough for the model to know when to use it"
+            );
+            let schema = &definition.function.parameters;
+            assert_eq!(
+                schema.get("type").and_then(|t| t.as_str()),
+                Some("object"),
+                "'{name}' does not take an object"
+            );
+            assert!(
+                schema.get("properties").is_some_and(|p| p.is_object()),
+                "'{name}' declares no parameters, not even none"
+            );
+            for required in schema
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+            {
+                let key = required.as_str().unwrap_or_default();
+                assert!(
+                    schema["properties"].get(key).is_some(),
+                    "'{name}' requires '{key}' but never says what it is"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_tools_share_a_name() {
+        // The model picks a tool by name; two with one name is a coin toss.
         let defs = get_tool_definitions();
-        assert_eq!(defs.len(), 18);
+        let mut names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(before, names.len(), "a tool name is used twice");
     }
 
     #[test]

@@ -41,6 +41,7 @@ import { emojiData } from './emojiData';
 import CodeBlockComponent from './CodeBlockComponent.vue';
 import { useSettings } from '../../composables/useSettings';
 import { useLicenseStore } from '../../stores/useLicenseStore';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 
 // --- Extracted CSS ---
@@ -61,11 +62,15 @@ import { useAssetPaths } from './editor/composables/useAssetPaths';
 import { useEditorModals } from './editor/composables/useEditorModals';
 import { useLocationPicker } from './editor/composables/useLocationPicker';
 import { createSlashCommandItems } from './editor/config/slashCommandItems';
+import { splitMentionQuery } from './editor/mentionQuery';
+import { createDeferredSerializer } from './editor/deferredSerializer';
+import { contextTargetFor } from './editor/contextTarget';
 
 // --- Extracted Components ---
 import EditorBubbleMenu from './editor/components/EditorBubbleMenu.vue';
 import EditorTableControls from './editor/components/EditorTableControls.vue';
 import EditorBlockMenu from './editor/components/EditorBlockMenu.vue';
+import EditorLinkMenu from './editor/components/EditorLinkMenu.vue';
 import LinkModal from './editor/components/modals/LinkModal.vue';
 import MediaModal from './editor/components/modals/MediaModal.vue';
 import LocationModal from './editor/components/modals/LocationModal.vue';
@@ -76,6 +81,27 @@ import PdfModal from './editor/components/modals/PdfModal.vue';
 import EmojiPickerModal from './editor/components/modals/EmojiPickerModal.vue';
 
 const lowlight = createLowlight(common);
+
+/**
+ * `mermaid`, `markmap` and `query` are ours, not highlight.js's — a diagram or
+ * a saved query, rendered below the block rather than coloured inside it.
+ *
+ * Registering them as plain text is what keeps typing in them fast. The
+ * lowlight plugin falls back to `highlightAuto` for any language it does not
+ * know, which runs the block through every grammar it has; and it re-runs that
+ * for *every* code block in the note on every keystroke made inside one. On a
+ * note of five mermaid diagrams that measured 150ms per character, against
+ * 5ms once the language is known — a note you could watch yourself type.
+ *
+ * Naming them here also puts them in the block's language dropdown, which
+ * until now could not display the language the block was actually set to.
+ */
+for (const name of ['mermaid', 'markmap', 'query']) {
+  // Written out rather than reusing highlight.js's own `plaintext`, which
+  // carries the `text` and `txt` aliases with it and would hand them to
+  // whichever of these three registered last.
+  lowlight.register(name, () => ({ name, contains: [], disableAutodetect: true }));
+}
 
 const props = defineProps<{
   modelValue: string;
@@ -99,16 +125,118 @@ const { injectLocalAssets, stripLocalAssets } = useAssetPaths(props.vaultPath);
 const modals = useEditorModals(props.vaultPath, props.currentNoteId);
 const location = useLocationPicker();
 
-// --- Fetch all nodes for @mention ---
-const allNodes = ref<any[]>([]);
-onMounted(async () => {
+/**
+ * Find the handful of nodes worth offering after an `@`.
+ *
+ * Asked of the database per keystroke rather than held in memory. The editor
+ * used to load every node in the vault on mount — with each one's full body —
+ * so that it could filter five of them with `String.includes`. Every open tab
+ * paid for it, and the payload is the same twenty megabytes the note list was
+ * rewritten to stop moving.
+ *
+ * Going through the search index also means an `@` matches the way search
+ * does: ranked by BM25, with the title weighted above the body, instead of
+ * whichever node happened to come first.
+ */
+const searchMentions = async (rawQuery: string): Promise<MentionItem[]> => {
+  const { search, alias } = splitMentionQuery(rawQuery);
+
+  // With spaces allowed in the query (see `allowSpaces` below) the text after
+  // an `@` runs to the end of the line, so a stray `@` earlier in a paragraph
+  // would otherwise send the whole rest of it to the search index.
+  if (search.length > MENTION_QUERY_MAX) return [];
+
   try {
-    allNodes.value = await invoke<any[]>('get_all_nodes');
+    const response = await invoke<{ results: MentionResult[] }>('search_nexus', {
+      vaultPath: props.vaultPath,
+      query: search,
+      page: 1,
+      perPage: MENTION_LIMIT,
+    });
+    return response.results.slice(0, MENTION_LIMIT).map((r) => ({
+      id: r.id,
+      title: r.title,
+      alias,
+      // The snippet arrives wrapped in <mark> around the matched words, which
+      // is markup for a search result list and literal angle brackets here.
+      summary: r.snippet.replace(/<\/?mark>/g, '').trim().substring(0, 50),
+      node_type: r.item_type || 'note',
+    }));
   } catch (e) {
-    logger.error('Failed to fetch all nodes for mention', e);
+    logger.error('Could not look up nodes for the mention menu', e);
+    return [];
   }
+};
+
+interface MentionResult {
+  id: string;
+  item_type: string;
+  title: string;
+  snippet: string;
+}
+
+interface MentionItem {
+  id: string;
+  title: string;
+  /** What this link should read as, when it should not read as the title. */
+  alias: string;
+  summary: string;
+  node_type: string;
+}
+
+/** How many suggestions the menu shows. */
+const MENTION_LIMIT = 5;
+
+/** Beyond this the text after an `@` is prose, not a search for a note. */
+const MENTION_QUERY_MAX = 80;
+
+/**
+ * Follow the link the context menu is open on.
+ *
+ * A note goes to the same place a Cmd/Ctrl-click goes, so there is one route
+ * into a note rather than two that can drift. Anything else is the web, and
+ * the web is the operating system's business, not a webview's — opening it
+ * in here would replace the user's editor with a page they cannot get back
+ * from.
+ */
+const openLinkTarget = () => {
+  const href = modals.linkCtxMenu.value.href;
+  modals.closeLinkContextMenu();
+  if (!href) return;
+
+  const internal = href.match(/^synabit:\/\/([^/]+)\/(.+)/);
+  if (internal) {
+    emit('open-internal-note', { id: decodeURIComponent(internal[2]), type: internal[1] });
+    return;
+  }
+  openUrl(href).catch((e) => logger.error('Could not open that link', e));
+};
+
+
+// ── Serialising the document ────────────────────────────────
+/** How long after a keystroke the document is turned into markdown. */
+const SERIALIZE_DEBOUNCE_MS = 200;
+
+const serializer = createDeferredSerializer({
+  delayMs: SERIALIZE_DEBOUNCE_MS,
+  produce: () => {
+    const ed = editor.value;
+    if (!ed) return null;
+    let md = (ed.storage as any).markdown.getMarkdown();
+    md = md.replace(/<span[^>]*data-transclusion="([^"]+)"[^>]*>.*?<\/span>/g, (_m: string, target: string) => `![[${target}]]`);
+    return stripLocalAssets(md);
+  },
+  emit: (value) => emit('update:modelValue', value),
 });
 
+/**
+ * Serialise right now, if anything is waiting.
+ *
+ * Called by whatever is about to read the note's text — a save arriving from
+ * somewhere other than typing, an export, a tab closing — so the last fraction
+ * of a second of writing is not missing from it.
+ */
+const flushSerialize = () => serializer.flush();
 
 // --- Toolbar Toggles ---
 const showBubble = ref(false);
@@ -117,7 +245,10 @@ const bubblePos = ref({ top: 0, left: 0 });
 const updateBubbleMenu = () => {
   if (!editor.value) return;
   const { from, to, empty } = editor.value.state.selection;
-  if (empty || editor.value.isActive('codeBlock')) {
+  // The link context menu selects the link it opened on, which would otherwise
+  // bring the floating toolbar up over the same link at the same moment. One
+  // gesture, one menu.
+  if (empty || editor.value.isActive('codeBlock') || modals.linkCtxMenu.value.show) {
     showBubble.value = false;
     return;
   }
@@ -368,6 +499,13 @@ const editor = useEditor({
             editor: this.editor,
             pluginKey: new PluginKey('noteMentionSuggestion'),
             char: '@',
+            // Note titles have spaces in them, and so do the aliases people
+            // want to give them. Without this the query stopped at the first
+            // space, so "@công ty cổ phần" could never match anything past
+            // "công". The default `allowedPrefixes` still requires the `@` to
+            // follow a space or start a line, so an address in the middle of a
+            // word does not open the menu.
+            allowSpaces: true,
             command: ({ editor, range, props }) => {
               editor
                 .chain()
@@ -381,24 +519,15 @@ const editor = useEditor({
                       attrs: { href: `synabit://${props.node_type || 'node'}/${props.id}` }
                     }
                   ],
-                  text: props.title
+                  // The alias when one was typed after a `|`, the title
+                  // otherwise. Only the text differs — the link still points at
+                  // the same node, so backlinks and the graph are unaffected.
+                  text: props.alias || props.title
                 })
                 .insertContent(' ')
                 .run();
             },
-            items: ({ query }) => {
-              if (allNodes.value.length === 0) return [];
-              const lowerQuery = query.toLowerCase();
-              return allNodes.value
-                .filter(n => n.title.toLowerCase().includes(lowerQuery) || (n.content && n.content.toLowerCase().includes(lowerQuery)))
-                .slice(0, 5)
-                .map(n => ({
-                  id: n.id,
-                  title: n.title,
-                  summary: n.content ? n.content.substring(0, 50).trim() : '',
-                  node_type: n.node_type || 'note'
-                }));
-            },
+            items: ({ query }) => searchMentions(query),
             render: () => {
               let component: any;
               let popup: TippyInstance | undefined;
@@ -506,10 +635,8 @@ const editor = useEditor({
     TransclusionExtension,
     BlockIdHider,
   ],
-  onUpdate: ({ editor: ed }) => {
-    let md = (ed.storage as any).markdown.getMarkdown();
-    md = md.replace(/<span[^>]*data-transclusion="([^"]+)"[^>]*>.*?<\/span>/g, (_m: string, target: string) => `![[${target}]]`);
-    emit('update:modelValue', stripLocalAssets(md));
+  onUpdate: () => {
+    serializer.schedule();
     setTimeout(updateBubbleMenu, 10);
   },
   onSelectionUpdate: ({ editor: ed }) => {
@@ -527,28 +654,53 @@ const editor = useEditor({
     }
   },
   onBlur: () => {
+    // Leaving the editor commits what is in it. Every action that rewrites a
+    // note without going through typing — pinning it, tagging it, unlinking a
+    // project — needs the user to click away from the editor first, so this
+    // one line closes the window on all of them at once. They flush explicitly
+    // as well: this is the net, not the guarantee.
+    flushSerialize();
     setTimeout(() => { showBubble.value = false; }, 200);
   },
   editorProps: {
     handleDOMEvents: {
       contextmenu: (_view, event) => {
         const target = event.target as HTMLElement;
-        if (target.closest('td, th') && target.closest('table')) {
+        const aimedAt = contextTargetFor(target);
+
+        // Whichever menu opens, the other two close. Two context menus at once
+        // is a thing the app used to be one selector away from.
+        const closeOthers = () => {
+          modals.blockCtxMenu.value.show = false;
+          modals.closeLinkContextMenu();
+        };
+
+        if (aimedAt.kind === 'table') {
           event.preventDefault();
+          closeOthers();
           tableControlsRef.value?.updateTableControls();
           tableControlsRef.value?.openContextMenu(event);
           return true;
         }
-        const blockEl = target.closest('p, h1, h2, h3, h4, h5, h6');
-        if (blockEl && props.currentNoteId && !target.closest('table')) {
-          const text = blockEl.textContent?.trim();
+
+        if (aimedAt.kind === 'link') {
+          event.preventDefault();
+          closeOthers();
+          modals.openLinkContextMenu(event, aimedAt.href);
+          return true;
+        }
+
+        if (aimedAt.kind === 'block' && props.currentNoteId) {
+          const text = target.closest('p, h1, h2, h3, h4, h5, h6')?.textContent?.trim();
           if (text) {
             event.preventDefault();
+            closeOthers();
             modals.openBlockContextMenu(event, text);
             return true;
           }
         }
-        modals.blockCtxMenu.value.show = false;
+
+        closeOthers();
         return false;
       },
     },
@@ -583,6 +735,53 @@ const editor = useEditor({
       return false;
     },
     handleDrop: function(view, event, _slice, moved) {
+      // A file dragged out of the Files app.
+      //
+      // Checked before the branch below, because a drag from inside the window
+      // carries no `files` — the OS has nothing to hand over. What it carries
+      // is a description of something already in the vault, so nothing is
+      // copied and nothing is written: the note simply points at it.
+      const fromLibrary = event.dataTransfer?.getData('application/x-synabit-file');
+      if (!moved && fromLibrary) {
+        event.preventDefault();
+        try {
+          const file = JSON.parse(fromLibrary) as {
+            filename: string; extension: string; assetPath: string | null; absPath: string;
+          };
+          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          const src = convertFileSrc(file.absPath);
+          const ext = (file.extension || '').toLowerCase();
+
+          // Only a file that lives in the vault's own assets folder can be
+          // embedded, because that is the only shape a note can carry to
+          // another device. Anything else gets a link to where it is here.
+          const embeddable = !!file.assetPath;
+          let content: Record<string, unknown>;
+          if (embeddable && ['jpg','jpeg','png','gif','webp','svg','bmp','avif'].includes(ext)) {
+            content = { type: 'image', attrs: { src, alt: file.filename } };
+          } else if (embeddable && ['mp4','mov','webm','mkv'].includes(ext)) {
+            content = { type: 'video', attrs: { src } };
+          } else if (embeddable && ['mp3','wav','ogg','m4a','flac'].includes(ext)) {
+            content = { type: 'audio', attrs: { src } };
+          } else {
+            content = {
+              type: 'text',
+              text: file.filename,
+              marks: [{ type: 'link', attrs: { href: src } }],
+            };
+          }
+
+          if (pos !== undefined) {
+            editor.value?.commands.insertContentAt(pos, content);
+          } else {
+            editor.value?.commands.insertContent(content);
+          }
+        } catch (e) {
+          logger.error("Failed to insert a file dragged from the library", e);
+        }
+        return true;
+      }
+
       if (!moved && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length > 0) {
         event.preventDefault();
         const file = event.dataTransfer.files[0];
@@ -689,20 +888,28 @@ const focus = () => {
   }
 };
 
-defineExpose({ loadContent, focus });
+defineExpose({ loadContent, focus, flushSerialize });
 
 // --- Watch for external model changes ---
 watch(() => props.modelValue, (newVal) => {
-  if (editor.value) {
-    const currentMd = (editor.value.storage as any).markdown.getMarkdown();
-    if (stripLocalAssets(currentMd) !== newVal) {
-       editor.value.commands.setContent(injectLocalAssets(newVal));
-    }
+  if (!editor.value) return;
+
+  // Our own value coming back around. Nothing to do, and — more to the point —
+  // no reason to serialise the document again to work that out.
+  if (serializer.isEcho(newVal)) return;
+
+  const currentMd = (editor.value.storage as any).markdown.getMarkdown();
+  if (stripLocalAssets(currentMd) !== newVal) {
+     editor.value.commands.setContent(injectLocalAssets(newVal));
+     serializer.adopt(newVal);
   }
 });
 
 // --- Cleanup ---
 onBeforeUnmount(() => {
+  // Before the editor goes: a tab being closed or swapped out must not take
+  // the last fraction of a second of typing with it.
+  flushSerialize();
   if (editor.value) {
     editor.value.destroy();
   }
@@ -726,6 +933,17 @@ onBeforeUnmount(() => {
       :editor="editor"
     />
 
+    <!-- Link Context Menu -->
+    <EditorLinkMenu
+      :show="modals.linkCtxMenu.value.show"
+      :top="modals.linkCtxMenu.value.top"
+      :left="modals.linkCtxMenu.value.left"
+      :href="modals.linkCtxMenu.value.href"
+      @open="openLinkTarget"
+      @edit="modals.editLinkFromMenu"
+      @remove="modals.removeLinkFromMenu"
+    />
+
     <!-- Block Context Menu -->
     <EditorBlockMenu
       :show="modals.blockCtxMenu.value.show"
@@ -740,15 +958,20 @@ onBeforeUnmount(() => {
       'list-style-alpha': nestedNumberListStyle === 'alpha',
       'list-style-nested': nestedNumberListStyle === 'nested'
     }" class="editor-wrapper h-full w-full">
-      <editor-content :editor="editor" @click="modals.blockCtxMenu.value.show = false" />
+      <editor-content
+        :editor="editor"
+        @click="modals.blockCtxMenu.value.show = false; modals.closeLinkContextMenu();"
+      />
     </div>
 
     <!-- Modals -->
     <LinkModal
       :show="modals.linkModal.value.show"
       :url="modals.linkModal.value.url"
+      :text="modals.linkModal.value.text"
       @update:show="v => modals.linkModal.value.show = v"
       @update:url="v => modals.linkModal.value.url = v"
+      @update:text="v => modals.linkModal.value.text = v"
       @confirm="modals.confirmLink"
       @remove="() => { modals.linkModal.value.url = ''; modals.confirmLink(); }"
     />
@@ -806,7 +1029,6 @@ onBeforeUnmount(() => {
 
     <EmbedPickerModal
       :show="modals.embedPickerModal.value"
-      :notes="allNodes"
       :vault-path="vaultPath"
       @close="modals.embedPickerModal.value = false"
       @embed="modals.confirmEmbed"

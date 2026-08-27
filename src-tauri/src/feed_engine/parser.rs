@@ -78,8 +78,19 @@ pub fn parse_feed(raw: &[u8]) -> Result<Vec<ParsedArticle>, String> {
             .map(|s| s.content.clone())
             .unwrap_or_default();
 
-        let content = sanitizer::sanitize_html(&raw_content);
-        let summary = sanitizer::sanitize_html(&raw_summary);
+        // Relative URLs in a feed are relative to the article's own page, and
+        // failing that to whatever the feed calls its home.
+        let base_url = if url.is_empty() {
+            feed.links
+                .first()
+                .map(|l| l.href.clone())
+                .unwrap_or_default()
+        } else {
+            url.clone()
+        };
+
+        let content = sanitizer::sanitize_html(&raw_content, &base_url);
+        let summary = sanitizer::sanitize_html(&raw_summary, &base_url);
 
         // Published date → ISO 8601
         let published_at = entry

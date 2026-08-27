@@ -2,8 +2,10 @@
 import { dayNamesShort } from '../helpers';
 
 defineProps<{
-    yearMonths: { monthIndex: number; name: string; days: (null | { date: Date; hasItems: boolean; isToday: boolean })[] }[];
+    yearMonths: { monthIndex: number; name: string; days: (null | { date: Date; isToday: boolean })[] }[];
     currentDate: Date;
+    /** Passed in the way MonthView already receives its lookups. */
+    hasItemsOnDate: (date: Date) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -22,7 +24,7 @@ const emit = defineEmits<{
                </div>
                <!-- Mini Grid -->
                <div class="grid grid-cols-7 gap-y-1 gap-x-0.5 justify-items-center">
-                   <div v-for="d in dayNamesShort" :key="'y-'+d" class="text-[9px] font-bold text-gray-400 mb-1">
+                   <div v-for="(d, di) in dayNamesShort()" :key="'y-'+di" class="text-[9px] font-bold text-gray-400 mb-1">
                        {{ d.substring(0,1) }}
                    </div>
                    <div v-for="(day, dIdx) in monthObj.days" :key="dIdx" class="w-6 h-6 flex flex-col items-center justify-center relative group">
@@ -32,7 +34,7 @@ const emit = defineEmits<{
                                {{ day.date.getDate() }}
                            </div>
                            <!-- Heatmap dot -->
-                           <div v-if="day.hasItems && !day.isToday" class="w-1 h-1 rounded-full bg-purple-500 absolute bottom-0"></div>
+                           <div v-if="!day.isToday && hasItemsOnDate(day.date)" class="w-1 h-1 rounded-full bg-purple-500 absolute bottom-0"></div>
                        </template>
                    </div>
                </div>

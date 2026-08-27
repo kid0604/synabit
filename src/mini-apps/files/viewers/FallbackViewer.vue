@@ -24,14 +24,14 @@ const openInNative = async () => {
     </div>
     <div class="text-center space-y-1">
       <p class="text-base font-semibold text-gray-700 dark:text-gray-300">{{ filename }}</p>
-      <p class="text-xs text-gray-400">{{ extension }} file — no built-in viewer available</p>
+      <p class="text-xs text-gray-400">{{ $t('file.no_viewer', { ext: extension }) }}</p>
     </div>
     <button
       @click="openInNative"
       class="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-semibold hover:scale-105 active:scale-95 transition-transform shadow-lg cursor-pointer"
     >
       <ExternalLink class="w-4 h-4" />
-      Open in Native App
+      {{ $t('file.open_in_native') }}
     </button>
   </div>
 </template>

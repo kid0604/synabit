@@ -1,89 +1,62 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { AlertCircle, Gift, ChevronRight, CalendarClock } from 'lucide-vue-next';
+import { AlertCircle, Gift, ChevronRight, CalendarClock, Check, Clock } from 'lucide-vue-next';
+import { useNodeService } from '../../composables/useNodeService';
+import { useKeepInTouch } from './composables/useKeepInTouch';
+import { contactStatus, daysSinceContact, daysUntilDue } from './composables/useRelationshipHealth';
+import { daysUntilAnnual } from './composables/anniversaries';
 
 const props = defineProps<{
     people: any[];
 }>();
 
-const emit = defineEmits(['select-person']);
+const emit = defineEmits(['select-person', 'updated']);
 
-const FREQ_DAYS: Record<string, number> = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 90, yearly: 365 };
+// Answering the nudge without leaving the list. Anything that takes three
+// clicks to resolve gets dismissed instead of resolved.
+const keepInTouch = useKeepInTouch(useNodeService());
 
-// Overdue contacts — have contact_frequency + last_contacted and are past due
-const overdueContacts = computed(() => {
+const answer = async (person: any, action: 'contacted' | 'snooze') => {
+    const done = action === 'contacted'
+        ? await keepInTouch.markContacted(person)
+        : await keepInTouch.snooze(person);
+    if (done) emit('updated');
+};
+
+// Both lists below read their status from the same place the person's own
+// card does. They used to carry a copy of the cadence table with different
+// boundaries, so a contact could appear under Overdue here and read "Due
+// Soon" when opened.
+const byStatus = (status: string) => computed(() => {
     const now = Date.now();
     return props.people
-        .filter(p => {
-            const freq = p.properties?.contact_frequency;
-            const last = p.properties?.last_contacted;
-            if (!freq || !last) return false;
-            const daysSince = Math.floor((now - new Date(last).getTime()) / (1000 * 60 * 60 * 24));
-            const threshold = FREQ_DAYS[freq] || 60;
-            return daysSince > threshold;
-        })
-        .map(p => {
-            const daysSince = Math.floor((now - new Date(p.properties.last_contacted).getTime()) / (1000 * 60 * 60 * 24));
-            const threshold = FREQ_DAYS[p.properties.contact_frequency] || 60;
-            const overdueDays = daysSince - threshold;
-            return { ...p, daysSince, overdueDays };
-        })
-        .sort((a, b) => b.overdueDays - a.overdueDays);
+        .filter(p => contactStatus(p, now) === status)
+        .map(p => ({
+            ...p,
+            daysSince: daysSinceContact(p, now) ?? 0,
+            // Past due, so `daysUntilDue` is negative; report it the way the
+            // label reads it.
+            overdueDays: -(daysUntilDue(p, now) ?? 0),
+            daysLeft: daysUntilDue(p, now) ?? 0,
+        }));
 });
 
-// Upcoming birthdays — within 30 days
+const overdueContacts = computed(() =>
+    byStatus('overdue').value.sort((a, b) => b.overdueDays - a.overdueDays));
+
+const dueSoonContacts = computed(() =>
+    byStatus('due_soon').value.sort((a, b) => a.daysLeft - b.daysLeft));
+
+// Birthdays within the next month, soonest first.
 const upcomingBirthdays = computed(() => {
     const now = new Date();
-    const thisYear = now.getFullYear();
     return props.people
-        .filter(p => p.properties?.birthday)
         .map(p => {
-            const bday = p.properties.birthday;
-            // Parse birthday — could be YYYY-MM-DD or MM-DD
-            const parts = bday.split('-');
-            let month: number, day: number;
-            if (parts.length === 3) {
-                month = parseInt(parts[1]) - 1;
-                day = parseInt(parts[2]);
-            } else if (parts.length === 2) {
-                month = parseInt(parts[0]) - 1;
-                day = parseInt(parts[1]);
-            } else {
-                return null;
-            }
-
-            // Next birthday occurrence
-            let nextBday = new Date(thisYear, month, day);
-            if (nextBday.getTime() < now.getTime() - 86400000) { // past yesterday
-                nextBday = new Date(thisYear + 1, month, day);
-            }
-            const daysUntil = Math.floor((nextBday.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-            return { ...p, nextBday, daysUntil, month, day };
+            const daysUntil = daysUntilAnnual(p.properties?.birthday ?? '', now);
+            return daysUntil === null ? null : { ...p, daysUntil };
         })
-        .filter((p): p is NonNullable<typeof p> => p !== null && p.daysUntil >= 0 && p.daysUntil <= 30)
+        .filter((p): p is NonNullable<typeof p> => p !== null && p.daysUntil <= 30)
         .sort((a, b) => a.daysUntil - b.daysUntil);
-});
-
-// Due soon contacts — between 85% and 100% of frequency
-const dueSoonContacts = computed(() => {
-    const now = Date.now();
-    return props.people
-        .filter(p => {
-            const freq = p.properties?.contact_frequency;
-            const last = p.properties?.last_contacted;
-            if (!freq || !last) return false;
-            const daysSince = Math.floor((now - new Date(last).getTime()) / (1000 * 60 * 60 * 24));
-            const threshold = FREQ_DAYS[freq] || 60;
-            const ratio = daysSince / threshold;
-            return ratio > 0.85 && ratio <= 1.0;
-        })
-        .map(p => {
-            const daysSince = Math.floor((now - new Date(p.properties.last_contacted).getTime()) / (1000 * 60 * 60 * 24));
-            const threshold = FREQ_DAYS[p.properties.contact_frequency] || 60;
-            const daysLeft = threshold - daysSince;
-            return { ...p, daysSince, daysLeft };
-        })
-        .sort((a, b) => a.daysLeft - b.daysLeft);
 });
 
 const hasReminders = computed(() => overdueContacts.value.length > 0 || upcomingBirthdays.value.length > 0 || dueSoonContacts.value.length > 0);
@@ -101,28 +74,39 @@ const formatBirthdayLabel = (daysUntil: number) => {
         <div v-if="overdueContacts.length > 0">
             <div class="px-2 mb-1">
                 <span class="text-[10px] font-bold uppercase tracking-wider text-red-500 flex items-center gap-1">
-                    <AlertCircle class="w-3 h-3" /> Overdue ({{ overdueContacts.length }})
+                    <AlertCircle class="w-3 h-3" /> {{ $t('people.overdue_count', { count: overdueContacts.length }) }}
                 </span>
             </div>
-            <button
-                v-for="p in overdueContacts.slice(0, 3)" :key="p.id"
-                @click="emit('select-person', p)"
-                class="w-full text-left px-3 py-2 rounded-lg flex items-center gap-2.5 bg-red-50/50 dark:bg-red-900/10 hover:bg-red-100/50 dark:hover:bg-red-900/20 transition-colors border border-red-100 dark:border-red-900/20 mb-1"
-            >
-                <div class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse"></div>
-                <div class="flex-1 min-w-0">
-                    <p class="text-xs font-medium truncate">{{ p.title }}</p>
-                    <p class="text-[10px] text-red-500">{{ p.overdueDays }}d overdue</p>
+            <div v-for="p in overdueContacts.slice(0, 3)" :key="p.id"
+                class="rounded-lg bg-red-50/50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 mb-1 overflow-hidden">
+                <button @click="emit('select-person', p)"
+                    class="w-full text-left px-3 pt-2 flex items-center gap-2.5 hover:bg-red-100/50 dark:hover:bg-red-900/20 transition-colors">
+                    <div class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse"></div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium truncate">{{ p.title }}</p>
+                        <p class="text-[10px] text-red-500">{{ $t('people.days_overdue', { days: p.overdueDays }) }}</p>
+                    </div>
+                    <ChevronRight class="w-3 h-3 text-red-400 flex-shrink-0" />
+                </button>
+                <!-- The two answers anybody actually has: I have, and not yet. -->
+                <div class="flex items-center gap-1 px-3 pb-2 pt-1.5 pl-8">
+                    <button @click="answer(p, 'contacted')"
+                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-green-700 dark:text-green-400 bg-green-100/70 dark:bg-green-900/25 hover:bg-green-200/70 dark:hover:bg-green-900/50 transition-colors">
+                        <Check class="w-2.5 h-2.5" /> {{ $t('people.ive_been_in_touch') }}
+                    </button>
+                    <button @click="answer(p, 'snooze')"
+                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-700/60 transition-colors">
+                        <Clock class="w-2.5 h-2.5" /> {{ $t('people.remind_next_week') }}
+                    </button>
                 </div>
-                <ChevronRight class="w-3 h-3 text-red-400 flex-shrink-0" />
-            </button>
+            </div>
         </div>
 
         <!-- Due Soon -->
         <div v-if="dueSoonContacts.length > 0">
             <div class="px-2 mb-1">
                 <span class="text-[10px] font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
-                    <CalendarClock class="w-3 h-3" /> Due Soon ({{ dueSoonContacts.length }})
+                    <CalendarClock class="w-3 h-3" /> {{ $t('people.due_soon_count', { count: dueSoonContacts.length }) }}
                 </span>
             </div>
             <button
@@ -133,7 +117,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
                 <div class="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
                 <div class="flex-1 min-w-0">
                     <p class="text-xs font-medium truncate">{{ p.title }}</p>
-                    <p class="text-[10px] text-yellow-600 dark:text-yellow-400">{{ p.daysLeft }}d left</p>
+                    <p class="text-[10px] text-yellow-600 dark:text-yellow-400">{{ $t('people.days_left', { days: p.daysLeft }) }}</p>
                 </div>
             </button>
         </div>
@@ -142,7 +126,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
         <div v-if="upcomingBirthdays.length > 0">
             <div class="px-2 mb-1">
                 <span class="text-[10px] font-bold uppercase tracking-wider text-pink-500 flex items-center gap-1">
-                    <Gift class="w-3 h-3" /> Birthdays
+                    <Gift class="w-3 h-3" /> {{ $t('people.birthdays') }}
                 </span>
             </div>
             <button

@@ -2,6 +2,8 @@
 import { ref, computed, watch } from 'vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Search, X, LayoutGrid, List, Table, Mail, Phone, Edit2, Trash2, Users, Building, PanelLeft } from 'lucide-vue-next';
+import { relationshipLabel } from './composables/relationships';
+import { searchPeople } from './composables/search';
 
 const props = defineProps<{
     people: any[];
@@ -36,18 +38,10 @@ const getDetail = (person: any, keyword: string): string => {
     return d?.value || person?.properties?.[keyword] || '';
 };
 
-const filtered = computed(() => {
-    if (!searchQuery.value.trim()) return props.people;
-    const q = searchQuery.value.toLowerCase();
-    return props.people.filter(p => {
-        if (p.title.toLowerCase().includes(q)) return true;
-        if (p.properties?.relationship_type?.toLowerCase().includes(q)) return true;
-        if (p.properties?.details?.some((d: any) => d.value.toLowerCase().includes(q) || d.label.toLowerCase().includes(q))) return true;
-        if (p.properties?.email?.toLowerCase().includes(q)) return true;
-        if (p.properties?.company?.toLowerCase().includes(q)) return true;
-        return false;
-    });
-});
+// The same predicate the sidebar uses. They had a copy each, and the copies
+// had already drifted: one searched relationships, the other a flat `company`
+// field only some people have.
+const filtered = computed(() => searchPeople(props.people, searchQuery.value));
 
 const totalPages = computed(() => Math.ceil(filtered.value.length / itemsPerPage));
 const paginated = computed(() => {
@@ -68,7 +62,7 @@ const formatDate = (d: string) => {
         <!-- Header bar -->
         <div class="flex items-center justify-between px-4 md:px-6 h-10 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
             <div class="flex items-center gap-2 md:gap-3">
-                <button @click="$emit('open-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-blue-500 rounded-md transition-colors" aria-label="$emit">
+                <button @click="$emit('open-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-blue-500 rounded-md transition-colors" :aria-label="$t('people.show_sidebar')">
                     <PanelLeft class="w-5 h-5" />
                 </button>
                 <Users class="hidden md:block w-4.5 h-4.5 text-blue-500" />
@@ -98,7 +92,7 @@ const formatDate = (d: string) => {
             <div class="relative w-full mb-8">
                 <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b]" />
                 <input v-model="searchQuery" type="text" :placeholder="$t('people.search_people')" class="w-full pl-12 pr-12 py-3 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl text-base text-text dark:text-text-dark shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow placeholder:text-gray-400" />
-                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors" aria-label="Search Query =">
+                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 transition-colors" :aria-label="$t('people.clear_search')">
                     <X class="w-4 h-4" />
                 </button>
             </div>
@@ -129,7 +123,7 @@ const formatDate = (d: string) => {
                                 <td class="py-3 px-4 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] max-w-[200px] truncate">{{ person.title }}</td>
                                 <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
                                     <span v-if="getDetail(person, 'company')">{{ getDetail(person, 'company') }}</span>
-                                    <span v-else-if="person.properties?.relationship_type" class="capitalize">{{ person.properties.relationship_type }}</span>
+                                    <span v-else-if="relationshipLabel(person)" class="capitalize">{{ relationshipLabel(person) }}</span>
                                     <span v-else class="italic text-gray-300 dark:text-gray-600">—</span>
                                 </td>
                                 <td class="py-3 px-4">
@@ -142,17 +136,17 @@ const formatDate = (d: string) => {
                                 <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ formatDate(person.created_at) }}</td>
                                 <td class="py-3 px-4 w-16 text-center" @click.stop>
                                     <div class="flex items-center justify-center gap-1">
-                                        <button @click="emit('edit', person)" class="p-1 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500" title="Edit">
+                                        <button @click="emit('edit', person)" class="p-1 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500" :title="$t('people.edit')">
                                             <Edit2 class="w-3.5 h-3.5" />
                                         </button>
-                                        <button @click="emit('delete', person)" class="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500" title="Delete">
+                                        <button @click="emit('delete', person)" class="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500" :title="$t('people.delete')">
                                             <Trash2 class="w-3.5 h-3.5" />
                                         </button>
                                     </div>
                                 </td>
                             </tr>
                             <tr v-if="filtered.length === 0">
-                                <td colspan="6" class="py-12 text-center text-gray-500">No people found.</td>
+                                <td colspan="6" class="py-12 text-center text-gray-500">{{ $t('people.no_people') }}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -171,7 +165,7 @@ const formatDate = (d: string) => {
                     <div class="flex-1 min-w-0">
                         <h4 class="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{{ person.title }}</h4>
                         <p v-if="getDetail(person, 'company')" class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ getDetail(person, 'company') }}</p>
-                        <p v-else-if="person.properties?.relationship_type" class="text-xs text-gray-400 capitalize truncate">{{ person.properties.relationship_type }}</p>
+                        <p v-else-if="relationshipLabel(person)" class="text-xs text-gray-400 capitalize truncate">{{ relationshipLabel(person) }}</p>
                     </div>
                     <!-- Details -->
                     <div class="hidden md:flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
@@ -184,10 +178,10 @@ const formatDate = (d: string) => {
                     </div>
                     <!-- Actions -->
                     <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
-                        <button @click="emit('edit', person)" class="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500" aria-label="More Options">
+                        <button @click="emit('edit', person)" class="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-[#444] md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-blue-500" :aria-label="$t('people.edit')">
                             <Edit2 class="w-3.5 h-3.5" />
                         </button>
-                        <button @click="emit('delete', person)" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500" aria-label="More Options">
+                        <button @click="emit('delete', person)" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 md:opacity-0 opacity-100 group-hover:opacity-100 transition text-gray-400 hover:text-red-500" :aria-label="$t('people.delete')">
                             <Trash2 class="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -208,7 +202,7 @@ const formatDate = (d: string) => {
                         <div class="flex-1 min-w-0">
                             <h4 class="text-sm font-semibold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{{ person.title }}</h4>
                             <p v-if="getDetail(person, 'company')" class="text-[11px] text-gray-500 dark:text-gray-400 truncate">{{ getDetail(person, 'company') }}</p>
-                            <p v-else-if="person.properties?.relationship_type" class="text-[11px] text-gray-400 truncate capitalize">{{ person.properties.relationship_type }}</p>
+                            <p v-else-if="relationshipLabel(person)" class="text-[11px] text-gray-400 truncate capitalize">{{ relationshipLabel(person) }}</p>
                         </div>
                     </div>
                     <div class="space-y-1 text-[11px] text-gray-500 dark:text-gray-400">
@@ -235,10 +229,10 @@ const formatDate = (d: string) => {
 
             <!-- Pagination -->
             <div v-if="totalPages > 1" class="mt-6 flex items-center justify-between text-[13px] text-gray-500">
-                <div>Showing {{ (currentPage - 1) * itemsPerPage + 1 }} to {{ Math.min(currentPage * itemsPerPage, filtered.length) }} of {{ filtered.length }}</div>
+                <div>{{ $t('people.showing_range', { from: (currentPage - 1) * itemsPerPage + 1, to: Math.min(currentPage * itemsPerPage, filtered.length), total: filtered.length }) }}</div>
                 <div class="flex items-center gap-2">
                     <button @click="currentPage--" :disabled="currentPage === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">{{ $t('people.previous') }}</button>
-                    <span class="font-medium px-2">Page {{ currentPage }} of {{ totalPages }}</span>
+                    <span class="font-medium px-2">{{ $t('people.page_of', { page: currentPage, total: totalPages }) }}</span>
                     <button @click="currentPage++" :disabled="currentPage === totalPages" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">{{ $t('people.next') }}</button>
                 </div>
             </div>

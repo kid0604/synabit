@@ -1,5 +1,6 @@
 import { ref, computed, type Ref } from 'vue';
 import { MarkerType, useVueFlow } from '@vue-flow/core';
+import { stampElement } from '../boardFile';
 import type { WBNode, WBEdge } from './useWhiteboardStore';
 
 export function useEdgeMenu(
@@ -44,9 +45,13 @@ export function useEdgeMenu(
     const wbEdge = store.currentBoardData.value.edges.find((e: WBEdge) => e.id === edgeId);
     if (!wbEdge) return;
 
-    // Update store
+    // Update store. The menu emits on `input`, so a colour or width dragged
+    // across its range arrives as a stream; keyed on the edge, the stream is
+    // one step back rather than one per pixel.
+    store.pushUndoState(`edge:${edgeId}`);
     wbEdge.type = data.type || wbEdge.type;
     wbEdge.data = { ...wbEdge.data, ...data };
+    stampElement(wbEdge);
 
     // Rebuild the full VueFlow edge object
     const d = wbEdge.data || {};
@@ -98,7 +103,10 @@ export function useEdgeMenu(
     if (!store.currentBoardData.value) return;
     const wbEdge = store.currentBoardData.value.edges.find((e: WBEdge) => e.id === edgeId);
     if (wbEdge) {
+      // Dragging a waypoint reports every pointer move; same treatment.
+      store.pushUndoState(`waypoints:${edgeId}`);
       wbEdge.data = { ...wbEdge.data, waypoints };
+      stampElement(wbEdge);
     }
 
     const vfEdge = vfEdges.value.find((e: any) => e.id === edgeId);

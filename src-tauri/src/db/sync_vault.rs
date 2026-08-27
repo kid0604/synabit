@@ -305,6 +305,111 @@ impl DbBridge {
             ))),
         }
     }
+
+    /// Forget whatever vault was registered at this directory.
+    ///
+    /// Used after a restore. The directory held a freshly created vault with an
+    /// identity of its own; the archive replaced that identity with the one it
+    /// was backed up under. Registration would then find a different vault
+    /// already claiming this root and refuse, so the stale claim is removed
+    /// first and the restored vault registers as itself.
+    ///
+    /// The foreign keys cascade, which is the point: the provider state,
+    /// outbox, inbox and CRDT history of the discarded vault go with it. None
+    /// of it described the restored vault, and a restore has to re-establish
+    /// its position with the server anyway.
+    ///
+    /// Returns whether there was anything to forget.
+    pub fn forget_sync_vault_at_root(&self, canonical_root: &str) -> AppResult<bool> {
+        if canonical_root.trim().is_empty() {
+            return Err(AppError::General(
+                "canonical_root cannot be empty or whitespace".into(),
+            ));
+        }
+
+        let removed = self
+            .conn
+            .execute(
+                "DELETE FROM sync_vaults WHERE canonical_root = ?1",
+                params![canonical_root],
+            )
+            .map_err(|e| AppError::General(format!("DB Error forgetting vault: {e}")))?;
+
+        Ok(removed > 0)
+    }
+
+    /// Point a vault that already exists at the directory it has moved to.
+    ///
+    /// The mapping is otherwise immutable, and deliberately so: one vault id
+    /// appearing under two roots normally means the folder was *copied*, and
+    /// adopting the copy would silently merge two vaults into one. That is why
+    /// `insert_sync_vault_mapping` refuses it.
+    ///
+    /// A move is the one case where the same id under a new root is correct —
+    /// there is still exactly one vault — and only the code that performed the
+    /// move can tell the two apart. So it says so here rather than the
+    /// registration path guessing.
+    ///
+    /// Returns `false` when there was no such vault to rebind, which is not an
+    /// error: a first run has nothing recorded yet and registration will create
+    /// the row with the right root anyway.
+    pub fn rebind_sync_vault_canonical_root(
+        &self,
+        vault_id: &str,
+        new_canonical_root: &str,
+        now: i64,
+    ) -> AppResult<bool> {
+        if vault_id.trim().is_empty() {
+            return Err(AppError::General("vault_id cannot be empty".into()));
+        }
+        if new_canonical_root.trim().is_empty() {
+            return Err(AppError::General(
+                "canonical_root cannot be empty or whitespace".into(),
+            ));
+        }
+        if new_canonical_root.len() > MAX_CANONICAL_ROOT_BYTES {
+            return Err(AppError::General(format!(
+                "canonical_root length {} exceeds maximum allowed {} bytes",
+                new_canonical_root.len(),
+                MAX_CANONICAL_ROOT_BYTES
+            )));
+        }
+
+        if self.get_sync_vault_by_id(vault_id)?.is_none() {
+            return Ok(false);
+        }
+
+        // Somebody else is already living there. Rebinding would either fail on
+        // the unique index or, worse, describe two vaults as one directory.
+        if let Some(occupant) = self.get_sync_vault_by_canonical_root(new_canonical_root)? {
+            if occupant.vault_id != vault_id {
+                return Err(AppError::General(format!(
+                    "'{new_canonical_root}' is already registered to a different vault \
+                     ({}), so vault {vault_id} was not moved onto it",
+                    occupant.vault_id
+                )));
+            }
+            return Ok(true);
+        }
+
+        // `updated_at >= created_at` is enforced by the table. Taking the later
+        // of the two keeps a clock that has gone backwards from failing the
+        // move outright — the timestamp is for observability, and losing a
+        // little accuracy is better than refusing to record where the vault is.
+        self.conn
+            .execute(
+                "UPDATE sync_vaults
+                 SET canonical_root = ?2,
+                     updated_at = MAX(?3, created_at)
+                 WHERE vault_id = ?1",
+                params![vault_id, new_canonical_root, now],
+            )
+            .map_err(|e| {
+                AppError::General(format!("DB Error rebinding vault canonical_root: {e}"))
+            })?;
+
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +420,191 @@ mod tests {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::schema::run_sync_schema_migrations(&mut conn).unwrap();
         DbBridge { conn }
+    }
+
+    /// Moving the vault on Android changes its canonical root. Registration
+    /// runs on every scan and every sync and rejects a second root for the same
+    /// id, so without a rebind the app moves the vault and then cannot open it.
+    mod rebind {
+        use super::*;
+
+        fn vault(id: &str, root: &str) -> SyncVaultRecord {
+            SyncVaultRecord {
+                vault_id: id.to_string(),
+                canonical_root: root.to_string(),
+                metadata_version: 1,
+                created_at: 1000,
+                updated_at: 1000,
+            }
+        }
+
+        #[test]
+        fn a_moved_vault_is_registerable_at_its_new_root() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/old/vault"))
+                .unwrap();
+
+            assert!(db
+                .rebind_sync_vault_canonical_root("v1", "/new/vault", 2000)
+                .unwrap());
+
+            // The check that matters: the ordinary registration path now
+            // succeeds where it previously reported a mapping collision.
+            db.insert_sync_vault_mapping(&vault("v1", "/new/vault"))
+                .expect("registering the vault at its new root must succeed after a rebind");
+            assert_eq!(
+                db.get_sync_vault_by_id("v1")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/new/vault"
+            );
+            assert!(db
+                .get_sync_vault_by_canonical_root("/old/vault")
+                .unwrap()
+                .is_none());
+        }
+
+        #[test]
+        fn rebinding_a_vault_that_was_never_recorded_is_not_an_error() {
+            let db = setup_test_db();
+            assert!(!db
+                .rebind_sync_vault_canonical_root("absent", "/new/vault", 2000)
+                .unwrap());
+        }
+
+        #[test]
+        fn rebinding_onto_its_own_root_is_harmless() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/vault"))
+                .unwrap();
+
+            assert!(db
+                .rebind_sync_vault_canonical_root("v1", "/vault", 2000)
+                .unwrap());
+            assert_eq!(
+                db.get_sync_vault_by_id("v1")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/vault"
+            );
+        }
+
+        /// Two vaults must never be described as one directory.
+        #[test]
+        fn a_root_another_vault_already_holds_is_refused() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/one")).unwrap();
+            db.insert_sync_vault_mapping(&vault("v2", "/two")).unwrap();
+
+            let err = db
+                .rebind_sync_vault_canonical_root("v1", "/two", 2000)
+                .unwrap_err();
+
+            assert!(err.to_string().contains("v2"), "unhelpful error: {err}");
+            assert_eq!(
+                db.get_sync_vault_by_id("v1")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/one",
+                "a refused rebind must not have moved anything"
+            );
+            assert_eq!(
+                db.get_sync_vault_by_id("v2")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/two"
+            );
+        }
+
+        /// The table enforces `updated_at >= created_at`. A clock that has gone
+        /// backwards must not make the vault unopenable — this codebase has
+        /// already lost a sync run to exactly that.
+        #[test]
+        fn a_clock_that_went_backwards_does_not_fail_the_move() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/old")).unwrap();
+
+            assert!(db
+                .rebind_sync_vault_canonical_root("v1", "/new", 1)
+                .unwrap());
+
+            let row = db.get_sync_vault_by_id("v1").unwrap().unwrap();
+            assert_eq!(row.canonical_root, "/new");
+            assert!(row.updated_at >= row.created_at);
+        }
+
+        /// After a restore the directory must be free for the archive's own
+        /// identity to claim, or registration reports a collision and the
+        /// restored vault cannot be opened.
+        #[test]
+        fn forgetting_a_root_lets_a_restored_vault_claim_it() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("fresh", "/vault"))
+                .unwrap();
+
+            assert!(db.forget_sync_vault_at_root("/vault").unwrap());
+
+            db.insert_sync_vault_mapping(&vault("restored", "/vault"))
+                .expect("the restored vault must be able to register at that root");
+            assert_eq!(
+                db.get_sync_vault_by_canonical_root("/vault")
+                    .unwrap()
+                    .unwrap()
+                    .vault_id,
+                "restored"
+            );
+        }
+
+        #[test]
+        fn forgetting_a_root_nothing_is_registered_at_is_not_an_error() {
+            let db = setup_test_db();
+            assert!(!db.forget_sync_vault_at_root("/never-used").unwrap());
+            assert!(db.forget_sync_vault_at_root("   ").is_err());
+        }
+
+        /// Only the named root goes. A restore must not disturb another vault
+        /// the same install is tracking.
+        #[test]
+        fn forgetting_one_root_leaves_other_vaults_alone() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/one")).unwrap();
+            db.insert_sync_vault_mapping(&vault("v2", "/two")).unwrap();
+
+            db.forget_sync_vault_at_root("/one").unwrap();
+
+            assert!(db.get_sync_vault_by_id("v1").unwrap().is_none());
+            assert_eq!(
+                db.get_sync_vault_by_id("v2")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/two"
+            );
+        }
+
+        #[test]
+        fn empty_inputs_are_refused() {
+            let db = setup_test_db();
+            db.insert_sync_vault_mapping(&vault("v1", "/old")).unwrap();
+
+            assert!(db
+                .rebind_sync_vault_canonical_root("", "/new", 2000)
+                .is_err());
+            assert!(db
+                .rebind_sync_vault_canonical_root("v1", "  ", 2000)
+                .is_err());
+            assert_eq!(
+                db.get_sync_vault_by_id("v1")
+                    .unwrap()
+                    .unwrap()
+                    .canonical_root,
+                "/old"
+            );
+        }
     }
 
     #[test]

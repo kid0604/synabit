@@ -13,6 +13,8 @@ const getIcon = (type: string) => {
 export interface MentionItem {
   id: string;
   title: string;
+  /** Set when the query carried an `alias` after a `|`. */
+  alias: string;
   summary: string;
   node_type: string;
 }
@@ -29,6 +31,13 @@ watch(() => props.items, () => {
 });
 
 const onKeyDown = (e: KeyboardEvent) => {
+  // Nothing to choose from, so nothing to claim. This matters because the
+  // mention query may now contain spaces, which keeps the suggestion alive to
+  // the end of the line: a stray `@` earlier in a paragraph would otherwise
+  // leave this menu invisibly swallowing every Enter the writer pressed.
+  // `% 0` is also how `selectedIndex` became NaN.
+  if (props.items.length === 0) return false;
+
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     selectedIndex.value = (selectedIndex.value + props.items.length - 1) % props.items.length;
@@ -79,11 +88,20 @@ defineExpose({ onKeyDown });
       </div>
       <div class="slash-menu-text">
         <span class="slash-menu-title">{{ item.title || 'Untitled' }}</span>
-        <span class="slash-menu-desc truncate max-w-[200px]">{{ item.summary }}</span>
+        <!--
+          When an alias was typed, show what the link will actually read as.
+          The row is otherwise labelled with the title, which is precisely the
+          text that is about to *not* appear in the note.
+        -->
+        <span v-if="item.alias" class="slash-menu-desc truncate max-w-[200px] italic">
+          {{ $t('note.mention_shows_as', { alias: item.alias }) }}
+        </span>
+        <span v-else class="slash-menu-desc truncate max-w-[200px]">{{ item.summary }}</span>
       </div>
     </button>
   </div>
   <div class="slash-command-menu p-3 px-4 text-xs text-gray-500" v-else>
-    No matching items found...
+    {{ $t('note.mention_no_match') }}
+    <div class="mt-1 opacity-70">{{ $t('note.mention_alias_hint') }}</div>
   </div>
 </template>

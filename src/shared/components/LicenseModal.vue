@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue';
 import { X, Key, Zap, Shield, CheckCircle2, AlertCircle, RefreshCw, TerminalSquare } from 'lucide-vue-next';
 import { useLicenseStore } from '../../stores/useLicenseStore';
 import { usePlatform } from '../../composables/usePlatform';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 const _props = defineProps<{
     isOpen: boolean;
@@ -61,6 +62,13 @@ const handleDeactivate = async () => {
 const handleRefresh = async () => {
     await licenseStore.refresh();
 };
+
+// A webview does not hand a plain external anchor to the system browser, so
+// this link did nothing. Desktop-only in practice — the licence screen is not
+// reachable on mobile, where the app ships free.
+async function openPricing() {
+  await openUrl('https://synabit.net/pricing');
+}
 </script>
 
 <template>
@@ -179,7 +187,7 @@ const handleRefresh = async () => {
                     </div>
                     
                     <p v-if="osType !== 'android'" class="text-xs text-text-muted dark:text-text-muted-dark mt-2">
-                        Don't have a key? <a href="https://synabit.net/pricing" target="_blank" class="text-primary hover:underline">Purchase one here</a>.
+                        Don't have a key? <button @click="openPricing" class="text-primary hover:underline">Purchase one here</button>.
                     </p>
                 </div>
             </div>

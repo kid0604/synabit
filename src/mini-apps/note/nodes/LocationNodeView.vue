@@ -207,8 +207,11 @@ function parseOsmRouteCoords(url: string): { oLat: number; oLng: number; dLat: n
 }
 
 let routeLine: L.GeoJSON | null = null;
-let originMarker: L.Marker | null = null;
-let destMarker: L.Marker | null = null;
+// No handles kept for the route's two endpoint markers, unlike `marker` and
+// `routeLine` above: those are read again to move a pin and to refit bounds,
+// whereas these are placed once and never touched. `leafletMap.remove()` in
+// `destroyLeafletMap` takes every layer down with it, so holding them bought
+// nothing but two variables that only ever appeared on the left of an `=`.
 
 /** Fetch OSRM route and draw polyline */
 const fetchOsrmRoute = async (oLat: number, oLng: number, dLat: number, dLng: number) => {
@@ -252,8 +255,8 @@ const initLeafletMap = () => {
   if (isOsmRoute.value) {
     const coords = parseOsmRouteCoords(a.routeUrl);
     if (coords) {
-      originMarker = L.marker([coords.oLat, coords.oLng], { icon: originIcon }).addTo(leafletMap);
-      destMarker = L.marker([coords.dLat, coords.dLng], { icon: destIcon }).addTo(leafletMap);
+      L.marker([coords.oLat, coords.oLng], { icon: originIcon }).addTo(leafletMap);
+      L.marker([coords.dLat, coords.dLng], { icon: destIcon }).addTo(leafletMap);
       const bounds = L.latLngBounds([coords.oLat, coords.oLng], [coords.dLat, coords.dLng]);
       leafletMap.fitBounds(bounds.pad(0.2));
       setTimeout(() => { leafletMap?.invalidateSize(); fetchOsrmRoute(coords.oLat, coords.oLng, coords.dLat, coords.dLng); }, 200);
@@ -269,7 +272,7 @@ const initLeafletMap = () => {
 };
 
 const destroyLeafletMap = () => {
-  if (leafletMap) { leafletMap.remove(); leafletMap = null; marker = null; originMarker = null; destMarker = null; routeLine = null; }
+  if (leafletMap) { leafletMap.remove(); leafletMap = null; marker = null; routeLine = null; }
 };
 
 const toggleProvider = () => {

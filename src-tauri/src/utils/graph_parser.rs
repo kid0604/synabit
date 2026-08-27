@@ -10,9 +10,23 @@ use std::sync::LazyLock;
 static TAG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?im)(?:^|\s)#([a-zA-Z0-9_\-/]+)").unwrap());
 static WIKI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
+/// Attachments a note embeds, written as a vault-relative asset path.
+///
+/// The editor writes pictures as `![](assets/name.png)` and video and audio as
+/// `<video src="assets/name.mp4">` — see
+/// `note/editor/composables/useAssetPaths.ts`. Neither shape was ever picked up
+/// here, which is why "which notes use this file?" had to be answered by
+/// scanning every node's body for the filename as a substring: slow, and wrong
+/// often enough to matter, since a file called `note.pdf` matched every note
+/// containing the word "note".
+static ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(?:\]\(|src\s*=\s*["'])(assets/[^)"'<>]+)"#).unwrap()
+});
 static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event|project)/([^)]+)\)")
-        .unwrap()
+    Regex::new(
+        r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event|project|file)/([^)]+)\)",
+    )
+    .unwrap()
 });
 static RENAME_MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -25,7 +39,16 @@ static RENAME_MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub struct GraphEdge {
     pub source_id: String,
     pub target_title_or_path: String,
-    pub link_type: String, // 'wikilink', 'internal_link', 'tag'
+    pub link_type: String, // 'wikilink', 'internal_link', 'tag', 'person_link'
+    /// What the link means, when the link itself says.
+    ///
+    /// A mention in a note carries no relationship — it is a mention. A person
+    /// linked to another person does: friend, mentor, the person who
+    /// introduced them. That word is the whole content of the link, and
+    /// nowhere else to put it means keeping a second copy of the graph in
+    /// somebody's frontmatter.
+    #[serde(default)]
+    pub relation: Option<String>,
 }
 
 /// Extracts all tags and internal links from raw markdown text
@@ -42,6 +65,7 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
                     source_id: source_id.to_string(),
                     target_title_or_path: tag_name,
                     link_type: "tag".to_string(),
+                    relation: None,
                 });
             }
         }
@@ -62,12 +86,32 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
                     source_id: source_id.to_string(),
                     target_title_or_path: target_title,
                     link_type: "wikilink".to_string(),
+                    relation: None,
                 });
             }
         }
     }
 
-    // 3. Tiptap Internal Links ([Title](synabit://.../path))
+    // 3. Embedded attachments (![](assets/name.png), <img src="assets/…">)
+    for cap in ASSET_RE.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            let raw = m.as_str().trim();
+            let path = urlencoding::decode(raw)
+                .unwrap_or(std::borrow::Cow::Borrowed(raw))
+                .to_string()
+                .to_lowercase();
+            if seen.insert(path.clone()) {
+                edges.push(GraphEdge {
+                    source_id: source_id.to_string(),
+                    target_title_or_path: path,
+                    link_type: "attachment".to_string(),
+                    relation: Some("attachment".to_string()),
+                });
+            }
+        }
+    }
+
+    // 4. Tiptap Internal Links ([Title](synabit://.../path))
     for cap in MD_LINK_RE.captures_iter(text) {
         if let Some(m) = cap.get(2) {
             let encoded_path = m.as_str().trim();
@@ -80,6 +124,7 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
                     source_id: source_id.to_string(),
                     target_title_or_path: path,
                     link_type: "internal_link".to_string(),
+                    relation: None,
                 });
             }
         }
@@ -119,11 +164,81 @@ pub fn extract_node_edges(node: &crate::models::node::NodeMetadata) -> Vec<Graph
         }
     }
 
+    edges.extend(person_links(node));
+
     // Deduplicate
     let mut seen = std::collections::HashSet::new();
     edges
         .into_iter()
         .filter(|e| seen.insert(format!("{}-{}", e.target_title_or_path, e.link_type)))
+        .collect()
+}
+
+/// The people this person is linked to, from their own `connections`.
+///
+/// Person-to-person links used to be kept twice: once as this list, and once
+/// as an array of markdown mentions written into the frontmatter beside it
+/// purely so that the edge index would notice them. The two drifted — the
+/// mentions named a file path, so moving somebody broke them, and each one
+/// carried a copy of the name it was written with, so renaming somebody left
+/// the old name showing in everybody else's graph.
+///
+/// One list now, and the edge index reads it directly. The relationship comes
+/// with the edge rather than being kept in a parallel copy.
+fn person_links(node: &crate::models::node::NodeMetadata) -> Vec<GraphEdge> {
+    let source = node.id.clone();
+
+    // A node that is *about* one person says so with a single `person_id`.
+    // An interaction is the reason this exists: one recorded coffee belongs
+    // to one person, and saying it this way means the link is an edge like
+    // any other rather than an entry in an array inside somebody's file.
+    let mut edges: Vec<GraphEdge> = node
+        .properties
+        .get("person_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|target| GraphEdge {
+            source_id: source.clone(),
+            target_title_or_path: target.to_string(),
+            link_type: "about".to_string(),
+            relation: None,
+        })
+        .into_iter()
+        .collect();
+
+    edges.extend(person_connection_links(node, &source));
+    edges
+}
+
+fn person_connection_links(
+    node: &crate::models::node::NodeMetadata,
+    source: &str,
+) -> Vec<GraphEdge> {
+    node.properties
+        .get("connections")
+        .and_then(|v| v.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|connection| {
+            let target = connection.get("person_id")?.as_str()?.trim();
+            if target.is_empty() {
+                return None;
+            }
+            let relation = connection
+                .get("relation_type")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(str::to_string);
+            Some(GraphEdge {
+                source_id: source.to_string(),
+                target_title_or_path: target.to_string(),
+                link_type: "person_link".to_string(),
+                relation,
+            })
+        })
         .collect()
 }
 
@@ -147,6 +262,8 @@ pub struct NodeResolver {
     id_map: std::collections::HashMap<String, String>,
     /// filename (lowercase) → stable id  (for file embeds like "image.png")
     filename_map: std::collections::HashMap<String, String>,
+    /// Every identity in the vault, for links that already name one.
+    stable_ids: std::collections::HashSet<String>,
 }
 
 impl NodeResolver {
@@ -156,11 +273,13 @@ impl NodeResolver {
         let mut path_map = std::collections::HashMap::new();
         let mut id_map = std::collections::HashMap::new();
         let mut filename_map = std::collections::HashMap::new();
+        let mut stable_ids = std::collections::HashSet::new();
 
         for node in all_nodes {
             // Every lookup answers with the node's stable identity, whatever
             // the caller used to ask for it.
             let id = node.stable_id().to_string();
+            stable_ids.insert(id.clone());
             id_map.insert(node.id.clone(), id.clone());
 
             // Title lookup (lowercase, strip .md)
@@ -177,9 +296,31 @@ impl NodeResolver {
                 if let Some(p) = node.properties.get("path").and_then(|v| v.as_str()) {
                     let file_path = std::path::Path::new(p);
                     if let Some(fname) = file_path.file_name().and_then(|s| s.to_str()) {
+                        let fname_lower = fname.to_lowercase();
                         filename_map
-                            .entry(fname.to_lowercase())
+                            .entry(fname_lower.clone())
                             .or_insert_with(|| id.clone());
+
+                        // The form a note actually writes.
+                        //
+                        // The editor embeds attachments as `assets/<name>`, and
+                        // that string is what arrives here to be resolved.
+                        // Registering it directly makes the lookup exact rather
+                        // than a hopeful fall through to matching on titles,
+                        // where a note called `báo-cáo.pdf` would answer for the
+                        // picture of the same name.
+                        //
+                        // No vault root is needed to spot one: an asset is an
+                        // asset by virtue of the folder it sits in.
+                        if file_path
+                            .parent()
+                            .and_then(|dir| dir.file_name())
+                            .is_some_and(|dir| dir.eq_ignore_ascii_case("assets"))
+                        {
+                            path_map
+                                .entry(format!("assets/{fname_lower}"))
+                                .or_insert_with(|| id.clone());
+                        }
                     }
                     // Also full path for exact matches
                     path_map
@@ -206,6 +347,7 @@ impl NodeResolver {
             path_map,
             id_map,
             filename_map,
+            stable_ids,
         }
     }
 
@@ -213,6 +355,13 @@ impl NodeResolver {
     pub fn resolve(&self, target: &str, _link_type: &str) -> String {
         let lower = target.to_lowercase();
         let no_md = lower.replace(".md", "");
+
+        // 0. Already an identity. A person link written since these became
+        //    stable names one directly, and looking it up as a path or a
+        //    title would find nothing and call a live person a ghost.
+        if self.stable_ids.contains(target) {
+            return target.to_string();
+        }
 
         // 1. Direct match on a node's current path
         if let Some(id) = self.id_map.get(target) {
@@ -287,15 +436,17 @@ pub fn extract_resolved_node_edges(
         let edge_type = match raw.link_type.as_str() {
             "wikilink" => "wikilink",
             "internal_link" => "internal_link",
+            "person_link" => "person_link",
+            "about" => "about",
+            // Kept distinct so "which notes show this picture?" is a different
+            // question from "which notes mention it".
+            "attachment" => "attachment",
             _ => "internal_link", // property-level links (key names like "assignee")
         };
 
-        // Determine semantic relation
-        let relation: Option<String> = if target_id.starts_with("ghost:") {
-            None // Ghost — can't determine
-        } else {
-            None // Auto-extracted edges default to NULL relation
-        };
+        // A person link says what it means; everything else is a mention, and
+        // a mention means only that somebody was named.
+        let relation: Option<String> = raw.relation.clone();
 
         let dedup_key = format!("{}-{}-{}", source, target_id, edge_type);
         if !seen.insert(dedup_key) {
@@ -521,6 +672,39 @@ mod tests {
         assert!(result.contains("New Title"));
     }
 
+    /// A label the writer chose is not a stale copy of the title, and renaming
+    /// the note must not overwrite it.
+    ///
+    /// This is what makes an alias worth typing: "công ty cũ" reads that way in
+    /// the sentence because someone meant it to, and the registered name
+    /// changing is no reason for the sentence to change. The mention menu
+    /// writes exactly this shape when a `|` is used, so the guarantee is now
+    /// load-bearing rather than incidental.
+    #[test]
+    fn test_rename_internal_link_keeps_a_deliberate_label() {
+        let text = "Chuyển từ [công ty cũ](synabit://note/Notes/Old%20Title.md) sang.";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+
+        assert!(
+            result.contains("[công ty cũ]"),
+            "the label was chosen, not derived: {result}"
+        );
+        assert!(
+            result.contains("New%20Title.md"),
+            "the destination should still follow the rename: {result}"
+        );
+        assert!(!result.contains("Old%20Title.md"), "{result}");
+    }
+
+    /// The other half of the same rule: a label that *is* the old title was
+    /// never a choice, so it follows the rename.
+    #[test]
+    fn test_rename_internal_link_updates_a_label_that_was_just_the_title() {
+        let text = "[Old Title](synabit://note/Notes/Old%20Title.md)";
+        let result = rename_links_in_text(text, "Old Title", "New Title", None);
+        assert!(result.starts_with("[New Title]"), "{result}");
+    }
+
     // ── NodeResolver + extract_resolved_node_edges ────────
 
     fn make_node(id: &str, title: &str, node_type: &str) -> crate::models::node::NodeMetadata {
@@ -623,5 +807,201 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, "Tasks/todo.md");
         assert_eq!(edges[0].edge_type, "internal_link");
+    }
+}
+
+#[cfg(test)]
+mod task_link_tests {
+    use super::*;
+    use crate::models::node::NodeMetadata;
+
+    fn node(id: &str, node_type: &str, title: &str) -> NodeMetadata {
+        NodeMetadata {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            title: title.to_string(),
+            content: String::new(),
+            properties: serde_json::json!({}),
+            created_at: String::new(),
+            updated_at: String::new(),
+            timestamp: 0,
+            blocks: None,
+        }
+    }
+
+    /// The Tasks app shows what else in the vault points at a task, which only
+    /// works if a link to one resolves to that task's stable identity rather
+    /// than to a ghost. These pin each way a link can name a task.
+    #[test]
+    fn a_synabit_link_to_a_task_resolves_to_it() {
+        let task = node("Tasks/abc.md", "task", "Ship the thing");
+        let resolver = NodeResolver::new(std::slice::from_ref(&task));
+        let edges = extract_edges(
+            "Notes/plan.md",
+            "agreed to [ship](synabit://task/Tasks/abc.md) this week",
+        );
+        let resolved: Vec<String> = edges
+            .iter()
+            .map(|e| resolver.resolve(&e.target_title_or_path, &e.link_type))
+            .collect();
+        assert_eq!(resolved, vec![task.stable_id().to_string()]);
+    }
+
+    #[test]
+    fn a_wikilink_by_title_resolves_to_the_task() {
+        let task = node("Tasks/abc.md", "task", "Ship the thing");
+        let resolver = NodeResolver::new(std::slice::from_ref(&task));
+        let edges = extract_edges("Notes/plan.md", "see [[Ship the thing]]");
+        assert_eq!(
+            resolver.resolve(&edges[0].target_title_or_path, &edges[0].link_type),
+            task.stable_id().to_string()
+        );
+    }
+
+    /// Case is not part of a name here. A note that writes the folder in lower
+    /// case still points at the task.
+    #[test]
+    fn the_case_of_the_path_does_not_matter() {
+        let task = node("Tasks/abc.md", "task", "Ship the thing");
+        let resolver = NodeResolver::new(std::slice::from_ref(&task));
+        assert_eq!(
+            resolver.resolve("tasks/abc.md", "internal_link"),
+            task.stable_id().to_string()
+        );
+    }
+
+    /// A link to a task that is gone stays a ghost rather than attaching
+    /// itself to whichever task happens to be nearby.
+    #[test]
+    fn a_link_to_a_task_that_no_longer_exists_stays_a_ghost() {
+        let task = node("Tasks/abc.md", "task", "Ship the thing");
+        let resolver = NodeResolver::new(std::slice::from_ref(&task));
+        assert!(resolver
+            .resolve("Tasks/deleted.md", "internal_link")
+            .starts_with("ghost:"));
+    }
+}
+
+#[cfg(test)]
+mod person_link_tests {
+    use super::*;
+    use crate::models::node::NodeMetadata;
+    use serde_json::json;
+
+    fn person(id: &str, stable: &str, properties: serde_json::Value) -> NodeMetadata {
+        let mut props = properties;
+        if let Some(map) = props.as_object_mut() {
+            map.insert("node_id".to_string(), json!(stable));
+        }
+        NodeMetadata {
+            id: id.to_string(),
+            node_type: "person".to_string(),
+            title: id.to_string(),
+            content: String::new(),
+            properties: props,
+            created_at: String::new(),
+            updated_at: String::new(),
+            timestamp: 0,
+            blocks: None,
+        }
+    }
+
+    #[test]
+    fn a_connection_becomes_an_edge_that_carries_the_relationship() {
+        // The relationship used to have nowhere to go: the edge index knew
+        // two people were linked, and a parallel list in the frontmatter knew
+        // what the link meant. One of them had to be the answer.
+        let an = person(
+            "People/an.md",
+            "uuid-an",
+            json!({ "connections": [{ "person_id": "uuid-binh", "relation_type": "mentor" }] }),
+        );
+        let binh = person("People/binh.md", "uuid-binh", json!({}));
+        let resolver = NodeResolver::new(&[an.clone(), binh]);
+
+        let edges = extract_resolved_node_edges(&an, &resolver);
+        let link = edges
+            .iter()
+            .find(|e| e.edge_type == "person_link")
+            .expect("a person link");
+        assert_eq!(link.source_id, "uuid-an");
+        assert_eq!(link.target_id, "uuid-binh");
+        assert_eq!(link.relation.as_deref(), Some("mentor"));
+    }
+
+    #[test]
+    fn a_link_written_before_identities_still_resolves() {
+        // Older vaults name a path. Refusing those would empty every graph in
+        // the app on the day this shipped.
+        let an = person(
+            "People/an.md",
+            "uuid-an",
+            json!({ "connections": [{ "person_id": "People/binh.md", "relation_type": "friend" }] }),
+        );
+        let binh = person("People/binh.md", "uuid-binh", json!({}));
+        let resolver = NodeResolver::new(&[an.clone(), binh]);
+
+        let edges = extract_resolved_node_edges(&an, &resolver);
+        let link = edges.iter().find(|e| e.edge_type == "person_link").expect("a link");
+        assert_eq!(link.target_id, "uuid-binh", "resolved to the identity, not the path");
+    }
+
+    #[test]
+    fn a_link_survives_the_other_person_being_moved() {
+        // The whole reason for storing an identity. The file moves; the link
+        // points at the same person.
+        let an = person(
+            "People/an.md",
+            "uuid-an",
+            json!({ "connections": [{ "person_id": "uuid-binh", "relation_type": "friend" }] }),
+        );
+        let moved = person("People/Archive/binh.md", "uuid-binh", json!({}));
+        let resolver = NodeResolver::new(&[an.clone(), moved]);
+
+        let edges = extract_resolved_node_edges(&an, &resolver);
+        let link = edges.iter().find(|e| e.edge_type == "person_link").expect("a link");
+        assert_eq!(link.target_id, "uuid-binh");
+    }
+
+    #[test]
+    fn a_connection_with_no_relationship_is_still_a_link() {
+        let an = person(
+            "People/an.md",
+            "uuid-an",
+            json!({ "connections": [{ "person_id": "uuid-binh" }] }),
+        );
+        let binh = person("People/binh.md", "uuid-binh", json!({}));
+        let resolver = NodeResolver::new(&[an.clone(), binh]);
+
+        let link = extract_resolved_node_edges(&an, &resolver)
+            .into_iter()
+            .find(|e| e.edge_type == "person_link")
+            .expect("a link");
+        assert_eq!(link.relation, None);
+    }
+
+    #[test]
+    fn a_person_with_no_connections_produces_no_person_links() {
+        let an = person("People/an.md", "uuid-an", json!({ "tags": ["work"] }));
+        let resolver = NodeResolver::new(&[an.clone()]);
+        assert!(extract_resolved_node_edges(&an, &resolver)
+            .iter()
+            .all(|e| e.edge_type != "person_link"));
+    }
+
+    #[test]
+    fn an_ordinary_mention_carries_no_relationship() {
+        // Only a person link says what it means. A note that names somebody
+        // means only that they were named.
+        let mut note = person("Notes/a.md", "uuid-a", json!({}));
+        note.node_type = "note".to_string();
+        note.content = "spoke to [Binh](synabit://person/People/binh.md)".to_string();
+        let binh = person("People/binh.md", "uuid-binh", json!({}));
+        let resolver = NodeResolver::new(&[note.clone(), binh]);
+
+        let edges = extract_resolved_node_edges(&note, &resolver);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].edge_type, "internal_link");
+        assert_eq!(edges[0].relation, None);
     }
 }

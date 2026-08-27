@@ -11,8 +11,15 @@
 // ──────────────────────────────────────────────
 
 export interface NodeMetadata {
+  /**
+   * The node's path relative to the vault root — `Tasks/foo.md`.
+   *
+   * This is what `writeNode`, `deleteNode` and the other path-taking commands
+   * want as their `relPath`. There is no separate `rel_path` field: the backend
+   * sends the path as the id, and declaring one here made every caller read
+   * `undefined` and hand it to the backend, which rejected the write.
+   */
   id: string;
-  rel_path: string;
   node_type: string;
   title: string;
   content: string;
@@ -246,4 +253,66 @@ export interface SyncResult {
   conflicts: SyncConflict[];
   tx_bytes: number;
   rx_bytes: number;
+}
+
+// ──────────────────────────────────────────────
+// Calendar
+// Keep in sync with: src-tauri/src/calendar/recurrence.rs
+// ──────────────────────────────────────────────
+
+/**
+ * An event as the calendar needs it — without its body.
+ *
+ * The description shown in the edit form is the node's content, and it is
+ * fetched with `getNode` for the one event the user opens. Sending every body
+ * with every range query is what made the old load scale with the size of the
+ * vault rather than with the days on screen.
+ */
+export interface EventSummary {
+  id: string;
+  title: string;
+  is_all_day: boolean;
+  start_at: string;
+  end_at: string;
+  location: string;
+  tags: string[];
+  /**
+   * The zone the *stored* clock belongs to. The times on an `OccurrenceRef`
+   * have already been converted to the reader's zone; this is here so the
+   * editor can show the event in its own, and say which one that is.
+   */
+  tzid: string;
+  /** The subscribed calendar this came from, or empty for the user's own. */
+  subscription_id: string;
+  /** A colour name; empty means the default. */
+  colour: string;
+  /** RFC 5545 rule. Authoritative when present. */
+  rrule: string;
+  /** What vaults written before `rrule` stored. Read only as a fallback. */
+  recurrence: string;
+  recurrence_end_at: string;
+  series_id: string;
+  exceptions: string[];
+  reminders: string[];
+  relations: string[];
+  created_at: string;
+}
+
+/**
+ * One day one event lands on. `event` indexes into `EventsInRange.events`.
+ *
+ * `start_at`/`end_at` are *this instance's*, not the series'. The stored event
+ * only knows its first occurrence; the tenth Monday of a stand-up says so
+ * here, which is what a time axis draws with.
+ */
+export interface OccurrenceRef {
+  date: string;
+  event: number;
+  start_at: string;
+  end_at: string;
+}
+
+export interface EventsInRange {
+  events: EventSummary[];
+  occurrences: OccurrenceRef[];
 }

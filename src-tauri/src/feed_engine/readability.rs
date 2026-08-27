@@ -32,7 +32,7 @@ pub fn extract_content(html: &str, base_url: &str) -> ReadabilityResult {
     let content = find_main_content(&document);
 
     // 3. Sanitize content
-    let sanitized = sanitizer::sanitize_html(&content);
+    let sanitized = sanitizer::sanitize_html(&content, base_url);
 
     // 4. Calculate stats
     let text_only = Html::parse_fragment(&sanitized)

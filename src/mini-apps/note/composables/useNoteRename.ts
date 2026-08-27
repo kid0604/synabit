@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import type { Ref } from 'vue';
 import type { NoteItem } from '../helpers';
-import { buildNotePayload } from '../helpers';
+import { buildNotePayload, rememberRecentNotes } from '../helpers';
 
 export function useNoteRename(
   notes: Ref<NoteItem[]>,
@@ -19,6 +19,58 @@ export function useNoteRename(
   editorRefs: Ref<Record<string, any>>,
 ) {
   const renameModal = ref<{ show: boolean; noteId: string; value: string }>({ show: false, noteId: '', value: '' });
+
+  /**
+   * Move everything keyed by a note's old path onto its new one.
+   *
+   * A note is keyed by its path throughout the front end, so renaming it
+   * changes its identity — and every map, list and open tab holding the old
+   * one has to be told. This was written out twice, once per rename entry
+   * point, and both copies forgot the same line: `note.id` itself.
+   *
+   * That line is not bookkeeping. `buildNotePayload` writes to `note.id`, so
+   * with it left behind the save that follows a rename landed at the path the
+   * rename had just moved the file off — recreating it there, and leaving the
+   * vault holding the note under both names.
+   */
+  const migrateNoteIdentity = (
+    note: NoteItem,
+    oldId: string,
+    newPath: string,
+    fallbackContent?: string,
+  ) => {
+    note.id = newPath;
+    note.path = newPath;
+
+    // A save queued under the old path before it moved: `useNoteSave` follows
+    // this to the new one rather than writing to a file that is no longer there.
+    //
+    // The delete first is not tidying. Rename a note and then rename it back,
+    // and the map holds `A → B` from the first and `B → A` from the second;
+    // the loop that follows those redirects then walks between them forever
+    // and the app stops responding. `newPath` names a file that exists again,
+    // so it cannot redirect anywhere, and saying so breaks the cycle where it
+    // would otherwise be created.
+    renamedTabs.delete(newPath);
+    renamedTabs.set(oldId, newPath);
+
+    const carried = tabContents.value[oldId] ?? fallbackContent;
+    if (carried !== undefined) {
+      tabContents.value[newPath] = carried;
+      delete tabContents.value[oldId];
+    }
+    if (activeTabs.value.includes(oldId)) {
+      activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
+    }
+    if (tabAccessTime.has(oldId)) {
+      tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
+      tabAccessTime.delete(oldId);
+    }
+    if (recentNoteIds.value.includes(oldId)) {
+      recentNoteIds.value = recentNoteIds.value.map(id => id === oldId ? newPath : id);
+      rememberRecentNotes(recentNoteIds.value);
+    }
+  };
 
   const handleRenamePrompt = (id: string, closeContextMenu?: () => void) => {
     const note = notes.value.find(n => n.id === id);
@@ -52,23 +104,7 @@ export function useNoteRename(
 
         note.title = newName;
         if (oldId !== newPath) {
-            renamedTabs.set(oldId, newPath);
-            
-            if (savedContent !== undefined) {
-                tabContents.value[newPath] = tabContents.value[oldId] || savedContent;
-                delete tabContents.value[oldId];
-            }
-            if (activeTabs.value.includes(oldId)) {
-                activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
-            }
-            if (tabAccessTime.has(oldId)) {
-                tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
-                tabAccessTime.delete(oldId);
-            }
-            if (recentNoteIds.value.includes(oldId)) {
-                recentNoteIds.value = recentNoteIds.value.map(id => id === oldId ? newPath : id);
-                localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
-            }
+            migrateNoteIdentity(note, oldId, newPath, savedContent);
         }
 
         if (currentNoteId.value === oldId) {
@@ -132,21 +168,7 @@ export function useNoteRename(
 
         note.title = newTitle;
         if (oldId !== newPath) {
-            if (tabContents.value[oldId] !== undefined) {
-                tabContents.value[newPath] = tabContents.value[oldId];
-                delete tabContents.value[oldId];
-            }
-            if (activeTabs.value.includes(oldId)) {
-                activeTabs.value = activeTabs.value.map(id => id === oldId ? newPath : id);
-            }
-            if (tabAccessTime.has(oldId)) {
-                tabAccessTime.set(newPath, tabAccessTime.get(oldId)!);
-                tabAccessTime.delete(oldId);
-            }
-            if (recentNoteIds.value.includes(oldId)) {
-                recentNoteIds.value = recentNoteIds.value.map(id => id === oldId ? newPath : id);
-                localStorage.setItem('synabit_recent_notes', JSON.stringify(recentNoteIds.value));
-            }
+            migrateNoteIdentity(note, oldId, newPath, savedContent);
         }
 
         currentNoteId.value = newPath;

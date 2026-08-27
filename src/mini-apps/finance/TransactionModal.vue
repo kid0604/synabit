@@ -1,23 +1,33 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
-import { X, RefreshCw, Plus, Check, Trash2 } from 'lucide-vue-next';
-import type { Transaction, TransactionType, FinanceAccount } from './types';
-import { currentCurrency, fetchExchangeRate } from './currency';
+import { X, RefreshCw, Plus, Check, Trash2, Paperclip } from 'lucide-vue-next';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import type { Transaction, TransactionType, FinanceAccount, Category } from './types';
+import { FINANCE_RECURRENCES, type RecurringRule } from './recurring';
+import { COMMON_CURRENCIES, allCurrencies, allowRateLookup, convertMinor, currentCurrency, fetchExchangeRate, formatAmountInput, formatCurrency, formatMinorForInput, parseAmountInput } from './currency';
 
 const props = defineProps<{
   show: boolean;
   transaction?: Transaction | null;
-  incomeCategories: string[];
-  expenseCategories: string[];
+  incomeCategories: Category[];
+  expenseCategories: Category[];
   accounts: FinanceAccount[];
   projects?: {id: string, title: string}[];
   people?: {id: string, title: string}[];
   defaultProjectId?: string;
+  /** Needed to turn a vault-relative receipt path into something renderable. */
+  vaultPath?: string;
+  /** The repeating rule being edited, if this dialog was opened on one. */
+  rule?: RecurringRule | null;
+  /** What the Repeats field starts on, so "Add repeating" opens repeating. */
+  defaultRecurrence?: string;
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'save', tx: Transaction): void;
+  (e: 'saveRule', rule: RecurringRule): void;
   (e: 'delete', txId: string): void;
   (e: 'addCategory', payload: { type: 'income' | 'expense', name: string }): void;
 }>();
@@ -33,23 +43,92 @@ const projectId = ref<string>('');
 const personId = ref<string>('');
 const showErrors = ref(false);
 
+/**
+ * How often this happens.
+ *
+ * `none` saves a transaction; anything else saves a rule, and the rule makes
+ * the transactions. The two share this dialog because they are the same form
+ * with one extra question — offering a separate screen for "the same thing but
+ * every month" is how apps end up with two ways to enter a purchase.
+ */
+const recurrence = ref<string>('none');
+const endDate = ref<string>('');
+const repeats = computed(() => recurrence.value !== 'none');
+
 const inputCurrency = ref(currentCurrency.value);
 const isFetchingRate = ref(false);
 const exchangeRate = ref<number | null>(null);
 const exchangeRateStr = ref<string>('');
 const calculatedBaseAmount = ref<number>(0);
-const CURRENCIES = ['VND', 'USD', 'EUR', 'GBP', 'JPY'];
-
-const getLocaleForCurrency = (currency: string): string => {
-    if (currency === 'VND') return 'vi-VN';
-    if (currency === 'EUR') return 'de-DE';
-    if (currency === 'JPY') return 'ja-JP';
-    if (currency === 'GBP') return 'en-GB';
-    return 'en-US';
-};
+/** The common few first, then everything this runtime can format. */
+const CURRENCIES = computed(() => {
+    const rest = allCurrencies().filter(c => !COMMON_CURRENCIES.includes(c));
+    return { common: COMMON_CURRENCIES, rest };
+});
 
 const isAddingCategory = ref(false);
 const newCategoryName = ref('');
+
+const pendingCategoryName = ref<string | null>(null);
+
+// ---------------------------------------------------------------------------
+// The receipt
+// ---------------------------------------------------------------------------
+
+/** A vault-relative `assets/…` path, or nothing. */
+const receipt = ref<string>('');
+const attaching = ref(false);
+
+/** What the picture is called, which is all the row has space to say. */
+const receiptName = computed(() => receipt.value.split('/').pop() ?? '');
+
+/** Where the picture actually is, for the webview to render. */
+const receiptSrc = computed(() =>
+    receipt.value && props.vaultPath
+        ? convertFileSrc(`${props.vaultPath}/${receipt.value}`)
+        : ''
+);
+
+/**
+ * Copy a picture into the vault and remember where it landed.
+ *
+ * Copied rather than referenced: the assets folder is what sync carries, so a
+ * receipt left in Downloads is a receipt only this device will ever see. The
+ * copy is named after its own contents, so photographing the same receipt
+ * twice stores one file.
+ */
+const attachReceipt = async () => {
+    if (!props.vaultPath) return;
+    try {
+        const picked = await openFileDialog({
+            multiple: false,
+            filters: [{ name: 'Image', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'pdf'] }],
+        });
+        const sourcePath = Array.isArray(picked) ? picked[0] : picked;
+        if (!sourcePath) return;
+
+        attaching.value = true;
+        receipt.value = await invoke<string>('copy_asset_to_vault', {
+            vaultPath: props.vaultPath,
+            sourcePath,
+        });
+    } catch (e) {
+        console.error('Could not attach the receipt', e);
+    } finally {
+        attaching.value = false;
+    }
+};
+
+/**
+ * Forget the receipt on this transaction.
+ *
+ * The file itself stays. It is named after its contents and may well be
+ * attached to something else, and deleting a picture because one transaction
+ * stopped pointing at it is how the other one loses it.
+ */
+const removeReceipt = () => {
+    receipt.value = '';
+};
 
 const availableCategories = computed(() => {
     if (type.value === 'income') return props.incomeCategories;
@@ -59,67 +138,125 @@ const availableCategories = computed(() => {
     return [];
 });
 
-watch(type, (newType, oldType) => {
-    if (newType !== oldType) {
-        if (availableCategories.value.length > 0) {
-            category.value = availableCategories.value[0];
-        } else {
-            category.value = '';
-        }
+/**
+ * A category asked for but not yet created.
+ *
+ * The parent owns the list and mints the id, so the dialog cannot select the
+ * new category until it comes back. It waits by name and selects by id — a
+ * name is not an id, and treating it as one is how the old code filed a
+ * transaction under a category that did not exist.
+ */
+watch(availableCategories, (list) => {
+    if (!pendingCategoryName.value) return;
+    const arrived = list.find(c => c.name === pendingCategoryName.value);
+    if (arrived) {
+        category.value = arrived.id;
+        pendingCategoryName.value = null;
     }
 });
 
-// Format number input with commas
-const formatAmount = (val: string) => {
-    const num = val.replace(/\D/g, '');
-    if (!num) return '';
-    return Number(num).toLocaleString(getLocaleForCurrency(inputCurrency.value));
-};
+watch(type, (newType, oldType) => {
+    if (newType !== oldType) {
+        category.value = availableCategories.value[0]?.id ?? '';
+    }
+});
+
+// Format number input with grouping, in whatever currency is being typed.
+const formatAmount = (val: string) => formatAmountInput(val, inputCurrency.value);
 
 const handleAmountInput = (e: Event) => {
     const target = e.target as HTMLInputElement;
     amount.value = formatAmount(target.value);
 };
 
-watch([amount, inputCurrency], async ([newAmount, newCurrency], [oldAmount, oldCurrency]) => {
-    const numAmount = Number(newAmount.replace(/\D/g, '')) || 0;
-    
+/** What was typed, in the minor units of the currency it was typed in. */
+const typedAmountMinor = () => parseAmountInput(amount.value, inputCurrency.value);
+
+/**
+ * A rate as text, keeping enough of it to be worth having.
+ *
+ * The old code rounded any rate above 1 to a whole number, which turned a
+ * euro-to-dollar rate of 1.08 into 1 and quietly made the conversion a no-op.
+ */
+const rateAsText = (rate: number) =>
+    rate >= 1000 ? rate.toFixed(0) : Number(rate.toPrecision(6)).toString();
+
+/** Recompute the vault-currency amount from what is typed and the rate. */
+const recalculateBase = () => {
+    const typed = typedAmountMinor();
+    if (inputCurrency.value === currentCurrency.value) {
+        calculatedBaseAmount.value = typed;
+        return;
+    }
+    calculatedBaseAmount.value = exchangeRate.value
+        ? convertMinor(typed, inputCurrency.value, currentCurrency.value, exchangeRate.value)
+        : 0;
+};
+
+watch([amount, inputCurrency], async ([, newCurrency], [, oldCurrency]) => {
     if (newCurrency === currentCurrency.value) {
         exchangeRate.value = null;
         exchangeRateStr.value = '';
-        calculatedBaseAmount.value = numAmount;
+        recalculateBase();
         return;
     }
-    
-    if (newCurrency !== oldCurrency && newCurrency !== currentCurrency.value) {
+
+    // Only when the currency itself changed: re-asking on every keystroke
+    // would be a request per character.
+    if (newCurrency !== oldCurrency) {
         isFetchingRate.value = true;
         const rate = await fetchExchangeRate(newCurrency, currentCurrency.value);
         isFetchingRate.value = false;
-        
+
         if (rate) {
             exchangeRate.value = rate;
-            // Limit to 2 decimals if it's fiat normally, but keep precision if very small. Rounding appropriately.
-            const rateStr = rate > 1 ? Math.round(rate).toString() : rate.toString();
-            exchangeRateStr.value = formatAmount(rateStr);
+            exchangeRateStr.value = rateAsText(rate);
         }
     }
-    
-    if (exchangeRate.value) {
-        calculatedBaseAmount.value = Math.round(numAmount * exchangeRate.value);
-    }
+
+    recalculateBase();
 });
 
 const handleRateInput = (e: Event) => {
     const target = e.target as HTMLInputElement;
-    const cleanStr = target.value.replace(/[^\d.]/g, ''); // Allow decimals in rate
-    exchangeRateStr.value = cleanStr; // Store exact string so decimal typing works
+    // A rate is not money: it is a plain decimal, in whatever precision the
+    // user has. Stored as the exact string so that typing "1.0" then "8"
+    // is not reformatted out from under the caret.
+    const cleanStr = target.value.replace(/[^\d.]/g, '');
+    exchangeRateStr.value = cleanStr;
     exchangeRate.value = Number(cleanStr) || 0;
-    
-    const numAmount = Number(amount.value.replace(/\D/g, '')) || 0;
-    calculatedBaseAmount.value = Math.round(numAmount * (exchangeRate.value || 0));
+    recalculateBase();
 };
 
 const initForm = () => {
+    if (props.rule) {
+        const template = props.rule.template;
+        type.value = template.type;
+        category.value = template.category;
+        accountId.value = template.accountId;
+        toAccountId.value = template.toAccountId || '';
+        inputCurrency.value = currentCurrency.value;
+        amount.value = formatMinorForInput(template.amount, currentCurrency.value);
+        calculatedBaseAmount.value = template.amount;
+        exchangeRate.value = null;
+        exchangeRateStr.value = '';
+        date.value = `${props.rule.startDate}T12:00`;
+        note.value = template.note;
+        projectId.value = template.projectId || '';
+        personId.value = template.personId || '';
+        receipt.value = '';
+        recurrence.value = props.rule.recurrence;
+        endDate.value = props.rule.endDate || '';
+        showErrors.value = false;
+        isAddingCategory.value = false;
+        newCategoryName.value = '';
+        pendingCategoryName.value = null;
+        return;
+    }
+
+    recurrence.value = props.defaultRecurrence ?? 'none';
+    endDate.value = '';
+
     if (props.transaction) {
         type.value = props.transaction.type;
         category.value = props.transaction.category;
@@ -128,13 +265,15 @@ const initForm = () => {
         
         if (props.transaction.originalCurrency && props.transaction.originalCurrency !== currentCurrency.value) {
             inputCurrency.value = props.transaction.originalCurrency;
-            amount.value = props.transaction.originalAmount ? props.transaction.originalAmount.toLocaleString(getLocaleForCurrency(inputCurrency.value)) : '';
+            amount.value = props.transaction.originalAmount
+                ? formatMinorForInput(props.transaction.originalAmount, inputCurrency.value)
+                : '';
             exchangeRate.value = props.transaction.exchangeRate || null;
-            exchangeRateStr.value = exchangeRate.value ? exchangeRate.value.toString() : '';
+            exchangeRateStr.value = exchangeRate.value ? rateAsText(exchangeRate.value) : '';
             calculatedBaseAmount.value = props.transaction.amount;
         } else {
             inputCurrency.value = currentCurrency.value;
-            amount.value = props.transaction.amount.toLocaleString(getLocaleForCurrency(inputCurrency.value));
+            amount.value = formatMinorForInput(props.transaction.amount, inputCurrency.value);
             exchangeRate.value = null;
             exchangeRateStr.value = '';
             calculatedBaseAmount.value = props.transaction.amount;
@@ -143,6 +282,7 @@ const initForm = () => {
         const d = new Date(props.transaction.date);
         date.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         note.value = props.transaction.note;
+        receipt.value = props.transaction.receipt || '';
         projectId.value = props.transaction.projectId || '';
         personId.value = props.transaction.personId || '';
     } else {
@@ -153,18 +293,20 @@ const initForm = () => {
         exchangeRateStr.value = '';
         calculatedBaseAmount.value = 0;
         
-        category.value = props.expenseCategories.length ? props.expenseCategories[0] : '';
+        category.value = props.expenseCategories[0]?.id ?? '';
         accountId.value = props.accounts.length ? props.accounts[0].id : '';
         toAccountId.value = props.accounts.length > 1 ? props.accounts[1].id : '';
         const now = new Date();
         date.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         note.value = '';
+        receipt.value = '';
         projectId.value = props.defaultProjectId || '';
         personId.value = '';
     }
     showErrors.value = false;
     isAddingCategory.value = false;
     newCategoryName.value = '';
+    pendingCategoryName.value = null;
 };
 
 watch(() => props.show, (newVal) => {
@@ -179,14 +321,36 @@ const save = () => {
         return;
     }
     
-    const numericAmount = Number(amount.value.replace(/\D/g, ''));
-    
     // Prevent saving if it's a transfer between the same account
     if (type.value === 'transfer' && accountId.value === toAccountId.value) {
         showErrors.value = true;
         return;
     }
     
+    if (repeats.value) {
+        // A repeating transaction is a rule, and the rule makes the
+        // transactions. Its start date is the anchor every later occurrence is
+        // measured from, so it is stored as a plain day.
+        emit('saveRule', {
+            id: props.rule?.id || `rule-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+            recurrence: recurrence.value as RecurringRule['recurrence'],
+            startDate: date.value.slice(0, 10),
+            endDate: endDate.value || undefined,
+            paused: props.rule?.paused,
+            template: {
+                type: type.value,
+                amount: calculatedBaseAmount.value,
+                category: type.value === 'transfer' ? 'Transfer' : category.value,
+                accountId: accountId.value,
+                toAccountId: type.value === 'transfer' ? toAccountId.value : undefined,
+                note: note.value.trim(),
+                projectId: type.value === 'expense' && projectId.value ? projectId.value : undefined,
+                personId: personId.value ? personId.value : undefined,
+            },
+        });
+        return;
+    }
+
     const tx: Transaction = {
         id: props.transaction?.id || `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: type.value,
@@ -196,12 +360,13 @@ const save = () => {
         date: new Date(date.value).toISOString(),
         note: note.value.trim(),
         projectId: type.value === 'expense' && projectId.value ? projectId.value : undefined,
-        personId: personId.value ? personId.value : undefined
+        personId: personId.value ? personId.value : undefined,
+        receipt: receipt.value || undefined
     };
     
     if (inputCurrency.value !== currentCurrency.value) {
         tx.originalCurrency = inputCurrency.value;
-        tx.originalAmount = Number(amount.value.replace(/\D/g, ''));
+        tx.originalAmount = typedAmountMinor();
         tx.exchangeRate = exchangeRate.value || 1;
     }
     
@@ -216,7 +381,10 @@ const saveNewCategory = () => {
     const name = newCategoryName.value.trim();
     if (name) {
         emit('addCategory', { type: type.value as 'income' | 'expense', name });
-        category.value = name;
+        // The parent mints the id and hands the list back; until then the
+        // dialog has nothing to select, so it waits rather than selecting a
+        // name as though it were an id.
+        pendingCategoryName.value = name;
     }
     isAddingCategory.value = false;
     newCategoryName.value = '';
@@ -224,18 +392,13 @@ const saveNewCategory = () => {
 
 // Computed property for save validation
 const canSave = computed(() => {
-    const numericAmount = Number(amount.value.replace(/\D/g, ''));
+    const numericAmount = typedAmountMinor();
     if (!numericAmount || numericAmount <= 0) return false;
     if (!accountId.value) return false;
     if (type.value === 'transfer' && (!toAccountId.value || accountId.value === toAccountId.value)) return false;
     return true;
 });
 
-const isDebtCategory = computed(() => {
-    const debtKeywords = ['vay', 'nợ', 'borrow', 'lend', 'debt', 'trả', 'thu', 'mượn', 'loan'];
-    const catLower = category.value.toLowerCase();
-    return debtKeywords.some(k => catLower.includes(k));
-});
 
 const personSearch = ref('');
 const isPersonDropdownOpen = ref(false);
@@ -299,10 +462,15 @@ const closePersonDropdown = () => {
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.must_be_gt_0') }}</span></label>
             <div class="flex gap-2">
                 <div :class="['relative rounded-xl transition-all flex-1', showErrors && calculatedBaseAmount <= 0 ? 'ring-2 ring-red-500' : '']">
-                    <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-4" placeholder="0" />
+                    <input type="text" inputmode="decimal" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-4" placeholder="0" />
                 </div>
                 <select v-model="inputCurrency" class="bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[80px] text-center cursor-pointer">
-                    <option v-for="c in CURRENCIES" :key="c" :value="c">{{ c }}</option>
+                    <optgroup label="Common">
+                        <option v-for="c in CURRENCIES.common" :key="c" :value="c">{{ c }}</option>
+                    </optgroup>
+                    <optgroup label="All">
+                        <option v-for="c in CURRENCIES.rest" :key="c" :value="c">{{ c }}</option>
+                    </optgroup>
                 </select>
             </div>
             
@@ -315,9 +483,14 @@ const closePersonDropdown = () => {
                 <div class="flex gap-2 items-center">
                     <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.custom_rate')" :disabled="isFetchingRate" />
                     <span class="text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
-                        ≈ {{ new Intl.NumberFormat(currentCurrency === 'VND' ? 'vi-VN' : 'en-US', { style: 'currency', currency: currentCurrency }).format(calculatedBaseAmount) }}
+                        ≈ {{ formatCurrency(calculatedBaseAmount) }}
                     </span>
                 </div>
+                <!-- Why nothing was looked up. Said here rather than left as an
+                     empty field the user has to guess the meaning of. -->
+                <p v-if="!allowRateLookup && !exchangeRate" class="text-xs text-blue-600/80 dark:text-blue-400/80">
+                    Enter today's rate. Synabit does not look rates up online unless you turn that on in Finance settings.
+                </p>
             </div>
         </div>
 
@@ -328,7 +501,7 @@ const closePersonDropdown = () => {
                 <div class="flex items-center gap-2">
                     <template v-if="!isAddingCategory">
                         <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                            <option v-for="cat in availableCategories" :key="cat" :value="cat">{{ cat }}</option>
+                            <option v-for="cat in availableCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                         </select>
                         <button @click="isAddingCategory = true" class="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-colors shrink-0 border border-border dark:border-border-dark bg-gray-50 dark:bg-gray-800" title="Add new category">
                             <Plus class="w-4 h-4" />
@@ -369,10 +542,58 @@ const closePersonDropdown = () => {
             <input type="datetime-local" v-model="date" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
 
+        <!-- How often. `none` saves one transaction; anything else saves a
+             rule that keeps making them. -->
+        <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.repeats') }}</label>
+            <select v-model="recurrence" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="none">{{ $t('finance.repeats_none') }}</option>
+                <option v-for="r in FINANCE_RECURRENCES" :key="r" :value="r">{{ $t(`finance.repeats_${r}`) }}</option>
+            </select>
+
+            <div v-if="repeats" class="mt-2 flex flex-col gap-2">
+                <p class="text-xs text-blue-600 dark:text-blue-400">{{ $t('finance.repeats_hint') }}</p>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.repeats_until') }}</label>
+                <input type="date" v-model="endDate" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+        </div>
+
         <!-- Note -->
         <div>
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.note') }}</label>
             <input type="text" v-model="note" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.tx_details_ph')" />
+        </div>
+
+        <!-- The receipt. Copied into the vault so it travels with the ledger,
+             rather than pointing at wherever the photo happened to be. -->
+        <div v-if="vaultPath">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.receipt') }}</label>
+
+            <button
+                v-if="!receipt"
+                @click="attachReceipt"
+                :disabled="attaching"
+                class="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-border dark:border-border-dark text-sm text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50"
+            >
+                <Paperclip class="w-4 h-4" />
+                {{ attaching ? $t('finance.receipt_attaching') : $t('finance.receipt_attach') }}
+            </button>
+
+            <div v-else class="flex items-center gap-3 p-2 rounded-xl bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark">
+                <img
+                    v-if="!receiptName.toLowerCase().endsWith('.pdf')"
+                    :src="receiptSrc"
+                    :alt="$t('finance.receipt')"
+                    class="w-12 h-12 rounded-lg object-cover shrink-0 bg-white dark:bg-gray-900"
+                />
+                <div v-else class="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center bg-white dark:bg-gray-900 text-gray-400">
+                    <Paperclip class="w-5 h-5" />
+                </div>
+                <span class="text-xs text-gray-500 truncate flex-1">{{ receiptName }}</span>
+                <button @click="removeReceipt" class="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0" :aria-label="$t('finance.receipt_remove')">
+                    <Trash2 class="w-4 h-4" />
+                </button>
+            </div>
         </div>
         
         <!-- Project Link (Only for Expense) -->
@@ -385,7 +606,7 @@ const closePersonDropdown = () => {
         </div>
 
         <!-- Person Link (Only for Debt categories) -->
-        <div v-if="people && people.length > 0 && isDebtCategory">
+        <div v-if="people && people.length > 0">
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.link_person') }}</label>
             <div class="relative">
                 <input 

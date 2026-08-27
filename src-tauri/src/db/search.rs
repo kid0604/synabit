@@ -3,6 +3,26 @@ use crate::error::{AppError, AppResult};
 use rusqlite::params;
 use std::time::Instant;
 
+/// A term, plus a way for it to reach the `đ` shadow column.
+///
+/// `unicode61` folds tone marks but not `đ`, so `dong` and `đông` tokenize
+/// differently and neither finds the other. The shadow column holds the `đ`
+/// words with `đ` folded to `d`; matching a term against both places closes
+/// the gap in both directions — `dong` reaches the folded `đông`, and `đông`
+/// reaches it too because the term is folded on the way in.
+///
+/// Only when the term could possibly be involved. A term with no `d` and no
+/// `đ` in it cannot match anything in that column, and adding the branch
+/// anyway would grow every query for nothing.
+fn with_d_stroke_branch(term: &str) -> String {
+    let folded = crate::search_fold::fold_d_stroke(term);
+    let touches_d = term.chars().any(|c| matches!(c, 'd' | 'D' | 'đ' | 'Đ'));
+    if !touches_d {
+        return format!("\"{}\"", term);
+    }
+    format!("(\"{}\" OR norm : \"{}\")", term, folded)
+}
+
 impl DbBridge {
     /// Rebuild the entire FTS5 search index from all data tables.
     /// Called on app startup or when the user requests a reindex.
@@ -15,30 +35,12 @@ impl DbBridge {
             .execute("DELETE FROM search_index_rowids", [])
             .map_err(|e| AppError::General(format!("FTS Rowid Map Clear Error: {}", e)))?;
 
-        // Index files (with properties)
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, filename, tags, extension, modified_at, path, source_type FROM files",
-            )
-            .map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let filename: String = row.get(1)?;
-            let tags_json: String = row.get(2)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let extension: String = row.get(3)?;
-            let date: String = row.get(4)?;
-            let path: String = row.get(5)?;
-            let source_type: String = row.get::<_, String>(6).unwrap_or_default();
-            let props = format!("ext:{} source:{}", extension, source_type);
-            self.index_row(
-                None, &id, "file", &filename, &tags.join(" "), &extension, &props, "", &date, &path,
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
+        // The legacy `files` table is deliberately not indexed here.
+        //
+        // It is still read once, by the schema migration that copies it into
+        // `nodes`, and after that its rows describe nothing: the identities in
+        // it were replaced by content digests. Indexing them put entries into
+        // search that opened nothing when clicked.
 
         // Boards need no pass of their own: they are `nodes` rows like anything
         // else, and are picked up by the query below.
@@ -47,68 +49,89 @@ impl DbBridge {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_type, title, content, properties, updated_at FROM nodes WHERE node_type NOT LIKE 'finance_%'"
         ).map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let node_type: String = row.get(1)?;
-            let title: String = row.get(2)?;
-            let content: String = row.get(3)?;
-            let properties: String = row.get(4)?;
-            let date: String = row.get(5)?;
-            // Attempt to extract tags, status, and priority from properties if present
-            let mut tags_str = String::new();
-            let mut status = None;
-            let mut props_search = properties.clone();
-            let mut search_path = id.clone();
-            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&properties) {
-                if let Some(p) = json_val.get("path").and_then(|v| v.as_str()) {
-                    search_path = p.to_string();
+        let _ = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let node_type: String = row.get(1)?;
+                let title: String = row.get(2)?;
+                let content: String = row.get(3)?;
+                let properties: String = row.get(4)?;
+                let date: String = row.get(5)?;
+                // Attempt to extract tags, status, and priority from properties if present
+                let mut tags_str = String::new();
+                let mut status = None;
+                let mut props_search = properties.clone();
+                let mut search_path = id.clone();
+                // A file node's body is not in the node — it is in `file_text`,
+                // where extraction put it.
+                //
+                // This pass used to index `content`, which for a file node is
+                // the empty string. So rebuilding the search index silently
+                // erased the full text of every document in the vault, and
+                // nothing put it back: extraction is recorded as done, so the
+                // words were never read again.
+                let content = if node_type == "file" {
+                    self.file_text_joined(&id).unwrap_or_default()
+                } else {
+                    content
+                };
+
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&properties) {
+                    if let Some(p) = json_val.get("path").and_then(|v| v.as_str()) {
+                        search_path = p.to_string();
+                    }
+                    if let Some(tags) = json_val.get("tags").and_then(|v| v.as_array()) {
+                        let tags_vec: Vec<String> = tags
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect();
+                        tags_str = tags_vec.join(" ");
+                    }
+                    if let Some(s) = json_val.get("status").and_then(|v| v.as_str()) {
+                        status = Some(s.to_string());
+                    }
+                    // Extract priority to append to properties text for BM25 search
+                    if let Some(p) = json_val.get("priority").and_then(|v| v.as_str()) {
+                        props_search = format!("{} priority:{}", properties, p);
+                    }
                 }
-                if let Some(tags) = json_val.get("tags").and_then(|v| v.as_array()) {
-                    let tags_vec: Vec<String> = tags.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                    tags_str = tags_vec.join(" ");
-                }
-                if let Some(s) = json_val.get("status").and_then(|v| v.as_str()) {
-                    status = Some(s.to_string());
-                }
-                // Extract priority to append to properties text for BM25 search
-                if let Some(p) = json_val.get("priority").and_then(|v| v.as_str()) {
-                    props_search = format!("{} priority:{}", properties, p);
-                }
-            }
-            self.index_row(
-                None,
-                &id,
-                &node_type,
-                &title,
-                &tags_str,
-                &content,
-                &props_search,
-                &status.unwrap_or_default(),
-                &date,
-                &search_path,
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
+                self.index_row(
+                    None,
+                    &id,
+                    &node_type,
+                    &title,
+                    &tags_str,
+                    &content,
+                    &props_search,
+                    &status.unwrap_or_default(),
+                    &date,
+                    &search_path,
+                );
+                Ok(())
+            })
+            .map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+            .filter_map(|r| r.ok())
+            .count();
 
         // Index node blocks
         let mut stmt = self
             .conn
             .prepare("SELECT block_id, node_id, content FROM node_blocks")
             .map_err(|e| AppError::General(format!("FTS Reindex Query Error: {}", e)))?;
-        let _ = stmt.query_map([], |row| {
-            let block_id: String = row.get(0)?;
-            let node_id: String = row.get(1)?;
-            let content: String = row.get(2)?;
-            let item_id = format!("{}#{}", node_id, block_id);
-            self.index_row(
-                None, &item_id, "block", &block_id, "", &content, "", "", "", &node_id,
-            );
-            Ok(())
-        }).map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
-        .filter_map(|r| r.ok())
-        .count();
+        let _ = stmt
+            .query_map([], |row| {
+                let block_id: String = row.get(0)?;
+                let node_id: String = row.get(1)?;
+                let content: String = row.get(2)?;
+                let item_id = format!("{}#{}", node_id, block_id);
+                self.index_row(
+                    None, &item_id, "block", &block_id, "", &content, "", "", "", &node_id,
+                );
+                Ok(())
+            })
+            .map_err(|e| AppError::General(format!("FTS Reindex Map Error: {}", e)))?
+            .filter_map(|r| r.ok())
+            .count();
 
         Ok(())
     }
@@ -146,9 +169,15 @@ impl DbBridge {
         date: &str,
         path: &str,
     ) {
+        // Only the `đ` words, and only from the columns a person searches by
+        // name — title, tags, body. Properties are machine keys; folding them
+        // would add noise nobody is looking for.
+        let norm =
+            crate::search_fold::fold_d_stroke_words(&format!("{} {} {}", title, tags, content));
+
         let inserted = self.conn.execute(
-            "INSERT INTO search_index (rowid, item_id, item_type, title, tags, content, properties, status, date, path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![rowid, item_id, item_type, title, tags, content, properties, status, date, path],
+            "INSERT INTO search_index (rowid, item_id, item_type, title, tags, content, properties, status, date, path, norm) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![rowid, item_id, item_type, title, tags, content, properties, status, date, path, norm],
         );
 
         if inserted.is_ok() && rowid.is_none() {
@@ -191,10 +220,9 @@ impl DbBridge {
 
         let existing = self.fts_rowid_for(item_id);
         if let Some(rid) = existing {
-            let _ = self.conn.execute(
-                "DELETE FROM search_index WHERE rowid = ?1",
-                params![rid],
-            );
+            let _ = self
+                .conn
+                .execute("DELETE FROM search_index WHERE rowid = ?1", params![rid]);
         }
 
         self.index_row(
@@ -214,10 +242,9 @@ impl DbBridge {
     /// Remove an entry from the FTS5 search index.
     pub fn delete_search_entry(&self, item_id: &str) {
         if let Some(rid) = self.fts_rowid_for(item_id) {
-            let _ = self.conn.execute(
-                "DELETE FROM search_index WHERE rowid = ?1",
-                params![rid],
-            );
+            let _ = self
+                .conn
+                .execute("DELETE FROM search_index WHERE rowid = ?1", params![rid]);
         }
         let _ = self.conn.execute(
             "DELETE FROM search_index_rowids WHERE item_id = ?1",
@@ -260,7 +287,7 @@ impl DbBridge {
                 } else {
                     // Search across title (boosted), tags, content with column weighting
                     // FTS5: {col1 col2} : term
-                    match_parts.push(format!("\"{}\"", term));
+                    match_parts.push(with_d_stroke_branch(term));
                 }
             }
             for term in &parsed.exclude_terms {
@@ -304,10 +331,27 @@ impl DbBridge {
         }
 
         // Apply generic property filters
+        //
+        // Read as a value, not as a substring of the raw JSON. `LIKE
+        // '%priority:1%'` is what this used to be, and it matched
+        // `priority:10` as readily as `priority:1` — and `status:do` matched
+        // `status:done`. A filter that quietly returns more than it was asked
+        // for is worse than one that returns nothing.
+        //
+        // The key goes into the SQL text because `json_extract` needs a
+        // literal path, so it is checked first; the value stays a parameter.
         for (key, val) in &parsed.property_filters {
-            sql.push_str(&format!(" AND properties LIKE ?{}", param_idx));
-            count_sql.push_str(&format!(" AND properties LIKE ?{}", param_idx));
-            param_values.push(format!("%{}:{}%", key, val));
+            let Some(path) = crate::search::json_path_for(key) else {
+                log::warn!("ignoring property filter on unusable key '{}'", key);
+                continue;
+            };
+            let clause = format!(
+                " AND lower(CAST(json_extract(properties, '{}') AS TEXT)) = ?{}",
+                path, param_idx
+            );
+            sql.push_str(&clause);
+            count_sql.push_str(&clause);
+            param_values.push(val.to_lowercase());
             param_idx += 1;
         }
 
@@ -440,6 +484,247 @@ mod tests {
                 |r| r.get::<_, i64>(0),
             )
             .unwrap()
+    }
+
+    fn upsert_with_props(db: &DbBridge, item_id: &str, title: &str, props: serde_json::Value) {
+        db.upsert_search_entry(
+            item_id,
+            "task",
+            title,
+            "",
+            "body",
+            &props.to_string(),
+            props.get("status").and_then(|s| s.as_str()),
+            "2026-01-01",
+            item_id,
+        );
+    }
+
+    /// Search the way the app searches, so a test failure means a search
+    /// somebody ran would have failed.
+    fn find(db: &DbBridge, query: &str) -> Vec<String> {
+        let parsed = crate::search::parse_query(query);
+        db.search_fts(&parsed, 1, 50)
+            .expect("search")
+            .results
+            .into_iter()
+            .map(|r| r.id)
+            .collect()
+    }
+
+    /// A property filter used to be a substring test against the raw JSON, so
+    /// `priority:1` also matched `priority:10` and `status:do` matched
+    /// `status:done`. A filter that quietly returns more than it was asked for
+    /// is worse than one that returns nothing.
+    #[test]
+    fn a_property_filter_matches_the_value_not_a_piece_of_it() {
+        let db = db();
+        upsert_with_props(
+            &db,
+            "Tasks/one.md",
+            "one",
+            serde_json::json!({ "priority": "1" }),
+        );
+        upsert_with_props(
+            &db,
+            "Tasks/ten.md",
+            "ten",
+            serde_json::json!({ "priority": "10" }),
+        );
+
+        assert_eq!(find(&db, "priority:1"), vec!["Tasks/one.md"]);
+        assert_eq!(find(&db, "priority:10"), vec!["Tasks/ten.md"]);
+    }
+
+    #[test]
+    fn a_property_filter_matches_a_number_written_as_a_number() {
+        // Frontmatter carries `priority: 2` as a JSON number, not a string.
+        let db = db();
+        upsert_with_props(
+            &db,
+            "Tasks/two.md",
+            "two",
+            serde_json::json!({ "priority": 2 }),
+        );
+
+        assert_eq!(find(&db, "priority:2"), vec!["Tasks/two.md"]);
+    }
+
+    /// The key reaches the SQL as text, because `json_extract` needs a literal
+    /// path. Everything that is not a plain key is refused rather than
+    /// escaped, and refusing means the filter is dropped, not that the search
+    /// returns somebody else's notes.
+    #[test]
+    fn a_key_that_is_not_a_key_cannot_reach_the_query() {
+        use crate::search::json_path_for;
+
+        assert_eq!(json_path_for("priority"), Some("$.priority".to_string()));
+        assert_eq!(json_path_for("due_date"), Some("$.due_date".to_string()));
+        for bad in ["", "a'b", "a.b", "a[0]", "a b", "a\"b", &"x".repeat(65)] {
+            assert_eq!(json_path_for(bad), None, "{bad:?} must not become a path");
+        }
+    }
+
+    #[test]
+    fn an_unusable_key_drops_its_filter_without_taking_the_search_down() {
+        let db = db();
+        upsert_with_props(
+            &db,
+            "Tasks/one.md",
+            "one",
+            serde_json::json!({ "priority": "1" }),
+        );
+
+        // The filter cannot be applied, so it is ignored; the search still runs.
+        let hits = find(&db, "a'b:1");
+        assert!(hits.is_empty() || hits == vec!["Tasks/one.md"], "{hits:?}");
+    }
+
+    /// The complaint this change answers: typing a Vietnamese word without its
+    /// tone marks — which is how people type when they are moving — found
+    /// nothing at all.
+    #[test]
+    fn a_word_typed_without_its_tone_marks_still_finds_the_note() {
+        let db = db();
+        upsert(&db, "Notes/company.md", "công ty cổ phần abc");
+        upsert(&db, "Notes/invoice.md", "hoá đơn tháng này");
+
+        assert_eq!(find(&db, "cong"), vec!["Notes/company.md"]);
+        assert_eq!(find(&db, "hoa"), vec!["Notes/invoice.md"]);
+        assert_eq!(find(&db, "thang"), vec!["Notes/invoice.md"]);
+    }
+
+    /// And the other direction still works: someone who does type the marks
+    /// must not be punished for it.
+    #[test]
+    fn a_word_typed_with_its_tone_marks_finds_it_too() {
+        let db = db();
+        upsert(&db, "Notes/company.md", "công ty cổ phần abc");
+
+        assert_eq!(find(&db, "công"), vec!["Notes/company.md"]);
+        assert_eq!(find(&db, "cổ phần"), vec!["Notes/company.md"]);
+    }
+
+    /// Folding costs precision, and it is worth being explicit about how much:
+    /// `hoa` now reaches `hóa` and `họa` alike. In a language where quick
+    /// typing drops the marks, finding too much beats finding nothing.
+    #[test]
+    fn folding_widens_a_search_rather_than_narrowing_it() {
+        let db = db();
+        upsert(&db, "Notes/a.md", "hóa đơn");
+        upsert(&db, "Notes/b.md", "hoa sen");
+
+        let hits = find(&db, "hoa");
+        assert_eq!(hits.len(), 2, "both should match: {hits:?}");
+    }
+
+    /// `đ` is a letter in its own right, so unicode61 never folds it and
+    /// `dong` could not find `đông`. A shadow column carrying just the `đ`
+    /// words, folded, closes that — see `crate::search_fold`.
+    #[test]
+    fn a_word_typed_with_a_plain_d_finds_one_written_with_a_stroked_d() {
+        let db = db();
+        upsert(&db, "Notes/east.md", "đông dương");
+        upsert(&db, "Notes/order.md", "đơn hàng tháng ba");
+
+        assert_eq!(find(&db, "dong"), vec!["Notes/east.md"]);
+        assert_eq!(find(&db, "don"), vec!["Notes/order.md"]);
+    }
+
+    /// And typing the stroke still works, which is the half that would break
+    /// if the term were only ever matched against the shadow column.
+    #[test]
+    fn a_word_typed_with_the_stroke_still_finds_it() {
+        let db = db();
+        upsert(&db, "Notes/east.md", "đông dương");
+
+        assert_eq!(find(&db, "đông"), vec!["Notes/east.md"]);
+    }
+
+    /// The shadow column must not quietly rewrite the ranking of searches that
+    /// have nothing to do with `đ`.
+    ///
+    /// Indexing a folded copy of the *whole* note would make every ordinary
+    /// term match twice — once in the real columns, once in the copy — which
+    /// doubles the term frequency BM25 ranks on. Carrying only the `đ` words
+    /// is what avoids it, and this holds the index to that.
+    #[test]
+    fn only_the_stroked_words_reach_the_shadow_column() {
+        let db = db();
+        upsert(&db, "Notes/mixed.md", "báo cáo đơn hàng tháng này");
+
+        let norm: String = db
+            .conn()
+            .query_row(
+                "SELECT norm FROM search_index WHERE item_id = 'Notes/mixed.md'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read norm");
+
+        // `dơn`, not `don`: this column folds the one letter the tokenizer
+        // cannot, and the tokenizer strips the tone mark on the way in. The
+        // search tests above prove the two meet in the middle.
+        assert_eq!(norm, "dơn", "only the `đ` word belongs here, got {norm:?}");
+    }
+
+    /// A note with no `đ` in it adds nothing to the shadow column at all.
+    #[test]
+    fn a_note_without_a_stroked_d_carries_no_shadow_text() {
+        let db = db();
+        upsert(&db, "Notes/company.md", "công ty cổ phần abc");
+
+        let norm: String = db
+            .conn()
+            .query_row(
+                "SELECT norm FROM search_index WHERE item_id = 'Notes/company.md'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read norm");
+
+        assert_eq!(norm, "");
+    }
+
+    /// A plain `d` word must not start matching `đ` words it never meant.
+    /// `dương` and `đương` are different words, and both are real.
+    #[test]
+    fn the_shadow_column_widens_recall_without_losing_the_real_match() {
+        let db = db();
+        upsert(&db, "Notes/plain.md", "dương lịch");
+        upsert(&db, "Notes/stroked.md", "đương nhiên");
+
+        let hits = find(&db, "duong");
+        assert!(hits.contains(&"Notes/plain.md".to_string()), "{hits:?}");
+        assert!(hits.contains(&"Notes/stroked.md".to_string()), "{hits:?}");
+    }
+
+    /// Nothing about folding may reach the text the user sees. Search results
+    /// quote the note, and quoting it back without its marks would look like
+    /// the note itself had been damaged.
+    #[test]
+    fn results_still_carry_the_text_as_it_was_written() {
+        let db = db();
+        db.upsert_search_entry(
+            "Notes/company.md",
+            "note",
+            "công ty cổ phần abc",
+            "",
+            "báo cáo tài chính",
+            "{}",
+            None,
+            "2026-01-01",
+            "Notes/company.md",
+        );
+
+        let parsed = crate::search::parse_query("cong");
+        let hit = db
+            .search_fts(&parsed, 1, 50)
+            .expect("search")
+            .results
+            .remove(0);
+
+        assert_eq!(hit.title, "công ty cổ phần abc");
     }
 
     fn upsert(db: &DbBridge, item_id: &str, title: &str) {

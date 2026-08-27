@@ -22,16 +22,19 @@ export function useMultiSelect(
     const selected = [...multiSelectedNodes.value];
     if (selected.length < 2) return;
     const groupId = `grp_${Date.now()}`;
+    store.beginUndoBatch();
     for (const n of selected) {
       // Use VueFlow's native API — doesn't reset selection
       vfUpdateNodeData(n.id, { groupId });
       store.updateNodeData(n.id, { groupId });
     }
+    store.endUndoBatch();
     scheduleSave();
   }
 
   function handleMultiUngroup() {
     const selected = [...multiSelectedNodes.value];
+    store.beginUndoBatch();
     for (const n of selected) {
       if (n.data?.groupId) {
         const { groupId, ...rest } = n.data;
@@ -39,6 +42,7 @@ export function useMultiSelect(
         store.updateNodeData(n.id, rest);
       }
     }
+    store.endUndoBatch();
     scheduleSave();
   }
 
@@ -49,10 +53,12 @@ export function useMultiSelect(
 
   function handleMultiUpdateAll(data: Record<string, any>) {
     const selected = [...multiSelectedNodes.value];
+    store.beginUndoBatch();
     for (const n of selected) {
       vfUpdateNodeData(n.id, data);
       store.updateNodeData(n.id, data);
     }
+    store.endUndoBatch();
     scheduleSave();
   }
 

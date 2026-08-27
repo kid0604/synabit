@@ -20,6 +20,11 @@ watch(() => props.items, () => {
 });
 
 const onKeyDown = (e: KeyboardEvent) => {
+  // With no items there is nothing to choose, so the key belongs to the
+  // editor. Claiming it anyway left a hidden menu eating Enter after a query
+  // that matched nothing, and `% 0` turned `selectedIndex` into NaN.
+  if (props.items.length === 0) return false;
+
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     selectedIndex.value = (selectedIndex.value + props.items.length - 1) % props.items.length;

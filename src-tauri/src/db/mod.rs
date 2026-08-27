@@ -1,7 +1,10 @@
 mod blocks;
-mod crdt;
+pub mod crdt;
+mod node_query;
 pub use crdt::StatCacheEntry;
-mod edges;
+pub use node_query::{QueryResult, QueryRow};
+pub mod edges;
+mod people_brief;
 mod files;
 mod kv;
 pub mod legacy_sync_migration;
@@ -9,6 +12,8 @@ pub mod metrics;
 mod nexus;
 mod nodes;
 mod rag;
+mod reminders;
+pub mod subscriptions;
 mod schema;
 mod search;
 pub mod sync_inbox;
@@ -41,6 +46,7 @@ impl DbBridge {
 
 // Re-exports (Option A — consumers keep using crate::db::NodeEdge, etc.)
 pub use edges::NodeEdge;
+pub use files::{FileFilter, FileLocation, FilePage, FileSort, RemoteEntry, TextStatus};
 pub use nexus::NexusRow;
 
 #[cfg(test)]

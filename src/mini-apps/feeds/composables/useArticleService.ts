@@ -2,8 +2,21 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../../stores/useAppStore';
 import { useEventBus } from '../../../composables/useEventBus';
 import { storeToRefs } from 'pinia';
-import type { FeedSource, FeedCategory, FeedConfig, CachedArticle, ArticleFilter, DiscoveredFeed } from '../types/feed.types';
+import type { FeedSource, FeedCategory, FeedConfig, CachedArticle, ArticleFilter, DiscoveredFeed, ViewCounts, OpmlImportResult, RefreshResult, Highlight, FeedRule } from '../types/feed.types';
 import { DEFAULT_CONFIG } from '../types/feed.types';
+
+/**
+ * Midnight this morning where the reader is, as an instant.
+ *
+ * The database stores publication times with whatever offset the publisher
+ * used, so "today" can only be decided by someone who knows the reader's
+ * timezone — which the backend does not.
+ */
+export function localMidnight(): string {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  return midnight.toISOString();
+}
 
 export function useArticleService() {
   const appStore = useAppStore();
@@ -55,19 +68,19 @@ export function useArticleService() {
 
   // Articles
   async function getArticles(filter: ArticleFilter): Promise<CachedArticle[]> {
-    return await invoke<CachedArticle[]>('feed_get_articles', { vaultPath: vaultPath.value, filter });
+    return await invoke<CachedArticle[]>('feed_get_articles', { filter });
   }
 
-  async function searchArticles(query: string, limit?: number): Promise<CachedArticle[]> {
-    return await invoke<CachedArticle[]>('feed_search_articles', { vaultPath: vaultPath.value, query, limit: limit || 50 });
+  async function searchArticles(query: string, sourceIds?: string[], limit?: number): Promise<CachedArticle[]> {
+    return await invoke<CachedArticle[]>('feed_search_articles', { query, sourceIds, limit: limit || 50 });
+  }
+
+  async function getViewCounts(): Promise<ViewCounts> {
+    return await invoke<ViewCounts>('feed_get_view_counts', { todayStart: localMidnight() });
   }
 
   async function getUnreadCounts(): Promise<Record<string, number>> {
     return await invoke<Record<string, number>>('feed_get_unread_counts', { vaultPath: vaultPath.value });
-  }
-
-  async function getTotalUnread(): Promise<number> {
-    return await invoke<number>('feed_get_total_unread', { vaultPath: vaultPath.value });
   }
 
   // Article actions
@@ -76,8 +89,15 @@ export function useArticleService() {
     bus.emit('node:updated', { nodeType: 'feed_article', id: articleId, title: '' });
   }
 
-  async function markAllRead(sourceId?: string, categoryId?: string): Promise<void> {
-    await invoke('feed_mark_all_read', { vaultPath: vaultPath.value, sourceId, categoryId });
+  /** Returns the articles this call changed, so the caller can offer an undo. */
+  async function markAllRead(sourceIds?: string[]): Promise<string[]> {
+    const changed = await invoke<string[]>('feed_mark_all_read', { sourceIds });
+    bus.emit('node:updated', { nodeType: 'feed_article', id: 'all', title: '' });
+    return changed;
+  }
+
+  async function markReadBulk(articleIds: string[], read: boolean): Promise<void> {
+    await invoke('feed_mark_read_bulk', { articleIds, read });
     bus.emit('node:updated', { nodeType: 'feed_article', id: 'all', title: '' });
   }
 
@@ -92,28 +112,88 @@ export function useArticleService() {
   }
 
   // Feed operations
-  async function refreshFeeds(sourceId?: string): Promise<void> {
-    await invoke('feed_refresh', { vaultPath: vaultPath.value, sourceId });
+  /**
+   * `manual` marks a fetch the reader asked for, which ignores the backoff a
+   * failing feed is under. `dueOnly` asks for just the feeds whose own
+   * interval has elapsed, which is what a timer wants. Which feeds are due is
+   * decided in the backend, so the scheduler and this call agree.
+   */
+  async function refreshFeeds(
+    sourceId?: string,
+    manual = false,
+    dueOnly = false,
+  ): Promise<RefreshResult> {
+    const result = await invoke<RefreshResult>('feed_refresh', {
+      vaultPath: vaultPath.value, sourceId, manual, dueOnly,
+    });
     bus.emit('feed:refreshed', { sourceId });
+    return result;
   }
+
+  /** The full row, including the article body the list only carries a slice of. */
+  async function getArticle(articleId: string): Promise<CachedArticle> {
+    return await invoke<CachedArticle>('feed_get_article', { articleId });
+  }
+
+  /**
+   * Publish this device's read state and take in the other devices'.
+   * `force` re-applies even when no file has changed — needed after a refresh,
+   * because state waiting for an article can only be applied once it exists.
+   */
+  async function syncReadState(force = false): Promise<number> {
+    return await invoke<number>('feed_state_sync', { vaultPath: vaultPath.value, force });
+  }
+
 
   async function discoverFeeds(url: string): Promise<DiscoveredFeed[]> {
     return await invoke<DiscoveredFeed[]>('feed_discover', { vaultPath: vaultPath.value, url });
   }
 
-  async function runCleanup(maxAgeDays = 14, maxPerFeed = 200): Promise<void> {
+  /** Defaults mirror `FeedConfig`, so a caller without config still matches it. */
+  async function runCleanup(
+    maxAgeDays = DEFAULT_CONFIG.autoCleanupDays,
+    maxPerFeed = DEFAULT_CONFIG.maxArticlesPerFeed,
+  ): Promise<void> {
     await invoke('feed_run_cleanup', { maxAgeDays, maxPerFeed });
   }
 
-  async function fetchArticleContent(articleId: string): Promise<CachedArticle> {
-    return await invoke<CachedArticle>('feed_fetch_article_content', { articleId });
+  /** `force` re-extracts an article that already has a body. */
+  async function fetchArticleContent(articleId: string, force = false): Promise<CachedArticle> {
+    return await invoke<CachedArticle>('feed_fetch_article_content', { articleId, force });
+  }
+
+  // Highlights
+  async function getHighlights(articleId: string): Promise<Highlight[]> {
+    return await invoke<Highlight[]>('feed_get_highlights', { articleId });
+  }
+
+  async function addHighlight(articleId: string, text: string, occurrence: number, note?: string): Promise<Highlight> {
+    return await invoke<Highlight>('feed_add_highlight', { articleId, text, occurrence, note });
+  }
+
+  async function removeHighlight(highlightId: string): Promise<void> {
+    await invoke('feed_remove_highlight', { highlightId });
+  }
+
+  // Rules
+  async function getRules(): Promise<FeedRule[]> {
+    return await invoke<FeedRule[]>('feed_get_rules', { vaultPath: vaultPath.value });
+  }
+
+  async function saveRules(rules: FeedRule[]): Promise<void> {
+    await invoke('feed_save_rules', { vaultPath: vaultPath.value, rules });
+  }
+
+  /** Run the rules over articles already cached. Muting is not applied here. */
+  async function applyRules(): Promise<number> {
+    return await invoke<number>('feed_apply_rules', { vaultPath: vaultPath.value });
   }
 
   // OPML
-  async function importOpml(opmlContent: string): Promise<any[]> {
-    const feeds = await invoke<any[]>('feed_import_opml', { vaultPath: vaultPath.value, opmlContent });
+  async function importOpml(opmlContent: string): Promise<OpmlImportResult> {
+    const result = await invoke<OpmlImportResult>('feed_import_opml', { vaultPath: vaultPath.value, opmlContent });
     bus.emit('node:created', { nodeType: 'feed_source', id: 'opml-import', title: 'OPML Import' });
-    return feeds;
+    return result;
   }
 
   async function exportOpml(): Promise<string> {
@@ -124,9 +204,11 @@ export function useArticleService() {
     getSources, addSource, removeSource, updateSource,
     getCategories, saveCategories,
     getConfig, saveConfig,
-    getArticles, searchArticles, getUnreadCounts, getTotalUnread,
-    markRead, markAllRead, toggleStar, toggleReadLater,
-    refreshFeeds, discoverFeeds, runCleanup,
+    getArticles, getArticle, searchArticles, getUnreadCounts, getViewCounts,
+    markRead, markAllRead, markReadBulk, toggleStar, toggleReadLater,
+    refreshFeeds, discoverFeeds, runCleanup, syncReadState,
+    getHighlights, addHighlight, removeHighlight,
+    getRules, saveRules, applyRules,
     fetchArticleContent,
     importOpml, exportOpml,
   };

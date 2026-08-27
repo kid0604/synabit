@@ -1,9 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { CalendarDays, Calendar, CheckCircle2, Send, Trash2, User } from 'lucide-vue-next';
+import DeleteButton from './DeleteButton.vue';
 import { type TaskMetadata, getTransferredName } from '../types';
+import { allSubtaskProgress } from '../subtasks';
 
-defineProps<{
+const props = defineProps<{
+  /** How much a delete asks first; see `taskDeleteConfirm`. */
+  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasksByQuadrant: Record<string, TaskMetadata[]>;
+  /** Every task, for counting subtask progress; see `TaskListView`. */
+  allTasks?: TaskMetadata[];
+  /** Ids currently picked out. Empty means the checkboxes are not shown. */
+  selectedIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -13,7 +22,21 @@ const emit = defineEmits<{
   (e: 'drag-start', event: DragEvent, task: TaskMetadata): void;
   (e: 'matrix-drop', event: DragEvent, quadrantId: string): void;
   (e: 'open-person', transferredTo: string): void;
+  (e: 'select-one', id: string): void;
 }>();
+
+const progress = computed(() => allSubtaskProgress(props.allTasks ?? []));
+const progressOf = (task: TaskMetadata) => progress.value.get(task.id) ?? { done: 0, total: 0 };
+
+const isSelecting = computed(() => (props.selectedIds?.size ?? 0) > 0);
+const isSelected = (id: string) => props.selectedIds?.has(id) ?? false;
+
+// As on the board: no shift-range, because four quadrants have no single
+// visible order for a range to run along.
+const onCardClick = (task: TaskMetadata) => {
+  if (isSelecting.value) return emit('select-one', task.id);
+  emit('edit-task', task);
+};
 
 const QUADRANTS = [
   { id: 'do_first', label: 'task.matrix_do_first', emptyLabel: 'task.matrix_do_first_empty', number: '1', color: 'red' },
@@ -156,15 +179,24 @@ const emptyIcons: Record<string, string> = {
               <div class="flex-1 overflow-y-auto custom-scrollbar">
                   <div class="flex flex-wrap gap-2 content-start">
                       <div v-for="(task, idx) in tasksByQuadrant[quadrant.id]" :key="task.id"
-                           draggable="true" @dragstart="emit('drag-start', $event, task)" @click="emit('edit-task', task)"
+                           draggable="true" @dragstart="emit('drag-start', $event, task)" @click="onCardClick(task)"
                            class="relative flex flex-col justify-between w-[calc(50%-4px)] min-w-[120px] max-w-[180px] h-[100px] p-2.5 rounded-xl cursor-grab active:cursor-grabbing group transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.97] border"
                            :class="colorClasses[quadrant.color].card"
                            :style="{ transform: getRotation(idx, qIdx) }">
-                          <button @click.stop="emit('toggle-status', task)" class="absolute top-1.5 right-1.5 shrink-0 cursor-pointer opacity-40 hover:opacity-100 transition-opacity z-10" aria-label="More Options">
+                          <button @click.stop="emit('toggle-status', task)" class="absolute top-1.5 right-1.5 shrink-0 cursor-pointer opacity-40 hover:opacity-100 transition-opacity z-10" :aria-label="$t('task.a11y_toggle_status')">
                               <div class="w-3.5 h-3.5 rounded-full border-[1.5px] transition-colors" :class="colorClasses[quadrant.color].checkbox"></div>
                           </button>
-                          <p class="text-[12px] font-semibold leading-[1.35] line-clamp-3 pr-4" :class="colorClasses[quadrant.color].cardText">{{ task.title }}</p>
+                          <input
+                              type="checkbox"
+                              :checked="isSelected(task.id)"
+                              @click.stop="emit('select-one', task.id)"
+                              class="absolute top-1.5 left-1.5 w-3.5 h-3.5 z-10 rounded border-gray-300 dark:border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer transition-opacity"
+                              :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'"
+                              :aria-label="$t('task.a11y_select_task')"
+                          />
+                          <p class="text-[12px] font-semibold leading-[1.35] line-clamp-3 pr-4" :class="[colorClasses[quadrant.color].cardText, isSelecting ? 'pl-5' : '']">{{ task.title }}</p>
                           <div class="flex items-center gap-1 mt-auto pt-1">
+                              <span v-if="progressOf(task).total" class="text-[8px] font-bold px-1 py-[0.5px] rounded bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">{{ progressOf(task).done }}/{{ progressOf(task).total }}</span>
                               <span v-if="task.priority" class="text-[8px] font-bold px-1 py-[0.5px] rounded" :class="colorClasses[quadrant.color].priority">{{ task.priority }}</span>
                               <span v-if="task.due_date" class="text-[8px] flex items-center gap-0.5" :class="colorClasses[quadrant.color].date">
                                   <CalendarDays class="w-2 h-2"/>{{ task.due_date.substring(5) }}
@@ -174,9 +206,7 @@ const emptyIcons: Record<string, string> = {
                                   <User class="w-2 h-2"/>{{ getTransferredName(task.transferred_to).substring(0, 6) }}
                               </span>
                           </div>
-                          <button @click.stop="emit('delete-task', task)" class="absolute bottom-1.5 right-1.5 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer p-0.5" :class="colorClasses[quadrant.color].delete" aria-label="More Options">
-                              <Trash2 class="w-2.5 h-2.5"/>
-                          </button>
+                          <DeleteButton :mode="deleteConfirm" compact class="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-all" @confirm="emit('delete-task', task)" />
                       </div>
                   </div>
                   <div v-if="tasksByQuadrant[quadrant.id].length === 0" class="flex flex-col items-center justify-center h-full py-8">

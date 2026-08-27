@@ -1,8 +1,18 @@
 import { ref, type Ref, type ComputedRef } from 'vue';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { type TaskMetadata, getTodayStr } from '../types';
+import { type TaskMetadata, getTodayStr, taskProperties } from '../types';
+import { advanceRecurrence, repeats } from '../recurrence';
+import { descendantsOf } from '../subtasks';
+import {
+  taskFieldIssues, safeStatus, safePriority, safeRecurrence, safeDate, safeTime,
+  isValidDuration,
+} from '../validation';
+import { useTaskDelete } from './useTaskDelete';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
+
+const t = i18n.global.t;
 
 export function useTaskCrud(
   tasks: Ref<TaskMetadata[]>,
@@ -13,6 +23,7 @@ export function useTaskCrud(
   activeCategory: Ref<string>,
   activeProject: ComputedRef<any | null>,
   taskArchiveDays: Ref<number>,
+  taskDeleteConfirm: Ref<'dialog' | 'inline' | 'undo'>,
   wipCheck?: { tasksByStatus: ComputedRef<Record<string, TaskMetadata[]>>, WIP_LIMIT: ComputedRef<number> },
 ) {
 
@@ -26,6 +37,11 @@ export function useTaskCrud(
     priority: string;
     start_date: string;
     due_date: string;
+    due_time: string;
+    reminders: string[];
+    recurrence: string;
+    recurrence_end_at: string;
+    parent_id: string;
     comment: string;
     tags: string;
     status: string;
@@ -40,6 +56,11 @@ export function useTaskCrud(
     priority: '',
     start_date: '',
     due_date: '',
+    due_time: '',
+    reminders: [],
+    recurrence: 'none',
+    recurrence_end_at: '',
+    parent_id: '',
     comment: '',
     tags: '',
     status: 'todo',
@@ -48,17 +69,38 @@ export function useTaskCrud(
   });
   const customFields = ref<{k: string, v: string}[]>([]);
 
-  const openEditModal = (task: TaskMetadata) => {
+  const openEditModal = async (task: TaskMetadata) => {
+    // The list holds a preview, not the body — see `TaskMetadata.preview`. The
+    // body is fetched for the one task the user actually opened.
+    //
+    // Fetched before the modal is shown, not after. Setting `editingTask`
+    // first renders the form for one frame against the previous task's
+    // fields, which reads as the wrong task having opened.
+    let body = '';
+    if (task.path) {
+      try {
+        body = (await ns.getNode(task.id))?.content ?? '';
+      } catch (e) {
+        logger.error("Failed to load the task body", e);
+        showToast(t('task.save_failed'));
+        return;
+      }
+    }
     editingTask.value = task;
     editingTaskParams.value = {
       title: task.title,
-      content: task.content,
+      content: body,
       is_transferred: task.is_transferred || false,
       transferred_to: task.transferred_to || '',
       track_progress: task.track_progress || false,
       priority: task.priority || '',
       start_date: task.start_date,
       due_date: task.due_date,
+      due_time: task.due_time || '',
+      reminders: [...(task.reminders || [])],
+      recurrence: task.recurrence || 'none',
+      recurrence_end_at: task.recurrence_end_at || '',
+      parent_id: task.parent_id || '',
       comment: task.comment,
       tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
       status: task.status,
@@ -111,7 +153,7 @@ export function useTaskCrud(
           }
         }
       }
-      openEditModal(task);
+      await openEditModal(task);
     } else {
       logger.warn(`TaskApp: Task not found for id: ${id}`);
     }
@@ -128,10 +170,15 @@ export function useTaskCrud(
       priority: '',
       start_date: '',
       due_date: '',
+      due_time: '',
+      reminders: [],
+      recurrence: 'none',
+      recurrence_end_at: '',
+      parent_id: '',
       comment: '',
       source_link: '',
       tags: [],
-      content: '',
+      preview: '',
       path: '',
       created_at: '',
       updated_at: '',
@@ -149,6 +196,11 @@ export function useTaskCrud(
       priority: '',
       start_date: '',
       due_date: '',
+      due_time: '',
+      reminders: [],
+      recurrence: 'none',
+      recurrence_end_at: '',
+      parent_id: '',
       comment: '',
       tags: '',
       status: 'todo',
@@ -161,14 +213,40 @@ export function useTaskCrud(
   const handleModalSave = async (payload: any) => {
     if (wipCheck && payload.status === 'in_progress' && editingTask.value && editingTask.value.status !== 'in_progress' && wipCheck.tasksByStatus.value['in_progress'].length >= wipCheck.WIP_LIMIT.value) {
       payload.status = 'todo';
-      showToast(`⚠️ Đã đạt giới hạn WIP (${wipCheck.WIP_LIMIT.value} tasks). Task được đẩy về TO DO.`);
+      showToast(t('task.wip_limit_reached', { limit: wipCheck.WIP_LIMIT.value }));
     }
 
     editingTaskParams.value = payload;
     if (editingTask.value) {
+      // Setting a repeating task to Done in the form means the same as ticking
+      // it off in the list: this occurrence is finished, and the task moves to
+      // the next one. Applied to the payload before the save so the write and
+      // the row on screen agree, rather than saving Done and correcting it.
+      const becomingDone = editingTask.value.status !== 'done' && payload.status === 'done';
+      const willRepeat = repeats({ recurrence: payload.recurrence } as TaskMetadata);
+      if (becomingDone && willRepeat) {
+        const outcome = advanceRecurrence(
+          {
+            recurrence: payload.recurrence,
+            recurrence_end_at: payload.recurrence_end_at,
+            start_date: payload.start_date,
+            due_date: payload.due_date,
+          } as TaskMetadata,
+          getTodayStr(),
+        );
+        if (outcome.kind === 'advance') {
+          payload.status = editingTask.value.status;
+          payload.start_date = outcome.start_date;
+          payload.due_date = outcome.due_date;
+          payload.completed_at = '';
+          editingTask.value.completed_at = '';
+          showToast(t('task.recurrence_advanced', { date: outcome.due_date || outcome.start_date }));
+        }
+      }
+
       if (editingTask.value.status !== payload.status) {
         if (payload.status === 'done') {
-          editingTask.value.completed_at = new Date().toISOString().split('T')[0];
+          editingTask.value.completed_at = getTodayStr();
         } else {
           editingTask.value.completed_at = '';
         }
@@ -210,8 +288,8 @@ export function useTaskCrud(
            updatedCustomFields['order'] = editingTask.value.custom_fields['order'] as string;
       }
       
-      const properties = {
-        ...updatedCustomFields,
+      const edited = taskProperties({
+        custom_fields: updatedCustomFields,
         status: editingTask.value.status || 'todo',
         is_transferred: editingTaskParams.value.is_transferred,
         transferred_to: editingTaskParams.value.transferred_to,
@@ -219,12 +297,32 @@ export function useTaskCrud(
         priority: editingTaskParams.value.priority,
         start_date: editingTaskParams.value.start_date,
         due_date: editingTaskParams.value.due_date,
+        due_time: editingTaskParams.value.due_time,
+        reminders: editingTaskParams.value.reminders,
+        recurrence: editingTaskParams.value.recurrence,
+        recurrence_end_at: editingTaskParams.value.recurrence_end_at,
+        parent_id: editingTaskParams.value.parent_id,
         comment: editingTaskParams.value.comment,
         source_link: editingTask.value.source_link || '',
         tags: tagArray,
         project_id: editingTaskParams.value.project_id,
-        completed_at: editingTask.value.completed_at || ''
-      };
+        completed_at: editingTask.value.completed_at || '',
+      });
+
+      // A write changes the keys it names and leaves the rest of the file
+      // alone, so a custom field the user deleted has to be named as `null` —
+      // otherwise the key is merely unmentioned, stays where it is, and comes
+      // straight back the next time the task is read.
+      //
+      // Safe to derive by subtraction here, and only here, because this form
+      // loads every frontmatter key as a row: a key missing from `edited` is
+      // one the user removed, never one the form never showed them.
+      const cleared: Record<string, null> = {};
+      for (const key of Object.keys(editingTask.value.custom_fields || {})) {
+        if (!(key in edited)) cleared[key] = null;
+      }
+
+      const properties = { ...cleared, ...edited };
 
       if (editingTask.value.isNew) {
         const relPath = `Tasks/${crypto.randomUUID()}.md`;
@@ -232,7 +330,7 @@ export function useTaskCrud(
         await ns.writeNode({
           relPath: relPath,
           nodeType: 'task',
-          title: editingTaskParams.value.title || 'Untitled',
+          title: editingTaskParams.value.title || t('task.untitled_task'),
           properties: properties,
           content: editingTaskParams.value.content,
           eventType: 'created'
@@ -242,8 +340,8 @@ export function useTaskCrud(
         const newTask: TaskMetadata = {
           id: relPath,
           path: relPath,
-          title: editingTaskParams.value.title || 'Untitled',
-          content: editingTaskParams.value.content,
+          title: editingTaskParams.value.title || t('task.untitled_task'),
+          preview: editingTaskParams.value.content,
           created_at: nowStr,
           updated_at: nowStr,
           custom_fields: updatedCustomFields,
@@ -260,13 +358,18 @@ export function useTaskCrud(
         });
         
         editingTask.value.title = editingTaskParams.value.title;
-        editingTask.value.content = editingTaskParams.value.content;
+        editingTask.value.preview = editingTaskParams.value.content;
         editingTask.value.is_transferred = editingTaskParams.value.is_transferred;
         editingTask.value.transferred_to = editingTaskParams.value.transferred_to;
         editingTask.value.track_progress = editingTaskParams.value.track_progress;
         editingTask.value.priority = editingTaskParams.value.priority;
         editingTask.value.start_date = editingTaskParams.value.start_date;
         editingTask.value.due_date = editingTaskParams.value.due_date;
+        editingTask.value.due_time = editingTaskParams.value.due_time;
+        editingTask.value.reminders = [...editingTaskParams.value.reminders];
+        editingTask.value.recurrence = editingTaskParams.value.recurrence;
+        editingTask.value.recurrence_end_at = editingTaskParams.value.recurrence_end_at;
+        editingTask.value.parent_id = editingTaskParams.value.parent_id;
         editingTask.value.comment = editingTaskParams.value.comment;
         editingTask.value.tags = tagArray;
         editingTask.value.project_id = editingTaskParams.value.project_id;
@@ -276,6 +379,7 @@ export function useTaskCrud(
       closeEditModal();
     } catch (e) {
       logger.error("Failed to update/create task", e);
+      showToast(t('task.save_failed'));
     }
   };
 
@@ -285,18 +389,35 @@ export function useTaskCrud(
 
     return {
       id: node.id,
-      path: node.rel_path, // ID is the relative path in the node system
+      path: node.id, // ID is the relative path in the node system
       title: node.title,
-      content: node.content,
+      preview: node.preview ?? '',
       created_at: node.created_at,
       updated_at: node.updated_at,
-      status: node.properties.status || 'todo',
+      // Every field with a fixed set of legal values goes through a guard, and
+      // a value outside that set is behaved-as-unset rather than acted on. See
+      // `validation.ts`: merging two devices' edits to one frontmatter line
+      // interleaves them character by character, and the result is valid YAML
+      // that means nothing — `in_pronegress`, `2026-129-315`.
+      status: safeStatus(node.properties.status),
       is_transferred: node.properties.is_transferred || false,
       transferred_to: node.properties.transferred_to || '',
       track_progress: node.properties.track_progress || false,
-      priority: node.properties.priority || '',
-      start_date: node.properties.start_date || '',
-      due_date: node.properties.due_date || '',
+      priority: safePriority(node.properties.priority),
+      start_date: safeDate(node.properties.start_date),
+      due_date: safeDate(node.properties.due_date),
+      // `start_time` is what the reminder loop read before this field existed;
+      // vaults written by older versions still carry it.
+      due_time: safeTime(node.properties.due_time || node.properties.start_time),
+      reminders: Array.isArray(node.properties.reminders)
+        ? node.properties.reminders.filter(isValidDuration)
+        : [],
+      recurrence: safeRecurrence(node.properties.recurrence),
+      recurrence_end_at: safeDate(node.properties.recurrence_end_at),
+      parent_id: node.properties.parent_id || '',
+      // The raw properties, before the guards above substituted anything — by
+      // the time the task is mapped the evidence is gone.
+      issues: taskFieldIssues(node.properties),
       comment: node.properties.comment || '',
       source_link: node.properties.source_link || '',
       tags: tagsArray,
@@ -306,18 +427,43 @@ export function useTaskCrud(
     };
   };
 
+  /**
+   * File finished tasks away. Its own call, made once when the app opens.
+   *
+   * This used to run at the top of every `loadTasks`, and `loadTasks` is what
+   * the file watcher, the sync-completed event and every node create/delete
+   * all call — so saving one task scheduled a scan of every task in the vault
+   * and, on the strength of a date, moved files. Archiving is a housekeeping
+   * job on a day scale; it has no business firing 300ms after a keystroke.
+   */
+  const archiveDoneTasks = async (): Promise<number> => {
+    if (!vaultPath.value) return 0;
+    try {
+      return await invoke<number>('archive_done_nodes', {
+        vaultPath: vaultPath.value,
+        nodeType: 'task',
+        days: taskArchiveDays.value,
+      });
+    } catch (e) {
+      logger.error("Failed to archive done tasks", e);
+      return 0;
+    }
+  };
+
   const loadTasks = async (onProjectsLoaded?: () => Promise<void>) => {
     if (!vaultPath.value) return;
     try {
-      const archiveDays = taskArchiveDays.value;
-      await invoke('archive_done_nodes', { vaultPath: vaultPath.value, nodeType: 'task', days: archiveDays });
-      const nodes = await ns.getNodes('task');
-      tasks.value = nodes.map(mapNodeToTask);
+      // Summaries, not whole nodes: four views draw a title, some dates and a
+      // few properties, and the bodies were the bulk of what was being sent.
+      const nodes = await ns.getNodeSummaries('task');
+      // A task waiting out its undo window is still on disk. Without this it
+      // reappears in the list underneath the toast offering to bring it back.
+      tasks.value = nodes.map(mapNodeToTask).filter((task: TaskMetadata) => !isHidden(task.id));
       
       const projNodes = await ns.getNodes('project');
       projects.value = projNodes.map((node: any) => ({
         id: node.id,
-        path: node.rel_path,
+        path: node.id,
         title: node.title,
         status: node.properties.status || 'active',
         start_date: node.properties.start_date || '',
@@ -338,32 +484,83 @@ export function useTaskCrud(
     }
   };
 
-  const toggleTaskStatus = async (task: TaskMetadata) => {
-    const newStatus = task.status === 'done' ? 'todo' : 'done';
-    const nowStr = new Date().toISOString().split('T')[0];
-    const newCompletedAt = newStatus === 'done' ? nowStr : '';
-    
+  /**
+   * Tick off one occurrence of a repeating task.
+   *
+   * The task is not marked done; its dates move to the next occurrence and it
+   * stays open, which is the whole point of a repeating task. When the series
+   * has run out — `advanceRecurrence` says `complete` — it finishes like any
+   * other task instead.
+   */
+  const advanceRecurringTask = async (task: TaskMetadata) => {
+    const outcome = advanceRecurrence(task, getTodayStr());
+
+    const previous = {
+      status: task.status,
+      completed_at: task.completed_at,
+      start_date: task.start_date,
+      due_date: task.due_date,
+    };
+
+    const next = outcome.kind === 'advance'
+      ? { status: 'todo', completed_at: '', start_date: outcome.start_date, due_date: outcome.due_date }
+      : { status: 'done', completed_at: getTodayStr(), start_date: task.start_date, due_date: task.due_date };
+
+    Object.assign(task, next);
+
     try {
-      const properties = {
-        ...task.custom_fields,
-        status: newStatus,
-        is_transferred: task.is_transferred,
-        transferred_to: task.transferred_to,
-        track_progress: task.track_progress,
-        priority: task.priority,
-        start_date: task.start_date,
-        due_date: task.due_date,
-        comment: task.comment,
-        source_link: task.source_link,
-        tags: task.tags,
-        completed_at: newCompletedAt
-      };
       await ns.writeNode({
         relPath: task.path,
         nodeType: 'task',
         title: task.title,
-        properties: properties,
-        content: task.content
+        properties: taskProperties(task),
+      });
+      if (outcome.kind === 'advance') {
+        showToast(t('task.recurrence_advanced', { date: outcome.due_date || outcome.start_date }));
+      } else {
+        showToast(t('task.recurrence_finished'));
+      }
+      bus.emit('task:status-changed', {
+        id: task.id, oldStatus: previous.status, newStatus: next.status, title: task.title,
+      });
+      if (next.status === 'done') {
+        bus.emit('task:completed', { id: task.id, title: task.title, projectId: activeProject.value?.id });
+      }
+    } catch (e) {
+      logger.error("Failed to advance a repeating task", e);
+      Object.assign(task, previous);
+      showToast(t('task.save_failed'));
+    }
+  };
+
+  const toggleTaskStatus = async (task: TaskMetadata) => {
+    const goingToDone = task.status !== 'done';
+
+    // A repeating task that is being ticked off does not finish — it moves to
+    // its next occurrence and stays open. Un-ticking one is left alone: the
+    // dates have already moved on, and rolling them back would be guessing at
+    // which occurrence the user meant.
+    if (goingToDone && repeats(task)) {
+      return advanceRecurringTask(task);
+    }
+
+    const newStatus = goingToDone ? 'done' : 'todo';
+    // The local date, not the UTC one. A task ticked at half past midnight in
+    // UTC+7 is stamped with yesterday by `toISOString`, and the Today view —
+    // which compares against the local date — then hides the task the moment
+    // the user completes it.
+    const newCompletedAt = newStatus === 'done' ? getTodayStr() : '';
+    const previousStatus = task.status;
+    const previousCompletedAt = task.completed_at;
+
+    try {
+      await ns.writeNode({
+        relPath: task.path,
+        nodeType: 'task',
+        title: task.title,
+        properties: taskProperties(task, { status: newStatus, completed_at: newCompletedAt }),
+        // No body: this write changes a property. Sending the copy loaded with
+        // the list would revert an edit made since, in another window or by sync.
       });
       task.status = newStatus;
       task.completed_at = newCompletedAt;
@@ -373,32 +570,89 @@ export function useTaskCrud(
       }
     } catch (e) {
       logger.error("Failed to update task", e);
+      task.status = previousStatus;
+      task.completed_at = previousCompletedAt;
+      showToast(t('task.save_failed'));
     }
   };
 
+  // ── Deleting ───────────────────────────────────────────────────────
+  //
+  // The work is held behind a timer and undone by cancelling it; see
+  // `useTaskDelete` for why that is the only shape an undo can take here.
+  const {
+    pending: pendingDelete,
+    isHidden,
+    scheduleDelete,
+    deleteTaskTree,
+    deleteMany,
+    undo: undoDelete,
+    commit: commitDelete,
+  } = useTaskDelete({
+    tasks,
+    ns,
+    onFailed: () => showToast(t('task.delete_failed')),
+  });
+
+  // Cancel / keep / delete-everything is a genuine three-way choice, and the
+  // platform dialog only offers two. So this one is asked in a modal the app
+  // draws, with the promise resolved by whichever button is pressed.
+  const pendingSubtreeDelete = ref<{ task: TaskMetadata; count: number } | null>(null);
+  let resolveSubtreeChoice: ((choice: 'keep' | 'all' | null) => void) | null = null;
+
+  const askSubtreeChoice = (task: TaskMetadata, count: number) =>
+    new Promise<'keep' | 'all' | null>((resolve) => {
+      pendingSubtreeDelete.value = { task, count };
+      resolveSubtreeChoice = resolve;
+    });
+
+  const answerSubtreeDelete = (choice: 'keep' | 'all' | null) => {
+    pendingSubtreeDelete.value = null;
+    resolveSubtreeChoice?.(choice);
+    resolveSubtreeChoice = null;
+  };
+
+  /**
+   * Delete one task.
+   *
+   * How much it asks first is the user's setting; see `taskDeleteConfirm`. The
+   * undo window happens either way — the setting decides how loudly the delete
+   * announces itself, not whether it can be taken back.
+   *
+   * `inline` is handled by the views, which turn the bin into a second button
+   * rather than opening anything, so by the time it reaches here the user has
+   * already pressed twice and there is nothing left to ask.
+   *
+   * A parent with subtasks always asks, whatever the setting says: what
+   * happens to the children is a real question and not a yes/no, and no undo
+   * window can stand in for an answer to it.
+   */
   const deleteTask = async (task: TaskMetadata) => {
-    let isConfirmed = false;
-    try {
-      isConfirmed = await ask('This action cannot be undone. The task will be permanently deleted.', { 
-        title: 'Delete this task?', 
-        kind: 'warning',
-        okLabel: 'Delete',
-        cancelLabel: 'Cancel'
-      });
-    } catch (e) {
-      logger.warn("Tauri confirm failed, falling back to window.confirm", e);
-      isConfirmed = window.confirm('Delete this task?');
+    const descendants = descendantsOf(task, tasks.value);
+    if (descendants.length > 0) {
+      const choice = await askSubtreeChoice(task, descendants.length);
+      if (!choice) return;
+      await deleteTaskTree(task, choice);
+      return;
     }
-    
-    if (!isConfirmed) return;
-    
-    try {
-      await ns.deleteNode({ relPath: task.path });
-      const idx = tasks.value.findIndex(t => t.id === task.id);
-      if (idx !== -1) tasks.value.splice(idx, 1);
-    } catch (e) {
-      logger.error("Failed to delete task", e);
+
+    if (taskDeleteConfirm.value === 'dialog') {
+      let isConfirmed = false;
+      try {
+        isConfirmed = await ask(t('task.delete_task_body'), {
+          title: t('task.delete_task_title'),
+          kind: 'warning',
+          okLabel: t('task.delete_confirm'),
+          cancelLabel: t('task.delete_cancel'),
+        });
+      } catch (e) {
+        logger.warn("Tauri confirm failed, falling back to window.confirm", e);
+        isConfirmed = window.confirm(t('task.delete_task_title'));
+      }
+      if (!isConfirmed) return;
     }
+
+    await scheduleDelete([task], [], task.title);
   };
 
   const handleModalDelete = async () => {
@@ -417,10 +671,13 @@ export function useTaskCrud(
   return {
     editingTask, editingTaskParams, customFields,
     toastMessage, showToast,
-    loadTasks, saveTask, mapNodeToTask,
+    loadTasks, archiveDoneTasks, saveTask, mapNodeToTask,
     openEditModal, openCreateModal, closeEditModal,
     handleModalSave, handleModalDelete,
     openEditById,
     toggleTaskStatus, deleteTask,
+    pendingSubtreeDelete, answerSubtreeDelete,
+    pendingDelete, undoDelete, commitDelete, deleteMany,
+    taskDeleteConfirm,
   };
 }

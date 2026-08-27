@@ -14,7 +14,12 @@ import { useAppLockStore } from '../../stores/useAppLockStore';
 const bus = useEventBus();
 
 const emit = defineEmits<{
-    (e: 'edit-item', id: string, type: string): void
+    /**
+     * `query` is what the reader typed to find this. Files carry it through so
+     * a document can open on the page the phrase is actually on, rather than at
+     * page one.
+     */
+    (e: 'edit-item', id: string, type: string, query?: string): void
 }>();
 
 const props = defineProps<{
@@ -196,7 +201,7 @@ const getTypeColor = (type: string) => {
 };
 
 const openPreview = async (item: NexusItem | SearchResult) => {
-    emit('edit-item', item.id, item.item_type);
+    emit('edit-item', item.id, item.item_type, searchQuery.value.trim() || undefined);
 };
 
 const openPreviewFromGraph = async (node: GraphNode) => {

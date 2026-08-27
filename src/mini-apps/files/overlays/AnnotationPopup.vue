@@ -126,7 +126,7 @@ const executeDelete = () => {
             <span class="text-xs font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">
               {{ mode === 'create' ? 'Highlight' : 'Edit Highlight' }}
             </span>
-            <button @click="emit('close')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark cursor-pointer" aria-label="More Options">
+            <button @click="emit('close')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark cursor-pointer" :aria-label="$t('file.close_panel')">
               <X class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -162,7 +162,7 @@ const executeDelete = () => {
               ]"
             >
               <MessageSquare class="w-3.5 h-3.5" />
-              Note
+              {{ $t('file.note') }}
             </button>
           </div>
 
@@ -172,7 +172,7 @@ const executeDelete = () => {
               <textarea
                 ref="noteInputRef"
                 v-model="noteText"
-                placeholder="Add a note…"
+                :placeholder="$t('file.add_note_placeholder')"
                 class="w-full text-xs bg-surface-hover/50 dark:bg-surface-hover-dark/50 border border-border dark:border-border-dark rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-accent dark:focus:ring-accent-dark text-text dark:text-text-dark placeholder:text-muted dark:placeholder:text-muted-dark"
                 rows="3"
                 @keydown.meta.enter="handleSave"
@@ -189,14 +189,14 @@ const executeDelete = () => {
               class="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer"
             >
               <Trash2 class="w-3.5 h-3.5" />
-              Delete
+              {{ $t('file.delete') }}
             </button>
             <div class="flex-1" />
             <button
               @click="emit('close')"
               class="px-3 py-1.5 rounded-md text-xs text-muted dark:text-muted-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark transition-colors cursor-pointer"
             >
-              Cancel
+              {{ $t('file.cancel') }}
             </button>
             <button
               @click="handleSave"
@@ -211,7 +211,7 @@ const executeDelete = () => {
     
     <ConfirmModal
       :show="showConfirmDelete"
-      title="Delete Highlight"
+      :title="$t('file.delete_highlight')"
       message="Are you sure you want to delete this highlight? This action cannot be undone."
       confirm-text="Delete"
       :is-destructive="true"

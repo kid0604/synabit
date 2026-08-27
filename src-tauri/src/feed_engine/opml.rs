@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ImportedFeed {
     pub url: String,
+    pub site_url: String,
     pub title: String,
     pub category: String,
     pub feed_type: String,
@@ -50,6 +51,7 @@ fn collect_outlines(
 
                 feeds.push(ImportedFeed {
                     url: xml_url.clone(),
+                    site_url: outline.html_url.clone().unwrap_or_default(),
                     title,
                     category: parent_category.to_string(),
                     feed_type,

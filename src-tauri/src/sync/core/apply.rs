@@ -174,7 +174,18 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
         fs::create_dir_all(parent)?;
     }
 
-    if payload.is_json {
+    // A Finance file is merged row by row when both sides know how; when the
+    // other device does not, `pull_finance` says so and this falls through to
+    // resolving the file whole, exactly as before.
+    let merged_finance = if crate::sync::core::finance_document::is_structured(&payload.rel_path) {
+        pull_finance(app_handle, &local_path, node_id, payload, vault_id)?
+    } else {
+        false
+    };
+
+    if merged_finance {
+        // Already written by the merge.
+    } else if payload.is_json {
         pull_json_impl(
             app_handle,
             vault_path,
@@ -321,6 +332,63 @@ pub fn apply_delete_payload<R: tauri::Runtime>(
 // Pull helpers
 // ---------------------------------------------------------------------------
 
+/// Merge a Finance file row by row, or report that it cannot be.
+///
+/// Returns `false` when the merged document carries no Finance containers,
+/// which means the snapshot came from a device that has not been taught to
+/// write them. The caller then falls back to resolving the file whole — the
+/// behaviour every `.json` node had before this existed.
+///
+/// Unlike the whole-file path there is no timestamp comparison here and no
+/// loser. Two devices that each added a transaction end up with both, because
+/// they wrote different keys of the same map.
+fn pull_finance<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    local_path: &Path,
+    node_id: &str,
+    payload: &crate::sync::core::types::DocSyncPayload,
+    vault_id: &str,
+) -> AppResult<bool> {
+    let db_state = app_handle.state::<crate::db::DbState>();
+    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+
+    let doc = db.get_crdt_doc(vault_id, node_id)?;
+
+    // The local file may hold edits this device made but has not pushed yet;
+    // folding them in first is what stops the merge from resurrecting rows the
+    // user deleted between the last push and now.
+    if local_path.exists() {
+        let local_text = read_text_or_empty_if_missing(local_path)?;
+        if crate::sync::core::finance_document::split(&local_text).is_some() {
+            if let Ok(delta) = crate::sync::core::crdt::apply_finance_update(&doc, &local_text) {
+                if !delta.is_empty() {
+                    db.save_crdt_delta(vault_id, node_id, delta)?;
+                }
+            }
+        }
+    }
+
+    let (delta, merged) = crate::sync::core::crdt::merge_finance_snapshot(&doc, &payload.snapshot)
+        .map_err(AppError::SyncError)?;
+
+    let Some(merged) = merged else {
+        return Ok(false);
+    };
+
+    if !delta.is_empty() {
+        db.save_crdt_delta(vault_id, node_id, delta)?;
+    }
+
+    let current = read_text_or_empty_if_missing(local_path)?;
+    if current != merged {
+        atomic_write(local_path, merged.as_bytes())
+            .map_err(|e| AppError::SyncError(format!("Write Finance {}: {}", node_id, e)))?;
+    }
+
+    info!("Finance merge for {}: rows from both devices kept", node_id);
+    Ok(true)
+}
+
 /// Pull a JSON/canvas file using LWW (last-write-wins on `metadata.updated_at`).
 fn pull_json_impl<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
@@ -413,7 +481,9 @@ fn pull_markdown<R: tauri::Runtime>(
         if let Err(e) = doc.import(&payload.snapshot) {
             return Err(format!("CRDT import error: {:?}", e));
         }
-        let text = doc.get_text("content").to_string();
+        // The file, not the body: the frontmatter now lives in its own
+        // container and is put back on the front here.
+        let text = crate::sync::core::crdt::node_text(&doc);
         let delta = doc.export_snapshot();
         Ok((delta, text))
     }));
@@ -479,7 +549,7 @@ fn pull_markdown_reset<R: tauri::Runtime>(
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         db.replace_crdt_snapshot(vault_id, node_id, &payload.snapshot)?;
         let doc = db.get_crdt_doc(vault_id, node_id)?;
-        doc.get_text("content").to_string()
+        crate::sync::core::crdt::node_text(&doc)
     };
 
     let local_text = read_text_or_empty_if_missing(local_path)?;

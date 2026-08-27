@@ -115,3 +115,29 @@ body.zen-mode nav[data-tauri-drag-region] {
   max-width: 800px;
   margin: 0 auto;
 }
+
+/* ─────────────────────────────────────────────────
+   Touch targets
+   ─────────────────────────────────────────────────
+   Icon buttons across the app are `p-1.5` around a 16px icon, which is a 28x28
+   target. On a phone that is well under what a thumb reliably hits, and it is
+   the single most common control in the note editor and the task list.
+
+   Height only, and this is measured rather than assumed. Raising the *width*
+   to 44px too was the obvious move and it is wrong: a twelve-button editor
+   toolbar goes from 390px to 582px and runs off the side of a 360dp phone.
+   Height costs nothing — toolbars are single rows with vertical room, and a
+   fixed-height header (`h-16`) stays exactly 64px.
+
+   `pointer: coarse` so a desktop mouse, which is precise, keeps the compact
+   layout it was designed with.
+
+   This does not reach 48dp in both dimensions. Dense toolbars need either
+   fewer buttons on a phone or a horizontally scrolling row, and that is a
+   decision per toolbar rather than something a stylesheet can take.
+   ───────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  button {
+    min-height: 44px;
+  }
+}

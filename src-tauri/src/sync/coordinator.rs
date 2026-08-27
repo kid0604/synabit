@@ -2,16 +2,12 @@ use crate::db::sync_outbox::OutboxRecord;
 use crate::db::sync_provider_state::ProviderSyncState;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
-use crate::sync::adapter::{
-    AdapterSyncMode, AdapterSyncPlan, PullLimits, PushAck, SyncAdapter,
-};
+use crate::sync::adapter::{AdapterSyncMode, AdapterSyncPlan, PullLimits, PushAck, SyncAdapter};
 use crate::sync::core::change::{
     detect_deletions, detect_local_changes, prepare_durable_outbox_operations, LocalChange,
 };
 use crate::sync::core::identity::VaultIdentity;
-use crate::sync::core::types::{
-    DocSyncPayload, SyncPayload, SyncResult, SyncRunContext,
-};
+use crate::sync::core::types::{DocSyncPayload, SyncPayload, SyncResult, SyncRunContext};
 use std::path::Path;
 use std::sync::Arc;
 use synabit_protocol::SyncEntryKind;
@@ -521,9 +517,10 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     Some(InboxApplyFailureKind::Corrupt.as_str()),
                     chrono::Utc::now().timestamp_millis(),
                 )?;
-                result
-                    .errors
-                    .push(format!("quarantined {}: Missing encrypted_payload", hex::encode(inbox_record.operation_id)));
+                result.errors.push(format!(
+                    "quarantined {}: Missing encrypted_payload",
+                    hex::encode(inbox_record.operation_id)
+                ));
                 continue;
             }
         };
@@ -544,9 +541,10 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     Some(InboxApplyFailureKind::Corrupt.as_str()),
                     chrono::Utc::now().timestamp_millis(),
                 )?;
-                result
-                    .errors
-                    .push(format!("quarantined {}: Missing payload_hash", hex::encode(inbox_record.operation_id)));
+                result.errors.push(format!(
+                    "quarantined {}: Missing payload_hash",
+                    hex::encode(inbox_record.operation_id)
+                ));
                 continue;
             }
         };
@@ -738,10 +736,12 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                             doc_payload.rel_path,
                             kept
                         );
-                        result.conflicts.push(crate::sync::core::types::SyncConflict {
-                            rel_path: doc_payload.rel_path.clone(),
-                            kept_as: kept.clone(),
-                        });
+                        result
+                            .conflicts
+                            .push(crate::sync::core::types::SyncConflict {
+                                rel_path: doc_payload.rel_path.clone(),
+                                kept_as: kept.clone(),
+                            });
                     }
                 }
 
@@ -845,7 +845,6 @@ pub fn process_staged_inbox_page<R: tauri::Runtime>(
                     .push(format!("{}: waiting on attachment data", asset.rel_path));
                 continue;
             }
-
         }
     }
 
@@ -1511,12 +1510,8 @@ impl SyncCoordinator {
 
         // The presence check asks "is the vault there at all", so it looks at
         // everything on disk, not just the documents this engine can publish.
-        let deletions: Vec<LocalChange> = detect_deletions(
-            app_handle,
-            vault_path_obj,
-            &vault_id,
-            &all_files,
-        )?;
+        let deletions: Vec<LocalChange> =
+            detect_deletions(app_handle, vault_path_obj, &vault_id, &all_files)?;
         log::info!(
             "Detected {} local change(s) and {} deletion(s)",
             edit_count,

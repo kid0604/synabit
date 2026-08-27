@@ -1,0 +1,208 @@
+{
+  "$comment": [
+    "QuickCap's tag grammar, as data, read by two test suites in two languages.",
+    "",
+    "The grammar has two implementations and has to: the app reads tags while",
+    "the user is still typing, which happens in TypeScript, and the migration",
+    "reads them off bytes on disk, which happens in Rust. Two implementations",
+    "that drift produce a vault where the tags shown are not the tags stored.",
+    "",
+    "So neither implementation owns the grammar — this file does.",
+    "src/mini-apps/quickcap/__tests__/parsing.spec.ts and",
+    "src-tauri/src/utils/tag_grammar.rs both run every case below, and a",
+    "disagreement between them is a failing test rather than a support ticket.",
+    "",
+    "Adding a case is how you change the grammar. Changing one should take an",
+    "argument."
+  ],
+  "cases": [
+    {
+      "name": "a plain tag",
+      "input": "họp lúc 3h #công-việc",
+      "tags": ["công-việc"]
+    },
+    {
+      "name": "several tags, in the order they appear",
+      "input": "#sau #trước",
+      "tags": ["sau", "trước"]
+    },
+    {
+      "name": "a tag opening the note",
+      "input": "#ý-tưởng bán hàng theo mùa",
+      "tags": ["ý-tưởng"]
+    },
+    {
+      "name": "a tag mid-sentence",
+      "input": "nói với #minh về giá",
+      "tags": ["minh"]
+    },
+    {
+      "name": "Vietnamese diacritics survive intact",
+      "input": "#dự-án #kế_hoạch #đường",
+      "tags": ["dự-án", "kế_hoạch", "đường"]
+    },
+    {
+      "name": "a Bear-style wrapped tag with spaces",
+      "input": "ghi chú #kế hoạch quý bốn#",
+      "tags": ["kế hoạch quý bốn"]
+    },
+    {
+      "name": "the closing hash of a wrapped tag does not open another",
+      "input": "#dự án lớn# xong",
+      "tags": ["dự án lớn"]
+    },
+    {
+      "name": "a repeated tag is listed once",
+      "input": "#lặp giữa bài #lặp và cuối #lặp",
+      "tags": ["lặp"]
+    },
+    {
+      "name": "an empty cap",
+      "input": "",
+      "tags": []
+    },
+    {
+      "name": "prose with no tags",
+      "input": "không có thẻ nào ở đây",
+      "tags": []
+    },
+
+    {
+      "name": "a six-digit hex colour is a colour",
+      "input": "đổi #ff0000 thành xanh",
+      "tags": []
+    },
+    {
+      "name": "three-digit hex, and hex starting with a digit",
+      "input": "nền #fff viền #1a1a1c",
+      "tags": []
+    },
+    {
+      "name": "eight-digit hex with alpha",
+      "input": "mờ dần #ff0000ff",
+      "tags": []
+    },
+    {
+      "name": "a hex-shaped English word reads as a colour — the known cost",
+      "input": "#cafe và #facade",
+      "tags": []
+    },
+    {
+      "name": "one more letter, and it is a tag again",
+      "input": "#cafes",
+      "tags": ["cafes"]
+    },
+    {
+      "name": "a diacritic, and it is a tag again",
+      "input": "#cà-phê",
+      "tags": ["cà-phê"]
+    },
+    {
+      "name": "an issue number is not a tag",
+      "input": "sửa xong #404 và #1",
+      "tags": []
+    },
+    {
+      "name": "a bare year is not a tag",
+      "input": "mục tiêu #2026",
+      "tags": []
+    },
+    {
+      "name": "a Markdown heading is not a tag",
+      "input": "# Tiêu đề\nnội dung",
+      "tags": []
+    },
+    {
+      "name": "a second-level heading is not a tag",
+      "input": "## Mục nhỏ",
+      "tags": []
+    },
+    {
+      "name": "a lone hash is not a tag",
+      "input": "ký hiệu # đứng một mình",
+      "tags": []
+    },
+    {
+      "name": "a hash glued to the end of a word is not a tag",
+      "input": "C#",
+      "tags": []
+    },
+    {
+      "name": "a hash inside a product code is not a tag",
+      "input": "mã sản phẩm A#1",
+      "tags": []
+    },
+
+    {
+      "name": "a fenced code block is not prose",
+      "input": "thử cái này\n\n```c\n#include <stdio.h>\n#define N 4\n```\n\n#lập-trình",
+      "tags": ["lập-trình"]
+    },
+    {
+      "name": "a shebang inside a fence",
+      "input": "```\n#!/bin/bash\n#cd-vào-đây\n```",
+      "tags": []
+    },
+    {
+      "name": "a tilde fence",
+      "input": "~~~\n#define X\n~~~",
+      "tags": []
+    },
+    {
+      "name": "inline code",
+      "input": "dùng `#define` chứ đừng dùng #macro",
+      "tags": ["macro"]
+    },
+    {
+      "name": "a fence the user has not closed yet",
+      "input": "#đang-viết\n\n```js\nconst x = \"#chưa-đóng\"",
+      "tags": ["đang-viết"]
+    },
+    {
+      "name": "a tag on the line before a fence",
+      "input": "#ghi-nhớ\n```\ncode\n```",
+      "tags": ["ghi-nhớ"]
+    },
+
+    {
+      "name": "a tag followed by a full stop",
+      "input": "họp về #dự-án.",
+      "tags": ["dự-án"]
+    },
+    {
+      "name": "tags followed by other sentence punctuation",
+      "input": "#một, #hai; #ba!",
+      "tags": ["một", "hai", "ba"]
+    },
+    {
+      "name": "a trailing separator is trimmed, not fatal",
+      "input": "#dự-án-",
+      "tags": ["dự-án"]
+    },
+    {
+      "name": "a trailing underscore is trimmed",
+      "input": "#tên_",
+      "tags": ["tên"]
+    },
+    {
+      "name": "a tag ending the cap with no trailing newline",
+      "input": "xong rồi #hoàn-thành",
+      "tags": ["hoàn-thành"]
+    },
+    {
+      "name": "a tag alone on its line",
+      "input": "nội dung\n\n#thẻ\n",
+      "tags": ["thẻ"]
+    },
+    {
+      "name": "the legacy colour marker is not scanned",
+      "input": "<!--color:bg-red-50 dark:bg-red-950/30-->\nnội dung #thẻ",
+      "tags": ["thẻ"]
+    },
+    {
+      "name": "frontmatter-style content with a tag in the body",
+      "input": "một dòng\nhai dòng #ghi-chú\nba dòng",
+      "tags": ["ghi-chú"]
+    }
+  ]
+}

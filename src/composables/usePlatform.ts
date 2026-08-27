@@ -31,8 +31,10 @@ export function usePlatform() {
     }
   };
 
-  // Run initialization
-  initOS();
+  // Detection starts immediately so callers that only read the refs keep
+  // working, and the promise is kept so callers that need the answer before
+  // they act can await it without triggering a second round of IPC.
+  const ready = initOS();
 
   // Determine if we should use mobile layout
   // Uses Mobile OS detection, but falls back to screen size if OS info is unavailable/desktop window is small
@@ -52,6 +54,7 @@ export function usePlatform() {
     isMac,
     isWindows,
     isLinux,
-    initOS
+    /** Resolves once the OS is known. Awaiting reuses the in-flight detection. */
+    initOS: () => ready
   };
 }

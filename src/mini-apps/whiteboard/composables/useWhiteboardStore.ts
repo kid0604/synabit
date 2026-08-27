@@ -3,32 +3,18 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { WhiteboardMetadata } from '../../../types/ipc';
+import {
+  BOARD_SCHEMA_VERSION,
+  newBoardData,
+  readBoardFile,
+  stampElement,
+} from '../boardFile';
+import type { WBEdge, WBNode, WhiteboardData } from '../boardFile';
 
-export interface WBNode {
-  id: string;
-  type: 'shape' | 'stroke' | 'mindmap' | 'text' | 'note';
-  position: { x: number; y: number };
-  data: Record<string, any>;
-}
-
-export interface WBEdge {
-  id: string;
-  source: string;
-  sourceHandle?: string;
-  target: string;
-  targetHandle?: string;
-  type: string;
-  data?: Record<string, any>;
-}
-
-export interface WhiteboardData {
-  title: string;
-  tags: string[];
-  created_at: string;
-  viewport: { x: number; y: number; zoom: number };
-  nodes: WBNode[];
-  edges: WBEdge[];
-}
+// The file format lives in `boardFile`, which is the only thing that reads or
+// writes one. Re-exported because every component in this app names these
+// types through the store.
+export type { WBEdge, WBNode, WhiteboardData };
 
 export type ToolMode = 'select' | 'pan' | 'draw' | 'shape' | 'mindmap' | 'text' | 'eraser';
 export type DrawSubTool = 'pen' | 'highlighter' | 'eraser';
@@ -56,6 +42,14 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
   });
   const isLoading = ref(false);
   const isSaving = ref(false);
+  /**
+   * Set when the open board was written by a newer build of the app.
+   *
+   * Nothing is loaded in that case and nothing may be saved: writing back a
+   * file we only half understand would drop whatever the newer build put in
+   * it, and the user would find out much later.
+   */
+  const currentBoardUnsupported = ref(false);
 
   // Undo/Redo
   const undoStack = ref<string[]>([]);
@@ -88,11 +82,20 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
         vaultPath: vaultPath.value,
         path: board.path,
       });
-      const parsed = JSON.parse(raw);
-      if (!parsed.nodes) parsed.nodes = [];
-      if (!parsed.edges) parsed.edges = [];
-      if (!parsed.viewport) parsed.viewport = { x: 0, y: 0, zoom: 1 };
-      currentBoardData.value = parsed;
+      const read = readBoardFile(raw);
+      if (!read.ok) {
+        currentBoardData.value = null;
+        currentBoardId.value = boardId;
+        currentBoardUnsupported.value = read.reason === 'too-new';
+        logger.error(
+          read.reason === 'too-new'
+            ? `Whiteboard ${board.path} is version ${read.fileVersion}; this build reads ${BOARD_SCHEMA_VERSION}`
+            : `Whiteboard ${board.path} is not readable JSON`
+        );
+        return;
+      }
+      currentBoardUnsupported.value = false;
+      currentBoardData.value = read.data;
       currentBoardId.value = boardId;
       undoStack.value = [];
       redoStack.value = [];
@@ -103,14 +106,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
 
   async function createBoard(title: string = 'Untitled Board') {
     try {
-      const data: WhiteboardData = {
-        title,
-        tags: [],
-        created_at: new Date().toISOString(),
-        viewport: { x: 0, y: 0, zoom: 1 },
-        nodes: [],
-        edges: [],
-      };
+      const data = newBoardData(title);
       const content = JSON.stringify(data, null, 2);
       const meta = await invoke<WhiteboardMetadata>('create_whiteboard', {
         vaultPath: vaultPath.value,
@@ -121,18 +117,39 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       boards.value.unshift(meta);
       currentBoardId.value = meta.id;
       currentBoardData.value = data;
+      currentBoardUnsupported.value = false;
     } catch (err) {
       logger.error('Failed to create whiteboard', err as string);
     }
   }
 
+  /**
+   * Record when this save happened, inside the file.
+   *
+   * Sync settles two copies of a board by comparing `metadata.updated_at` as
+   * a string. Boards never wrote one, so both sides read as empty, and the
+   * comparison is `remote >= local` — an empty string is not greater than an
+   * empty string, so the remote copy won every time, including when it was
+   * the older of the two. A board edited here could be replaced by a stale
+   * copy from another device, silently.
+   *
+   * UTC, in RFC 3339, because the two devices being compared need not share
+   * a time zone and the comparison is lexicographic.
+   */
+  function stampSave(data: WhiteboardData) {
+    data.schemaVersion = BOARD_SCHEMA_VERSION;
+    data.metadata = { ...(data.metadata || {}), updated_at: new Date().toISOString() };
+  }
+
   async function saveCurrentBoard() {
+    if (currentBoardUnsupported.value) return;
     if (!currentBoardData.value || !currentBoardId.value) return;
     const board = boards.value.find(b => b.id === currentBoardId.value);
     if (!board) return;
 
     try {
       isSaving.value = true;
+      stampSave(currentBoardData.value);
       const content = JSON.stringify(currentBoardData.value, null, 2);
       await invoke('update_whiteboard', {
         vaultPath: vaultPath.value,
@@ -176,12 +193,68 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
   }
 
   // ─── Undo/Redo ─────────────────────────────────────────
-  function pushUndoState() {
+  //
+  // One entry per thing the user did. Getting there needs two guards, because
+  // the code below calls `pushUndoState` far more often than a person acts:
+  //
+  //   - a batch, for an action that is many operations. Erasing across a
+  //     drawing removes and rebuilds a stroke per pointer event, and each one
+  //     used to push; a single wipe could push every other entry off the end
+  //     of a fifty-deep stack, leaving nothing to go back to.
+  //   - coalescing, for an action that arrives as a stream. A colour slider
+  //     and the label field both emit on `input`, so dragging one produces a
+  //     push per pixel. Repeats against the same target inside the window
+  //     below fold into the first, which is the state the user wants back.
+  const COALESCE_MS = 700;
+  let batchDepth = 0;
+  let batchPushed = false;
+  let lastPushKey: string | null = null;
+  let lastPushAt = 0;
+
+  /**
+   * Treat everything until `endUndoBatch` as one action.
+   *
+   * Nests: only the outermost pair records anything, so a batched operation
+   * can call another one without splitting the entry.
+   */
+  function beginUndoBatch() {
+    if (batchDepth === 0) batchPushed = false;
+    batchDepth++;
+  }
+
+  function endUndoBatch() {
+    if (batchDepth > 0) batchDepth--;
+  }
+
+  /**
+   * Record the state to come back to, before changing it.
+   *
+   * `coalesceKey` names what is being changed — a node id, usually. Two
+   * pushes with the same key in quick succession keep only the first.
+   */
+  function pushUndoState(coalesceKey?: string) {
     if (!currentBoardData.value) return;
+
+    if (batchDepth > 0) {
+      if (batchPushed) return;
+      batchPushed = true;
+    } else if (coalesceKey) {
+      const now = Date.now();
+      const repeat = coalesceKey === lastPushKey && now - lastPushAt < COALESCE_MS;
+      lastPushKey = coalesceKey;
+      lastPushAt = now;
+      if (repeat) return;
+    } else {
+      lastPushKey = null;
+    }
+
     const snapshot = JSON.stringify({
       nodes: currentBoardData.value.nodes,
       edges: currentBoardData.value.edges,
     });
+    // An operation that changed nothing is not a step back to anywhere.
+    if (snapshot === undoStack.value[undoStack.value.length - 1]) return;
+
     undoStack.value.push(snapshot);
     if (undoStack.value.length > MAX_UNDO) undoStack.value.shift();
     redoStack.value = [];
@@ -189,6 +262,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
 
   function undo() {
     if (!undoStack.value.length || !currentBoardData.value) return;
+    lastPushKey = null;
     const currentSnapshot = JSON.stringify({
       nodes: currentBoardData.value.nodes,
       edges: currentBoardData.value.edges,
@@ -201,6 +275,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
 
   function redo() {
     if (!redoStack.value.length || !currentBoardData.value) return;
+    lastPushKey = null;
     const currentSnapshot = JSON.stringify({
       nodes: currentBoardData.value.nodes,
       edges: currentBoardData.value.edges,
@@ -219,12 +294,14 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
   function addNode(node: WBNode) {
     if (!currentBoardData.value) return;
     pushUndoState();
+    stampElement(node);
     currentBoardData.value.nodes.push(node);
   }
 
   function addEdge(edge: WBEdge) {
     if (!currentBoardData.value) return;
     pushUndoState();
+    stampElement(edge);
     currentBoardData.value.edges.push(edge);
   }
 
@@ -247,8 +324,18 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     if (!currentBoardData.value) return;
     const node = currentBoardData.value.nodes.find(n => n.id === nodeId);
     if (node) {
+      // Before the change, keyed on the node: a slider dragged across its
+      // range is one step back, not two hundred.
+      pushUndoState(`data:${nodeId}`);
       node.data = { ...node.data, ...data };
+      stampElement(node);
     }
+  }
+
+  /** Record that a node moved. Position is written by the canvas itself. */
+  function stampNode(nodeId: string) {
+    const node = currentBoardData.value?.nodes.find(n => n.id === nodeId);
+    if (node) stampElement(node);
   }
 
   function getMindmapColor(level: number): string {
@@ -309,6 +396,8 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     };
 
     pushUndoState();
+    stampElement(childNode);
+    stampElement(edge);
     currentBoardData.value.nodes.push(childNode);
     currentBoardData.value.edges.push(edge);
 
@@ -341,6 +430,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
         },
       };
       pushUndoState();
+      stampElement(siblingNode);
       currentBoardData.value.nodes.push(siblingNode);
       return siblingId;
     }
@@ -363,6 +453,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     drawSubTool,
     isLoading,
     isSaving,
+    currentBoardUnsupported,
     undoStack,
     redoStack,
     loadBoards,
@@ -371,6 +462,8 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     saveCurrentBoard,
     deleteBoard,
     pushUndoState,
+    beginUndoBatch,
+    endUndoBatch,
     undo,
     redo,
     generateId,
@@ -379,6 +472,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     removeNode,
     removeEdge,
     updateNodeData,
+    stampNode,
     getMindmapColor,
     addMindmapChild,
     addMindmapSibling,

@@ -51,11 +51,6 @@ const RELATION_TYPES = [
     { value: 'client', label: '📋 Client', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
 ];
 
-const existingConnectionIds = computed(() => {
-    const conns: Array<{person_id: string}> = props.person?.properties?.connections || [];
-    return new Set(conns.map(c => c.person_id));
-});
-
 const filteredPeople = computed(() => {
     return props.allPeople.filter(p => {
         if (p.id === props.person.id) return false;
@@ -110,11 +105,11 @@ onMounted(() => {
                         <UserPlus class="w-4 h-4 text-white" />
                     </div>
                     <div>
-                        <h2 class="text-sm font-bold">Link a person</h2>
+                        <h2 class="text-sm font-bold">{{ $t('people.link_a_person') }}</h2>
                         <p class="text-[11px] text-gray-500 dark:text-gray-400">to <strong>{{ person.title }}</strong></p>
                     </div>
                 </div>
-                <button @click="emit('close')" class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="More Options">
+                <button @click="emit('close')" class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" :aria-label="$t('people.close')">
                     <X class="w-4 h-4" />
                 </button>
             </div>
@@ -177,7 +172,7 @@ onMounted(() => {
                             selectedRelation === 'custom'
                                 ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900 border-transparent ring-2 ring-offset-1 ring-gray-500/30 dark:ring-offset-[#1e1e1e]'
                                 : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800']"
-                    >✨ Custom</button>
+                    >{{ $t('people.custom_option') }}</button>
                 </div>
                 
                 <div v-if="selectedRelation === 'custom'" class="mt-3">
@@ -189,14 +184,14 @@ onMounted(() => {
             <!-- Footer Actions -->
             <div class="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-black/20 flex justify-end gap-3 flex-shrink-0">
                 <button @click="emit('close')" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors">
-                    Cancel
+                    {{ $t('people.cancel') }}
                 </button>
                 <button @click="handleLink" :disabled="!canLink"
                     :class="['px-5 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2',
                         canLink ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md' : 'bg-gray-200 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed']"
                 >
                     <UserPlus class="w-4 h-4" />
-                    Link Connection
+                    {{ $t('people.link_connection') }}
                 </button>
             </div>
         </div>

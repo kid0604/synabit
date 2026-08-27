@@ -187,9 +187,9 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
 
       <div v-if="!boards.length" class="text-center text-xs text-muted dark:text-muted-dark py-8">
         <PenTool class="w-8 h-8 mx-auto mb-2 opacity-30" />
-        <p>No whiteboards yet</p>
+        <p>{{ $t('whiteboard.no_whiteboards') }}</p>
         <button @click="emit('create-board')" class="text-accent dark:text-accent-dark mt-1 hover:underline">
-          Create one
+          {{ $t('whiteboard.create_one') }}
         </button>
       </div>
     </div>

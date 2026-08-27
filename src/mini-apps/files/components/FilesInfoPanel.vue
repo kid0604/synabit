@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue';
-import { X, Plus, ExternalLink } from 'lucide-vue-next';
+import { X, Plus, ExternalLink, History } from 'lucide-vue-next';
+import NoteHistoryModal from '../../note/NoteHistoryModal.vue';
 import type { FileMetadata, FileReference } from '../composables/useFileStore';
 import type { useFileStore } from '../composables/useFileStore';
 import { watch, onMounted, computed } from 'vue';
@@ -61,7 +62,17 @@ const handleRemovePerson = async (link: string) => {
 const props = defineProps<{
   file: FileMetadata;
   store: ReturnType<typeof useFileStore>;
+  vaultPath: string;
 }>();
+
+/**
+ * An annotated file is an ordinary vault document — that is what P1 made it —
+ * so the note editor's history modal reads it with no changes at all.
+ */
+const showHistory = ref(false);
+const hasMetadata = computed(() =>
+  props.file.tags.length > 0 || (props.file.people?.length ?? 0) > 0 || !!props.file.label
+);
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -103,7 +114,7 @@ const checkReferences = async () => {
   fileRefs.value = [];
   isLoadingRefs.value = true;
   try {
-    fileRefs.value = await props.store.getFileReferences(props.file.filename);
+    fileRefs.value = await props.store.getFileReferences(props.file.id);
   } catch (e) {
     console.error(e);
   } finally {
@@ -156,48 +167,48 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
   <div class="absolute md:relative inset-0 md:inset-auto z-40 w-full md:w-72 flex-shrink-0 bg-white md:bg-white/70 dark:bg-[#0a0a0a] md:dark:bg-white/[0.03] backdrop-blur-xl md:border-l border-gray-200/50 dark:border-white/5 flex flex-col overflow-hidden">
     <!-- Header -->
     <div class="h-12 px-4 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
-      <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Info</h3>
-      <button @click="emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 cursor-pointer" aria-label="More Options"><X class="w-3.5 h-3.5" /></button>
+      <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">{{ $t('file.info') }}</h3>
+      <button @click="emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded-md text-gray-400 cursor-pointer" :aria-label="$t('file.close_panel')"><X class="w-3.5 h-3.5" /></button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-4 space-y-5">
       <!-- Filename -->
       <div>
-        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Name</h4>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{{ $t('file.name_col') }}</h4>
         <input v-if="isRenaming" ref="renameInputRef" v-model="renameInput" @blur="handleRename" @keydown.enter="handleRename" @keydown.esc="isRenaming = false" class="w-full text-sm font-semibold text-gray-900 dark:text-white break-words bg-transparent border-b-2 border-indigo-500 focus:outline-none" />
         <p v-else @click="startRename" class="text-sm font-semibold text-gray-900 dark:text-white break-words" :class="(isLoadingRefs || fileRefs.length > 0) ? '' : 'cursor-text hover:underline decoration-dashed decoration-gray-400 underline-offset-4'" :title="(isLoadingRefs || fileRefs.length > 0) ? 'Cannot rename while referenced' : 'Click to rename'">{{ file.filename }}</p>
       </div>
 
       <!-- Properties -->
       <div class="p-3 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-xs">
-        <div class="flex justify-between"><span class="text-gray-500">Type</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ file.extension }}</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">Size</span><span class="font-medium text-gray-900 dark:text-white">{{ store.formatSize(file.size) }}</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">Modified</span><span class="font-medium text-gray-900 dark:text-white">{{ file.modified_at.split(' ')[0] }}</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">Created</span><span class="font-medium text-gray-900 dark:text-white">{{ file.created_at.split(' ')[0] }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.type') }}</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ file.extension }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.size_col') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ store.formatSize(file.size) }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.modified_col') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ file.modified_at.split(' ')[0] }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.created') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ file.created_at.split(' ')[0] }}</span></div>
       </div>
 
       <!-- Location -->
       <div>
-        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Location</h4>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{{ $t('file.location') }}</h4>
         <p class="text-[10px] font-mono text-gray-500 break-all p-2 bg-white dark:bg-black/40 rounded-lg border border-gray-200/50 dark:border-white/5">{{ file.path }}</p>
       </div>
 
       <!-- Tags -->
       <div>
-        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Tags</h4>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.tags') }}</h4>
         <div class="flex flex-wrap items-center gap-1.5">
           <span v-for="tag in file.tags" :key="tag" class="group relative px-2 py-0.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md text-[11px] font-medium border border-indigo-100 dark:border-indigo-500/20 flex items-center gap-1">
             #{{ tag }}
-            <button v-if="!isAssetsFile" @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" aria-label="Handle Remove Tag">
+            <button v-if="!isAssetsFile" @click="handleRemoveTag(tag)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" :aria-label="$t('file.remove_tag')">
               <X class="w-2.5 h-2.5" />
             </button>
           </span>
           <template v-if="!isAssetsFile">
             <input v-if="isAddingTag" ref="infoPanelTagRef" v-model="newTagInput" @keydown.enter="handleAddTag" @blur="isAddingTag = false; newTagInput = ''"
-              type="text" placeholder="tag..."
+              type="text" :placeholder="$t('file.tag_placeholder')"
               class="px-2 py-0.5 bg-white dark:bg-black/40 border border-indigo-300 dark:border-indigo-500/50 rounded-md text-[11px] font-medium focus:outline-none w-16" />
             <button v-else @click="startAddingTag" class="px-2 py-0.5 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-md text-[11px] font-medium text-gray-400 hover:text-indigo-500 cursor-pointer">
-              <Plus class="w-3 h-3 inline" /> Add
+              <Plus class="w-3 h-3 inline" /> {{ $t('file.add') }}
             </button>
           </template>
         </div>
@@ -205,11 +216,11 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
 
       <!-- Linked People -->
       <div>
-        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">People</h4>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.people') }}</h4>
         <div class="flex flex-wrap items-center gap-1.5 mb-2">
           <span v-for="link in (file.people || [])" :key="link" class="group relative px-2 py-0.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-md text-[11px] font-medium border border-emerald-100 dark:border-emerald-500/20 flex items-center gap-1">
             @{{ getPersonName(link) }}
-            <button v-if="!isAssetsFile" @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" aria-label="Handle Remove Person">
+            <button v-if="!isAssetsFile" @click="handleRemovePerson(link)" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer" :disabled="isSaving" :aria-label="$t('file.remove_person')">
               <X class="w-2.5 h-2.5" />
             </button>
           </span>
@@ -220,12 +231,12 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
             ref="peopleInputRef"
             v-model="searchPeopleQuery"
             type="text" 
-            placeholder="Search person..."
+            :placeholder="$t('file.search_person_placeholder')"
             class="w-full px-2 py-1.5 bg-white dark:bg-black/40 border border-emerald-300 dark:border-emerald-500/50 rounded-md text-[11px] font-medium focus:outline-none"
             @blur="handlePeopleDropdownBlur"
           />
           <button v-else @click="() => { showPeopleDropdown = true; nextTick(() => peopleInputRef?.focus()) }" class="px-2 py-1 bg-white dark:bg-white/5 border border-dashed border-gray-300 dark:border-gray-600 rounded-md text-[11px] font-medium text-gray-400 hover:text-emerald-500 cursor-pointer">
-            <Plus class="w-3 h-3 inline" /> Link Person
+            <Plus class="w-3 h-3 inline" /> {{ $t('file.link_person') }}
           </button>
           
           <!-- Dropdown -->
@@ -244,11 +255,11 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
 
       <!-- Used by -->
       <div>
-        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Used by</h4>
-        <div v-if="isLoadingRefs" class="text-xs text-gray-400">Checking references...</div>
+        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{{ $t('file.used_by') }}</h4>
+        <div v-if="isLoadingRefs" class="text-xs text-gray-400">{{ $t('file.checking_refs') }}</div>
         <div v-else-if="fileRefs.length === 0" class="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20">
           <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span class="text-xs font-medium text-green-600 dark:text-green-400">Not used by any node</span>
+          <span class="text-xs font-medium text-green-600 dark:text-green-400">{{ $t('file.not_used') }}</span>
         </div>
         <div v-else class="space-y-1.5">
           <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 mb-2">
@@ -258,15 +269,42 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
           <div v-for="ref_ in fileRefs" :key="ref_.node_id" class="flex items-center gap-2 px-3 py-2 bg-white dark:bg-black/30 rounded-lg border border-gray-200/50 dark:border-white/5">
             <span class="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded text-[9px] font-bold uppercase flex-shrink-0">{{ ref_.node_type }}</span>
             <span class="text-xs text-gray-700 dark:text-gray-300 truncate">{{ ref_.title || 'Untitled' }}</span>
+            <!-- Showing a file and pointing at it are different relationships,
+                 and only one of them breaks if the file is renamed. -->
+            <span class="ml-auto text-[9px] text-gray-400 flex-shrink-0">
+              {{ ref_.edge_type === 'attachment' ? $t('file.shown_in') : $t('file.linked_from') }}
+            </span>
           </div>
         </div>
       </div>
     </div>
 
+    <!-- History -->
+    <!--
+      Only for files somebody has annotated. A file with no tags has no vault
+      document behind it and therefore no history to show — which is correct,
+      not a gap: the history is of what a person recorded about the file, and
+      nobody has recorded anything.
+    -->
+    <div v-if="hasMetadata" class="px-3 pb-2 flex-shrink-0">
+      <button @click="showHistory = true" class="w-full py-2 rounded-lg bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer">
+        <History class="w-3.5 h-3.5" /> {{ $t('note.history') }}
+      </button>
+    </div>
+
+    <NoteHistoryModal
+      v-if="showHistory"
+      :vault-path="vaultPath"
+      :note-id="file.id"
+      :note-title="file.filename"
+      @close="showHistory = false"
+      @restored="showHistory = false"
+    />
+
     <!-- Open Externally -->
     <div class="p-3 border-t border-gray-200/50 dark:border-white/5 flex-shrink-0">
       <button @click="store.openLocalFile(file.path)" class="w-full py-2 rounded-lg bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer">
-        <ExternalLink class="w-3.5 h-3.5" /> Open Externally
+        <ExternalLink class="w-3.5 h-3.5" /> {{ $t('file.open_externally') }}
       </button>
     </div>
   </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, toRef } from 'vue';
+import { ref, computed, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
 import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
@@ -86,8 +87,7 @@ const unifiedTimeline = computed(() => {
     }
 
     // Manual interactions
-    const interactions = props.person?.properties?.interactions || [];
-    for (const i of interactions) {
+    for (const i of interactions.value) {
         items.push({
             id: i.id,
             date: i.date,
@@ -235,17 +235,65 @@ const resetForm = () => {
     showAddForm.value = false;
 };
 
+/**
+ * Every interaction with this person, as its own node.
+ *
+ * They used to be an array inside the person's frontmatter. A `.md` file is
+ * merged character by character when two devices have both changed it, which
+ * is right for prose and wrong for a list of objects in YAML — an interleave
+ * produces something neither device wrote. One file each has nothing to
+ * merge, and a person's file stops growing with every coffee.
+ */
+const interactions = ref<any[]>([]);
+
+const loadInteractions = async () => {
+    if (!props.person?.id) { interactions.value = []; return; }
+    try {
+        const nodes = await invoke<any[]>('person_interactions', { personId: props.person.id });
+        interactions.value = nodes.map(node => ({
+            id: node.id,
+            type: node.properties?.interaction_type || 'other',
+            date: node.properties?.date || '',
+            mood: node.properties?.mood || '',
+            note: node.content?.trim() || '',
+        }));
+    } catch (e) {
+        logger.error('Failed to load interactions', e);
+        interactions.value = [];
+    }
+};
+
+watch(() => props.person?.id, loadInteractions, { immediate: true });
+
 const saveInteraction = async () => {
     if (!newInteraction.value.note.trim()) return;
+    const { type, date, mood, note } = newInteraction.value;
     try {
-        const currentInteractions = [...(props.person.properties.interactions || [])];
-        currentInteractions.push({ id: crypto.randomUUID(), ...newInteraction.value });
-        const properties = { ...props.person.properties, interactions: currentInteractions, last_contacted: newInteraction.value.date };
+        await ns.writeNode({
+            relPath: `People/Interactions/${crypto.randomUUID()}.md`,
+            title: `${getTypeLabel(type)} · ${props.person.title}`,
+            nodeType: 'interaction',
+            properties: {
+                // The person's own identity, so the link survives their file
+                // being moved or renamed.
+                person_id: props.person.properties?.node_id || props.person.id,
+                interaction_type: type,
+                date,
+                mood: mood || null,
+            },
+            content: note.trim(),
+            eventType: 'created',
+        });
+        // The cadence counts from the last time there was contact, and this
+        // was contact.
         await ns.writeNode({
             relPath: props.person.id,
-            title: props.person.title, nodeType: 'person', properties, content: props.person.content || ''
+            title: props.person.title,
+            nodeType: 'person',
+            properties: { last_contacted: date },
         });
         resetForm();
+        await loadInteractions();
         emit('updated');
     } catch (e) {
         logger.error('Failed to save interaction', e);
@@ -254,12 +302,8 @@ const saveInteraction = async () => {
 
 const deleteInteraction = async (id: string) => {
     try {
-        const currentInteractions = (props.person.properties.interactions || []).filter((i: any) => i.id !== id);
-        const properties = { ...props.person.properties, interactions: currentInteractions };
-        await ns.writeNode({
-            relPath: props.person.id,
-            title: props.person.title, nodeType: 'person', properties, content: props.person.content || ''
-        });
+        await ns.deleteNode({ relPath: id });
+        await loadInteractions();
         emit('updated');
     } catch (e) {
         logger.error('Failed to delete interaction', e);
@@ -296,9 +340,9 @@ const handleLinkedClick = (item: any) => {
             <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold" :class="health.color">{{ health.label }}</p>
                 <p class="text-xs text-gray-500 dark:text-gray-400">
-                    <template v-if="health.daysSinceContact !== null">Last contact {{ health.daysSinceContact }}d ago</template>
-                    <template v-if="health.nextContactDue !== null && health.nextContactDue > 0"> · Due in {{ health.nextContactDue }}d</template>
-                    <template v-else-if="health.nextContactDue !== null && health.nextContactDue <= 0"> · {{ Math.abs(health.nextContactDue) }}d overdue</template>
+                    <template v-if="health.daysSinceContact !== null">{{ $t('people.last_contact_days', { days: health.daysSinceContact }) }}</template>
+                    <template v-if="health.nextContactDue !== null && health.nextContactDue > 0"> · {{ $t('people.due_in_days', { days: health.nextContactDue }) }}</template>
+                    <template v-else-if="health.nextContactDue !== null && health.nextContactDue <= 0"> · {{ $t('people.days_overdue', { days: Math.abs(health.nextContactDue) }) }}</template>
                 </p>
             </div>
             <div class="text-right flex-shrink-0">
@@ -310,7 +354,7 @@ const handleLinkedClick = (item: any) => {
         <!-- Add Button / Form -->
         <div v-if="!showAddForm">
             <button @click="showAddForm = true" class="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl text-sm text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors">
-                <Plus class="w-4 h-4" /> Log Interaction
+                <Plus class="w-4 h-4" /> {{ $t('people.log_interaction') }}
             </button>
         </div>
 
@@ -330,7 +374,7 @@ const handleLinkedClick = (item: any) => {
                 class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                 @keydown.meta.enter="saveInteraction"></textarea>
             <div class="flex items-center gap-2">
-                <span class="text-xs text-gray-500 dark:text-gray-400">Mood:</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.mood') }}</span>
                 <button v-for="m in moodOptions" :key="m.value" @click="newInteraction.mood = newInteraction.mood === m.value ? '' : m.value"
                     :class="['p-1.5 rounded-lg transition-all', newInteraction.mood === m.value ? 'bg-blue-100 dark:bg-blue-900/30 ring-1 ring-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800']" :title="m.label">
                     <component :is="m.icon" class="w-4 h-4" :class="newInteraction.mood === m.value ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'" />
@@ -357,8 +401,8 @@ const handleLinkedClick = (item: any) => {
         <!-- Empty State -->
         <div v-if="filteredTimeline.length === 0 && !showAddForm" class="text-center py-10 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
             <Clock class="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
-            <p class="text-gray-500 dark:text-gray-400">No activity yet.</p>
-            <p class="text-xs text-gray-400 mt-1">Log an interaction or mention <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{ person.title }}]]</code> in a Note.</p>
+            <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_activity') }}</p>
+            <p class="text-xs text-gray-400 mt-1">{{ $t('people.log_interaction_desc') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{ person.title }}]]</code> {{ $t('people.in_a_note') }}</p>
         </div>
 
         <!-- Unified Timeline -->
@@ -387,7 +431,7 @@ const handleLinkedClick = (item: any) => {
                             <div class="flex items-center gap-1 flex-shrink-0">
                                 <span class="text-xs text-gray-400">{{ formatDate(item.date) }}</span>
                                 <button v-if="item.source === 'interaction'" @click.stop="deleteInteraction(item.id)"
-                                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-all" aria-label="Delete Interaction">
+                                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-all" :aria-label="$t('people.delete_interaction')">
                                     <X class="w-3 h-3" />
                                 </button>
                             </div>
@@ -419,9 +463,9 @@ const handleLinkedClick = (item: any) => {
                                 <p v-if="item.debt.note" class="text-xs text-gray-600 dark:text-gray-400 mt-1">{{ item.debt.note }}</p>
                                 <div class="mt-2 text-xs">
                                     <span v-if="item.debt.status === 'active'" class="px-2 py-0.5 rounded-full font-medium" :class="item.debt.type === 'lend' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'">
-                                        Remaining: {{ formatCurrency(item.debt.totalAmount - item.debt.paidAmount) }}
+                                        {{ $t('people.remaining') }} {{ formatCurrency(item.debt.totalAmount - item.debt.paidAmount) }}
                                     </span>
-                                    <span v-else class="px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">Paid</span>
+                                    <span v-else class="px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium">{{ $t('people.paid') }}</span>
                                 </div>
                             </div>
                         </template>

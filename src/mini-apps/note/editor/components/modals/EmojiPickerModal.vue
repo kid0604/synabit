@@ -26,7 +26,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <div v-if="show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-      <div class="emoji-picker-panel bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[360px] max-h-[420px] flex flex-col overflow-hidden">
+      <div class="emoji-picker-panel bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[95vw] max-w-[360px] max-h-[420px] flex flex-col overflow-hidden">
         <!-- Search -->
         <div class="p-3 border-b border-[#e5e7eb] dark:border-[#333]">
           <input

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { X, Scale } from 'lucide-vue-next';
-import { formatCurrency } from './currency';
+import { formatAmountInput, formatCurrency, formatMinorForInput, parseAmountInput } from './currency';
 
 const props = defineProps<{
     show: boolean;
@@ -17,11 +17,8 @@ const emit = defineEmits<{
 
 const actualBalanceStr = ref<string>('');
 
-const formatAmount = (val: string) => {
-    const num = val.replace(/\D/g, '');
-    if (!num) return '';
-    return Number(num).toLocaleString('en-US');
-};
+/** Grouped and read the way the vault's own currency is written. */
+const formatAmount = (val: string) => formatAmountInput(val);
 
 const handleInput = (e: Event) => {
     const target = e.target as HTMLInputElement;
@@ -32,12 +29,12 @@ const handleInput = (e: Event) => {
 
 watch(() => props.show, (newVal) => {
     if (newVal) {
-        actualBalanceStr.value = props.currentBalance.toLocaleString('en-US');
+        actualBalanceStr.value = formatMinorForInput(props.currentBalance);
     }
 });
 
 const actualBalance = computed(() => {
-    return Number(actualBalanceStr.value.replace(/\D/g, '')) || 0;
+    return parseAmountInput(actualBalanceStr.value);
 });
 
 const difference = computed(() => {
@@ -77,7 +74,7 @@ const save = () => {
           <div>
               <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.actual_wallet_balance') }}</label>
               <div class="relative">
-                  <input type="text" inputmode="numeric" :value="actualBalanceStr" @input="handleInput" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
+                  <input type="text" inputmode="decimal" :value="actualBalanceStr" @input="handleInput" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
               </div>
           </div>
 

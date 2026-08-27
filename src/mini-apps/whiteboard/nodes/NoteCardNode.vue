@@ -4,6 +4,7 @@ import { Handle, Position } from '@vue-flow/core';
 import { NodeResizer } from '@vue-flow/node-resizer';
 import { ExternalLink, FileText, Loader2 } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
+import { useEventBus } from '../../../composables/useEventBus';
 
 const props = defineProps<{
   id: string;
@@ -91,6 +92,30 @@ const loadNoteData = async () => {
 
 onMounted(() => {
   loadNoteData();
+});
+
+// The card showed whatever the note said when the board was opened, and went
+// on showing it: edit the note, come back, and the card is stale until the
+// board is reloaded. Every path that changes a note announces itself, so
+// listen — filtered to this card's note, which is what keeps a board of
+// twenty cards from making twenty reads every time any file in the vault
+// changes. The bus unsubscribes with the component, which matters here
+// because cards mount and unmount as they scroll in and out of view.
+const bus = useEventBus();
+
+const reloadIfMine = (id: string | undefined) => {
+  if (id && id === props.data.noteId) loadNoteData();
+};
+
+// Saved in the note editor.
+bus.on('note:updated-external', ({ id }) => reloadIfMine(id));
+// Written by another mini-app through the node service.
+bus.on('node:updated', ({ id }) => reloadIfMine(id));
+// Changed on disk, by an external editor or by the watcher.
+bus.on('vault:file-modified', ({ paths }) => paths?.forEach(reloadIfMine));
+// Arrived from another device.
+bus.on('vault:sync-completed', (payload: any) => {
+  (payload?.pulled_files as string[] | undefined)?.forEach(reloadIfMine);
 });
 
 const cardWidth = computed(() => (props.data.width || 280) + 'px');

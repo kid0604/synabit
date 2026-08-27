@@ -2,7 +2,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
 import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Cloud, RefreshCw, CloudOff, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
 import { useNodeService } from './composables/useNodeService';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -20,6 +20,7 @@ const SetupPinModal = defineAsyncComponent(() => import('./shared/components/Set
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
 const GDriveMigrationModal = defineAsyncComponent(() => import('./shared/components/GDriveMigrationModal.vue'));
 const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
+const VaultBackupNotice = defineAsyncComponent(() => import('./shared/components/VaultBackupNotice.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
@@ -27,7 +28,13 @@ import { useGDrive } from './composables/useGDrive';
 import { useSync } from './composables/useSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
+import { useBackGuard } from './composables/useBackGuard';
+import { appInPlatformScope } from './shared/platformScope';
+import { ensureNotificationPermission } from './composables/useNotificationPermission';
 import { useAppUpdate } from './composables/useAppUpdate';
+import { useCaptureIntake } from './mini-apps/quickcap/useQuickCapWriter';
+import { isComposeUrl } from './mini-apps/quickcap/captureUrl';
+import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 
 
 import DesktopLayout from './layouts/DesktopLayout.vue';
@@ -79,21 +86,34 @@ const getAppName = (appId: string): string => {
   return ALL_APPS.find(a => a.id === appId)?.name || appId;
 };
 
+/**
+ * The mini-apps this platform ships at all.
+ *
+ * Distinct from what the user chose to hide, and from what fits on screen. An
+ * app outside the platform's scope is not in the product here — it never
+ * reaches the bottom bar, the More menu, or the router.
+ *
+ * Note this keys off `isMobileOS` and not `useMobileLayout`: a desktop window
+ * dragged narrow adopts the mobile layout, and must keep every app.
+ */
+const platformApps = computed(() => ALL_APPS.filter(a => appInPlatformScope(a.id)));
+
 const mobileVisibleApps = computed(() => {
-    return ALL_APPS
+    return platformApps.value
         .filter(a => !hiddenSidebarApps.value.includes(a.id))
         .slice(0, 4)
         .map(a => a.id);
 });
 
 const isAppVisible = (appId: string) => {
+    if (!appInPlatformScope(appId)) return false;
     if (hiddenSidebarApps.value.includes(appId)) return false;
     if (useMobileLayout.value && !mobileVisibleApps.value.includes(appId)) return false;
     return true;
 };
 
 const moreMenuApps = computed(() => {
-    return ALL_APPS.filter(a => {
+    return platformApps.value.filter(a => {
         const isUserHidden = hiddenSidebarApps.value.includes(a.id);
         const isMobileHidden = useMobileLayout.value && !mobileVisibleApps.value.includes(a.id);
         return isUserHidden || isMobileHidden;
@@ -112,7 +132,7 @@ const showHiddenAppsMenu = ref(false);
 const appStore = useAppStore();
 const { vaultPath, vaultType, activeSyncProvider } = storeToRefs(appStore);
 
-const { useMobileLayout, isMobileOS } = usePlatform();
+const { useMobileLayout, isMobileOS, initOS } = usePlatform();
 
 // ─── App View State (Vue Router) ──────────────────────────
 const router = useRouter();
@@ -212,7 +232,6 @@ const setAppRef = (el: any, name: string) => {
 };
 
 // ─── Floating Note (opened in new window) ─────────────────
-const isSidebarCollapsed = ref(false);
 
 watch(activeTool, (newTool) => {
     if (newTool === 'task') {
@@ -234,6 +253,53 @@ const handleGDriveMigrated = async (newPath: string) => {
     syncState.sync();
 };
 
+/**
+ * How many caps are waiting to be turned into something.
+ *
+ * Promotion trashes the cap it came from, so everything still in QuickCap is
+ * by definition unprocessed — the count is the inbox. It is here rather than
+ * inside QuickCapApp because the whole point is to be visible when that tab
+ * is *not* open: a fleeting note only stays fleeting if something reminds you
+ * it is still sitting there.
+ */
+const quickCapCount = ref(0);
+
+const refreshQuickCapCount = async () => {
+    if (!vaultPath.value) {
+        quickCapCount.value = 0;
+        return;
+    }
+    try {
+        quickCapCount.value = await invoke<number>('count_inbox_caps');
+    } catch (e) {
+        logger.error('Could not count quick caps', e);
+    }
+};
+
+// ─── Captures from outside the app ───────────────────────
+//
+// A share sheet, a widget or a hotkey can hand over a thought at a moment
+// when no vault is open — locked, unchosen, or the process only just
+// started by an intent. Those are queued rather than written, and this is
+// where they finally land. It lives here rather than in QuickCapApp so a
+// capture arrives even when the user never opens that tab.
+const { drainCaptures } = useCaptureIntake();
+let stopCaptureListener: (() => void) | null = null;
+let stopComposeListener: (() => void) | null = null;
+
+watch(
+    vaultPath,
+    (path) => {
+        if (path) {
+            void drainCaptures();
+            void refreshQuickCapCount();
+        } else {
+            quickCapCount.value = 0;
+        }
+    },
+    { immediate: true },
+);
+
 // ─── Sync ────────────────────────────────────────────────
 const syncState = useSync(vaultPath, activeSyncProvider);
 
@@ -244,16 +310,52 @@ const syncConflictCount = computed(() => syncState.syncConflicts.value.length);
 const showSyncConflicts = ref(false);
 let lastAutoSyncTriggerTime = 0;
 
-import { appDataDir } from '@tauri-apps/api/path';
+// The Android back button closes the topmost layer rather than the app. Every
+// dismissible thing owned by this component is registered here, after all of
+// them exist; see useBackGuard for why this cooperates with Tauri's back
+// handling instead of replacing it.
+//
+// E2EE onboarding and the recovery modal are deliberately absent: both are
+// flows where leaving half way puts the vault in a state the user cannot see,
+// and a stray back press is exactly how that happens.
+useBackGuard(showSettingsModal, () => { showSettingsModal.value = false; });
+useBackGuard(showLicenseModal, () => { showLicenseModal.value = false; });
+useBackGuard(showSetupPinModal, () => { showSetupPinModal.value = false; });
+const hiddenAppsGuard = useBackGuard(showHiddenAppsMenu, () => { showHiddenAppsMenu.value = false; });
+useBackGuard(showSyncConflicts, () => { showSyncConflicts.value = false; });
+useBackGuard(showGDriveMigrationModal, () => { showGDriveMigrationModal.value = false; });
+
+/**
+ * Open an app the sidebar is not showing.
+ *
+ * The menu has to give up its back-guard entry before the route changes.
+ * Closing it the ordinary way schedules a `history.back()`, and the router
+ * pushes the new route a few microtasks later — so the press lands on the
+ * navigation and undoes it, and the click looks ignored. This was how People
+ * and Finance became unreachable once they were hidden from the sidebar.
+ */
+const openHiddenApp = (appId: string) => {
+    hiddenAppsGuard.detach();
+    showHiddenAppsMenu.value = false;
+    activeTool.value = appId;
+};
+
 
 const selectVault = async () => {
     try {
         if (isMobileOS.value) {
-            // On mobile, directory picker is not supported. Use app data dir implicitly.
-            const dataDir = await appDataDir();
-            const vaultDir = `${dataDir}/vault`;
-            await appStore.setVaultPath(vaultDir, 'local');
+            // No directory picker exists on mobile, so the backend decides and
+            // reports where the vault lives.
+            const resolved = await invoke<string>('resolve_mobile_vault_path');
+            await appStore.setVaultPath(resolved, 'local');
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
+
+     // Feeds refresh on a timer for as long as the app is running, not only
+     // while the Feeds tab happens to be open. Starting it here rather than in
+     // the mini-app is the difference between "background refresh" and
+     // "refresh whenever you go and look".
+     invoke('feed_start_scheduler', { vaultPath: vaultPath.value })
+         .catch((e) => logger.error('Failed to start feed scheduler', e));
             return;
         }
 
@@ -362,7 +464,7 @@ const navigateToItem = (app: string, itemId: string, scrollTop?: number, skipNav
     else if (app === 'file') { callWhenReady(() => filesAppRef.value, 'openFileById', itemId, skipNavPush); }
 };
 
-const handleEditFromNexus = async (id: string, type: string) => {
+const handleEditFromNexus = async (id: string, type: string, query?: string) => {
     logger.debug(`App.vue: handleEditFromNexus received id: ${id}, type: ${type}`);
     // Note: watcher on activeTool now handles pushing to back stack automatically
     if (type === 'note') { 
@@ -403,7 +505,8 @@ const handleEditFromNexus = async (id: string, type: string) => {
     }
     else if (type === 'pdf' || type === 'pdf_highlight' || type === 'file') {
         activeTool.value = 'file';
-        callWhenReady(() => filesAppRef.value, 'openFileById', id);
+        // The query rides along so a hit inside a document opens on its page.
+        callWhenReady(() => filesAppRef.value, 'openFileById', id, false, query);
     }
 };
 
@@ -422,6 +525,26 @@ const feedsUnreadCount = ref(0);
  * being findable with nothing anywhere to say why. The count comes back from
  * the scan now; the Rust log names the individual files.
  */
+/**
+ * Re-read the vault when the app comes back to the foreground.
+ *
+ * Desktop has a filesystem watcher; `notify` has no Android backend, so the
+ * mobile stub in watcher.rs does nothing and its comment says the frontend
+ * re-scans on resume instead. Nothing did. Anything that changed the vault
+ * while the app was backgrounded — a sync that ran, a file pulled in, a restore
+ * — stayed invisible to search and backlinks until something else happened to
+ * trigger a scan.
+ *
+ * Only on a mobile OS: on the desktop the watcher already covers this, and
+ * re-scanning every time the window regains focus would be a large amount of
+ * work for nothing.
+ */
+const rescanOnResume = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!isMobileOS.value || !vaultPath.value) return;
+    scanVaultNodes().catch(logger.error);
+};
+
 const scanVaultNodes = async (): Promise<void> => {
     if (!vaultPath.value) return;
     const report = await invoke<ScanReport>('scan_all_nodes', { vaultPath: vaultPath.value });
@@ -441,6 +564,18 @@ const checkUnreadNotifications = async () => {
         logger.error('Failed to check unread messages', e);
     }
 };
+
+/**
+ * The 60-second feeds poll, kept where `onUnmounted` can reach it.
+ *
+ * It used to be a `const` inside `onMounted`, with a note saying the component
+ * lifecycle cleaned it up. Nothing cleans up a `setInterval` but a matching
+ * `clearInterval` — Vue does not track timers — so the poll outlived the
+ * component. On the root component that is invisible in a packaged app, which
+ * is why it survived; under dev HMR every reload left another copy running,
+ * each one still invoking `feed_get_total_unread` once a minute.
+ */
+let feedsUnreadInterval: ReturnType<typeof setInterval> | undefined;
 
 const updateFeedsUnreadCount = async () => {
     if (!vaultPath.value) return;
@@ -468,6 +603,43 @@ const handleKeyboardNav = (e: KeyboardEvent) => {
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
   logger.info("Synabit Frontend App Mounting...");
+
+  // A capture can arrive while the app is already open — a share sheet hands
+  // one over to a running process. Without this it would sit in the queue
+  // until the next launch, which is the one thing the fast path must not do.
+  stopCaptureListener = await listen('capture-queued', () => {
+    if (vaultPath.value) void drainCaptures();
+  });
+
+  // "Let me write something" — from the Android launcher shortcut, and from
+  // the desktop global hotkey. Three entry points, one destination.
+  const openCompose = () => {
+    activeTool.value = 'quickcap';
+    callWhenReady(() => quickCapAppRef.value, 'focusCompose');
+  };
+
+  // The hotkey has already raised and focused the window by the time this
+  // arrives; all that is left is to land in the right place.
+  stopComposeListener = await listen('quickcap:compose', openCompose);
+
+  // Both deep-link paths are needed: `getCurrent` for a cold start, where the
+  // URL arrived before anything was listening, and `onOpenUrl` for a shortcut
+  // used while the app is already running.
+  await onOpenUrl((urls) => {
+    if (urls.some(isComposeUrl)) openCompose();
+  });
+
+  getCurrent()
+    .then((urls) => {
+      if (urls?.some(isComposeUrl)) openCompose();
+    })
+    .catch((e) => logger.error('Could not read the launch deep link', e));
+  // Before anything reads `isMobileOS`. `usePlatform` starts this during setup
+  // but does not wait for it, so until it resolves the app believes it is on a
+  // desktop: the vault location below would be skipped on a phone, and a tablet
+  // would paint the desktop layout and then jump to the mobile one. Awaiting the
+  // same promise costs one tick and removes both.
+  await initOS();
   await appStore.initialize();
   await initSettings();
   await initEventBus();
@@ -478,6 +650,7 @@ onMounted(async () => {
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   window.addEventListener('keydown', handleKeyboardNav);
+  document.addEventListener('visibilitychange', rescanOnResume);
 
   const params = new URLSearchParams(window.location.search);
   const floatingId = params.get('floatingNote');
@@ -489,13 +662,27 @@ onMounted(async () => {
       activeTool.value = defaultApp.value;
   }
 
-  if (!vaultPath.value && isMobileOS.value) {
-      const dataDir = await appDataDir();
-      const vaultDir = `${dataDir}/vault`;
-      await appStore.setVaultPath(vaultDir, 'local');
+  // Runs whether or not a vault is already configured, because an install made
+  // by an earlier version has one in app-private storage — invisible to the
+  // user and unreachable over USB. The backend moves it and hands back where
+  // it ended up; calling this again once it has moved does nothing.
+  if (isMobileOS.value) {
+      try {
+          const resolved = await invoke<string>('resolve_mobile_vault_path');
+          if (resolved !== vaultPath.value) {
+              await appStore.setVaultPath(resolved, 'local');
+          }
+      } catch (e) {
+          logger.error('Could not resolve the vault location on this device', e);
+      }
   }
 
   if (vaultPath.value) {
+     // Only once there is a vault: task reminders are the reason to want
+     // notifications, and they cannot happen before one exists. Not awaited —
+     // the permission dialog must not hold up the rest of startup.
+     ensureNotificationPermission();
+
      invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
@@ -507,9 +694,17 @@ onMounted(async () => {
      // Trigger GC for FTS5 on startup
      invoke('reindex_sources', { vaultPath: vaultPath.value }).catch(logger.error);
      invoke('scan_whiteboards', { vaultPath: vaultPath.value }).catch(logger.error);
+
+     // Empty what has been in `.trash/` longer than the delete dialogs promise.
+     // This used to run when QuickCap mounted, back when captures were the only
+     // thing that went in there. Notes go there too now, and the dialog that
+     // says "removed for good after 30 days" is a promise the app has to keep
+     // whether or not the user ever opens that tab.
+     invoke('purge_trash', { vaultPath: vaultPath.value, maxAgeDays: 30 })
+         .catch((e) => logger.error('Failed to purge trash', e));
      
      // Feeds unread count polling (every 60s)
-     const feedsUnreadInterval = setInterval(() => updateFeedsUnreadCount(), 60 * 1000);
+     feedsUnreadInterval = setInterval(() => updateFeedsUnreadCount(), 60 * 1000);
      
      if (noteAppRef.value) noteAppRef.value.scanVault();
   }
@@ -524,7 +719,13 @@ onMounted(async () => {
       showGDriveMigrationModal.value = true;
   }
 
+  // Anything that creates or retires a cap moves this number.
+  bus.on('node:created', () => void refreshQuickCapCount());
+  bus.on('node:deleted', () => void refreshQuickCapCount());
+  bus.on('vault:sync-completed', () => void refreshQuickCapCount());
+
   bus.on('vault:file-created-deleted', async (payload: any) => {
+      void refreshQuickCapCount();
       if (noteAppRef.value) noteAppRef.value.scanVault();
       const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
@@ -597,7 +798,17 @@ onMounted(async () => {
       navigateToItem(app, itemId);
   });
 
-  getCurrentWindow().onCloseRequested(async () => {
+  getCurrentWindow().onCloseRequested(async (event) => {
+      // Closing puts Synabit in the background rather than ending it: the
+      // global hotkey only exists while the process does, and the tray's Quit
+      // is the way out.
+      //
+      // This has to happen in JavaScript. Registering this listener is what
+      // makes Tauri hand the close decision to the front end, and from that
+      // moment the Rust-side `CloseRequested` handler stops being called at
+      // all — so preventing the close there quietly did nothing.
+      event.preventDefault();
+
       // NoteApp handles its own save-on-close internally
       // But we trigger a final save here for safety
       if (noteAppRef.value?.currentNoteId) {
@@ -623,6 +834,10 @@ onMounted(async () => {
               }
           }
       }
+
+      // After the save, not before: hiding first would let the window go while
+      // a note was still being written to disk.
+      invoke('hide_to_background').catch(logger.error);
   });
 
   logger.info("Synabit Frontend App Mount Complete.");
@@ -634,10 +849,13 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopCaptureListener?.();
+  stopComposeListener?.();
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   window.removeEventListener('keydown', handleKeyboardNav);
+  document.removeEventListener('visibilitychange', rescanOnResume);
   destroyEventBus();
-  // Note: feedsUnreadInterval is scoped inside onMounted, cleaned up via component lifecycle
+  clearInterval(feedsUnreadInterval);
 });
 </script>
 
@@ -729,10 +947,28 @@ onUnmounted(() => {
     <template v-else>
 
       <component :is="useMobileLayout ? MobileLayout : DesktopLayout" :activeTool="activeTool" @update:activeTool="activeTool = $event">
+
+        <template #banner>
+          <VaultBackupNotice v-if="vaultPath" :vaultPath="vaultPath" />
+        </template>
         
-        <!-- SIDEBAR / BOTTOMBAR -->
+        <!--
+          SIDEBAR / BOTTOMBAR
+
+          `z-[55]` on the desktop sidebar is load-bearing, not decoration. The
+          nav is a flex item with a z-index, so it is a stacking context and
+          nothing inside it — the hover tooltips, the More Apps menu — can
+          paint above something outside it that sits higher. The content area
+          is `relative` with no z-index, so a mini-app's own panels land in the
+          root stacking context: People and Finance both hold their list at
+          `z-[49]`, which used to swallow the menu whole.
+
+          55 is chosen to sit above every in-content layer (the highest is 50)
+          and below every modal (the lowest is 60), so a dialog still covers
+          the sidebar as it should.
+        -->
         <template v-if="!isFloatingView" #[useMobileLayout?`bottombar`:`sidebar`]>
-          <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-20 h-full'" data-tauri-drag-region>
+          <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-[55] h-full'" data-tauri-drag-region>
               <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
                 <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Globe class="w-5 h-5" />
@@ -746,6 +982,12 @@ onUnmounted(() => {
                 </button>
 
                 <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <!--
+                     Caps waiting to be turned into something. Grey rather than
+                     red: an inbox with things in it is the normal state, not an
+                     alarm, and a colour that shouts gets ignored within a week.
+                   -->
+                   <span v-if="quickCapCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-gray-400 dark:bg-gray-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ quickCapCount > 99 ? '99+' : quickCapCount }}</span>
                    <Zap class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
                 </button>
@@ -796,7 +1038,7 @@ onUnmounted(() => {
                   <div v-if="showHiddenAppsMenu" class="fixed inset-0 z-40" @click="showHiddenAppsMenu = false"></div>
                   
                   <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50 max-h-[60vh] overflow-y-auto">
-                    <button v-for="app in moreMenuApps" :key="app.id" @click="activeTool = app.id; showHiddenAppsMenu = false" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
+                    <button v-for="app in moreMenuApps" :key="app.id" @click="openHiddenApp(app.id)" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
                       <component :is="app.icon" class="w-5 h-5 text-gray-500" />
                       <span class="font-medium">{{ app.name }}</span>
                     </button>

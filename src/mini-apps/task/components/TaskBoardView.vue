@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { Plus, Trash2 } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { Plus } from 'lucide-vue-next';
+import DeleteButton from './DeleteButton.vue';
 import { type TaskMetadata, isOverdue } from '../types';
 import TaskCardMeta from './TaskCardMeta.vue';
+import { allSubtaskProgress } from '../subtasks';
 
-defineProps<{
+const props = defineProps<{
+  /** How much a delete asks first; see `taskDeleteConfirm`. */
+  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasksByStatus: Record<string, TaskMetadata[]>;
   columns: readonly { id: string; name: string; class: string }[];
   wipLimit: number;
   quickAddColumn: string | null;
   quickAddTitle: string;
+  /** Every task, for counting subtask progress; see `TaskListView`. */
+  allTasks?: TaskMetadata[];
+  /** Ids currently picked out. Empty means the checkboxes are not shown. */
+  selectedIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -21,7 +30,26 @@ const emit = defineEmits<{
   (e: 'open-person', transferredTo: string): void;
   (e: 'update:quickAddColumn', value: string | null): void;
   (e: 'update:quickAddTitle', value: string): void;
+  (e: 'select-one', id: string): void;
 }>();
+
+const progress = computed(() => allSubtaskProgress(props.allTasks ?? []));
+const progressOf = (task: TaskMetadata) => progress.value.get(task.id) ?? { done: 0, total: 0 };
+
+const isSelecting = computed(() => (props.selectedIds?.size ?? 0) > 0);
+const isSelected = (id: string) => props.selectedIds?.has(id) ?? false;
+
+/**
+ * Clicking a card while a selection is running adds to it rather than opening.
+ *
+ * No shift-range here, unlike the list and the table: a range means "from here
+ * to there in the order you can see", and a board has four of those orders
+ * side by side with no answer for what a range across them would contain.
+ */
+const onCardClick = (task: TaskMetadata) => {
+  if (isSelecting.value) return emit('select-one', task.id);
+  emit('edit-task', task);
+};
 </script>
 
 <template>
@@ -39,25 +67,33 @@ const emit = defineEmits<{
                       {{ tasksByStatus[col.id].length }}
                   </span>
               </h3>
-              <button @click="emit('show-quick-add', col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3" aria-label="More Options"><Plus class="w-4 h-4"/></button>
+              <button @click="emit('show-quick-add', col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3" :aria-label="$t('task.a11y_add_task_to_column')"><Plus class="w-4 h-4"/></button>
           </div>
           <div class="flex-1 overflow-y-auto space-y-3 pb-4 column-content">
               <div v-for="task in tasksByStatus[col.id]" :key="task.id"
                    draggable="true"
                    @dragstart="emit('drag-start', $event, task)"
-                   @click="emit('edit-task', task)"
+                   @click="onCardClick(task)"
                    :data-task-id="task.id"
                    class="task-card p-4 rounded-xl border hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group relative"
                    :class="isOverdue(task) ? 'border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10' : 'bg-white dark:bg-[#1e1e1e] border-[#e6e6e6] dark:border-[#2c2c2c]'"
               >
-                 <p class="text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] leading-snug mb-3">{{ task.title }}</p>
+                 <div class="flex items-start gap-2 mb-3">
+                     <input
+                         type="checkbox"
+                         :checked="isSelected(task.id)"
+                         @click.stop="emit('select-one', task.id)"
+                         class="mt-0.5 w-4 h-4 shrink-0 rounded border-gray-300 dark:border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer transition-opacity"
+                         :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'"
+                         :aria-label="$t('task.a11y_select_task')"
+                     />
+                     <p class="text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] leading-snug">{{ task.title }}</p>
+                 </div>
                  <div class="flex items-center justify-between mt-auto pt-2 border-t border-gray-50 dark:border-[#2c2c2c]">
                      <div class="flex gap-2 items-center flex-wrap">
-                         <TaskCardMeta :task="task" compact @open-person="emit('open-person', $event)" />
+                         <TaskCardMeta :task="task" compact :progress="progressOf(task)" @open-person="emit('open-person', $event)" />
                      </div>
-                     <button @click.stop="emit('delete-task', task)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" aria-label="More Options">
-                         <Trash2 class="w-3.5 h-3.5" />
-                     </button>
+                     <DeleteButton :mode="deleteConfirm" compact class="opacity-0 group-hover:opacity-100 transition-opacity" @confirm="emit('delete-task', task)" />
                  </div>
               </div>
               

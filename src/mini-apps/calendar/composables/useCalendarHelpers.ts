@@ -2,73 +2,23 @@ import type { Ref } from 'vue';
 import type { TaskMetadata, EventMetadata } from '../types';
 import { formatDateString } from '../helpers';
 
+/**
+ * Reading the days the vault has already answered for.
+ *
+ * There is no recurrence logic here any more, and there must not be. Rust
+ * decides which days a series lands on — `src-tauri/src/calendar/recurrence.rs`
+ * — and hands back a day-keyed map. A second opinion in this file is exactly
+ * what let the grid draw an appointment the reminder loop never fired for.
+ */
 export function useCalendarHelpers(
-    allTasks: Ref<TaskMetadata[]>,
-    allEvents: Ref<EventMetadata[]>,
+    tasksByDate: Ref<Map<string, TaskMetadata[]>>,
+    eventsByDate: Ref<Map<string, EventMetadata[]>>,
 ) {
-    const getTasksForDate = (dateStr: string) => allTasks.value.filter(t => t.due_date === dateStr || t.start_date === dateStr);
+    const getTasksForDate = (dateStr: string): TaskMetadata[] =>
+        tasksByDate.value.get(dateStr) ?? [];
 
-    const getEventsForDate = (dateStr: string) => {
-        return allEvents.value.filter(e => {
-            if (!e.start_at) return false;
-            const eStartStr = e.start_at.split('T')[0];
-            const eEndStr = e.end_at ? e.end_at.split('T')[0] : eStartStr;
-            
-            if (e.exceptions && e.exceptions.includes(dateStr)) return false;
-            
-            if (!e.recurrence || e.recurrence === 'none') {
-                return dateStr >= eStartStr && dateStr <= eEndStr;
-            }
-
-            if (dateStr < eStartStr) return false;
-            if (e.recurrence_end_at && dateStr > e.recurrence_end_at) return false;
-
-            const startObj = new Date(eStartStr + 'T00:00:00');
-            const endObj = new Date(eEndStr + 'T00:00:00');
-            const durationDays = Math.round((endObj.getTime() - startObj.getTime()) / 86400000);
-            const targetObj = new Date(dateStr + 'T00:00:00');
-
-            if (e.recurrence === 'daily') {
-                return true;
-            } else if (e.recurrence === 'weekly') {
-                const diffDays = Math.round((targetObj.getTime() - startObj.getTime()) / 86400000);
-                const rem = diffDays % 7;
-                const posRem = (rem + 7) % 7;
-                return posRem >= 0 && posRem <= durationDays;
-            } else if (e.recurrence === 'monthly') {
-                let cur = new Date(targetObj.getFullYear(), targetObj.getMonth(), startObj.getDate());
-                if (cur.getMonth() !== targetObj.getMonth()) {
-                    cur = new Date(targetObj.getFullYear(), targetObj.getMonth() + 1, 0); 
-                }
-                const diffDays = Math.round((targetObj.getTime() - cur.getTime()) / 86400000);
-                return diffDays >= 0 && diffDays <= durationDays;
-            } else if (e.recurrence === 'yearly') {
-                let cur = new Date(targetObj.getFullYear(), startObj.getMonth(), startObj.getDate());
-                if (startObj.getMonth() === 1 && startObj.getDate() === 29 && cur.getMonth() !== 1) {
-                    cur = new Date(targetObj.getFullYear(), 2, 0);
-                }
-                const diffDays = Math.round((targetObj.getTime() - cur.getTime()) / 86400000);
-                return diffDays >= 0 && diffDays <= durationDays;
-            }
-            return false;
-        });
-    };
-
-    const getEventsForDateAndHour = (dateStr: string, hour: number) => {
-        return getEventsForDate(dateStr).filter(e => {
-            if (e.is_all_day) return false;
-            if (!e.start_at) return false;
-            
-            const eStartStr = e.start_at.split('T')[0];
-            const eEndStr = e.end_at ? e.end_at.split('T')[0] : eStartStr;
-            if (eStartStr !== eEndStr) return false; // Multi-day events go to "All Day"
-            
-            const timePart = e.start_at.split('T')[1];
-            if (!timePart) return false;
-            const eHour = parseInt(timePart.split(':')[0]);
-            return eHour === hour;
-        });
-    };
+    const getEventsForDate = (dateStr: string): EventMetadata[] =>
+        eventsByDate.value.get(dateStr) ?? [];
 
     const getMonthViewItems = (dateStr: string) => {
         const events = getEventsForDate(dateStr).map(e => {
@@ -88,5 +38,11 @@ export function useCalendarHelpers(
         return getTasksForDate(ds).length > 0 || getEventsForDate(ds).length > 0;
     };
 
-    return { getTasksForDate, getEventsForDate, getEventsForDateAndHour, getMonthViewItems, hasItemsOnDate };
+    const getSortedEventsForDate = (dateStr: string) =>
+        [...getEventsForDate(dateStr)].sort((a, b) => (a.start_at || '').localeCompare(b.start_at || ''));
+
+    return {
+        getTasksForDate, getEventsForDate,
+        getMonthViewItems, hasItemsOnDate, getSortedEventsForDate,
+    };
 }

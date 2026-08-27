@@ -3,6 +3,7 @@ import type { Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { NoteItem } from '../helpers';
 import { logger } from '../../../utils/logger';
+import { looseIncludes } from '../../../utils/diacritics';
 
 export function useNoteSearch(
   notes: Ref<NoteItem[]>,
@@ -32,10 +33,15 @@ export function useNoteSearch(
         const q = searchQuery.value.trim();
         const isTagSearch = q.startsWith('#');
         const searchTerm = isTagSearch ? q.slice(1) : q;
-        const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
         const match = (text: string) => {
            if (!text) return false;
-           return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
+           // Case-sensitive search is a deliberate ask for exactness, so it
+           // stays literal. Everything else folds tone marks the way the index
+           // does, or this interim pass finds less than the results replacing
+           // it and the list blinks empty on the way.
+           return isCaseSensitiveSearch.value
+             ? text.includes(searchTerm)
+             : looseIncludes(text, searchTerm);
         };
         result = result.filter(n => {
             if (isTagSearch) return n.tags.some(t => match(t));

@@ -1,13 +1,34 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { Plus, List, Trello, Table2, Grid2x2, Search, X, Menu as MenuIcon } from 'lucide-vue-next';
 import NavButtons from '../../../shared/components/NavButtons.vue';
+import { taskViewInPlatformScope } from '../../../shared/platformScope';
 
 defineProps<{
-  activeProject: any;
-  activeCategory: string;
+  /** Only the linear views can be sorted and grouped; see `TaskSortBar`. */
+  showSortBar?: boolean;
+  /**
+   * What to call whatever is on screen.
+   *
+   * Worked out by the caller rather than by a chain of ternaries here. The
+   * chain ended in `activeCategory` itself, so any bucket it had not been
+   * taught about printed its own internal id: selecting a saved search put
+   * `Filter:Filters/ac40aa52-…` across the top of the page.
+   */
+  title: string;
   viewMode: 'list' | 'board' | 'table' | 'matrix';
   searchQuery: string;
 }>();
+
+/**
+ * Board and Matrix move cards with the HTML5 drag-and-drop API, which never
+ * fires from a touch event — on a phone they draw correctly and simply cannot
+ * be operated. Table is a wide grid. So on mobile only List is offered, and
+ * with one view left the switcher itself is noise.
+ */
+const availableViewCount = computed(
+  () => (['list', 'board', 'table', 'matrix'] as const).filter(taskViewInPlatformScope).length,
+);
 
 const emit = defineEmits<{
   (e: 'update:viewMode', mode: 'list' | 'board' | 'table' | 'matrix'): void;
@@ -22,11 +43,17 @@ const emit = defineEmits<{
       <div class="flex items-center justify-between mb-4 md:mb-6">
           <div class="flex items-center gap-3">
               <NavButtons />
-              <button @click="emit('open-mobile-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer" aria-label="More Options">
+              <button @click="emit('open-mobile-sidebar')" class="md:hidden p-1 -ml-1 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer" :aria-label="$t('task.a11y_open_sidebar')">
                   <MenuIcon class="w-6 h-6" />
               </button>
-              <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight capitalize truncate max-w-[200px] sm:max-w-md lg:max-w-xl">
-                  {{ activeProject ? activeProject.title : (activeCategory === 'all' ? $t('task.all_tasks') : activeCategory === 'today' ? $t('task.today') : activeCategory === 'upcoming' ? $t('task.upcoming') : activeCategory === 'someday' ? $t('task.someday') : activeCategory === 'transferred' ? $t('task.transferred') : activeCategory) }}
+              <!--
+                No `capitalize`. The bucket names come from translations and
+                are already cased properly, while a project or a saved search
+                is named by the user — and CSS capitalising it turns their
+                `iOS rollout` into `IOS Rollout`.
+              -->
+              <h1 class="text-2xl md:text-3xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] tracking-tight truncate max-w-[200px] sm:max-w-md lg:max-w-xl">
+                  {{ title }}
               </h1>
           </div>
           <div class="flex items-center gap-3">
@@ -39,17 +66,17 @@ const emit = defineEmits<{
                   {{ $t('task.new_btn') }}
               </button>
 
-              <div class="flex bg-gray-100 dark:bg-[#1a1a1a] p-1 rounded-xl">
+              <div v-if="availableViewCount > 1" class="flex bg-gray-100 dark:bg-[#1a1a1a] p-1 rounded-xl">
                   <button @click="emit('update:viewMode', 'list')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'list' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.list_view')">
                       <List class="w-4 h-4"/>
                   </button>
-                  <button @click="emit('update:viewMode', 'board')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'board' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.board_view')">
+                  <button v-if="taskViewInPlatformScope('board')" @click="emit('update:viewMode', 'board')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'board' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.board_view')">
                       <Trello class="w-4 h-4"/>
                   </button>
-                  <button @click="emit('update:viewMode', 'table')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'table' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.table_view')">
+                  <button v-if="taskViewInPlatformScope('table')" @click="emit('update:viewMode', 'table')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'table' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.table_view')">
                       <Table2 class="w-4 h-4"/>
                   </button>
-                  <button @click="emit('update:viewMode', 'matrix')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'matrix' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.matrix_view')">
+                  <button v-if="taskViewInPlatformScope('matrix')" @click="emit('update:viewMode', 'matrix')" class="p-1.5 rounded-lg transition-colors cursor-pointer" :class="viewMode === 'matrix' ? 'bg-white dark:bg-[#2c2c2c] shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-black dark:hover:text-white'" :title="$t('task.matrix_view')">
                       <Grid2x2 class="w-4 h-4"/>
                   </button>
               </div>
@@ -57,19 +84,20 @@ const emit = defineEmits<{
       </div>
 
       <!-- Bar (Search & Properties) -->
-      <div class="mt-4 flex flex-row items-center gap-3">
+      <div class="mt-4 flex flex-row items-center gap-3 flex-wrap">
           <div class="relative w-full sm:max-w-xs group">
               <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Search class="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
               </div>
-              <input 
+              <input
+                  id="task-search-input"
                   :value="searchQuery"
                   @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
                   type="text" 
                   class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
                   :placeholder="$t('task.search_placeholder')" 
               />
-              <button v-if="searchQuery" @click="emit('update:searchQuery', '')" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10" aria-label="More Options">
+              <button v-if="searchQuery" @click="emit('update:searchQuery', '')" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer z-10" :aria-label="$t('task.a11y_clear_search')">
                   <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
               </button>
               
@@ -87,6 +115,9 @@ const emit = defineEmits<{
                   </div>
               </div>
           </div>
+
+          <slot name="save-search" />
+          <slot name="sort" />
       </div>
   </div>
 </template>

@@ -78,7 +78,34 @@ pub fn save_license(app: &AppHandle, raw_json: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "official-build")]
+/// Android ships free, so there is nothing to check.
+///
+/// Google Play requires digital purchases to go through Play Billing, and this
+/// app sells licence keys from its own site. Rather than build Billing for a
+/// platform that has never earned anything, the Android release is a companion
+/// to the paid desktop app and is not gated at all.
+///
+/// Answering here rather than hiding a button in the interface is deliberate:
+/// anything that ever asks whether the app is licensed gets "yes" on Android
+/// without having to know why, so a future gate cannot lock the app by
+/// forgetting about this.
+#[cfg(target_os = "android")]
+pub fn check_license_status(_app: &AppHandle) -> LicenseStatus {
+    LicenseStatus::Active(LicenseFile {
+        license_key: "ANDROID-FREE".to_string(),
+        status: "active".to_string(),
+        plan: "free".to_string(),
+        expires_at: Utc::now() + chrono::Duration::days(36500),
+        max_devices: 0,
+        features: vec!["all".to_string()],
+        hwid: String::new(),
+        device_name: Some(crate::hwid::get_device_name()),
+        issued_at: Utc::now(),
+        last_heartbeat: Utc::now(),
+    })
+}
+
+#[cfg(all(feature = "official-build", not(target_os = "android")))]
 pub fn check_license_status(app: &AppHandle) -> LicenseStatus {
     let license = match load_license(app) {
         Ok(Some(l)) => l,
@@ -103,7 +130,7 @@ pub fn check_license_status(app: &AppHandle) -> LicenseStatus {
     LicenseStatus::Active(license)
 }
 
-#[cfg(not(feature = "official-build"))]
+#[cfg(all(not(feature = "official-build"), not(target_os = "android")))]
 pub fn check_license_status(app: &AppHandle) -> LicenseStatus {
     // Try to load real license first so we can test the activation flow in dev mode
     if let Ok(Some(license)) = load_license(app) {

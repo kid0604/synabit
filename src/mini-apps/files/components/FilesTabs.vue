@@ -6,6 +6,11 @@ export interface FileTab {
   filename: string;
   extension: string;
   path: string;
+  /**
+   * The page a search sent the reader to, when the file was opened from a hit
+   * inside it rather than from the list.
+   */
+  page?: number;
 }
 
 const props = defineProps<{

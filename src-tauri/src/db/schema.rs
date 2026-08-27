@@ -6,7 +6,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 /// (e.g. adding/removing columns, changing tokenizer).
 /// The index will only be dropped and rebuilt when this version differs
 /// from the stored value in `kv_store`.
-const FTS_SCHEMA_VERSION: &str = "4";
+const FTS_SCHEMA_VERSION: &str = "6";
+
+/// Same idea for the feed article index, which has a schema of its own.
+const FEEDS_FTS_SCHEMA_VERSION: &str = "3";
 
 impl DbBridge {
     /// Create an in-memory database with sync schema initialized (useful for testing).
@@ -107,6 +110,131 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (file_sources): {}", e)))?;
 
+        // ─── Where each indexed file currently sits ─────────────
+        //
+        // A file's identity is what is inside it; this is where a copy of it
+        // happens to be right now. Splitting the two is what lets a file keep
+        // its tags after being renamed or moved in Finder: the location row
+        // changes and the node it points at does not.
+        //
+        // There is no device column, and there does not need to be one — this
+        // database never leaves the machine it was written on, so every row in
+        // here is already a statement about *this* device. What travels between
+        // devices is the node, and a node says nothing about paths.
+        //
+        // Keyed by path because a path holds one file: two rows for the same
+        // path would be two answers to the same question. One node may of
+        // course have many rows, which is what duplicates are.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_locations (
+                abs_path TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mtime_ms INTEGER NOT NULL,
+                seen_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (file_locations): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_file_locations_node ON file_locations(node_id);",
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (file_locations index): {}", e)))?;
+
+        // ─── Hashes we have already paid for ────────────────────
+        //
+        // Identity is a BLAKE3 digest of the file's contents, and re-reading
+        // every byte of a photo library on every scan is the one cost that
+        // would make content addressing not worth having. A file whose size and
+        // modification time both match what was recorded is taken to be the
+        // file that was hashed.
+        //
+        // Strictly an optimisation, exactly like `sync_stat_cache` which it is
+        // modelled on: an entry that is missing or stale costs a hash and
+        // nothing else.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_stat_cache (
+                abs_path TEXT PRIMARY KEY,
+                size INTEGER NOT NULL,
+                mtime_ms INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (file_stat_cache): {}", e)))?;
+
+        // ─── The words inside each indexed file ─────────────────
+        //
+        // Keyed by node, which is to say by contents: extraction happens once
+        // per distinct document, ever. Edit a file and it becomes a different
+        // node and is read again; revert the edit and it is the old node, whose
+        // text is already here. That falls out of content identity for free.
+        //
+        // One row per page, so a hit can say *where* — the difference between
+        // "this manual mentions it" and "page 34 mentions it". Formats without
+        // pages store a single row at page 0.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_text (
+                node_id TEXT NOT NULL,
+                page INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                PRIMARY KEY (node_id, page)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (file_text): {}", e)))?;
+
+        // ─── What has been tried, and how it went ───────────────
+        //
+        // The queue is everything absent from this table, so a row here means
+        // "settled, do not attempt again". That includes the failures: a file
+        // that is not really a .docx will not become one, and retrying it on
+        // every pass forever is how a background job turns into a treadmill.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_text_state (
+                node_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                pages INTEGER NOT NULL,
+                chars INTEGER NOT NULL,
+                extracted_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (file_text_state): {}", e)))?;
+
+        // ─── Files that live somewhere else ─────────────────────
+        //
+        // A cloud file has no location on this device, which is the whole point
+        // of it — so `file_locations` cannot describe one, and neither can a
+        // content digest: identity there comes from reading the bytes, and the
+        // bytes are the thing we are deliberately not fetching.
+        //
+        // Its identity is the provider's own, which is already stable and
+        // already machine-independent. Kept in its own table rather than shoved
+        // into `file_locations` so that "where can I open this?" and "where
+        // does this live?" stay separate questions with separate answers.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS remote_files (
+                node_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                remote_id TEXT NOT NULL,
+                account TEXT NOT NULL DEFAULT '',
+                size INTEGER NOT NULL DEFAULT 0,
+                modified_at TEXT NOT NULL DEFAULT '',
+                web_url TEXT NOT NULL DEFAULT '',
+                seen_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (remote_files): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_remote_files_provider ON remote_files(provider);",
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (remote_files index): {}", e)))?;
+
         // ─── Nodes Table (Universal Core) ────────────────────────
         conn.execute(
             "CREATE TABLE IF NOT EXISTS nodes (
@@ -185,10 +313,8 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Migrate Error (stable_id backfill): {}", e)))?;
 
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_nodes_stable_id ON nodes(stable_id);",
-        )
-        .map_err(|e| AppError::General(format!("DB Index Error (nodes stable id): {}", e)))?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_nodes_stable_id ON nodes(stable_id);")
+            .map_err(|e| AppError::General(format!("DB Index Error (nodes stable id): {}", e)))?;
 
         // ─── Node Blocks (for Block-Level Referencing) ──────────
         conn.execute(
@@ -407,6 +533,99 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (search_index_rowids): {}", e)))?;
 
+        // Calendars belonging to somebody else.
+        //
+        // Deliberately not vault files. A subscribed calendar is a copy of a
+        // feed the user does not own: writing it into the vault would sync
+        // someone else's data to their other devices, make it editable when
+        // the next refresh would overwrite the edit, and leave hundreds of
+        // orphans behind when the subscription is removed. A cache belongs in
+        // a cache.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                colour TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                etag TEXT NOT NULL DEFAULT '',
+                last_modified TEXT NOT NULL DEFAULT '',
+                last_fetched_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                event_count INTEGER NOT NULL DEFAULT 0,
+                -- Off by default, and deliberately. A holidays calendar would
+                -- otherwise announce every holiday at midnight; a team
+                -- calendar is worth being reminded about. Only the person who
+                -- pasted the URL knows which one this is.
+                remind INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::General(format!("DB Schema Error (calendar_subscriptions): {}", e))
+        })?;
+
+        // `remind` arrived after the table had already shipped, and the
+        // `CREATE TABLE IF NOT EXISTS` above does nothing to a database that
+        // already has one — so every existing install would keep a table the
+        // query no longer matches, and Calendar would open on "no such column:
+        // remind" rather than on a calendar.
+        let has_remind = conn
+            .prepare("SELECT remind FROM calendar_subscriptions LIMIT 1")
+            .is_ok();
+        if !has_remind {
+            conn.execute(
+                "ALTER TABLE calendar_subscriptions ADD COLUMN remind INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| {
+                AppError::General(format!("DB Schema Error (calendar_subscriptions.remind): {}", e))
+            })?;
+        }
+
+        // The events those calendars currently hold. Replaced wholesale on
+        // every refresh: a feed is a statement of what the calendar contains
+        // now, not a list of changes since last time, so merging would keep
+        // events the other end has deleted.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS calendar_subscription_events (
+                subscription_id TEXT NOT NULL,
+                uid TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (subscription_id, uid)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::General(format!("DB Schema Error (subscription_events): {}", e))
+        })?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_events_source
+                 ON calendar_subscription_events(subscription_id);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (subscription_events): {}", e)))?;
+
+        // Which reminders have already been announced.
+        //
+        // This used to be rebuilt every sixty seconds by reading and parsing
+        // every message file in the vault — after two years of use, some seven
+        // hundred files a minute, forever, to answer a question a primary key
+        // answers instantly.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS reminder_deliveries (
+                delivery_key TEXT PRIMARY KEY,
+                delivered_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (reminder_deliveries): {}", e)))?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_at
+                 ON reminder_deliveries(delivered_at);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (reminder_deliveries): {}", e)))?;
+
         // Blocks are cleared a whole note at a time, but the table's primary key
         // leads with block_id, so that lookup had no index to use.
         conn.execute_batch(
@@ -452,7 +671,39 @@ impl DbBridge {
                         status UNINDEXED,
                         date UNINDEXED,
                         path UNINDEXED,
-                        tokenize = 'unicode61 remove_diacritics 0'
+                        -- Just the words containing `đ`, with it folded to
+                        -- `d`, so that `dong` finds `đông`. The tokenizer
+                        -- cannot do this one: `đ` is a letter, not a mark.
+                        --
+                        -- Last, so the column numbers everything else depends
+                        -- on — `snippet(..., 4, ...)` for content, the bm25
+                        -- weights — keep meaning what they meant. And only the
+                        -- `đ` words, so an ordinary search never matches here
+                        -- twice and has its ranking quietly rearranged. See
+                        -- `crate::search_fold`.
+                        norm,
+                        -- Diacritics folded, at index time and at query time
+                        -- alike, so that a word typed without them finds one
+                        -- written with them.
+                        --
+                        -- This is not a nicety in a Vietnamese vault: with
+                        -- `remove_diacritics 0`, searching `cong` returned
+                        -- nothing at all for a note about `công ty`, and every
+                        -- search — the sidebar, the manager, Nexus, and the
+                        -- editor's own `@` menu — went through here. Typing
+                        -- full tone marks to find your own notes is not a
+                        -- search feature.
+                        --
+                        -- It costs precision: `hoa` now also finds `hóa` and
+                        -- `họa`. For a language where fast typing routinely
+                        -- drops the marks, recall is the side worth being
+                        -- wrong on.
+                        --
+                        -- Note `đ` is a letter of its own rather than a `d`
+                        -- with a mark, so unicode61 leaves it alone: `dong`
+                        -- still will not find `đông`. That needs folding this
+                        -- tokenizer cannot do.
+                        tokenize = 'unicode61 remove_diacritics 2'
                     );",
                 )
                 .map_err(|e| AppError::General(format!("DB Schema Error (search_index): {}", e)))?;
@@ -547,6 +798,32 @@ impl DbBridge {
         .map_err(|e| AppError::General(format!("DB Index Error (feed_articles): {}", e)))?;
 
         // ─── Feed Articles FTS5 ───────────────────────────────
+        //
+        // Same tokenizer as `search_index`, and for the same reason. `CREATE
+        // ... IF NOT EXISTS` cannot change one, though, so the version below
+        // does the dropping — without it the fix would reach new installs
+        // only, and two people running the same build would get different
+        // answers to the same search.
+        let feeds_fts_version: String = conn
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = 'feeds_fts_schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        if feeds_fts_version != FEEDS_FTS_SCHEMA_VERSION {
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS feed_articles_ai;
+                 DROP TRIGGER IF EXISTS feed_articles_ad;
+                 DROP TRIGGER IF EXISTS feed_articles_au;
+                 DROP TABLE IF EXISTS feed_articles_fts;",
+            )
+            .map_err(|e| {
+                AppError::General(format!("DB Schema Error (drop feed_articles_fts): {}", e))
+            })?;
+        }
+
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS feed_articles_fts USING fts5(
                 title,
@@ -555,10 +832,65 @@ impl DbBridge {
                 summary,
                 content='feed_articles',
                 content_rowid='rowid',
-                tokenize = 'unicode61 remove_diacritics 0'
+                tokenize = 'unicode61 remove_diacritics 2'
             );",
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (feed_articles_fts): {}", e)))?;
+
+        // The index is kept by the database, not by whoever happened to write
+        // the row. Every path that touched `feed_articles` used to be
+        // responsible for its own `INSERT INTO ..._fts`, and the two that did
+        // not — deleting a feed, and cleanup deleting old articles — left rows
+        // in the index pointing at articles that no longer existed. SQLite
+        // reuses rowids, so those stale entries did not merely go missing from
+        // results, they started naming whichever article landed on the rowid
+        // next.
+        //
+        // The update trigger names its columns on purpose: marking an article
+        // read is by far the most common write to this table and touches
+        // nothing the index holds, so it should not cost a reindex of the
+        // article body.
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS feed_articles_ai AFTER INSERT ON feed_articles BEGIN
+                INSERT INTO feed_articles_fts (rowid, title, author, content, summary)
+                VALUES (new.rowid, new.title, new.author, new.content, new.summary);
+             END;
+             CREATE TRIGGER IF NOT EXISTS feed_articles_ad AFTER DELETE ON feed_articles BEGIN
+                INSERT INTO feed_articles_fts (feed_articles_fts, rowid, title, author, content, summary)
+                VALUES ('delete', old.rowid, old.title, old.author, old.content, old.summary);
+             END;
+             CREATE TRIGGER IF NOT EXISTS feed_articles_au
+                AFTER UPDATE OF title, author, content, summary ON feed_articles BEGIN
+                INSERT INTO feed_articles_fts (feed_articles_fts, rowid, title, author, content, summary)
+                VALUES ('delete', old.rowid, old.title, old.author, old.content, old.summary);
+                INSERT INTO feed_articles_fts (rowid, title, author, content, summary)
+                VALUES (new.rowid, new.title, new.author, new.content, new.summary);
+             END;",
+        )
+        .map_err(|e| {
+            AppError::General(format!("DB Schema Error (feed_articles_fts triggers): {}", e))
+        })?;
+
+        if feeds_fts_version != FEEDS_FTS_SCHEMA_VERSION {
+            // An external-content table holds no text of its own, so refilling
+            // it is a read of `feed_articles` rather than a refetch of anybody's
+            // feeds. Failing here would leave articles unfindable but present,
+            // which is worth a log and not worth refusing to start over.
+            if let Err(e) = conn.execute(
+                "INSERT INTO feed_articles_fts (rowid, title, author, content, summary)
+                 SELECT rowid, title, author, content, summary FROM feed_articles",
+                [],
+            ) {
+                log::warn!("could not refill the feed search index: {}", e);
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO kv_store (key, value) VALUES ('feeds_fts_schema_version', ?1)",
+                params![FEEDS_FTS_SCHEMA_VERSION],
+            )
+            .map_err(|e| {
+                AppError::General(format!("DB KV Error (feeds_fts_schema_version): {}", e))
+            })?;
+        }
 
         // ─── Feed Fetch Log ───────────────────────────────────
         conn.execute(
@@ -580,6 +912,108 @@ impl DbBridge {
              CREATE INDEX IF NOT EXISTS idx_ffl_fetched ON feed_fetch_log(fetched_at);",
         )
         .map_err(|e| AppError::General(format!("DB Index Error (feed_fetch_log): {}", e)))?;
+
+        // ─── Feed Highlights ──────────────────────────────────
+        //
+        // Keyed by the feed and the article's guid rather than by the local
+        // article id, for the same reason the read state is: article ids are
+        // UUIDs minted at insert time and differ on every device, while the
+        // guid comes from the publisher.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS feed_highlights (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                guid TEXT NOT NULL,
+                text TEXT NOT NULL,
+                occurrence INTEGER NOT NULL DEFAULT 0,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT ''
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (feed_highlights): {}", e)))?;
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_fh_article ON feed_highlights(source_id, guid);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (feed_highlights): {}", e)))?;
+
+        // ─── Feed Source State ────────────────────────────────
+        //
+        // Per-device, and deliberately not in the vault. How many times this
+        // machine has failed to reach a feed, and when it should next try, are
+        // facts about this machine's last few hours of network — they are not
+        // subscriptions, and syncing them would mean two devices rewriting the
+        // same file every refresh.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS feed_source_state (
+                source_id TEXT PRIMARY KEY,
+                etag TEXT NOT NULL DEFAULT '',
+                last_modified TEXT NOT NULL DEFAULT '',
+                last_fetched_at TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                error_count INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT NOT NULL DEFAULT ''
+            )",
+            [],
+        )
+        .map_err(|e| AppError::General(format!("DB Schema Error (feed_source_state): {}", e)))?;
+
+        // The table started life holding only the backoff, before the rest of
+        // the per-device fetch state was moved out of the vault.
+        for column in [
+            "etag TEXT NOT NULL DEFAULT ''",
+            "last_modified TEXT NOT NULL DEFAULT ''",
+            "last_fetched_at TEXT NOT NULL DEFAULT ''",
+            "last_error TEXT NOT NULL DEFAULT ''",
+        ] {
+            let name = column.split_whitespace().next().unwrap_or_default();
+            let exists = conn
+                .prepare(&format!("SELECT {} FROM feed_source_state LIMIT 1", name))
+                .is_ok();
+            if !exists {
+                conn.execute(
+                    &format!("ALTER TABLE feed_source_state ADD COLUMN {}", column),
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::General(format!("DB Schema Error (feed_source_state.{}): {}", name, e))
+                })?;
+            }
+        }
+
+        // Tags a rule attached to an article. Stored comma-wrapped —
+        // `,rust,work,` — so that a `LIKE '%,rust,%'` cannot match `rustlang`.
+        let has_tags = conn.prepare("SELECT tags FROM feed_articles LIMIT 1").is_ok();
+        if !has_tags {
+            conn.execute(
+                "ALTER TABLE feed_articles ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| AppError::General(format!("DB Schema Error (feed tags): {}", e)))?;
+        }
+
+        // When this device last changed an article's read/starred/read-later
+        // flags. Empty means "never touched here", which is what keeps this
+        // device's published state file to its own decisions rather than a
+        // copy of everybody's.
+        let has_state_updated_at = conn
+            .prepare("SELECT state_updated_at FROM feed_articles LIMIT 1")
+            .is_ok();
+        if !has_state_updated_at {
+            conn.execute(
+                "ALTER TABLE feed_articles ADD COLUMN state_updated_at TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| {
+                AppError::General(format!("DB Schema Error (state_updated_at): {}", e))
+            })?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_fa_state_updated ON feed_articles(state_updated_at);
+             CREATE INDEX IF NOT EXISTS idx_fa_guid ON feed_articles(feed_source_id, guid);",
+        )
+        .map_err(|e| AppError::General(format!("DB Index Error (feed state): {}", e)))?;
 
         // ─── Sync Metrics (Phase 4 Mobile Optimization) ───────────
         conn.execute(
@@ -1453,10 +1887,8 @@ pub(crate) fn migrate_sync_schema_v8(conn: &mut Connection) -> AppResult<()> {
         .transaction()
         .map_err(|e| AppError::General(format!("Failed to start sync schema tx: {}", e)))?;
 
-    tx.execute_batch(
-        "ALTER TABLE sync_inbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;",
-    )
-    .map_err(|e| AppError::General(format!("DB Schema Error (sync v8 migration): {}", e)))?;
+    tx.execute_batch("ALTER TABLE sync_inbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;")
+        .map_err(|e| AppError::General(format!("DB Schema Error (sync v8 migration): {}", e)))?;
 
     tx.execute(
         "INSERT INTO sync_schema_meta (singleton_id, version, updated_at)
@@ -1688,6 +2120,90 @@ pub(crate) fn migrate_sync_schema_v7(conn: &mut Connection) -> AppResult<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A database from before `remind` existed has to gain the column, not
+    /// keep the table it already has. `CREATE TABLE IF NOT EXISTS` is silent
+    /// about a table that is already there, so without the `ALTER` every
+    /// existing install opens Calendar on "no such column: remind".
+    #[test]
+    fn an_older_subscriptions_table_gains_the_remind_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE calendar_subscriptions (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                colour TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                etag TEXT NOT NULL DEFAULT '',
+                last_modified TEXT NOT NULL DEFAULT '',
+                last_fetched_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                event_count INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO calendar_subscriptions (id, url, name)
+             VALUES ('s1', 'https://example.invalid/c.ics', 'Holidays');",
+        )
+        .unwrap();
+
+        let db = DbBridge::init_with_conn(conn).expect("schema init should succeed");
+        let conn = db.conn();
+
+        // The subscription the user already had is still there, and quiet —
+        // a calendar that started announcing itself after an update would be
+        // the upgrade making a decision that is the reader's to make.
+        let (name, remind): (String, i64) = conn
+            .query_row(
+                "SELECT name, remind FROM calendar_subscriptions WHERE id = 's1'",
+                [],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .expect("the row must survive the migration, with a remind column to read");
+        assert_eq!(name, "Holidays");
+        assert_eq!(remind, 0);
+    }
+
+    /// The guard, from the other side: a table that already has the column
+    /// must not have it added again, or every start after the first fails on
+    /// "duplicate column name".
+    #[test]
+    fn a_subscriptions_table_that_already_has_remind_is_left_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE calendar_subscriptions (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                colour TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                etag TEXT NOT NULL DEFAULT '',
+                last_modified TEXT NOT NULL DEFAULT '',
+                last_fetched_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                event_count INTEGER NOT NULL DEFAULT 0,
+                remind INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO calendar_subscriptions (id, url, remind)
+             VALUES ('s1', 'https://example.invalid/c.ics', 1);",
+        )
+        .unwrap();
+
+        let db = DbBridge::init_with_conn(conn).expect("schema init should succeed");
+
+        // And the choice already recorded against it is still the one stored:
+        // a migration that ran anyway would reset it to the default.
+        let remind: i64 = db
+            .conn()
+            .query_row(
+                "SELECT remind FROM calendar_subscriptions WHERE id = 's1'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(remind, 1);
+    }
 
     #[test]
     fn fresh_sync_schema_v5_creates_vault_scoped_legacy_targets() {
@@ -3356,9 +3872,11 @@ mod upgrade_from_released_version_tests {
 
         let source: String = db
             .conn()
-            .query_row("SELECT source_id FROM node_edges WHERE id = 'e1'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT source_id FROM node_edges WHERE id = 'e1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(source, "uuid-writer");
     }
@@ -3526,9 +4044,7 @@ mod upgrade_from_released_version_tests {
 
         let stale: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM search_index_rowids", [], |r| {
-                r.get(0)
-            })
+            .query_row("SELECT COUNT(*) FROM search_index_rowids", [], |r| r.get(0))
             .unwrap();
         assert_eq!(stale, 0, "the map outlived the index it described");
 

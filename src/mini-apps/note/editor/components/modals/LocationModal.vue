@@ -33,7 +33,7 @@ const updateField = <K extends keyof LocationModalState>(key: K, value: Location
 <template>
   <Teleport to="body">
     <div v-if="modelValue.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-      <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-[420px] border border-[#e6e6e6] dark:border-[#3a3a3a]">
+      <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-[95vw] max-w-[420px] border border-[#e6e6e6] dark:border-[#3a3a3a]">
         <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-1 flex items-center gap-2">
           <MapPinIcon class="w-4 h-4 text-red-500" />
           Insert Location

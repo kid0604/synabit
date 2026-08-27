@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// The single key every secret is stored under on Android.
+#[cfg(target_os = "android")]
+const ANDROID_SECRETS_KEY: &str = "app_secrets";
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AppSecrets {
     pub e2ee_password: Option<String>, // KEEP for migration
@@ -18,6 +22,162 @@ pub struct AppSecrets {
     pub auto_lock_timeout_secs: Option<u64>, // Default 300
     #[serde(default)]
     pub app_lock_active: Option<bool>, // Tier 1 toggle (independent of PIN)
+}
+
+/// Read one value out of the Android keystore-backed store.
+///
+/// Every step is fallible and none of them may panic. The Java side is reached
+/// by name through JNI, so a build that renamed or removed `SecureStore` — R8
+/// does exactly that unless a keep rule holds it — fails here rather than at
+/// some later point that looks unrelated. Panicking would take the app down on
+/// the startup path, since reading the E2EE key is one of the first things the
+/// frontend asks for.
+///
+/// A failed JNI call leaves an exception pending on the thread, which poisons
+/// every later call made from it, including Tauri's own. It is cleared before
+/// returning.
+#[cfg(target_os = "android")]
+fn android_secure_store_get(key: &str) -> Result<String, String> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+        .map_err(|e| format!("the Android JVM is unavailable: {e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("could not attach to the Android JVM: {e}"))?;
+    let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+
+    let outcome = android_secure_store_get_inner(&mut env, &context, key);
+    if outcome.is_err() {
+        let _ = env.exception_clear();
+    }
+    outcome
+}
+
+#[cfg(target_os = "android")]
+fn android_secure_store_get_inner(
+    env: &mut jni::JNIEnv,
+    context: &jni::objects::JObject,
+    key: &str,
+) -> Result<String, String> {
+    use jni::objects::JValue;
+
+    let jclass = android_secure_store_class(env, context)?;
+    let jkey = env
+        .new_string(key)
+        .map_err(|e| format!("could not allocate the key string: {e}"))?;
+
+    let value = env
+        .call_static_method(
+            &jclass,
+            "getSecret",
+            "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(context), JValue::Object(&jkey)],
+        )
+        .and_then(|v| v.l())
+        .map_err(|e| format!("SecureStore.getSecret is not callable: {e}"))?;
+
+    let value = jni::objects::JString::from(value);
+    let value: String = env
+        .get_string(&value)
+        .map_err(|e| format!("could not read what SecureStore returned: {e}"))?
+        .into();
+    Ok(value)
+}
+
+/// Write one value into the Android keystore-backed store. See
+/// [`android_secure_store_get`] for why nothing here is allowed to panic.
+#[cfg(target_os = "android")]
+fn android_secure_store_put(key: &str, value: &str) -> Result<(), String> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+        .map_err(|e| format!("the Android JVM is unavailable: {e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("could not attach to the Android JVM: {e}"))?;
+    let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+
+    let outcome = android_secure_store_put_inner(&mut env, &context, key, value);
+    if outcome.is_err() {
+        let _ = env.exception_clear();
+    }
+    outcome
+}
+
+#[cfg(target_os = "android")]
+fn android_secure_store_put_inner(
+    env: &mut jni::JNIEnv,
+    context: &jni::objects::JObject,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    use jni::objects::JValue;
+
+    let jclass = android_secure_store_class(env, context)?;
+    let jkey = env
+        .new_string(key)
+        .map_err(|e| format!("could not allocate the key string: {e}"))?;
+    let jvalue = env
+        .new_string(value)
+        .map_err(|e| format!("could not allocate the value string: {e}"))?;
+
+    let stored = env
+        .call_static_method(
+            &jclass,
+            "saveSecret",
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
+            &[
+                JValue::Object(context),
+                JValue::Object(&jkey),
+                JValue::Object(&jvalue),
+            ],
+        )
+        .and_then(|v| v.z())
+        .map_err(|e| format!("SecureStore.saveSecret is not callable: {e}"))?;
+
+    if stored {
+        Ok(())
+    } else {
+        Err("the Android keystore refused the write".to_string())
+    }
+}
+
+/// Resolve `com.synabit.app.SecureStore` through the app's own class loader.
+///
+/// The system class loader cannot see application classes from a thread the JVM
+/// did not start, which is every thread Rust attaches, so the loader is taken
+/// from the activity context instead.
+#[cfg(target_os = "android")]
+fn android_secure_store_class<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    context: &jni::objects::JObject,
+) -> Result<jni::objects::JClass<'local>, String> {
+    use jni::objects::JValue;
+
+    let class_loader = env
+        .call_method(context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .and_then(|v| v.l())
+        .map_err(|e| format!("could not reach the Android class loader: {e}"))?;
+
+    let class_name = env
+        .new_string("com.synabit.app.SecureStore")
+        .map_err(|e| format!("could not allocate the class name: {e}"))?;
+
+    let class = env
+        .call_method(
+            &class_loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )
+        .and_then(|v| v.l())
+        .map_err(|e| {
+            format!(
+                "SecureStore is missing from this build — the most likely cause is R8 \
+                 removing it, which a keep rule in proguard-rules.pro prevents: {e}"
+            )
+        })?;
+
+    Ok(jni::objects::JClass::from(class))
 }
 
 pub struct SecretManager;
@@ -61,70 +221,44 @@ impl SecretManager {
         }
         #[cfg(target_os = "android")]
         {
-            if let Some(_handle) = app_handle {
-                use jni::objects::JValue;
-                let ctx = ndk_context::android_context();
-                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-                let mut env = vm.attach_current_thread().unwrap();
-                let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-
-                let class_loader = env
-                    .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-                    .unwrap()
-                    .l()
-                    .unwrap();
-                let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
-                let jclass_obj = env
-                    .call_method(
-                        &class_loader,
-                        "loadClass",
-                        "(Ljava/lang/String;)Ljava/lang/Class;",
-                        &[JValue::Object(&class_name)],
-                    )
-                    .unwrap()
-                    .l()
-                    .unwrap();
-                let jclass = jni::objects::JClass::from(jclass_obj);
-
-                let key = env.new_string("app_secrets").unwrap();
-
-                let result = env
-                    .call_static_method(
-                        &jclass,
-                        "getSecret",
-                        "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
-                        &[JValue::Object(&context), JValue::Object(&key)],
-                    )
-                    .unwrap()
-                    .l()
-                    .unwrap();
-
-                let jstr = jni::objects::JString::from(result);
-                let content_str: String = env.get_string(&jstr).unwrap().into();
-
-                if !content_str.is_empty() {
-                    if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&content_str) {
-                        return secrets;
-                    }
-                } else {
-                    let path = Self::get_file_path(_handle);
-                    if let Ok(old_content) = std::fs::read_to_string(&path) {
-                        if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&old_content) {
-                            let val = env.new_string(&old_content).unwrap();
-                            let _ = env.call_static_method(
-                                &jclass,
-                                "saveSecret",
-                                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
-                                &[
-                                    JValue::Object(&context),
-                                    JValue::Object(&key),
-                                    JValue::Object(&val),
-                                ],
-                            );
-                            let _ = std::fs::remove_file(path);
+            if let Some(handle) = app_handle {
+                match android_secure_store_get(ANDROID_SECRETS_KEY) {
+                    Ok(content) if !content.is_empty() => {
+                        if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&content) {
                             return secrets;
                         }
+                        log::error!(
+                            "the Android keystore holds a secrets blob this build cannot parse; \
+                             treating it as absent rather than overwriting it"
+                        );
                     }
+                    Ok(_) => {
+                        // Nothing stored yet. An install that predates the keystore
+                        // left its secrets in a plain file next door; carry those
+                        // across once and remove the file.
+                        let path = Self::get_file_path(handle);
+                        if let Ok(old_content) = std::fs::read_to_string(&path) {
+                            if let Ok(secrets) = serde_json::from_str::<AppSecrets>(&old_content) {
+                                match android_secure_store_put(ANDROID_SECRETS_KEY, &old_content) {
+                                    Ok(()) => {
+                                        let _ = std::fs::remove_file(&path);
+                                    }
+                                    // The file stays where it is, so the next
+                                    // launch tries the move again.
+                                    Err(e) => log::error!(
+                                        "could not move the stored secrets into the Android \
+                                         keystore, leaving them in place: {e}"
+                                    ),
+                                }
+                                return secrets;
+                            }
+                        }
+                    }
+                    // Loud on purpose. The caller cannot tell "no key yet" from
+                    // "the key is unreachable", and acting on the first when the
+                    // second is true means minting a fresh vault key and losing
+                    // the existing vault.
+                    Err(e) => log::error!("could not read the Android keystore: {e}"),
                 }
             }
         }
@@ -159,54 +293,8 @@ impl SecretManager {
         }
         #[cfg(target_os = "android")]
         {
-            if let Some(_handle) = app_handle {
-                use jni::objects::JValue;
-                let ctx = ndk_context::android_context();
-                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-                let mut env = vm.attach_current_thread().unwrap();
-                let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-
-                let class_loader = env
-                    .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-                    .unwrap()
-                    .l()
-                    .unwrap();
-                let class_name = env.new_string("com.synabit.app.SecureStore").unwrap();
-                let jclass_obj = env
-                    .call_method(
-                        &class_loader,
-                        "loadClass",
-                        "(Ljava/lang/String;)Ljava/lang/Class;",
-                        &[JValue::Object(&class_name)],
-                    )
-                    .unwrap()
-                    .l()
-                    .unwrap();
-                let jclass = jni::objects::JClass::from(jclass_obj);
-
-                let key = env.new_string("app_secrets").unwrap();
-                let val = env.new_string(&content).unwrap();
-
-                let res = env
-                    .call_static_method(
-                        &jclass,
-                        "saveSecret",
-                        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
-                        &[
-                            JValue::Object(&context),
-                            JValue::Object(&key),
-                            JValue::Object(&val),
-                        ],
-                    )
-                    .unwrap()
-                    .z()
-                    .unwrap();
-
-                if res {
-                    Ok(())
-                } else {
-                    Err("Android Keystore error".to_string())
-                }
+            if app_handle.is_some() {
+                android_secure_store_put(ANDROID_SECRETS_KEY, &content)
             } else {
                 Err("AppHandle is required on mobile to save secrets".to_string())
             }

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { X, Wallet, FileText, CheckCircle2 } from 'lucide-vue-next';
 import type { Debt, FinanceAccount, Transaction } from './types';
-import { formatCurrency } from './currency';
+import { formatAmountInput, formatCurrency, formatMinorForInput, parseAmountInput } from './currency';
 
 const props = defineProps<{
     show: boolean;
@@ -32,26 +32,18 @@ onMounted(() => {
     accountId.value = props.debt.accountId || (props.accounts.length > 0 ? props.accounts[0].id : '');
     
     // Default amount to remaining
-    amountStr.value = remainingAmount.toString();
+    amountStr.value = formatMinorForInput(remainingAmount);
     markCompleted.value = true;
 });
 
+/** See the note in DebtModal: `parseInt` stopped at the first group separator. */
 const formatCurrencyInput = (e: Event) => {
     const input = e.target as HTMLInputElement;
-    let val = input.value.replace(/\D/g, '');
-    if (val) {
-        val = new Intl.NumberFormat('en-US').format(parseInt(val));
-    }
-    input.value = val;
-    amountStr.value = val.replace(/\./g, '');
-    
-    // Auto toggle mark completed
-    const amt = parseInt(amountStr.value);
-    if (!isNaN(amt) && amt >= remainingAmount) {
-        markCompleted.value = true;
-    } else {
-        markCompleted.value = false;
-    }
+    amountStr.value = formatAmountInput(input.value);
+    input.value = amountStr.value;
+
+    // Paying off the remainder marks the debt closed, unless the user says not.
+    markCompleted.value = parseAmountInput(amountStr.value) >= remainingAmount;
 };
 
 // formatCurrency is imported from ./currency
@@ -59,8 +51,8 @@ const formatCurrencyInput = (e: Event) => {
 const save = () => {
     if (!amountStr.value || !date.value || !accountId.value) return;
 
-    const amount = parseInt(amountStr.value);
-    if (isNaN(amount) || amount <= 0) return;
+    const amount = parseAmountInput(amountStr.value);
+    if (amount <= 0) return;
 
     const now = new Date();
     const dDate = new Date(date.value);
@@ -74,7 +66,6 @@ const save = () => {
         status: (markCompleted.value || updatedPaidAmount >= props.debt.totalAmount) ? 'completed' : 'active'
     };
 
-    const actionText = props.debt.type === 'lend' ? 'Collect from' : 'Repay to';
     const tx: Transaction = {
         id: `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: props.debt.type === 'lend' ? 'income' : 'expense',
@@ -127,7 +118,7 @@ const save = () => {
                         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.transaction_amount') }}</label>
                         <div class="relative">
                             <input 
-                                :value="new Intl.NumberFormat('en-US').format(Number(amountStr) || 0) === '0' ? '' : new Intl.NumberFormat('en-US').format(Number(amountStr) || 0)"
+                                :value="amountStr"
                                 @input="formatCurrencyInput"
                                 type="text" 
                                 placeholder="0"

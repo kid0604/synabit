@@ -7,6 +7,23 @@ export const useAppStore = defineStore('app', () => {
   const vaultPath = ref<string>('');
   const vaultType = ref<'local' | 'gdrive'>('local');
   const taskArchiveDays = ref<number>(30);
+  /**
+   * How much a task delete asks before it happens.
+   *
+   * `dialog` — a modal, every time. `inline` — the bin turns into a "Delete?"
+   * button that has to be pressed again. `undo` — no question at all; the
+   * toast is the way back.
+   *
+   * All three keep the undo window, so nothing here decides whether a delete
+   * can be taken back, only how loudly it announces itself first.
+   */
+  const taskDeleteConfirm = ref<'dialog' | 'inline' | 'undo'>('inline');
+  /**
+   * How the task list is arranged. Names rather than a shape, so a value from
+   * a newer version is ignored by the guard rather than breaking the list.
+   */
+  const taskListSort = ref<string>('updated');
+  const taskListGroup = ref<string>('none');
   
   // Daily Notes
   const enableDailyNotes = ref<boolean>(true);
@@ -64,6 +81,17 @@ export const useAppStore = defineStore('app', () => {
       
       const arcDays = await storeInstance.get('taskArchiveDays');
       if (arcDays) taskArchiveDays.value = Number(arcDays);
+
+      const listSort = await storeInstance.get('taskListSort');
+      if (typeof listSort === 'string') taskListSort.value = listSort;
+
+      const listGroup = await storeInstance.get('taskListGroup');
+      if (typeof listGroup === 'string') taskListGroup.value = listGroup;
+
+      const delConfirm = await storeInstance.get('taskDeleteConfirm');
+      if (delConfirm === 'dialog' || delConfirm === 'inline' || delConfirm === 'undo') {
+        taskDeleteConfirm.value = delConfirm;
+      }
       
       const enDaily = await storeInstance.has('enableDailyNotes');
       if (enDaily) enableDailyNotes.value = (await storeInstance.get('enableDailyNotes')) as boolean;
@@ -192,6 +220,15 @@ export const useAppStore = defineStore('app', () => {
       watch(taskArchiveDays, async (v) => {
         if (storeInstance) await storeInstance.set('taskArchiveDays', v);
       });
+      watch(taskDeleteConfirm, async (v) => {
+        if (storeInstance) await storeInstance.set('taskDeleteConfirm', v);
+      });
+      watch(taskListSort, async (v) => {
+        if (storeInstance) await storeInstance.set('taskListSort', v);
+      });
+      watch(taskListGroup, async (v) => {
+        if (storeInstance) await storeInstance.set('taskListGroup', v);
+      });
       watch(enableDailyNotes, async (v) => {
         if (storeInstance) await storeInstance.set('enableDailyNotes', v);
       });
@@ -285,6 +322,9 @@ export const useAppStore = defineStore('app', () => {
     vaultPath,
     vaultType,
     taskArchiveDays,
+    taskDeleteConfirm,
+    taskListSort,
+    taskListGroup,
     enableDailyNotes,
     dailyNoteFormat,
     dailyNoteTag,

@@ -20,7 +20,6 @@ use super::CLIENT_SECRET;
 use super::{generate_pkce_pair, CLIENT_ID, TOKEN_URI};
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
-use crate::models::file::FileMetadata;
 
 const BROWSE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 
@@ -480,96 +479,129 @@ pub async fn disconnect_gdrive(
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     crate::error::logged("clear token expiry", "gdrive_expires_at", db.delete_kv("gdrive_expires_at"));
     crate::error::logged("clear account email", "gdrive_user_email", db.delete_kv("gdrive_user_email"));
-    crate::error::logged("drop cached Drive files", "gdrive", db.delete_files_by_source_type("gdrive"));
+    crate::error::logged(
+        "drop cached Drive files",
+        "gdrive",
+        db.forget_provider(crate::file_providers::gdrive::PROVIDER).map(|_| ()),
+    );
 
     Ok(true)
 }
 
+/// Bring the local picture of a Drive account up to date.
+///
+/// Metadata only, and every page of it.
+///
+/// What this replaces asked for a single page of a thousand files and stopped:
+/// a Drive with more than that reported a fraction of itself and said nothing
+/// about the rest. It also wrote what it found into the legacy `files` table
+/// while the screen read from `nodes`, so even the thousand it did fetch never
+/// appeared. The paging now lives in `file_providers`, where a test drives it.
 #[tauri::command]
 pub async fn get_gdrive_files(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     vault_path: String,
-) -> AppResult<Vec<FileMetadata>> {
+) -> AppResult<usize> {
+    use crate::file_providers::{self, gdrive::PROVIDER};
+
     let access_token = get_valid_access_token(&app_handle, &vault_path).await?;
+    let account = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        db.get_kv("gdrive_user_email").ok().flatten().unwrap_or_default()
+    };
 
+    // Fetched first, written second. The paging loop is synchronous — it is
+    // pure logic, and keeping it that way is what makes it testable — so each
+    // page is awaited here and handed to it complete.
     let client = Client::new();
-    let res = client
-        .get("https://www.googleapis.com/drive/v3/files")
-        .header("Authorization", format!("Bearer {}", access_token))
-        .query(&[
-            ("fields", "files(id, name, mimeType, size, modifiedTime)"),
-            ("q", "trashed=false"),
-            ("pageSize", "1000"),
-        ])
-        .send()
-        .await
-        .map_err(|e| AppError::General(format!("Failed to fetch files: {}", e)))?;
-
-    if !res.status().is_success() {
-        let err_text = res.text().await.unwrap_or_default();
-        return Err(AppError::General(format!("GDrive API error: {}", err_text)));
-    }
-
-    #[derive(Deserialize)]
-    struct GDriveFileEntry {
-        id: String,
-        name: String,
-        #[serde(rename = "mimeType")]
-        mime_type: Option<String>,
-        size: Option<String>,
-        #[serde(rename = "modifiedTime")]
-        modified_time: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    struct GDriveListResp {
-        files: Vec<GDriveFileEntry>,
-    }
-
-    let file_list: GDriveListResp = res
-        .json()
-        .await
-        .map_err(|e| AppError::General(format!("Failed to parse GDrive files: {}", e)))?;
-
-    let mut result_files = Vec::new();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-
-    for gfile in file_list.files {
-        let mime = gfile.mime_type.unwrap_or_default();
-        let ext = if gfile.name.contains('.') {
-            gfile.name.split('.').next_back().unwrap_or("").to_string()
-        } else if mime.contains("folder") {
-            "folder".to_string()
-        } else if mime.contains("document") {
-            "gdoc".to_string()
-        } else if mime.contains("spreadsheet") {
-            "gsheet".to_string()
-        } else {
-            "file".to_string()
-        };
-
-        let size = gfile.size.and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-        let modified = gfile.modified_time.unwrap_or_else(|| now.clone());
-
-        let meta = FileMetadata {
-            id: format!("gdrive_{}", gfile.id),
-            path: format!("gdrive://{}", gfile.id),
-            filename: gfile.name,
-            extension: ext,
-            size,
-            created_at: modified.clone(),
-            modified_at: modified,
-            tags: vec!["gdrive".to_string()],
-            people: vec![],
-            source_type: "gdrive".to_string(),
-        };
-
-        if db.upsert_file(&meta).is_ok() {
-            result_files.push(meta);
+    let mut pages: Vec<file_providers::RemotePage> = Vec::new();
+    let mut token: Option<String> = None;
+    loop {
+        let page = file_providers::gdrive::fetch_page(&client, &access_token, token.clone()).await?;
+        let next = page.next.clone();
+        pages.push(page);
+        match next {
+            Some(next) if Some(&next) != token.as_ref() && pages.len() < 1_000 => {
+                token = Some(next)
+            }
+            _ => break,
         }
     }
 
-    Ok(result_files)
+    let mut cursor = 0usize;
+    let files = file_providers::collect_pages(|_| {
+        let page = pages.get(cursor).cloned().unwrap_or_default();
+        cursor += 1;
+        Ok(page)
+    })?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut listed = Vec::with_capacity(files.len());
+
+    for file in &files {
+        let node_id = file_providers::node_id_for(PROVIDER, &file.remote_id);
+
+        // Whatever a person attached to this file stays attached: a listing
+        // knows what Drive holds, not what the reader thought about it.
+        let existing = db.get_node(&node_id).ok().flatten();
+        let mut properties = serde_json::json!({
+            "extension": file.extension,
+            "size": file.size,
+            "source_type": PROVIDER,
+            "web_url": file.web_url,
+            "tags": [],
+            "people": [],
+        });
+        if let (Some(existing), Some(props)) = (&existing, properties.as_object_mut()) {
+            for field in ["tags", "people", "linked_projects"] {
+                if let Some(previous) = existing.properties.get(field) {
+                    if previous.as_array().is_some_and(|a| !a.is_empty()) {
+                        props.insert(field.to_string(), previous.clone());
+                    }
+                }
+            }
+        }
+
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: node_id.clone(),
+            node_type: "file".to_string(),
+            title: file.name.clone(),
+            content: String::new(),
+            properties,
+            created_at: existing
+                .as_ref()
+                .map(|n| n.created_at.clone())
+                .unwrap_or_else(|| file.modified_at.clone()),
+            updated_at: file.modified_at.clone(),
+            timestamp: chrono::Utc::now().timestamp(),
+            blocks: None,
+        })?;
+
+        db.upsert_remote_file(
+            &crate::db::RemoteEntry {
+                node_id: node_id.clone(),
+                provider: PROVIDER.to_string(),
+                remote_id: file.remote_id.clone(),
+                account: account.clone(),
+                size: file.size,
+                modified_at: file.modified_at.clone(),
+                web_url: file.web_url.clone(),
+            },
+            now,
+        )?;
+
+        listed.push(node_id);
+    }
+
+    // Anything the account no longer lists has gone from it.
+    let dropped = db.prune_remote_files(PROVIDER, &listed)?;
+    log::info!(
+        "gdrive: {} file(s) listed across {} page(s), {dropped} no longer there",
+        files.len(),
+        pages.len()
+    );
+
+    Ok(files.len())
 }

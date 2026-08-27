@@ -59,11 +59,40 @@ const BLACKLIST_PATHS: &[&str] = &[
 const EXCLUDED_TAGS: &[&str] = &["nav", "header", "footer", "aside"];
 
 /// Scrape article cards from a web page's HTML.
-pub fn scrape_articles(html: &str, base_url: &str) -> Vec<ScrapedArticle> {
+///
+/// `container_override` is a CSS selector the reader supplied for this
+/// particular site. The built-in guesses work on the many sites that use one
+/// of a handful of conventional markup patterns and produce nothing useful on
+/// the ones that do not — and for those, one selector typed once is the
+/// difference between a working feed and no feed. An override that matches
+/// nothing falls back to the guesses rather than to an empty list, because a
+/// selector that has gone stale should degrade to the old behaviour rather
+/// than silently emptying the feed.
+pub fn scrape_articles(
+    html: &str,
+    base_url: &str,
+    container_override: Option<&str>,
+) -> Vec<ScrapedArticle> {
     let document = Html::parse_document(html);
     let domain = extract_domain(base_url);
     let mut articles = Vec::new();
     let mut seen_urls: HashSet<String> = HashSet::new();
+
+    if let Some(custom) = container_override.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Ok(selector) = Selector::parse(custom) {
+            for container in document.select(&selector) {
+                if let Some(article) = extract_article_card(&container, &domain, base_url) {
+                    if !article.title.is_empty() && seen_urls.insert(article.url.clone()) {
+                        articles.push(article);
+                    }
+                }
+            }
+        }
+        if !articles.is_empty() {
+            articles.truncate(50);
+            return articles;
+        }
+    }
 
     for selector_str in CONTAINER_SELECTORS {
         let selector = match Selector::parse(selector_str) {

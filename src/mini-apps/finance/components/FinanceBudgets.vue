@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { Target, Plus, TrendingUp, AlertCircle, CheckCircle2, Calendar, ChevronDown, ChevronLeft, ChevronRight, Settings, X } from 'lucide-vue-next';
-import type { Budget, BudgetItem, Transaction } from '../types';
+import type { Budget, BudgetItem, Category, Transaction } from '../types';
 import BudgetModal from './BudgetModal.vue';
 import { formatCurrency } from '../currency';
+import { categoryName } from '../categories';
+import * as calc from '../calc';
 
 const props = defineProps<{
     budgets: Budget[];
     transactions: Transaction[];
     allTransactions: Transaction[];
     currentMonth: string;
-    expenseCategories: string[];
+    expenseCategories: Category[];
     selectedMonthNum: number;
     selectedYear: number;
     baseYear: number;
@@ -61,31 +63,23 @@ const isCustom = computed(() => selectedBudget.value?.type === 'custom');
 
 // --- Item stats for selected budget ---
 
-const getEffectiveAmount = (item: BudgetItem): number => {
-    if (!isCustom.value && item.monthlyOverrides && item.monthlyOverrides[props.currentMonth]) {
-        return item.monthlyOverrides[props.currentMonth];
-    }
-    return item.amount;
-};
+const getEffectiveAmount = (item: BudgetItem): number =>
+    calc.effectiveBudgetAmount(item, props.currentMonth, isCustom.value);
 
+/**
+ * A custom-period budget is measured over its own dates and so has to look at
+ * every transaction; a monthly one is already handed the month it belongs to.
+ */
 const getSpent = (item: BudgetItem): number => {
-    const categories = item.categories;
-    
     if (isCustom.value && selectedBudget.value?.startDate && selectedBudget.value?.endDate) {
-        const start = new Date(selectedBudget.value.startDate).getTime();
-        const end = new Date(selectedBudget.value.endDate + 'T23:59:59').getTime();
-        return props.allTransactions
-            .filter(tx => tx.type === 'expense' && categories.includes(tx.category))
-            .filter(tx => {
-                const t = new Date(tx.date).getTime();
-                return t >= start && t <= end;
-            })
-            .reduce((sum, tx) => sum + tx.amount, 0);
+        const window = calc.transactionsBetween(
+            props.allTransactions,
+            new Date(selectedBudget.value.startDate),
+            new Date(selectedBudget.value.endDate + 'T23:59:59'),
+        );
+        return calc.budgetSpent(item, window);
     }
-    
-    return props.transactions
-        .filter(tx => tx.type === 'expense' && categories.includes(tx.category))
-        .reduce((sum, tx) => sum + tx.amount, 0);
+    return calc.budgetSpent(item, props.transactions);
 };
 
 const itemStats = computed(() => {
@@ -94,7 +88,7 @@ const itemStats = computed(() => {
         const effectiveAmount = getEffectiveAmount(item);
         const spent = getSpent(item);
         const realPercent = effectiveAmount > 0 ? (spent / effectiveAmount) * 100 : 0;
-        const isOverridden = !isCustom.value && item.monthlyOverrides && item.monthlyOverrides[props.currentMonth] !== undefined;
+        const isOverridden = calc.isBudgetOverridden(item, props.currentMonth, isCustom.value);
 
         let status: 'safe' | 'warning' | 'danger' = 'safe';
         if (realPercent >= 100) status = 'danger';
@@ -414,7 +408,7 @@ const resetNewBudgetForm = () => {
                                 :key="cat"
                                 class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700/50"
                             >
-                                {{ cat }}
+                                {{ categoryName(expenseCategories, cat) }}
                             </span>
                             <span v-if="b.isOverridden" class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
                                 Override

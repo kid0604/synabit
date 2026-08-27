@@ -3,6 +3,11 @@ import { computed, toRef } from 'vue';
 import { Heart, Calendar, Globe, ExternalLink, Gift, Sparkles, Bell } from 'lucide-vue-next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
+import { daysUntilAnnual } from './composables/anniversaries';
+import { relationshipLabel } from './composables/relationships';
+import BriefCard from './BriefCard.vue';
+
+const emit = defineEmits(['open-node']);
 
 const props = defineProps<{
     person: any;
@@ -15,7 +20,7 @@ const howWeMet = computed(() => {
     const d = props.person?.properties?.details?.find((d: any) => d.label.toLowerCase().includes('how we met'));
     return d?.value || props.person?.properties?.how_we_met || '';
 });
-const relationshipType = computed(() => props.person?.properties?.relationship_type || '');
+const relationshipType = computed(() => relationshipLabel(props.person));
 const contactFrequency = computed(() => props.person?.properties?.contact_frequency || '');
 
 // Social links from details[] or legacy social object
@@ -53,19 +58,18 @@ const recentGifts = computed(() => gifts.value.slice(0, 5));
 // All notable dates (birthday + important_dates) with countdown
 const upcomingDates = computed(() => {
     const now = new Date();
-    const thisYear = now.getFullYear();
     const dates: Array<{ label: string; date: string; daysUntil: number | null; isUpcoming: boolean }> = [];
 
     // Birthday
     const bday = props.person?.properties?.birthday;
     if (bday) {
-        const daysUntil = getDaysUntilAnnual(bday, now, thisYear);
+        const daysUntil = daysUntilAnnual(bday, now);
         dates.push({ label: '🎂 Birthday', date: bday, daysUntil, isUpcoming: daysUntil !== null && daysUntil >= 0 && daysUntil <= 30 });
     }
 
     // Important dates
     for (const d of importantDates.value) {
-        const daysUntil = getDaysUntilAnnual(d.date, now, thisYear);
+        const daysUntil = daysUntilAnnual(d.date, now);
         dates.push({ label: d.label, date: d.date, daysUntil, isUpcoming: daysUntil !== null && daysUntil >= 0 && daysUntil <= 30 });
     }
 
@@ -79,25 +83,6 @@ const upcomingDates = computed(() => {
 
     return dates;
 });
-
-const getDaysUntilAnnual = (dateStr: string, now: Date, thisYear: number): number | null => {
-    if (!dateStr) return null;
-    const parts = dateStr.split('-');
-    let month: number, day: number;
-    if (parts.length === 3) {
-        month = parseInt(parts[1]) - 1;
-        day = parseInt(parts[2]);
-    } else if (parts.length === 2) {
-        month = parseInt(parts[0]) - 1;
-        day = parseInt(parts[1]);
-    } else return null;
-
-    let next = new Date(thisYear, month, day);
-    if (next.getTime() < now.getTime() - 86400000) {
-        next = new Date(thisYear + 1, month, day);
-    }
-    return Math.floor((next.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-};
 
 const hasUpcomingDates = computed(() => upcomingDates.value.length > 0);
 
@@ -130,6 +115,9 @@ const hasOverviewContent = computed(() => {
 
 <template>
     <div class="space-y-6">
+        <!-- What to know before you see them, and what has passed between you -->
+        <BriefCard :person="person" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
+
         <!-- Relationship Strength Card -->
         <div v-if="health.status !== 'unknown'" :class="['rounded-2xl p-5 border', health.bgColor, health.status === 'overdue' ? 'border-red-200 dark:border-red-900/30' : health.status === 'due_soon' ? 'border-yellow-200 dark:border-yellow-900/30' : 'border-transparent']">
             <div class="flex items-center gap-5">
@@ -153,7 +141,7 @@ const hasOverviewContent = computed(() => {
                     <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
                         <div v-if="health.daysSinceContact !== null">
                             <span class="text-gray-400">{{ $t('people.last_contact') }}</span>
-                            <span class="ml-1 font-medium" :class="health.color">{{ health.daysSinceContact }}d ago</span>
+                            <span class="ml-1 font-medium" :class="health.color">{{ $t('people.days_ago', { days: health.daysSinceContact }) }}</span>
                         </div>
                         <div v-if="health.nextContactDue !== null">
                             <span class="text-gray-400">{{ $t('people.next_due') }}</span>
@@ -174,7 +162,7 @@ const hasOverviewContent = computed(() => {
         <!-- Quick Stats (only if no health tracking — show basic stats) -->
         <div v-else-if="health.interactionCount > 0" class="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-3 text-center">
-                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Interactions</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('people.interactions') }}</p>
                 <p class="text-lg font-bold text-gray-800 dark:text-gray-100">{{ health.interactionCount }}</p>
             </div>
         </div>
@@ -182,14 +170,14 @@ const hasOverviewContent = computed(() => {
         <!-- Empty state -->
         <div v-if="!hasOverviewContent" class="text-center py-10 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
             <Sparkles class="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
-            <p class="text-gray-500 dark:text-gray-400 font-medium">No relationship details yet.</p>
+            <p class="text-gray-500 dark:text-gray-400 font-medium">{{ $t('people.no_details') }}</p>
             <p class="text-xs text-gray-400 mt-1">{{ $t('people.edit_to_add') }}</p>
         </div>
 
         <!-- How We Met -->
         <div v-if="howWeMet" class="bg-amber-50/50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-xl p-5">
             <h3 class="text-sm font-semibold text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-2">
-                <Heart class="w-4 h-4" /> How We Met
+                <Heart class="w-4 h-4" /> {{ $t('people.how_we_met') }}
             </h3>
             <p class="text-sm text-gray-700 dark:text-gray-300">{{ howWeMet }}</p>
         </div>
@@ -197,7 +185,7 @@ const hasOverviewContent = computed(() => {
         <!-- Social Links -->
         <div v-if="hasSocial" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-5">
             <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <Globe class="w-4 h-4" /> Social Links
+                <Globe class="w-4 h-4" /> {{ $t('people.social_links') }}
             </h3>
             <div class="grid grid-cols-2 gap-2">
                 <button v-for="item in socialItems" :key="item.label" @click="openLink(item.url)"
@@ -211,7 +199,7 @@ const hasOverviewContent = computed(() => {
         <!-- Important Dates -->
         <div v-if="hasUpcomingDates" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-5">
             <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <Calendar class="w-4 h-4" /> Important Dates
+                <Calendar class="w-4 h-4" /> {{ $t('people.important_dates') }}
             </h3>
             <div class="space-y-2">
                 <div v-for="(d, i) in upcomingDates" :key="i"
@@ -236,7 +224,7 @@ const hasOverviewContent = computed(() => {
         <!-- Recent Gifts -->
         <div v-if="recentGifts.length > 0" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-5">
             <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <Gift class="w-4 h-4 text-pink-500" /> Gifts
+                <Gift class="w-4 h-4 text-pink-500" /> {{ $t('people.gifts') }}
             </h3>
             <div class="space-y-2">
                 <div v-for="g in recentGifts" :key="g.id" class="flex items-center gap-3 text-sm py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">

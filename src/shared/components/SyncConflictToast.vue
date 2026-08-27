@@ -6,12 +6,6 @@ import { usePlatform } from '../../composables/usePlatform';
 
 const { isMobileOS } = usePlatform();
 
-// ─── Types ────────────────────────────────────────────────
-interface SyncConflictEvent {
-  merged_files: string[];
-  total: number;
-}
-
 // ─── State ────────────────────────────────────────────────
 const visible = ref(false);
 const mergedFiles = ref<string[]>([]);

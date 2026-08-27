@@ -109,18 +109,56 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
     // words there instead. The board itself is always read back from disk, so
     // nothing needs `content` to round-trip the file.
     if node_type == "whiteboard" {
-        let (summary, node_count, board_tags) = summarise_whiteboard(&content);
-        final_content = summary;
+        let summary = summarise_whiteboard(&content);
+        final_content = summary.text;
 
         if !properties.is_object() {
             properties = serde_json::json!({});
         }
         if let Some(map) = properties.as_object_mut() {
-            map.insert("node_count".to_string(), Value::from(node_count));
+            map.insert("node_count".to_string(), Value::from(summary.node_count));
+
+            // Notes pinned to a board are links from it, and were invisible:
+            // a board's indexed text is the labels its author typed, and a
+            // note card carries no label — so dragging a note onto a board
+            // put it nowhere in the graph and nowhere in that note's
+            // backlinks. Written in the form the link extractor already
+            // reads, so the edge, the backlink and the Nexus graph all follow
+            // without a second path through the code.
+            if !summary.note_links.is_empty() {
+                map.insert("linked_notes".to_string(), Value::from(summary.note_links));
+            }
             // Tags sit at the top level of a board file rather than inside its
             // metadata, so lift them where every other node type keeps them.
-            if !board_tags.is_empty() && !map.contains_key("tags") {
-                map.insert("tags".to_string(), Value::from(board_tags));
+            if !summary.tags.is_empty() && !map.contains_key("tags") {
+                map.insert("tags".to_string(), Value::from(summary.tags));
+            }
+
+            // A board stamps every save with an RFC 3339 time, because sync
+            // compares two copies of a board by that string and the two
+            // devices need not share a time zone. Every other date in the
+            // index is local time in the app's own format, and the block
+            // below copies this one straight over the top of it. Convert it
+            // here rather than let one node type put a second date format
+            // into lists that sort them as plain strings; a stamp that will
+            // not parse is dropped, which leaves the file's mtime standing.
+            let stamped = map
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            if let Some(stamped) = stamped {
+                match chrono::DateTime::parse_from_rfc3339(&stamped) {
+                    Ok(parsed) => {
+                        let local = parsed
+                            .with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string();
+                        map.insert("updated_at".to_string(), Value::from(local));
+                    }
+                    Err(_) => {
+                        map.remove("updated_at");
+                    }
+                }
             }
         }
     }
@@ -152,29 +190,72 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
     })
 }
 
+/// What a whiteboard file has to say about itself.
+#[derive(Debug, Default, PartialEq)]
+pub struct BoardSummary {
+    /// The words on the board: the labels its author typed, and the titles of
+    /// the notes pinned to it.
+    pub text: String,
+    /// How many items are on the board.
+    pub node_count: usize,
+    /// The board's own tags.
+    pub tags: Vec<String>,
+    /// One link per note card, written as `[Title](synabit://note/<path>)`.
+    pub note_links: Vec<String>,
+}
+
 /// Reduce a whiteboard file to the parts worth indexing.
 ///
-/// Returns the text its author typed into the board, how many items are on it,
-/// and the board's tags. Everything else in the file — positions, edge handles,
-/// styling — describes how to draw the board, not what it says.
-pub fn summarise_whiteboard(raw_json: &str) -> (String, usize, Vec<String>) {
+/// Everything left out — positions, edge handles, styling — describes how to
+/// draw the board, not what it says or what it points at.
+pub fn summarise_whiteboard(raw_json: &str) -> BoardSummary {
     let Ok(parsed) = serde_json::from_str::<Value>(raw_json) else {
-        return (String::new(), 0, Vec::new());
+        return BoardSummary::default();
     };
 
     let board_nodes = parsed.get("nodes").and_then(|v| v.as_array());
     let node_count = board_nodes.map(|n| n.len()).unwrap_or(0);
 
-    let labels: Vec<String> = board_nodes
-        .map(|nodes| {
-            nodes
-                .iter()
-                .filter_map(|n| n.get("data")?.get("label")?.as_str())
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut words: Vec<String> = Vec::new();
+    let mut note_links: Vec<String> = Vec::new();
+    let mut seen_notes = std::collections::HashSet::new();
+
+    for node in board_nodes.map(Vec::as_slice).unwrap_or_default() {
+        let data = node.get("data");
+
+        if let Some(label) = data.and_then(|d| d.get("label")).and_then(Value::as_str) {
+            if !label.is_empty() {
+                words.push(label.to_string());
+            }
+        }
+
+        // A note card names the note it shows by that note's path in the
+        // vault, which is exactly the id every other link resolves against.
+        let Some(note_id) = data.and_then(|d| d.get("noteId")).and_then(Value::as_str) else {
+            continue;
+        };
+        if note_id.is_empty() {
+            continue;
+        }
+
+        let title = data
+            .and_then(|d| d.get("noteTitle"))
+            .and_then(Value::as_str)
+            .unwrap_or(note_id);
+        if !title.is_empty() {
+            words.push(title.to_string());
+        }
+
+        if seen_notes.insert(note_id.to_string()) {
+            // The link text runs to the first `]` and the target to the first
+            // `)`, so a bracket in a note's title or a parenthesis in its path
+            // would cut the link short. Encoding the path and dropping
+            // brackets from the title keeps both ends intact.
+            let safe_title = title.replace(['[', ']'], "");
+            let encoded = urlencoding::encode(note_id);
+            note_links.push(format!("[{safe_title}](synabit://note/{encoded})"));
+        }
+    }
 
     let tags: Vec<String> = parsed
         .get("tags")
@@ -186,7 +267,12 @@ pub fn summarise_whiteboard(raw_json: &str) -> (String, usize, Vec<String>) {
         })
         .unwrap_or_default();
 
-    (labels.join(" "), node_count, tags)
+    BoardSummary {
+        text: words.join(" "),
+        node_count,
+        tags,
+        note_links,
+    }
 }
 
 /// Matches a ` ^block-id` marker at the end of a block.
@@ -426,5 +512,114 @@ mod tests {
         let json = write(&vault_path, "b.json", r#"{"type":"note","content":"x ^abc123"}"#);
         let node = parse_file_to_node(&vault_path, &json).expect("json should parse");
         assert!(node.blocks.is_none());
+    }
+
+    /// A board writes its save stamp in RFC 3339 so that sync can compare two
+    /// copies of it across time zones. Everything that lists nodes sorts their
+    /// dates as plain strings, so the stamp has to reach the index in the same
+    /// format the rest of them use.
+    #[test]
+    fn a_boards_rfc3339_save_stamp_reaches_the_index_in_the_local_format() {
+        let (_holder, vault_path) = vault();
+        let path = write(
+            &vault_path,
+            "Whiteboards/stamped.whiteboard.json",
+            r#"{"title":"Stamped","metadata":{"updated_at":"2026-08-23T04:05:06Z"},
+                "nodes":[],"edges":[]}"#,
+        );
+
+        let node = parse_file_to_node(&vault_path, &path).expect("board should parse");
+
+        let expected = chrono::DateTime::parse_from_rfc3339("2026-08-23T04:05:06Z")
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(node.updated_at, expected);
+    }
+
+    /// Dragging a note onto a board is a link from the board to that note, and
+    /// nothing recorded it: a board's indexed text is the labels its author
+    /// typed, and a note card has none. The link has to come out of the file
+    /// in the form the extractor reads, or the note has no backlink and the
+    /// graph has no edge.
+    #[test]
+    fn a_note_card_on_a_board_becomes_a_link_the_extractor_can_read() {
+        let (_holder, vault_path) = vault();
+        let path = write(
+            &vault_path,
+            "Whiteboards/plan.whiteboard.json",
+            r#"{"title":"Plan","nodes":[
+                {"id":"n1","type":"note","position":{"x":0,"y":0},
+                 "data":{"noteId":"Notes/công ty (cũ).md","noteTitle":"Công ty [cũ]"}},
+                {"id":"n2","type":"text","position":{"x":0,"y":0},"data":{"label":"a label"}}
+               ],"edges":[]}"#,
+        );
+
+        let node = parse_file_to_node(&vault_path, &path).expect("board should parse");
+
+        // The note's title is part of what the board says, so the board is
+        // findable by what is pinned to it.
+        assert!(node.content.contains("Công ty"), "content: {}", node.content);
+        assert!(node.content.contains("a label"), "content: {}", node.content);
+
+        let edges = crate::utils::graph_parser::extract_node_edges(&node);
+        let targets: Vec<&str> = edges
+            .iter()
+            .map(|e| e.target_title_or_path.as_str())
+            .collect();
+        assert!(
+            targets.contains(&"Notes/công ty (cũ).md"),
+            "the note card produced no link; got {targets:?}"
+        );
+    }
+
+    /// The same note pinned twice is one link, and a board with no note cards
+    /// carries no `linked_notes` at all rather than an empty list nothing can
+    /// tell apart from a board whose links were dropped.
+    #[test]
+    fn note_links_are_deduplicated_and_absent_when_there_are_none() {
+        let (_holder, vault_path) = vault();
+
+        let twice = write(
+            &vault_path,
+            "Whiteboards/twice.whiteboard.json",
+            r#"{"title":"Twice","nodes":[
+                {"id":"a","type":"note","position":{"x":0,"y":0},"data":{"noteId":"Notes/one.md"}},
+                {"id":"b","type":"note","position":{"x":9,"y":9},"data":{"noteId":"Notes/one.md"}}
+               ],"edges":[]}"#,
+        );
+        let node = parse_file_to_node(&vault_path, &twice).expect("board should parse");
+        let links = node.properties.get("linked_notes").expect("links recorded");
+        assert_eq!(links.as_array().map(Vec::len), Some(1), "{links:?}");
+
+        let bare = write(
+            &vault_path,
+            "Whiteboards/bare.whiteboard.json",
+            r#"{"title":"Bare","nodes":[],"edges":[]}"#,
+        );
+        let node = parse_file_to_node(&vault_path, &bare).expect("board should parse");
+        assert!(node.properties.get("linked_notes").is_none());
+    }
+
+    /// A stamp nobody can read is worse than no stamp: it would sort against
+    /// real dates and win or lose arbitrarily. The file's own mtime is the
+    /// honest answer, so the unreadable one is dropped before it is copied
+    /// over the top of it.
+    #[test]
+    fn a_board_stamp_that_will_not_parse_leaves_the_file_time_standing() {
+        let (_holder, vault_path) = vault();
+        let path = write(
+            &vault_path,
+            "Whiteboards/broken.whiteboard.json",
+            r#"{"title":"Broken","metadata":{"updated_at":"last Tuesday"},
+                "nodes":[],"edges":[]}"#,
+        );
+
+        let node = parse_file_to_node(&vault_path, &path).expect("board should parse");
+
+        assert_ne!(node.updated_at, "last Tuesday");
+        // The mtime format, not the file's: %Y-%m-%d %H:%M:%S is 19 characters.
+        assert_eq!(node.updated_at.len(), 19);
     }
 }

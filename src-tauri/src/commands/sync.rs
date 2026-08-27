@@ -153,9 +153,21 @@ pub async fn sync_connect(
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let now = chrono::Utc::now().to_rfc3339();
-        logged("record last connection", "p2p_last_connected", db.set_kv("p2p_last_connected", &now));
-        logged("record peer address", "p2p_server_addr", db.set_kv("p2p_server_addr", &server_addr));
-        logged("record peer id", "p2p_server_id_hex", db.set_kv("p2p_server_id_hex", &server_id_hex));
+        logged(
+            "record last connection",
+            "p2p_last_connected",
+            db.set_kv("p2p_last_connected", &now),
+        );
+        logged(
+            "record peer address",
+            "p2p_server_addr",
+            db.set_kv("p2p_server_addr", &server_addr),
+        );
+        logged(
+            "record peer id",
+            "p2p_server_id_hex",
+            db.set_kv("p2p_server_id_hex", &server_id_hex),
+        );
     }
 
     log::info!("P2P sync connected to {}", server_addr);
@@ -291,11 +303,19 @@ pub async fn sync_full(
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         let now = chrono::Utc::now();
-        logged("record sync time", "p2p_last_sync_time", db.set_kv("p2p_last_sync_time", &now.to_rfc3339()));
+        logged(
+            "record sync time",
+            "p2p_last_sync_time",
+            db.set_kv("p2p_last_sync_time", &now.to_rfc3339()),
+        );
 
         // Record data usage metrics
         let today = now.format("%Y-%m-%d").to_string();
-        logged("record sync metric", &today, db.record_sync_metric(&today, is_cellular, result.tx_bytes, result.rx_bytes));
+        logged(
+            "record sync metric",
+            &today,
+            db.record_sync_metric(&today, is_cellular, result.tx_bytes, result.rx_bytes),
+        );
     }
 
     log::info!(
@@ -376,83 +396,13 @@ pub async fn sync_metrics(
         .map_err(|e| format!("failed to fetch metrics: {}", e))
 }
 
-/// Save sync config to Android SharedPreferences for the background worker
-#[allow(unused_variables)]
-#[tauri::command]
-pub async fn sync_update_worker_config(
-    app_handle: tauri::AppHandle,
-    vault_path: String,
-    server_addr: String,
-    server_id_hex: String,
-) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    {
-        use jni::objects::JValue;
-
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-        let mut env = vm.attach_current_thread().unwrap();
-
-        let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-
-        let prefs_name = env.new_string("SynabitPrefs").unwrap();
-
-        let shared_prefs = env
-            .call_method(
-                &context,
-                "getSharedPreferences",
-                "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-                &[JValue::Object(&prefs_name), JValue::Int(0)],
-            )
-            .unwrap()
-            .l()
-            .unwrap();
-
-        let editor = env
-            .call_method(
-                &shared_prefs,
-                "edit",
-                "()Landroid/content/SharedPreferences$Editor;",
-                &[],
-            )
-            .unwrap()
-            .l()
-            .unwrap();
-
-        let k_vault = env.new_string("vaultPath").unwrap();
-        let v_vault = env.new_string(&vault_path).unwrap();
-        env.call_method(
-            &editor,
-            "putString",
-            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-            &[JValue::Object(&k_vault), JValue::Object(&v_vault)],
-        )
-        .unwrap();
-
-        let k_addr = env.new_string("p2pServerAddr").unwrap();
-        let v_addr = env.new_string(&server_addr).unwrap();
-        env.call_method(
-            &editor,
-            "putString",
-            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-            &[JValue::Object(&k_addr), JValue::Object(&v_addr)],
-        )
-        .unwrap();
-
-        let k_id = env.new_string("p2pServerIdHex").unwrap();
-        let v_id = env.new_string(&server_id_hex).unwrap();
-        env.call_method(
-            &editor,
-            "putString",
-            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-            &[JValue::Object(&k_id), JValue::Object(&v_id)],
-        )
-        .unwrap();
-
-        env.call_method(&editor, "apply", "()V", &[]).unwrap();
-    }
-    Ok(())
-}
+// Android once had a `sync_update_worker_config` command here, which copied the
+// vault path and server details into SharedPreferences for a background
+// WorkManager job to read. The job never did any work — its JNI entry point was
+// a stub — and nothing in the frontend ever called this command, so it wrote
+// configuration that no reader existed for. Both are gone. When background sync
+// on Android is built for real, it starts from the durable outbox like every
+// other path, not from a second copy of the settings.
 
 // ---------------------------------------------------------------------------
 // Key rotation commands

@@ -1,6 +1,6 @@
 use crate::db::DbState;
 use crate::error::AppResult;
-use crate::sync::core::crdt::apply_text_update;
+use crate::sync::core::crdt::apply_node_update;
 use crate::sync::utils::file_sha256;
 use std::fs;
 use std::path::Path;
@@ -555,7 +555,23 @@ fn prepare_one_operation(
             db.get_crdt_doc(vault_id, &actual_node_id)?
         };
 
-        let _delta = apply_text_update(&doc, &text).map_err(crate::error::AppError::General)?;
+        // Both containers, not just the text: a push that carried only the
+        // body would publish a document whose frontmatter map still held the
+        // values from before the edit.
+        //
+        // A Finance file has containers of its own — one entry per transaction
+        // — so it is applied through the function that knows about them. If it
+        // cannot be taken apart, the ordinary path still publishes it whole.
+        let structured_finance =
+            crate::sync::core::finance_document::is_structured(&change.rel_path)
+                && crate::sync::core::finance_document::split(&text).is_some();
+
+        let _delta = if structured_finance {
+            crate::sync::core::crdt::apply_finance_update(&doc, &text)
+                .map_err(crate::error::AppError::General)?
+        } else {
+            apply_node_update(&doc, &text).map_err(crate::error::AppError::General)?
+        };
 
         if !_delta.is_empty() {
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());

@@ -1,0 +1,158 @@
+{
+  "$comment": [
+    "Cách các ô trong trình sửa lặp lại dịch ra chuỗi RFC 5545 — dưới dạng dữ liệu.",
+    "",
+    "Ngữ nghĩa 'khi nào rơi vào ngày nào' chỉ có MỘT cài đặt, ở Rust, và được",
+    "chốt bởi contracts/recurrence.json. File này chốt thứ hẹp hơn nhưng không",
+    "tránh được: một cái form có checkbox và ô số, còn kho lưu thì có một chuỗi,",
+    "nên phải có chỗ dịch qua lại trước khi ghi.",
+    "",
+    "Chỗ dịch đó nằm ở cả hai phía — src/mini-apps/calendar/rrule.ts sinh chuỗi,",
+    "src-tauri/src/calendar/rrule.rs đọc lại. Một chuỗi mà TS sinh ra còn Rust",
+    "hiểu khác đi sẽ là một chuỗi lặp âm thầm rơi vào sai ngày. File này làm nó",
+    "thành một test đỏ.",
+    "",
+    "`rrule` rỗng nghĩa là không lặp — cùng câu trả lời cả hai phía đưa ra cho",
+    "một chuỗi không đọc được."
+  ],
+  "cases": [
+    {
+      "name": "no rule at all",
+      "fields": {
+        "freq": "none",
+        "interval": 1,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": ""
+    },
+    {
+      "name": "every day",
+      "fields": {
+        "freq": "daily",
+        "interval": 1,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=DAILY"
+    },
+    {
+      "name": "every third day",
+      "fields": {
+        "freq": "daily",
+        "interval": 3,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=DAILY;INTERVAL=3"
+    },
+    {
+      "name": "every week",
+      "fields": {
+        "freq": "weekly",
+        "interval": 1,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=WEEKLY"
+    },
+    {
+      "name": "every other week",
+      "fields": {
+        "freq": "weekly",
+        "interval": 2,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=WEEKLY;INTERVAL=2"
+    },
+    {
+      "name": "Mondays, Wednesdays and Fridays",
+      "fields": {
+        "freq": "weekly",
+        "interval": 1,
+        "byDay": [
+          "MO",
+          "WE",
+          "FR"
+        ],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+    },
+    {
+      "name": "every other Tuesday, ten times",
+      "fields": {
+        "freq": "weekly",
+        "interval": 2,
+        "byDay": [
+          "TU"
+        ],
+        "endMode": "count",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;COUNT=10"
+    },
+    {
+      "name": "weekly until a date",
+      "fields": {
+        "freq": "weekly",
+        "interval": 1,
+        "byDay": [],
+        "endMode": "until",
+        "until": "2026-12-31",
+        "count": 10
+      },
+      "rrule": "FREQ=WEEKLY;UNTIL=20261231"
+    },
+    {
+      "name": "every quarter",
+      "fields": {
+        "freq": "monthly",
+        "interval": 3,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=MONTHLY;INTERVAL=3"
+    },
+    {
+      "name": "every fourth year",
+      "fields": {
+        "freq": "yearly",
+        "interval": 4,
+        "byDay": [],
+        "endMode": "never",
+        "until": "",
+        "count": 10
+      },
+      "rrule": "FREQ=YEARLY;INTERVAL=4"
+    },
+    {
+      "name": "a birthday that stops after five",
+      "fields": {
+        "freq": "yearly",
+        "interval": 1,
+        "byDay": [],
+        "endMode": "count",
+        "until": "",
+        "count": 5
+      },
+      "rrule": "FREQ=YEARLY;COUNT=5"
+    }
+  ]
+}

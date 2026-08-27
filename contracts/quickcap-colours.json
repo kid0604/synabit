@@ -1,0 +1,29 @@
+{
+  "$comment": [
+    "QuickCap's card colours, as data, because two sides need this table and",
+    "they need to agree.",
+    "",
+    "The migration reads it backwards — a stored Tailwind class becomes a name",
+    "(src-tauri/src/utils/quickcap_storage.rs). The card reads it forwards — a",
+    "stored name becomes classes to render (src/mini-apps/quickcap/parsing.ts).",
+    "",
+    "Storing the name rather than the classes is the point of the change. A cap",
+    "written before 0.9.7 has a Tailwind class string frozen into the user's own",
+    "Markdown file, sometimes in frontmatter and sometimes as an HTML comment in",
+    "the body. That is a styling detail leaking into their data: restyle the app",
+    "and every cap's colour breaks, and anyone opening the vault in Obsidian sees",
+    "the leak.",
+    "",
+    "A value that is not in this table is left exactly as written rather than",
+    "guessed at — see the migration, which never invents a colour it cannot read."
+  ],
+  "colours": [
+    { "name": "red", "class": "bg-red-50 dark:bg-red-950/30" },
+    { "name": "orange", "class": "bg-orange-50 dark:bg-orange-950/30" },
+    { "name": "yellow", "class": "bg-yellow-50 dark:bg-yellow-950/30" },
+    { "name": "green", "class": "bg-green-50 dark:bg-green-950/30" },
+    { "name": "blue", "class": "bg-blue-50 dark:bg-blue-950/30" },
+    { "name": "purple", "class": "bg-purple-50 dark:bg-purple-950/30" },
+    { "name": "pink", "class": "bg-pink-50 dark:bg-pink-950/30" }
+  ]
+}

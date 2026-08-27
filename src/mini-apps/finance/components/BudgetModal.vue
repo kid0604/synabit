@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { X, Target, Plus, Trash2 } from 'lucide-vue-next';
-import type { BudgetItem } from '../types';
-import { currentCurrency } from '../currency';
+import type { BudgetItem, Category } from '../types';
+import { currentCurrency, formatAmountInput, formatMinorForInput, parseAmountInput } from '../currency';
 
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: '$', VND: '₫', EUR: '€', GBP: '£', JPY: '¥' };
 const currencySymbol = computed(() => CURRENCY_SYMBOLS[currentCurrency.value] || currentCurrency.value);
@@ -10,7 +10,7 @@ const currencySymbol = computed(() => CURRENCY_SYMBOLS[currentCurrency.value] ||
 const props = defineProps<{
     show: boolean;
     item?: BudgetItem | null;
-    expenseCategories: string[];
+    expenseCategories: Category[];
     existingBudgetCategories: string[];
     currentMonth: string;
 }>();
@@ -33,30 +33,18 @@ const isCategoryDisabled = (cat: string) => {
     return props.existingBudgetCategories.includes(cat);
 };
 
-const getLocale = () => {
-    if (currentCurrency.value === 'VND') return 'vi-VN';
-    if (currentCurrency.value === 'EUR') return 'de-DE';
-    if (currentCurrency.value === 'JPY') return 'ja-JP';
-    if (currentCurrency.value === 'GBP') return 'en-GB';
-    return 'en-US';
-};
-
-const formatAmount = (val: string) => {
-    const num = val.replace(/\D/g, '');
-    if (!num) return '';
-    return Number(num).toLocaleString(getLocale());
-};
+const formatAmount = (val: string) => formatAmountInput(val);
 
 watch(() => props.show, (newVal) => {
     if (newVal) {
         if (props.item) {
             name.value = props.item.name || '';
             selectedCategories.value = [...(props.item.categories || [])];
-            amount.value = props.item.amount.toLocaleString(getLocale());
+            amount.value = formatMinorForInput(props.item.amount);
             if (props.item.monthlyOverrides) {
                 overrides.value = Object.entries(props.item.monthlyOverrides).map(([month, amt]) => ({
                     month,
-                    amount: amt.toLocaleString(getLocale())
+                    amount: formatMinorForInput(amt)
                 }));
             } else {
                 overrides.value = [];
@@ -89,7 +77,7 @@ const removeOverride = (idx: number) => {
 };
 
 const canSave = computed(() => {
-    const numericAmount = Number(amount.value.replace(/\D/g, ''));
+    const numericAmount = parseAmountInput(amount.value);
     return name.value.trim() !== '' && selectedCategories.value.length > 0 && numericAmount > 0;
 });
 
@@ -100,14 +88,16 @@ const save = () => {
         id: props.item?.id || `bi-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         name: name.value.trim(),
         categories: [...selectedCategories.value],
-        amount: Number(amount.value.replace(/\D/g, '')),
+        amount: parseAmountInput(amount.value),
     };
 
     if (overrides.value.length > 0) {
         const ov: Record<string, number> = {};
         overrides.value.forEach(o => {
-            const amt = Number(o.amount.replace(/\D/g, ''));
-            if (o.month && amt > 0) ov[o.month] = amt;
+            const amt = parseAmountInput(o.amount);
+            // A limit of zero is a real limit — "nothing this month" — and has
+            // to survive being saved. See roadmap 3.5 for the other half.
+            if (o.month && amt >= 0 && o.amount.trim() !== '') ov[o.month] = amt;
         });
         if (Object.keys(ov).length > 0) item.monthlyOverrides = ov;
     }
@@ -148,16 +138,16 @@ const save = () => {
             <div class="space-y-1.5">
                 <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.categories') }}</label>
                 <div class="max-h-40 overflow-y-auto hidden-scrollbar bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl p-3 flex flex-wrap gap-2">
-                    <label v-for="cat in expenseCategories" :key="cat" class="flex items-center px-3 py-1.5 rounded-lg border transition-all cursor-pointer select-none text-sm"
+                    <label v-for="cat in expenseCategories" :key="cat.id" class="flex items-center px-3 py-1.5 rounded-lg border transition-all cursor-pointer select-none text-sm"
                         :class="[
-                            selectedCategories.includes(cat) 
-                                ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-400 shadow-sm' 
-                                : isCategoryDisabled(cat) && !selectedCategories.includes(cat)
+                            selectedCategories.includes(cat.id)
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-400 shadow-sm'
+                                : isCategoryDisabled(cat.id) && !selectedCategories.includes(cat.id)
                                     ? 'bg-gray-100 border-gray-200 text-gray-400 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-500 cursor-not-allowed opacity-60'
                                     : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
                         ]">
-                        <input type="checkbox" :value="cat" v-model="selectedCategories" :disabled="isCategoryDisabled(cat) && !selectedCategories.includes(cat)" class="hidden" />
-                        <span>{{ cat }}</span>
+                        <input type="checkbox" :value="cat.id" v-model="selectedCategories" :disabled="isCategoryDisabled(cat.id) && !selectedCategories.includes(cat.id)" class="hidden" />
+                        <span>{{ cat.name }}</span>
                     </label>
                 </div>
             </div>
@@ -166,7 +156,7 @@ const save = () => {
             <div class="space-y-1.5">
                 <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.budget_limit') }}</label>
                 <div class="relative">
-                    <input type="text" inputmode="numeric" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-12" placeholder="0" />
+                    <input type="text" inputmode="decimal" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-12" placeholder="0" />
                     <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium pointer-events-none">{{ currencySymbol }}</span>
                 </div>
             </div>
@@ -186,7 +176,7 @@ const save = () => {
                     <div v-for="(ov, idx) in overrides" :key="idx" class="flex items-center gap-2 bg-gray-50 dark:bg-gray-800 rounded-xl p-2.5 border border-border dark:border-border-dark">
                         <input type="month" v-model="ov.month" class="bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-2.5 py-1.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 w-[150px]" />
                         <div class="relative flex-1">
-                            <input type="text" inputmode="numeric" :value="ov.amount" @input="handleOverrideAmountInput($event, idx)" class="w-full bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
+                            <input type="text" inputmode="decimal" :value="ov.amount" @input="handleOverrideAmountInput($event, idx)" class="w-full bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8" placeholder="0" />
                             <span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">{{ currencySymbol }}</span>
                         </div>
                         <button @click="removeOverride(idx)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors shrink-0" aria-label="Remove Override">

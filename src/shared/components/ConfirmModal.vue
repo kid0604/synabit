@@ -7,11 +7,20 @@ defineProps<{
   message: string;
   confirmText?: string;
   cancelText?: string;
+  /**
+   * A third choice, shown only when given.
+   *
+   * For the decisions where "no" and "yes" are not the whole question —
+   * deleting a task that has subtasks is either "this one" or "this one and
+   * everything under it", and cancelling is neither.
+   */
+  secondaryText?: string;
   isDestructive?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'confirm'): void;
+  (e: 'secondary'): void;
   (e: 'cancel'): void;
 }>();
 </script>
@@ -28,7 +37,7 @@ const emit = defineEmits<{
           <!-- Header -->
           <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
             <h3 class="text-base font-semibold text-text dark:text-text-dark">{{ title }}</h3>
-            <button @click="emit('cancel')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark transition-colors cursor-pointer" aria-label="More Options">
+            <button @click="emit('cancel')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark transition-colors cursor-pointer" :aria-label="cancelText || 'Cancel'">
               <X class="w-4 h-4" />
             </button>
           </div>
@@ -41,12 +50,19 @@ const emit = defineEmits<{
           </div>
 
           <!-- Footer -->
-          <div class="p-4 bg-surface-hover/30 dark:bg-surface-hover-dark/30 flex justify-end gap-3 border-t border-border dark:border-border-dark">
+          <div class="p-4 bg-surface-hover/30 dark:bg-surface-hover-dark/30 flex flex-wrap justify-end gap-3 border-t border-border dark:border-border-dark">
             <button
               @click="emit('cancel')"
               class="px-4 py-2 text-sm font-medium rounded-lg text-text dark:text-text-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark transition-colors cursor-pointer"
             >
               {{ cancelText || 'Cancel' }}
+            </button>
+            <button
+              v-if="secondaryText"
+              @click="emit('secondary')"
+              class="px-4 py-2 text-sm font-medium rounded-lg border border-border dark:border-border-dark text-text dark:text-text-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark transition-colors cursor-pointer"
+            >
+              {{ secondaryText }}
             </button>
             <button
               @click="emit('confirm')"

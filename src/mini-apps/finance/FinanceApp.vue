@@ -3,21 +3,40 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask } from '@tauri-apps/plugin-dialog';
-import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, PanelLeft, TrendingUp, TrendingDown, RefreshCw, Trash2 } from 'lucide-vue-next';
+import { ask, open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { openPath } from '@tauri-apps/plugin-opener';
+import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, PanelLeft, TrendingUp, TrendingDown, RefreshCw, Trash2, AlertTriangle, X, Landmark, CreditCard, Repeat, Paperclip } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
+import { RECURRING_PATH, monthNodePath, monthNodeTitle, repairFinanceStorage, rowChanges, writeFinanceRows } from './ledger';
+import { pendingByMonth, todayStr, type RecurringRule } from './recurring';
+import {
+    exportCsv,
+    exportFilename,
+    importRows,
+    matchColumns,
+    missingColumns,
+    parseCsv,
+    type ColumnMap,
+    type ImportResult,
+} from './csv';
 import NavButtons from '../../shared/components/NavButtons.vue';
 
 
 import FinanceReports from './components/FinanceReports.vue';
 import FinanceDebts from './components/FinanceDebts.vue';
 import FinanceBudgets from './components/FinanceBudgets.vue';
+import FinanceRecurring from './components/FinanceRecurring.vue';
+import FinanceImportModal from './components/FinanceImportModal.vue';
 import TransactionModal from './TransactionModal.vue';
 import FinanceSettingsModal from './FinanceSettingsModal.vue';
 import FinanceOnboarding from './FinanceOnboarding.vue';
 import AdjustBalanceModal from './AdjustBalanceModal.vue';
-import { type Transaction, type FinanceAccount, type Debt, type Budget, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS, SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from './types';
-import { currentCurrency, formatCurrency } from './currency';
+import { type Transaction, type FinanceAccount, type Category, type Debt, type Budget, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS, SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from './types';
+import { categoryName, newCategoryId, toCategories } from './categories';
+import { allowRateLookup, currentCurrency, formatCurrency, formatMinorForInput } from './currency';
+import * as calc from './calc';
+import { normalizeConfigNode, normalizeDebtsNode, normalizeMonthNode, schemaStamp } from './schema';
 
 const props = defineProps<{
   vaultPath: string;
@@ -29,17 +48,19 @@ const bus = useEventBus();
 const ns = useNodeService();
 
 // --- State ---
-const currentView = ref<'transactions' | 'reports' | 'debts' | 'budgets'>('transactions');
+const currentView = ref<'transactions' | 'reports' | 'debts' | 'budgets' | 'recurring'>('transactions');
 const months = ref<{ id: string, label: string, date: Date, node: any }[]>([]);
 const currentMonthIdx = ref(-1);
 
 const configNode = ref<any>(null);
-const incomeCategories = ref<string[]>([...DEFAULT_INCOME_CATEGORIES]);
-const expenseCategories = ref<string[]>([...DEFAULT_EXPENSE_CATEGORIES]);
+const incomeCategories = ref<Category[]>(toCategories(DEFAULT_INCOME_CATEGORIES));
+const expenseCategories = ref<Category[]>(toCategories(DEFAULT_EXPENSE_CATEGORIES));
 const accounts = ref<FinanceAccount[]>([...DEFAULT_ACCOUNTS]);
 
 const debtsNode = ref<any>(null);
 const debts = ref<Debt[]>([]);
+
+const recurringRules = ref<RecurringRule[]>([]);
 
 const budgets = ref<Budget[]>([]);
 const projects = ref<{id: string, title: string}[]>([]);
@@ -61,6 +82,7 @@ const showAdjustModal = ref(false);
 const adjustingAccount = ref<{id: string, name: string, balance: number} | null>(null);
 
 const needsOnboarding = ref(false);
+const storageError = ref<string | null>(null);
 const loading = ref(true);
 
 const isMobile = ref(window.innerWidth < 768);
@@ -75,14 +97,6 @@ const currentMonth = computed(() => {
     return null;
 });
 
-const currentTransactions = computed<Transaction[]>(() => {
-    if (!currentMonth.value || !currentMonth.value.node.properties?.transactions) return [];
-    
-    // Sort descending by date
-    const txs = [...currentMonth.value.node.properties.transactions] as Transaction[];
-    return txs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-});
-
 // Collect ALL transactions across all month nodes
 const allTransactionsFlat = computed<Transaction[]>(() => {
     const all: Transaction[] = [];
@@ -95,108 +109,43 @@ const allTransactionsFlat = computed<Transaction[]>(() => {
 });
 
 // Transactions for the selected month (for summary stats) — filtered by actual transaction date
-const selectedMonthTransactions = computed<Transaction[]>(() => {
-    return allTransactionsFlat.value.filter(tx => {
-        const d = new Date(tx.date);
-        return d.getMonth() + 1 === selectedMonthNum.value && d.getFullYear() === selectedYear.value;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-});
+const selectedMonthTransactions = computed<Transaction[]>(() =>
+    calc.transactionsInMonth(allTransactionsFlat.value, selectedMonthNum.value, selectedYear.value)
+);
 
-const totalIncome = computed(() => {
-    return selectedMonthTransactions.value
-        .filter(t => t.type === 'income')
-        .reduce((sum, t) => sum + t.amount, 0);
-});
+const monthTotals = computed(() => calc.totals(selectedMonthTransactions.value));
+const totalIncome = computed(() => monthTotals.value.income);
+const totalExpense = computed(() => monthTotals.value.expense);
+const balance = computed(() => monthTotals.value.balance);
 
-const totalExpense = computed(() => {
-    return selectedMonthTransactions.value
-        .filter(t => t.type === 'expense')
-        .reduce((sum, t) => sum + t.amount, 0);
-});
+const filteredTransactions = computed(() =>
+    calc.filterTransactions(selectedMonthTransactions.value, {
+        query: searchQuery.value,
+        type: filterType.value,
+        accountId: filterAccount.value,
+    })
+);
 
-const allTransactions = computed<Transaction[]>(() => {
-    return [...allTransactionsFlat.value].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-});
+const groupedTransactions = computed(() => calc.groupByDate(filteredTransactions.value));
 
-const filteredTransactions = computed(() => {
-    return selectedMonthTransactions.value.filter(tx => {
-        if (searchQuery.value) {
-            const query = searchQuery.value.toLowerCase();
-            const categoryMatch = tx.category.toLowerCase().includes(query);
-            const noteMatch = tx.note && tx.note.toLowerCase().includes(query);
-            if (!categoryMatch && !noteMatch) return false;
-        }
-        if (filterType.value !== 'all' && tx.type !== filterType.value) return false;
-        if (filterAccount.value !== 'all' && tx.accountId !== filterAccount.value && tx.toAccountId !== filterAccount.value) return false;
-        
-        return true;
-    });
-});
+const globalNetWorth = computed(() =>
+    calc.netWorth(accounts.value, allTransactionsFlat.value, debts.value)
+);
 
-const groupedTransactions = computed(() => {
-    const groups: Record<string, { dateStr: string, date: Date, transactions: Transaction[], totalIncome: number, totalExpense: number }> = {};
-    filteredTransactions.value.forEach(tx => {
-        const d = new Date(tx.date);
-        const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth()+1).toString().padStart(2, '0')}/${d.getFullYear()}`;
-        if (!groups[dateStr]) {
-            groups[dateStr] = { dateStr, date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), transactions: [], totalIncome: 0, totalExpense: 0 };
-        }
-        groups[dateStr].transactions.push(tx);
-        if (tx.type === 'income') groups[dateStr].totalIncome += tx.amount;
-        if (tx.type === 'expense') groups[dateStr].totalExpense += tx.amount;
-    });
-    
-    return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
-});
+/** What the accounts hold, before anything is owed either way. */
+const accountsTotal = computed(() => calc.accountsTotal(accounts.value, allTransactionsFlat.value));
 
-const balance = computed(() => totalIncome.value - totalExpense.value);
+/** The two sides of the debts ledger, for showing what net worth is made of. */
+const debtSummary = computed(() => calc.debtTotals(debts.value));
 
-const globalNetWorth = computed(() => {
-    // 1. Sum Initial Balances
-    let initialSum = 0;
-    accounts.value.forEach(acc => {
-        initialSum += acc.initialBalance;
-    });
-    
-    // 2. Sum All-time transactions
-    let allTimeIncome = 0;
-    let allTimeExpense = 0;
-    
-    months.value.forEach(m => {
-        const txs: Transaction[] = m.node.properties?.transactions || [];
-        txs.forEach(t => {
-            if (t.type === 'income') allTimeIncome += t.amount;
-            else if (t.type === 'expense') allTimeExpense += t.amount;
-        });
-    });
-    
-    return initialSum + allTimeIncome - allTimeExpense;
-});
+// What is still in use, so Settings can refuse to remove it.
+const accountUsage = computed(() => calc.accountUsage(allTransactionsFlat.value));
+const categoryUsage = computed(() => calc.categoryUsage(allTransactionsFlat.value));
+const budgetedCategories = computed(() => [...calc.budgetedCategories(budgets.value)]);
 
-const accountBalances = computed(() => {
-    return accounts.value.map(acc => {
-        let income = 0;
-        let expense = 0;
-        months.value.forEach(m => {
-            const txs: Transaction[] = m.node.properties?.transactions || [];
-            txs.forEach(t => {
-                if (t.accountId === acc.id) {
-                    if (t.type === 'income') income += t.amount;
-                    else if (t.type === 'expense') expense += t.amount;
-                    else if (t.type === 'transfer') expense += t.amount;
-                }
-                if (t.toAccountId === acc.id) {
-                    if (t.type === 'transfer') income += t.amount;
-                }
-            });
-        });
-        return {
-            id: acc.id,
-            name: acc.name,
-            balance: acc.initialBalance + income - expense
-        };
-    });
-});
+const accountBalances = computed(() =>
+    calc.accountBalances(accounts.value, allTransactionsFlat.value)
+);
 
 
 
@@ -209,6 +158,44 @@ const getAccountName = (id: string) => {
     const acc = accounts.value.find(a => a.id === id);
     return acc ? acc.name : 'Unknown';
 };
+
+/**
+ * What a transaction's category is called now.
+ *
+ * The transaction stores an id; the name can have changed since, and for a
+ * category that has been deleted the id is the only record of what it was.
+ */
+/**
+ * The icon that says what kind of account this is.
+ *
+ * A wallet for everything was the only option before accounts had a kind; a
+ * credit card and a savings account are not the same thing and should not look
+ * the same. An account nobody has classified keeps the wallet.
+ */
+const ACCOUNT_ICONS = { cash: Wallet, bank: Landmark, credit: CreditCard, investment: TrendingUp, other: Wallet };
+const accountIcon = (id: string) => {
+    const type = accounts.value.find(a => a.id === id)?.type;
+    return type ? ACCOUNT_ICONS[type] ?? Wallet : Wallet;
+};
+
+/**
+ * Open a receipt in whatever the system uses for pictures.
+ *
+ * Rather than a viewer of its own: the operating system already has one, it is
+ * the one the user knows, and it can zoom into the line of a receipt in a way a
+ * modal in a sidebar cannot.
+ */
+const openReceipt = async (relPath: string) => {
+    try {
+        await openPath(`${props.vaultPath}/${relPath}`);
+    } catch (e) {
+        logger.error('Could not open the receipt', e);
+        storageError.value = 'That receipt could not be opened. The file may have been moved.';
+    }
+};
+
+const displayCategory = (id: string) =>
+    categoryName([...incomeCategories.value, ...expenseCategories.value], id);
 
 const getPersonName = (id: string) => {
     const p = people.value.find(p => p.id === id);
@@ -223,12 +210,12 @@ const ensureCurrentMonthNodeExists = async () => {
     const now = new Date();
     const mm = (now.getMonth() + 1).toString().padStart(2, '0');
     const yyyy = now.getFullYear();
-    const expectedId = `Finance/${yyyy}-${mm}.json`;
+    const expectedId = monthNodePath(new Date(Number(yyyy), Number(mm) - 1, 1));
     
     const existing = months.value.find(m => m.id === expectedId);
     if (!existing) {
         // Create new node
-        const nodeProps = { transactions: [] };
+        const nodeProps = { transactions: [], ...schemaStamp() };
         try {
             await ns.writeNode({
                 relPath: expectedId,
@@ -249,6 +236,50 @@ const ensureCurrentMonthNodeExists = async () => {
     }
 };
 
+/**
+ * The month a path names, put back in the list without re-reading the vault.
+ *
+ * `loadData` fetches every month, every debt, every project and every person.
+ * That is the right thing on open and far too much when one transaction was
+ * saved — or when a sync delivered one month and four separate bus events fired
+ * because of it. A ledger with five years in it re-parsed all sixty months
+ * every time.
+ */
+const reloadMonth = async (id: string) => {
+    const node = await ns.getNode(id);
+    if (!node) {
+        // Gone, which is what a month emptied and removed looks like.
+        months.value = months.value.filter(m => m.id !== id);
+        return;
+    }
+
+    normalizeMonthNode(node, currentCurrency.value);
+
+    const match = id.match(/(\d{4})-(\d{2})\.json/);
+    const date = match
+        ? new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1)
+        : new Date();
+
+    const entry = { id, label: node.title, date, node };
+    const existing = months.value.findIndex(m => m.id === id);
+
+    if (existing >= 0) {
+        months.value[existing] = entry;
+        return;
+    }
+
+    // A month that did not exist a moment ago. Keep the list chronological and
+    // keep looking at whatever was being looked at.
+    const selected = currentMonth.value?.id;
+    months.value = [...months.value, entry].sort((a, b) => a.date.getTime() - b.date.getTime());
+    if (selected) {
+        currentMonthIdx.value = months.value.findIndex(m => m.id === selected);
+    }
+};
+
+/** Whether a path is a month of the ledger rather than the config or debts. */
+const isMonthPath = (id: string) => /Finance[\\/]\d{4}-\d{2}\.json$/.test(id);
+
 const loadData = async () => {
     if (!props.vaultPath) return;
     loading.value = true;
@@ -258,54 +289,48 @@ const loadData = async () => {
         if (configs.length > 0) {
             configNode.value = configs[0];
             if (configNode.value.properties) {
-                if (configNode.value.properties.categories) {
-                    // Auto-migrate legacy config
-                    const oldCats = configNode.value.properties.categories;
-                    incomeCategories.value = [...DEFAULT_INCOME_CATEGORIES];
-                    // Keep old ones that are not in income default
-                    expenseCategories.value = Array.from(new Set([...DEFAULT_EXPENSE_CATEGORIES, ...oldCats.filter((c: string) => !DEFAULT_INCOME_CATEGORIES.includes(c))]));
-                    
-                    delete configNode.value.properties.categories;
-                    configNode.value.properties.incomeCategories = incomeCategories.value;
-                    configNode.value.properties.expenseCategories = expenseCategories.value;
-                    
-                    saveConfig({ incomeCategories: incomeCategories.value, expenseCategories: expenseCategories.value, accounts: configNode.value.properties.accounts || [...DEFAULT_ACCOUNTS] });
-                } else {
-                    incomeCategories.value = configNode.value.properties.incomeCategories || [...DEFAULT_INCOME_CATEGORIES];
-                    expenseCategories.value = configNode.value.properties.expenseCategories || [...DEFAULT_EXPENSE_CATEGORIES];
-                    budgets.value = configNode.value.properties.budgets || [];
-                    
-                    // Auto-migrate old flat budget format → new container format
-                    if (budgets.value.length > 0 && !budgets.value[0].items) {
-                        const oldItems = budgets.value as any[];
-                        budgets.value = [{
-                            id: 'budget-default-monthly',
-                            name: 'Monthly Budget',
-                            type: 'monthly',
-                            items: oldItems.map((item: any) => ({
-                                id: item.id || `bi-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-                                name: item.name || item.categoryId || '',
-                                categories: item.categories || (item.categoryId ? [item.categoryId] : []),
-                                amount: item.amount || 0,
-                                monthlyOverrides: item.monthlyOverrides,
-                            }))
-                        }];
-                    }
-                    
-                    // Ensure system categories exist in loaded arrays
-                    SYSTEM_INCOME_CATEGORIES.forEach(sysCat => {
-                        if (!incomeCategories.value.includes(sysCat)) {
-                            incomeCategories.value.push(sysCat);
-                        }
-                    });
-                    SYSTEM_EXPENSE_CATEGORIES.forEach(sysCat => {
-                        if (!expenseCategories.value.includes(sysCat)) {
-                            expenseCategories.value.push(sysCat);
-                        }
-                    });
-                }
-                accounts.value = configNode.value.properties.accounts || [...DEFAULT_ACCOUNTS];
+                // The currency first: everything below is read in terms of it.
                 currentCurrency.value = configNode.value.properties.currency || 'USD';
+                allowRateLookup.value = configNode.value.properties.allowRateLookup === true;
+
+                // A vault the storage repair could not reach still holds whole
+                // units. Scaling it here is what keeps a failed migration from
+                // showing every amount at a hundredth of its value.
+                normalizeConfigNode(configNode.value, currentCurrency.value);
+
+                // Everything the old shapes needed doing to them is done by
+                // `repairStorageOnce` before this runs. What is left here is
+                // reading, plus the defaults a vault written by an older
+                // version may still be missing on disk.
+                // `toCategories` reads both shapes, so a vault the repair
+                // could not reach still shows its categories rather than a
+                // column of blanks.
+                const storedIncome = configNode.value.properties.incomeCategories;
+                const storedExpense = configNode.value.properties.expenseCategories;
+                incomeCategories.value = storedIncome
+                    ? toCategories(storedIncome)
+                    : toCategories(DEFAULT_INCOME_CATEGORIES);
+                expenseCategories.value = storedExpense
+                    ? toCategories(storedExpense)
+                    : toCategories(DEFAULT_EXPENSE_CATEGORIES);
+                budgets.value = configNode.value.properties.budgets || [];
+
+                // The repair pass adds these to the file. This keeps the two
+                // ledger categories on screen even on a vault where it could
+                // not run — without them the debts screen has nothing to file
+                // a repayment under.
+                SYSTEM_INCOME_CATEGORIES.forEach(sysCat => {
+                    if (!incomeCategories.value.some(c => c.id === sysCat)) {
+                        incomeCategories.value.push({ id: sysCat, name: sysCat });
+                    }
+                });
+                SYSTEM_EXPENSE_CATEGORIES.forEach(sysCat => {
+                    if (!expenseCategories.value.some(c => c.id === sysCat)) {
+                        expenseCategories.value.push({ id: sysCat, name: sysCat });
+                    }
+                });
+
+                accounts.value = configNode.value.properties.accounts || [...DEFAULT_ACCOUNTS];
             }
             needsOnboarding.value = false;
         } else {
@@ -317,38 +342,12 @@ const loadData = async () => {
 
         // Load months
         const monthNodes: any[] = await ns.getNodes('finance_month');
-        
-        // Auto-migration for legacy transactions
-        
+
         months.value = monthNodes.map(node => {
-            // Check for legacy transactions
-            let nodeModified = false;
-            if (node.properties && node.properties.transactions) {
-                node.properties.transactions.forEach((tx: any) => {
-                    if (tx.account && !tx.accountId) {
-                        // Find matching account id by name
-                        const matched = accounts.value.find(a => a.name === tx.account);
-                        tx.accountId = matched ? matched.id : accounts.value[0]?.id;
-                        delete tx.account; // clean up
-                        nodeModified = true;
-                    }
-                });
-            }
-            
-            if (nodeModified) {
-                // Save migrated node back to disk
-                ns.writeNode({
-                    relPath: node.rel_path,
-                    title: node.title,
-                    nodeType: 'finance_month',
-                    properties: node.properties,
-                    content: '',
-                    silent: true,
-                }).catch(e => logger.error('Auto-migration save failed', e));
-            }
-            
+            normalizeMonthNode(node, currentCurrency.value);
+
             // Extract YYYY-MM from title or id
-            const match = node.rel_path.match(/(\d{4})-(\d{2})\.json/);
+            const match = node.id.match(/(\d{4})-(\d{2})\.json/);
             let date = new Date();
             if (match) {
                 date = new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1);
@@ -371,10 +370,11 @@ const loadData = async () => {
         const debtNodes: any[] = await ns.getNodes('finance_debts');
         if (debtNodes.length > 0) {
             debtsNode.value = debtNodes[0];
+            normalizeDebtsNode(debtsNode.value, currentCurrency.value);
             debts.value = debtsNode.value.properties.debts || [];
         } else {
             // Create default debts node
-            const newProps = { debts: [] };
+            const newProps = { debts: [], ...schemaStamp() };
             try {
                 await ns.writeNode({
                     relPath: 'Finance/Debts.json',
@@ -395,6 +395,16 @@ const loadData = async () => {
             }
         }
         
+        // Load the repeating rules. Absent is normal: a vault where nobody has
+        // set one up has no file, and creating an empty one would be noise.
+        try {
+            const recurringNodes: any[] = await ns.getNodes('finance_recurring');
+            recurringRules.value = recurringNodes[0]?.properties?.rules ?? [];
+        } catch (e) {
+            logger.error('Failed to load recurring rules', e);
+            recurringRules.value = [];
+        }
+
         // Load projects for linking
         try {
             const projectNodes: any[] = await ns.getNodes('project');
@@ -422,47 +432,138 @@ const loadData = async () => {
 
 
 
-const saveDebts = async (updatedDebts: Debt[]) => {
-    debts.value = updatedDebts;
-    if (debtsNode.value) {
-        debtsNode.value.properties.debts = updatedDebts;
-        try {
-            await ns.writeNode({
-                relPath: debtsNode.value.id,
-                title: debtsNode.value.title,
-                nodeType: 'finance_debts',
-                properties: debtsNode.value.properties,
-                content: debtsNode.value.content || '',
+/**
+ * Write out whatever the repeating rules owe.
+ *
+ * Runs after every load, and catches up rather than only producing what has
+ * fallen due since last time: a vault nobody opened for three months comes
+ * back with three months of rent in it.
+ *
+ * Safe to run again because it is not additive. Each occurrence's id is its
+ * rule and its date, so a second pass upserts the same rows — two devices, two
+ * launches, one rent payment.
+ */
+const materialiseRecurring = async () => {
+    if (recurringRules.value.length === 0) return;
+
+    const months = pendingByMonth(recurringRules.value, todayStr());
+    if (months.length === 0) return;
+
+    try {
+        for (const month of months) {
+            await writeFinanceRows({
+                relPath: month.relPath,
+                title: month.title,
+                nodeType: 'finance_month',
+                upserts: month.transactions as unknown as Record<string, unknown>[],
             });
-        } catch(e) {
-            logger.error('Failed to save debts node', e);
         }
+        for (const month of months) await reloadMonth(month.relPath);
+    } catch (e) {
+        logger.error('Failed to record repeating transactions', e);
+        storageError.value = 'Some repeating transactions could not be recorded. Finance will try again next time you open it.';
     }
 };
 
+/** Save the repeating rules, row by row like everything else. */
+const saveRules = async (updated: RecurringRule[]) => {
+    const changes = rowChanges(recurringRules.value, updated);
+    recurringRules.value = updated;
 
+    try {
+        await writeFinanceRows({
+            relPath: RECURRING_PATH,
+            title: 'Repeating Transactions',
+            nodeType: 'finance_recurring',
+            upserts: changes.upserts as unknown as Record<string, unknown>[],
+            removals: changes.removals,
+        });
+        bus.emit('node:updated', { nodeType: 'finance_recurring', id: RECURRING_PATH, title: 'Repeating Transactions' });
+        await materialiseRecurring();
+    } catch (e) {
+        logger.error('Failed to save repeating rules', e);
+        storageError.value = 'That repeating transaction could not be saved. Please try again.';
+    }
+};
+
+const saveDebts = async (updatedDebts: Debt[]) => {
+    if (!debtsNode.value) return;
+
+    // The debts screen hands over the whole list. Sending it back whole would
+    // overwrite a debt recorded on another device between this screen's last
+    // read and now; sending only what this list changed cannot.
+    const changes = rowChanges(debts.value, updatedDebts);
+    debts.value = updatedDebts;
+
+    try {
+        await writeFinanceRows({
+            relPath: debtsNode.value.id,
+            title: debtsNode.value.title,
+            nodeType: 'finance_debts',
+            upserts: changes.upserts as unknown as Record<string, unknown>[],
+            removals: changes.removals,
+        });
+        bus.emit('node:updated', { nodeType: 'finance_debts', id: debtsNode.value.id, title: debtsNode.value.title });
+    } catch (e) {
+        logger.error('Failed to save debts', e);
+        storageError.value = 'The debts ledger could not be saved. Please try again.';
+    }
+};
 
 const openAddTx = () => {
     editingTx.value = null;
+    editingRule.value = null;
+    defaultRecurrence.value = 'none';
     showTxModal.value = true;
 };
 
 const openEditTx = (tx: Transaction) => {
     editingTx.value = tx;
+    editingRule.value = null;
+    defaultRecurrence.value = 'none';
     showTxModal.value = true;
+};
+
+// The transaction dialog does double duty: the same form plus one question,
+// rather than a second screen for "the same thing but every month".
+const editingRule = ref<RecurringRule | null>(null);
+const defaultRecurrence = ref('none');
+
+const openAddRule = () => {
+    editingTx.value = null;
+    editingRule.value = null;
+    defaultRecurrence.value = 'monthly';
+    showTxModal.value = true;
+};
+
+const openEditRule = (rule: RecurringRule) => {
+    editingTx.value = null;
+    editingRule.value = rule;
+    defaultRecurrence.value = rule.recurrence;
+    showTxModal.value = true;
+};
+
+/** Save one rule, whether it is new or an edit of an existing one. */
+const saveRule = async (rule: RecurringRule) => {
+    const others = recurringRules.value.filter(r => r.id !== rule.id);
+    showTxModal.value = false;
+    await saveRules([...others, rule]);
 };
 
 const handleBalanceAdjust = async (diff: number) => {
     if (!adjustingAccount.value) return;
     
-    // Auto-add "Điều chỉnh số dư" to categories if missing
+    // The category an adjustment is filed under, added the first time one is
+    // made. Its id is its name, matching every category that predates ids — so
+    // an adjustment made before this still lands in the same place.
+    const ADJUSTMENT = 'Balance Adjustment';
     let needSave = false;
-    if (!expenseCategories.value.includes('Balance Adjustment')) {
-        expenseCategories.value.push('Balance Adjustment');
+    if (!expenseCategories.value.some(c => c.id === ADJUSTMENT)) {
+        expenseCategories.value.push({ id: ADJUSTMENT, name: ADJUSTMENT });
         needSave = true;
     }
-    if (!incomeCategories.value.includes('Balance Adjustment')) {
-        incomeCategories.value.push('Balance Adjustment');
+    if (!incomeCategories.value.some(c => c.id === ADJUSTMENT)) {
+        incomeCategories.value.push({ id: ADJUSTMENT, name: ADJUSTMENT });
         needSave = true;
     }
     if (needSave) {
@@ -473,7 +574,7 @@ const handleBalanceAdjust = async (diff: number) => {
         id: `tx-${Date.now()}-${Math.floor(Math.random()*1000)}`,
         type: diff > 0 ? 'income' : 'expense',
         amount: Math.abs(diff),
-        category: 'Balance Adjustment',
+        category: ADJUSTMENT,
         accountId: adjustingAccount.value.id,
         date: new Date().toISOString(),
         note: 'Automatic balance adjustment'
@@ -483,155 +584,204 @@ const handleBalanceAdjust = async (diff: number) => {
 };
 
 const saveTransaction = async (tx: Transaction) => {
-    if (!currentMonth.value) return;
-    
-    // Auto-create debt if standalone borrow/lend
-    const catLower = tx.category.toLowerCase();
-    const isBorrowing = ['borrow', 'đi vay', 'vay', 'mượn'].some(k => catLower.includes(k)) && tx.type === 'income';
-    const isLending = ['lend', 'cho vay', 'cho mượn'].some(k => catLower.includes(k)) && tx.type === 'expense';
-    
-    if ((isBorrowing || isLending) && !tx.debtId) {
-        const newDebt: Debt = {
-            id: `debt-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-            type: isBorrowing ? 'borrow' : 'lend',
-            person: tx.note.trim() ? tx.note.trim() : 'Anonymous',
-            totalAmount: tx.amount,
-            paidAmount: 0,
-            startDate: tx.date,
-            status: 'active',
-            accountId: tx.accountId,
-            note: ''
-        };
-        tx.debtId = newDebt.id;
-        const newDebts = [...debts.value, newDebt];
-        await saveDebts(newDebts);
-    }
-    
-    // Instead of using the currently viewed month, we should ideally put it in the correct month's node based on tx.date
-    // For simplicity in v1, we ensure it goes to the correct month file.
-    const d = new Date(tx.date);
-    const mm = (d.getMonth() + 1).toString().padStart(2, '0');
-    const yyyy = d.getFullYear();
-    const expectedId = `Finance/${yyyy}-${mm}.json`;
-    
-    let targetNode = months.value.find(m => m.id === expectedId)?.node;
-    
-    // If saving to a month that doesn't exist yet
-    if (!targetNode) {
-        targetNode = {
-            id: expectedId,
-            title: `Month ${mm}/${yyyy}`,
-            node_type: 'finance_month',
-            properties: { transactions: [] }
-        };
-    }
-    
-    // Make sure properties.transactions exists
-    if (!targetNode.properties) targetNode.properties = {};
-    if (!targetNode.properties.transactions) targetNode.properties.transactions = [];
-    
-    const txs: Transaction[] = targetNode.properties.transactions;
-    const existingIdx = txs.findIndex(t => t.id === tx.id);
-    
-    if (existingIdx >= 0) {
-        txs[existingIdx] = tx; // Update
-    } else {
-        txs.push(tx); // Add
-    }
-    
-    if (!months.value.some(m => m.id === expectedId)) {
-        months.value.push({
-            id: expectedId,
-            label: `Month ${mm}/${yyyy}`,
-            date: new Date(yyyy, parseInt(mm) - 1, 1),
-            node: targetNode
+    // Recording a debt is something the user does on the Debts screen, which
+    // asks who it is with and when it is due. This used to guess from the
+    // category name instead — anything containing "vay", "lend", "debt" — and
+    // invent a debt owed to whatever was in the note, or to "Anonymous". A
+    // category called "Calendar" was enough to create one.
+
+    // A transaction belongs to the month its own date names, not to the month
+    // being looked at. Editing the date moves it, which means taking it out of
+    // wherever it used to be.
+    const date = new Date(tx.date);
+    const targetId = monthNodePath(date);
+    const previous = months.value.find(m =>
+        ((m.node.properties?.transactions as Transaction[]) || []).some(t => t.id === tx.id)
+    );
+
+    try {
+        await writeFinanceRows({
+            relPath: targetId,
+            title: monthNodeTitle(date),
+            nodeType: 'finance_month',
+            upserts: [tx as unknown as Record<string, unknown>],
         });
-        // Sort chronologically
-        months.value.sort((a, b) => a.date.getTime() - b.date.getTime());
-    }
-    
-    // Also if we edited an existing transaction and changed its month, we need to remove it from the old month!
-    // Edge case handling: check if it existed in the current viewing month but we moved it to another month
-    if (currentMonth.value && currentMonth.value.id !== expectedId) {
-        const currTxs = currentMonth.value.node.properties?.transactions as Transaction[] || [];
-        const oldIdx = currTxs.findIndex(t => t.id === tx.id);
-        if (oldIdx >= 0) {
-            currTxs.splice(oldIdx, 1);
-            // Save the old month to remove it
-            await ns.writeNode({
-                relPath: currentMonth.value.id,
-                title: currentMonth.value.label,
+
+        if (previous && previous.id !== targetId) {
+            await writeFinanceRows({
+                relPath: previous.id,
+                title: previous.label,
                 nodeType: 'finance_month',
-                properties: currentMonth.value.node.properties,
-                content: '',
+                removals: [tx.id],
             });
         }
-    }
-    
-    try {
-        await ns.writeNode({
-            relPath: targetNode.id,
-            title: targetNode.title,
-            nodeType: 'finance_month',
-            properties: targetNode.properties,
-            content: '',
-        });
+
         showTxModal.value = false;
-        
-        // Always jump to the month where the transaction was added
-        const targetIdx = months.value.findIndex(m => m.id === expectedId);
+
+        // Read the month back rather than patch memory: the file now holds
+        // whatever arrived from other devices as well as this row.
+        await reloadMonth(targetId);
+        if (previous && previous.id !== targetId) await reloadMonth(previous.id);
+
+        const targetIdx = months.value.findIndex(m => m.id === targetId);
         if (targetIdx >= 0) {
             currentMonthIdx.value = targetIdx;
         }
+
+        // `upsert_finance_rows` does not go through `writeNode`, so the event
+        // other apps listen for has to be raised here.
+        bus.emit('node:updated', { nodeType: 'finance_month', id: targetId, title: monthNodeTitle(date) });
     } catch (e) {
         logger.error('Failed to save transaction', e);
+        storageError.value = 'That transaction could not be saved. Nothing was changed — please try again.';
     }
 };
 
 const deleteTransaction = async (txId: string) => {
-    // Find which month node contains this transaction
-    let targetMonthNode = null;
-    let targetIdx = -1;
-    
-    for (const m of months.value) {
-        const txs = (m.node.properties?.transactions as Transaction[]) || [];
-        const idx = txs.findIndex(t => t.id === txId);
-        if (idx >= 0) {
-            targetMonthNode = m;
-            targetIdx = idx;
-            break;
-        }
-    }
-    
-    if (!targetMonthNode || targetIdx < 0) return;
-    
+    // Which month holds it, so the removal goes to the right file.
+    const holder = months.value.find(m =>
+        ((m.node.properties?.transactions as Transaction[]) || []).some(t => t.id === txId)
+    );
+    if (!holder) return;
+
     const confirmed = await ask('This transaction will be permanently removed. This action cannot be undone.', {
         title: 'Delete transaction?',
         kind: 'warning',
         okLabel: 'Delete',
         cancelLabel: 'Cancel'
     });
-    
+
     if (!confirmed) return;
-    
-    const txs = targetMonthNode.node.properties.transactions as Transaction[];
-    txs.splice(targetIdx, 1);
-    
+
     try {
-        await ns.writeNode({
-            relPath: targetMonthNode.id,
-            title: targetMonthNode.label,
+        await writeFinanceRows({
+            relPath: holder.id,
+            title: holder.label,
             nodeType: 'finance_month',
-            properties: targetMonthNode.node.properties,
-            content: '',
+            removals: [txId],
         });
         showTxModal.value = false;
+        await reloadMonth(holder.id);
+        bus.emit('node:updated', { nodeType: 'finance_month', id: holder.id, title: holder.label });
     } catch (e) {
         logger.error('Failed to delete transaction', e);
+        storageError.value = 'That transaction could not be deleted. Nothing was changed — please try again.';
     }
 };
 
-const saveConfig = async (config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[], budgets?: Budget[], currency?: string }) => {
+// ---------------------------------------------------------------------------
+// Import and export
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole ledger, in a file anything can open.
+ *
+ * The app's own description promises no vendor lock-in, and until this the only
+ * way out was to read the JSON by hand. Every transaction goes, not the month
+ * being looked at: an export somebody has to run twelve times is not an exit.
+ */
+const exportLedger = async () => {
+    try {
+        const path = await saveFileDialog({
+            defaultPath: exportFilename(),
+            filters: [{ name: 'CSV', extensions: ['csv'] }],
+        });
+        if (!path) return;
+
+        const text = exportCsv(allTransactionsFlat.value, {
+            accounts: accounts.value,
+            categories: [...incomeCategories.value, ...expenseCategories.value],
+            currency: currentCurrency.value,
+        });
+        await writeTextFile(path, text);
+    } catch (e) {
+        logger.error('Failed to export the ledger', e);
+        storageError.value = 'The ledger could not be exported. Nothing was changed.';
+    }
+};
+
+// What an import is about to do, held while the user looks at it.
+const showImportModal = ref(false);
+const importFileName = ref('');
+const importHeader = ref<string[]>([]);
+const importMap = ref<ColumnMap | null>(null);
+const importMissing = ref<string[]>([]);
+const importResult = ref<ImportResult | null>(null);
+
+/**
+ * Read a file and work out what importing it would do — without doing it.
+ *
+ * Import is the one thing here that puts somebody else's data into the user's
+ * ledger, so it shows its working first. Nothing is written until the preview
+ * is confirmed.
+ */
+const chooseImportFile = async () => {
+    try {
+        const picked = await openFileDialog({
+            multiple: false,
+            filters: [{ name: 'CSV', extensions: ['csv'] }],
+        });
+        const path = Array.isArray(picked) ? picked[0] : picked;
+        if (!path) return;
+
+        const rows = parseCsv(await readTextFile(path));
+        if (rows.length === 0) {
+            storageError.value = 'That file has nothing in it.';
+            return;
+        }
+
+        const [header, ...body] = rows;
+        const map = matchColumns(header);
+
+        importFileName.value = path.split(/[\\/]/).pop() ?? path;
+        importHeader.value = header;
+        importMap.value = map;
+        importMissing.value = missingColumns(map);
+        importResult.value = missingColumns(map).length > 0
+            ? { ready: [], duplicates: 0, problems: [] }
+            : importRows(body, map, {
+                accounts: accounts.value,
+                categories: [...incomeCategories.value, ...expenseCategories.value],
+                currency: currentCurrency.value,
+                existing: allTransactionsFlat.value,
+            });
+        showImportModal.value = true;
+    } catch (e) {
+        logger.error('Failed to read the file', e);
+        storageError.value = 'That file could not be read.';
+    }
+};
+
+/** Write what the preview showed, one month at a time. */
+const confirmImport = async () => {
+    const rows = importResult.value?.ready ?? [];
+    showImportModal.value = false;
+    if (rows.length === 0) return;
+
+    // Grouped by month, because writing is per file.
+    const byMonth = new Map<string, Transaction[]>();
+    for (const tx of rows) {
+        const relPath = monthNodePath(new Date(tx.date));
+        byMonth.set(relPath, [...(byMonth.get(relPath) ?? []), tx]);
+    }
+
+    try {
+        for (const [relPath, transactions] of byMonth) {
+            await writeFinanceRows({
+                relPath,
+                title: monthNodeTitle(new Date(transactions[0].date)),
+                nodeType: 'finance_month',
+                upserts: transactions as unknown as Record<string, unknown>[],
+            });
+        }
+        await loadData();
+    } catch (e) {
+        logger.error('Failed to import transactions', e);
+        storageError.value = 'Some transactions could not be imported. Nothing else was changed.';
+    }
+};
+
+const saveConfig = async (config: { incomeCategories: Category[], expenseCategories: Category[], accounts: FinanceAccount[], budgets?: Budget[], currency?: string }) => {
     if (config.budgets) {
         budgets.value = config.budgets;
     }
@@ -644,7 +794,9 @@ const saveConfig = async (config: { incomeCategories: string[], expenseCategorie
         expenseCategories: config.expenseCategories,
         accounts: config.accounts,
         budgets: budgets.value,
-        currency: currentCurrency.value
+        currency: currentCurrency.value,
+        allowRateLookup: allowRateLookup.value,
+        ...schemaStamp()
     };
     
     try {
@@ -661,13 +813,15 @@ const saveConfig = async (config: { incomeCategories: string[], expenseCategorie
     }
 };
 
-const finishOnboarding = async (config: { incomeCategories: string[], expenseCategories: string[], accounts: FinanceAccount[] }) => {
+const finishOnboarding = async (config: { incomeCategories: Category[], expenseCategories: Category[], accounts: FinanceAccount[], currency: string }) => {
     loading.value = true;
     await saveConfig(config);
 };
 
 const handleAddCategory = async (payload: { type: 'income' | 'expense', name: string }) => {
-    let configHasChanged = false;
+    const name = payload.name.trim();
+    if (!name) return;
+
     const config = {
         incomeCategories: [...incomeCategories.value],
         expenseCategories: [...expenseCategories.value],
@@ -675,21 +829,17 @@ const handleAddCategory = async (payload: { type: 'income' | 'expense', name: st
         budgets: budgets.value,
         currency: currentCurrency.value
     };
-    
-    if (payload.type === 'income' && !config.incomeCategories.includes(payload.name)) {
-        config.incomeCategories.push(payload.name);
-        configHasChanged = true;
-    } else if (payload.type === 'expense' && !config.expenseCategories.includes(payload.name)) {
-        config.expenseCategories.push(payload.name);
-        configHasChanged = true;
-    }
-    
-    if (configHasChanged) {
-        await saveConfig(config);
-        // Force refresh local lists so the modal sees it immediately without waiting for full reload
-        incomeCategories.value = config.incomeCategories;
-        expenseCategories.value = config.expenseCategories;
-    }
+
+    const list = payload.type === 'income' ? config.incomeCategories : config.expenseCategories;
+    if (list.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) return;
+
+    list.push({ id: newCategoryId(), name });
+
+    await saveConfig(config);
+    // Refresh the local lists so the dialog sees the new category without
+    // waiting for the reload.
+    incomeCategories.value = config.incomeCategories;
+    expenseCategories.value = config.expenseCategories;
 };
 
 const openMonthById = async (id: string) => {
@@ -734,12 +884,52 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
 };
 
 // Lifecycle
+/**
+ * The one-time repair that brings an older vault up to the shape this screen
+ * reads. The pass itself is `repairFinanceStorage`; see
+ * `src-tauri/src/utils/finance_storage.rs` for the transforms and
+ * `commands/migration.rs` for why they do not go through the ordinary save
+ * path.
+ *
+ * This used to happen inside `loadData`, on every launch, writing back through
+ * the ordinary save path and swallowing failures into the log. The screen then
+ * drew the repaired copy from memory while the disk still held the old one, so
+ * a vault that could not be written looked migrated until the next launch.
+ */
+const repairStorageOnce = async () => {
+    try {
+        const failed = await repairFinanceStorage(props.vaultPath);
+        if (failed > 0) {
+            // Say so rather than carry on looking fine. The files that failed
+            // are untouched, not half-written, so the ledger is still readable
+            // — it is the repair that did not happen.
+            storageError.value = `${failed} Finance file(s) could not be updated. Your data is unchanged; Finance will try again next time you open it.`;
+        }
+    } catch (e) {
+        logger.error('Finance storage repair failed', e);
+        storageError.value = 'Finance could not update its stored files. Your data is unchanged; it will try again next time you open Finance.';
+    }
+};
+
 onMounted(async () => {
+    // Before the first read, so the ledger is never drawn from the old shape
+    // and then redrawn from the new one.
+    await repairStorageOnce();
     await loadData();
+    // After the load, so the rules are known — and before the user looks at a
+    // month that is missing this month's rent.
+    await materialiseRecurring();
     handleRouteQuery();
     
-    bus.on('vault:file-modified', () => {
-        // Reload data if background sync changes finance files
+    bus.on('vault:file-modified', ({ paths }) => {
+        // A sync that touched only months can refresh only those months.
+        // Anything else — the config, the debts ledger, a path we cannot read —
+        // still needs the full pass.
+        const finance = (paths || []).filter(p => p.includes('Finance'));
+        if (finance.length > 0 && finance.every(isMonthPath)) {
+            finance.forEach(p => reloadMonth(p.replace(/\\/g, '/')));
+            return;
+        }
         debouncedLoad(() => loadData());
     });
 
@@ -755,12 +945,20 @@ onMounted(async () => {
     });
 
     // Cross-app: refresh when finance data changes from other apps (e.g., TaskApp saves a finance_month)
-    bus.on('node:created', ({ nodeType }) => {
-        if (nodeType === 'finance_month' || nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
+    bus.on('node:created', ({ nodeType, id }) => {
+        if (nodeType === 'finance_month' && id && isMonthPath(id)) {
+            reloadMonth(id);
+            return;
+        }
+        if (nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
     });
 
-    bus.on('node:updated', ({ nodeType }) => {
-        if (nodeType === 'finance_month' || nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
+    bus.on('node:updated', ({ nodeType, id }) => {
+        if (nodeType === 'finance_month' && id && isMonthPath(id)) {
+            reloadMonth(id);
+            return;
+        }
+        if (nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
     });
 });
 
@@ -777,7 +975,25 @@ defineExpose({ openMonthById });
       
       <!-- Onboarding -->
       <FinanceOnboarding v-if="needsOnboarding" @complete="finishOnboarding" />
-      
+
+      <!-- A repair that could not finish. Said out loud, because the ledger
+           looks perfectly normal either way. -->
+      <div
+          v-if="storageError"
+          class="mx-4 md:mx-6 mt-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200"
+          role="status"
+      >
+          <AlertTriangle class="w-5 h-5 shrink-0 mt-0.5" />
+          <p class="flex-1">{{ storageError }}</p>
+          <button
+              @click="storageError = null"
+              class="shrink-0 rounded-lg p-1 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 transition-colors"
+              aria-label="Dismiss"
+          >
+              <X class="w-4 h-4" />
+          </button>
+      </div>
+
       <!-- Topbar -->
       <div v-else class="flex items-center justify-between p-4 md:p-6 shrink-0 relative z-10">
           <div class="flex items-center gap-3">
@@ -844,6 +1060,13 @@ defineExpose({ openMonthById });
                       <Target class="w-5 h-5" />
                       Budgets
                   </button>
+                  <button
+                      @click="currentView = 'recurring'; if(isMobile) isSidebarOpen = false;"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'recurring' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                  >
+                      <Repeat class="w-5 h-5" />
+                      {{ $t('finance.recurring') }}
+                  </button>
               </div>
 
               <!-- Global Net Worth -->
@@ -853,6 +1076,14 @@ defineExpose({ openMonthById });
                   </div>
                   <p class="text-blue-100 text-sm font-medium mb-1">{{ $t('finance.total_net_worth') }}</p>
                   <h2 class="text-3xl font-bold tracking-tight">{{ formatCurrency(globalNetWorth) }}</h2>
+                  <!-- What the one figure is made of. Net worth now nets off
+                       what is owed either way, and a headline that moves when
+                       a debt is recorded should say why. -->
+                  <div v-if="debtSummary.receivable > 0 || debtSummary.payable > 0" class="flex flex-wrap gap-x-3 gap-y-0.5 mt-2 text-[11px] text-blue-100/90">
+                      <span>{{ $t('finance.in_accounts') }} {{ formatCurrency(accountsTotal) }}</span>
+                      <span v-if="debtSummary.receivable > 0">+ {{ $t('finance.owed_to_you') }} {{ formatCurrency(debtSummary.receivable) }}</span>
+                      <span v-if="debtSummary.payable > 0">− {{ $t('finance.you_owe') }} {{ formatCurrency(debtSummary.payable) }}</span>
+                  </div>
               </div>
               
               <!-- Account Balances -->
@@ -861,7 +1092,7 @@ defineExpose({ openMonthById });
                   <div class="flex flex-col gap-1.5">
                       <div v-for="acc in accountBalances" :key="acc.id" class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group relative">
                           <div class="p-2.5 rounded-xl bg-white dark:bg-gray-900 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-800 shrink-0">
-                              <Wallet class="w-5 h-5" />
+                              <component :is="accountIcon(acc.id)" class="w-5 h-5" />
                           </div>
                           <div class="flex flex-col flex-1 min-w-0">
                               <span class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ acc.name }}</span>
@@ -1006,7 +1237,16 @@ defineExpose({ openMonthById });
                                   </div>
                                   
                                   <div class="flex-1 min-w-0">
-                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? 'Internal Transfer' : tx.category }}</p>
+                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? 'Internal Transfer' : displayCategory(tx.category) }}</p>
+                                      <button
+                                          v-if="tx.receipt"
+                                          @click.stop="openReceipt(tx.receipt)"
+                                          class="p-1 rounded text-gray-400 hover:text-blue-500 transition-colors shrink-0"
+                                          :aria-label="$t('finance.receipt_open')"
+                                          :title="$t('finance.receipt_open')"
+                                      >
+                                          <Paperclip class="w-3.5 h-3.5" />
+                                      </button>
                                       <div class="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
                                           <span>{{ new Date(tx.date).getHours().toString().padStart(2, '0') }}:{{ new Date(tx.date).getMinutes().toString().padStart(2, '0') }}</span>
                                           <span>•</span>
@@ -1021,7 +1261,7 @@ defineExpose({ openMonthById });
                                           {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ formatCurrency(tx.amount) }}
                                       </p>
                                       <p v-if="tx.originalCurrency && tx.originalCurrency !== currentCurrency" class="text-xs text-gray-400 mt-0.5 font-medium">
-                                          {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ tx.originalAmount?.toLocaleString('en-US') }} {{ tx.originalCurrency }}
+                                          {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ formatMinorForInput(tx.originalAmount ?? 0, tx.originalCurrency) }} {{ tx.originalCurrency }}
                                       </p>
                                   </div>
                                   
@@ -1041,7 +1281,7 @@ defineExpose({ openMonthById });
           
           <!-- Reports View -->
           <div v-else-if="currentView === 'reports'" class="flex-1 overflow-hidden">
-              <FinanceReports :months="months" :global-net-worth="globalNetWorth" :accounts="accounts" :account-balances="accountBalances" />
+              <FinanceReports :months="months" :accounts-total="accountsTotal" :categories="[...incomeCategories, ...expenseCategories]" :accounts="accounts" :account-balances="accountBalances" />
           </div>
 
           <!-- Debts View -->
@@ -1052,6 +1292,18 @@ defineExpose({ openMonthById });
                   :people="people"
                   @save-debts="saveDebts"
                   @create-transaction="(tx) => { saveTransaction(tx) }"
+              />
+          </div>
+
+          <!-- Repeating View -->
+          <div v-else-if="currentView === 'recurring'" class="flex-1 overflow-hidden flex flex-col">
+              <FinanceRecurring
+                  :rules="recurringRules"
+                  :accounts="accounts"
+                  :categories="[...incomeCategories, ...expenseCategories]"
+                  @save-rules="saveRules"
+                  @add-rule="openAddRule"
+                  @edit-rule="openEditRule"
               />
           </div>
 
@@ -1084,13 +1336,27 @@ defineExpose({ openMonthById });
           :income-categories="incomeCategories"
           :expense-categories="expenseCategories"
           :transaction="editingTx"
+          :vault-path="vaultPath"
+          :rule="editingRule"
+          :default-recurrence="defaultRecurrence"
           :projects="projects"
           :people="people"
           @close="showTxModal = false"
           @save="saveTransaction"
+          @save-rule="saveRule"
           @delete="deleteTransaction"
           @add-category="handleAddCategory"
-      /><FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" />
+      /><FinanceSettingsModal :show="showSettingsModal" :initial-income-categories="incomeCategories" :initial-expense-categories="expenseCategories" :initial-accounts="accounts" :current-balances="accountBalances" :account-usage="accountUsage" :category-usage="categoryUsage" :budgeted-categories="budgetedCategories" :initial-currency="currentCurrency" @close="showSettingsModal = false" @save="saveConfig" @export-csv="exportLedger" @import-csv="chooseImportFile" />
+      <FinanceImportModal
+          :show="showImportModal"
+          :file-name="importFileName"
+          :header="importHeader"
+          :map="importMap"
+          :missing="importMissing"
+          :result="importResult"
+          @close="showImportModal = false"
+          @confirm="confirmImport"
+      />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />
   </div>
 </template>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { Star, Bookmark, FileText, Zap, CheckSquare, ExternalLink } from 'lucide-vue-next';
+import { Star, Bookmark, FileText, Zap, CheckSquare, ExternalLink, AlignLeft, Loader2 } from 'lucide-vue-next';
 import type { CachedArticle } from '../types/feed.types';
 
-const props = defineProps<{
+defineProps<{
   article: CachedArticle;
+  fetchingFullText?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -14,6 +15,7 @@ const emit = defineEmits<{
   'quick-capture': [];
   'create-task': [];
   'open-original': [];
+  'fetch-full-text': [];
 }>();
 
 const { t } = useI18n();
@@ -47,6 +49,19 @@ const { t } = useI18n();
       :title="article.isReadLater ? t('feeds.read_later_remove') : t('feeds.read_later_add')"
     >
       <Bookmark class="w-4 h-4" :class="{ 'fill-current': article.isReadLater }" />
+    </button>
+
+    <div class="w-px h-5 bg-border dark:bg-border-dark mx-1"></div>
+
+    <!-- Fetch the article's own page, for feeds that publish only a teaser -->
+    <button
+      @click="emit('fetch-full-text')"
+      :disabled="fetchingFullText"
+      class="p-2 rounded-lg text-gray-400 hover:text-orange-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all duration-200 disabled:opacity-50"
+      :title="t('feeds.fetch_full_text')"
+    >
+      <Loader2 v-if="fetchingFullText" class="w-4 h-4 animate-spin" />
+      <AlignLeft v-else class="w-4 h-4" />
     </button>
 
     <div class="w-px h-5 bg-border dark:bg-border-dark mx-1"></div>

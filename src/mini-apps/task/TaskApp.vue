@@ -1,16 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, toRef } from 'vue';
+import { computed, ref, onMounted, watch, toRef } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { useSettings } from '../../composables/useSettings';
 import { CheckCircle2, Plus } from 'lucide-vue-next';
 import { type TaskMetadata, BOARD_COLUMNS } from './types';
+import { routeForNode } from '../../shared/nodeRoutes';
 
 // ── Composables ────────────────────────────────────────────────────
 import { useTaskCrud } from './composables/useTaskCrud';
 import { useTaskSearch } from './composables/useTaskSearch';
 import { useProjectManager } from './composables/useProjectManager';
 import { useBoardLogic } from './composables/useBoardLogic';
+import { useTaskSelection } from './composables/useTaskSelection';
+import { useTaskKeyboard } from './composables/useTaskKeyboard';
+import { useTaskBacklinks } from './composables/useTaskBacklinks';
+import { useTaskFilters } from './composables/useTaskFilters';
+import { sortTasks, groupTasks, type SortMode, type GroupMode } from './sorting';
 
 // ── Components ─────────────────────────────────────────────────────
 import TaskSidebar from './components/TaskSidebar.vue';
@@ -25,6 +32,12 @@ import ProjectDashboard from './components/ProjectDashboard.vue';
 import TaskEditModal from './TaskEditModal.vue';
 import ProjectEditModal from './ProjectEditModal.vue';
 import ResourceLinkModal from './ResourceLinkModal.vue';
+import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import TaskBulkBar from './components/TaskBulkBar.vue';
+import TaskSortBar from './components/TaskSortBar.vue';
+import SaveSearchButton from './components/SaveSearchButton.vue';
+import TaskShortcutsHelp from './components/TaskShortcutsHelp.vue';
 import TransactionModal from '../finance/TransactionModal.vue';
 
 // ── Props & Emits ──────────────────────────────────────────────────
@@ -33,9 +46,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['open-node']);
+const { t: tt } = useI18n();
 
 // ── Services ───────────────────────────────────────────────────────
-const { taskArchiveDays } = useSettings();
+const { taskArchiveDays, taskDeleteConfirm } = useSettings();
+const showShortcuts = ref(false);
 const bus = useEventBus();
 const ns = useNodeService();
 const vaultPathRef = toRef(props, 'vaultPath');
@@ -49,7 +64,7 @@ const isMobileSidebarOpen = ref(false);
 const {
   searchQuery, activeCategory,
   categoryCounts, activeCategoryTasks,
-} = useTaskSearch(tasks, vaultPathRef);
+} = useTaskSearch(tasks);
 
 // ── 2. Project Manager ─────────────────────────────────────────────
 const {
@@ -85,16 +100,178 @@ const {
 const {
   editingTask, editingTaskParams,
   toastMessage, showToast,
-  loadTasks,
+  loadTasks, archiveDoneTasks,
   openEditModal, openCreateModal,
   handleModalSave, handleModalDelete,
   openEditById,
   toggleTaskStatus, deleteTask,
+  pendingSubtreeDelete, answerSubtreeDelete,
+  pendingDelete, undoDelete, deleteMany,
 } = useTaskCrud(
   tasks, projects, vaultPathRef, ns, bus,
-  activeCategory, activeProject, taskArchiveDays,
+  activeCategory, activeProject, taskArchiveDays, taskDeleteConfirm,
   { tasksByStatus, WIP_LIMIT },
 );
+
+// ── 5. Sorting and grouping ────────────────────────────────────────
+const { taskListSort, taskListGroup } = useSettings();
+
+const projectTitle = (id: string) =>
+  projects.value.find(p => p.id === id)?.title || id.split('/').pop() || id;
+
+/** The list's tasks, arranged. Sorted before grouping, so sections agree. */
+const sortedCategoryTasks = computed(() =>
+  sortTasks(activeCategoryTasks.value, taskListSort.value as SortMode));
+
+const listGroups = computed(() =>
+  groupTasks(sortedCategoryTasks.value, taskListGroup.value as GroupMode, projectTitle));
+
+// ── 6. Bulk selection ──────────────────────────────────────────────
+/**
+ * What the current view is actually showing.
+ *
+ * Not simply `activeCategoryTasks`: the matrix hides finished tasks and the
+ * board groups by status. "Select all" has to mean the rows in front of the
+ * user, and a task that is not on screen must not be able to sit in the
+ * selection while a bulk action runs over it.
+ */
+const visibleInCurrentView = computed<TaskMetadata[]>(() => {
+  if (viewMode.value === 'board') return Object.values(tasksByStatus.value).flat();
+  if (viewMode.value === 'matrix') return Object.values(tasksByQuadrant.value).flat();
+  return activeCategoryTasks.value;
+});
+
+const {
+  selectedIds, selectedTasks, isSelected: _isSelected,
+  selectOne, selectRange, clear: clearSelection,
+  toggleAllVisible, allVisibleSelected,
+  completeSelected, setPriorityOnSelection, setProjectOnSelection,
+} = useTaskSelection(visibleInCurrentView, tasks, ns, showToast, tt);
+
+const deleteSelected = async () => {
+  const chosen = [...selectedTasks.value];
+  if (!chosen.length) return;
+  clearSelection();
+  await deleteMany(chosen, tt('task.deleted_many_toast', { count: chosen.length }));
+};
+
+// ── 6b. Saved searches ─────────────────────────────────────────────
+const {
+  filters, load: loadFilters, save: saveFilter,
+  rename: renameFilter, remove: removeFilter, byId: filterById,
+} = useTaskFilters(ns, showToast, tt);
+
+/**
+ * Applying a saved search means the query *and* the arrangement.
+ *
+ * A filter restored without its view and grouping would need adjusting by hand
+ * every time it was opened, which is most of what saving it was meant to avoid.
+ */
+watch(activeCategory, (category) => {
+  if (!category.startsWith('filter:')) return;
+  const filter = filterById(category.substring(7));
+  if (!filter) return;
+  searchQuery.value = filter.query;
+  viewMode.value = filter.viewMode;
+  taskListSort.value = filter.sort;
+  taskListGroup.value = filter.group;
+});
+
+/**
+ * Keep what is on screen, under a name.
+ *
+ * The name comes from the button itself; see `SaveSearchButton` for why it is
+ * not a `window.prompt`.
+ */
+const saveCurrentSearch = async (name: string) => {
+  const query = searchQuery.value.trim();
+  if (!query || !name.trim()) return;
+  const saved = await saveFilter({
+    name: name.trim(),
+    query,
+    viewMode: viewMode.value,
+    sort: taskListSort.value as SortMode,
+    group: taskListGroup.value as GroupMode,
+  });
+  if (saved) activeCategory.value = 'filter:' + saved.id;
+};
+
+const renameFilterById = async (id: string, name: string) => {
+  const filter = filterById(id);
+  if (filter) await renameFilter(filter, name);
+};
+
+const deleteFilterById = async (id: string) => {
+  const filter = filterById(id);
+  if (!filter) return;
+  await removeFilter(filter);
+  if (activeCategory.value === 'filter:' + id) activeCategory.value = 'today';
+};
+
+/**
+ * What to call whatever is on screen.
+ *
+ * One place, so a bucket added later cannot fall through to printing its own
+ * id — which is what put `Filter:Filters/ac40aa52-…` across the top when saved
+ * searches arrived.
+ */
+const BUCKET_TITLES: Record<string, string> = {
+  all: 'task.all_tasks',
+  today: 'task.today',
+  upcoming: 'task.upcoming',
+  someday: 'task.someday',
+  transferred: 'task.transferred',
+};
+
+const headerTitle = computed(() => {
+  const category = activeCategory.value;
+  if (activeProject.value) return activeProject.value.title;
+  if (category.startsWith('filter:')) {
+    return filterById(category.substring(7))?.name ?? tt('task.filters');
+  }
+  const key = BUCKET_TITLES[category];
+  // A project that has been deleted while selected leaves its category behind.
+  return key ? tt(key) : tt('task.all_tasks');
+});
+
+// ── 7. Keyboard ────────────────────────────────────────────────────
+/**
+ * The rows the cursor walks, in the order they appear on screen.
+ *
+ * Only the linear views have one: a board has four columns side by side and a
+ * matrix four quadrants, and "the next row" has no answer in either.
+ */
+const keyboardRows = computed<TaskMetadata[]>(() => {
+  if (viewMode.value === 'list' || viewMode.value === 'table') {
+    return listGroups.value.flatMap(g => g.tasks);
+  }
+  return [];
+});
+
+
+const { focusedId } = useTaskKeyboard(
+  keyboardRows,
+  computed(() => selectedTasks.value.length > 0),
+  // A shortcut firing behind an open modal would act on a task the user cannot
+  // see, so every one of them is suspended while something is up.
+  computed(() => !!editingTask.value || !!pendingSubtreeDelete.value || showProjectEditModal.value || showShortcuts.value),
+  {
+    createTask: openCreateModal,
+    openTask: openEditModal,
+    toggleStatus: toggleTaskStatus,
+    deleteTask,
+    selectOne,
+    selectRange,
+    clearSelection,
+    selectAllVisible: toggleAllVisible,
+    focusSearch: () => document.getElementById('task-search-input')?.focus(),
+    setViewMode: (mode) => { viewMode.value = mode; },
+    showHelp: () => { showShortcuts.value = true; },
+  },
+);
+
+// ── 8. Backlinks ───────────────────────────────────────────────────
+const { backlinks, loading: backlinksLoading } = useTaskBacklinks(editingTask, ns);
 
 // ── Navigation ─────────────────────────────────────────────────────
 const openProjectById = (id: string) => {
@@ -113,6 +290,25 @@ const refresh = async () => {
   if (activeProject.value) {
     await loadProjectResources();
   }
+};
+
+/**
+ * Follow a backlink to whatever owns it.
+ *
+ * Routed through the shared map rather than a local guess: the panel lists
+ * notes, boards, people and events alongside tasks, and each goes to a
+ * different mini-app. An unknown type opens nothing rather than opening the
+ * note editor, which is how a task once ended up being edited as a note.
+ */
+const openBacklink = (id: string, nodeType: string) => {
+  const route = routeForNode(nodeType, id);
+  if (!route) return;
+  if (route === 'task') {
+    editingTask.value = null;
+    void openEditById(id);
+    return;
+  }
+  emit('open-node', id, route);
 };
 
 const openPerson = (transferredTo: string) => {
@@ -134,6 +330,12 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
 
 onMounted(() => {
   loadTasks(() => loadFinanceConfig());
+  void loadFilters();
+  // Once, on open — not on every watcher tick; see `archiveDoneTasks`. The
+  // reload is worth a second round trip only when something actually moved.
+  archiveDoneTasks().then((moved) => {
+    if (moved > 0) loadTasks(() => loadFinanceConfig());
+  });
 
   bus.on('vault:file-modified', () => {
     debouncedLoad(() => loadTasks(() => loadFinanceConfig()));
@@ -170,22 +372,43 @@ watch(() => props.vaultPath, () => {
       :categoryCounts="categoryCounts"
       :projects="projects"
       @update:activeCategory="activeCategory = $event"
+      :filters="filters"
       @create-project="handleCreateProjectClick"
+      @delete-filter="deleteFilterById"
+      @rename-filter="renameFilterById"
     />
 
     <!-- MAIN CONTENT -->
     <div class="flex-1 flex flex-col h-full overflow-hidden">
       <!-- Header -->
       <TaskHeader
-        :activeProject="activeProject"
-        :activeCategory="activeCategory"
+        :title="headerTitle"
         :viewMode="viewMode"
         :searchQuery="searchQuery"
         @update:viewMode="viewMode = $event"
         @update:searchQuery="searchQuery = $event"
         @create-task="openCreateModal"
         @open-mobile-sidebar="isMobileSidebarOpen = true"
-      />
+      >
+        <template #save-search>
+          <SaveSearchButton
+            v-if="searchQuery.trim()"
+            :suggestedName="searchQuery.trim()"
+            @save="saveCurrentSearch"
+          />
+        </template>
+
+        <template #sort>
+          <TaskSortBar
+            v-if="viewMode === 'list'"
+            :sort="taskListSort as SortMode"
+            :group="taskListGroup as GroupMode"
+            @update:sort="taskListSort = $event"
+            @update:group="taskListGroup = $event"
+            @show-shortcuts="showShortcuts = true"
+          />
+        </template>
+      </TaskHeader>
 
       <!-- Main Content -->
       <div class="flex-1 overflow-y-auto px-4 md:px-8 pb-16">
@@ -225,17 +448,41 @@ watch(() => props.vaultPath, () => {
 
           <div v-else class="h-full flex flex-col min-h-0">
             <!-- LIST VIEW -->
+            <TaskBulkBar
+              v-if="selectedTasks.length"
+              :selected="selectedTasks"
+              :allVisibleSelected="allVisibleSelected"
+              :projects="projects"
+              @complete="completeSelected"
+              @delete="deleteSelected"
+              @set-priority="setPriorityOnSelection"
+              @set-project="setProjectOnSelection"
+              @toggle-all="toggleAllVisible"
+              @clear="clearSelection"
+            />
+
             <TaskListView
               v-if="viewMode === 'list'"
-              :tasks="activeCategoryTasks"
+              :deleteConfirm="taskDeleteConfirm"
+              :tasks="sortedCategoryTasks"
+              :groups="listGroups"
+              :allTasks="tasks"
+              :selectedIds="selectedIds"
+              :focusedId="focusedId"
               @edit-task="openEditModal"
               @toggle-status="toggleTaskStatus"
               @delete-task="deleteTask"
               @open-person="openPerson"
+              @select-one="selectOne"
+              @select-range="selectRange"
             />
 
             <!-- BOARD VIEW -->
             <TaskBoardView
+              :deleteConfirm="taskDeleteConfirm"
+              :allTasks="tasks"
+              :selectedIds="selectedIds"
+              @select-one="selectOne"
               v-else-if="viewMode === 'board'"
               :tasksByStatus="tasksByStatus"
               :columns="BOARD_COLUMNS"
@@ -255,8 +502,14 @@ watch(() => props.vaultPath, () => {
 
             <!-- TABLE VIEW -->
             <TaskTableView
+              :deleteConfirm="taskDeleteConfirm"
+              :allTasks="tasks"
+              :selectedIds="selectedIds"
+              :focusedId="focusedId"
+              @select-one="selectOne"
+              @select-range="selectRange"
               v-else-if="viewMode === 'table'"
-              :tasks="activeCategoryTasks"
+              :tasks="sortedCategoryTasks"
               @edit-task="openEditModal"
               @toggle-status="toggleTaskStatus"
               @delete-task="deleteTask"
@@ -265,6 +518,10 @@ watch(() => props.vaultPath, () => {
 
             <!-- MATRIX VIEW -->
             <TaskMatrixView
+              :deleteConfirm="taskDeleteConfirm"
+              :allTasks="tasks"
+              :selectedIds="selectedIds"
+              @select-one="selectOne"
               v-else-if="viewMode === 'matrix'"
               :tasksByQuadrant="tasksByQuadrant"
               @edit-task="openEditModal"
@@ -285,6 +542,12 @@ watch(() => props.vaultPath, () => {
       :task="editingTaskParams"
       :vaultPath="vaultPath"
       :projects="projects"
+      :allTasks="tasks"
+      :taskId="editingTask?.id"
+      :issues="editingTask?.issues"
+      :backlinks="backlinks"
+      :backlinksLoading="backlinksLoading"
+      @open-node="openBacklink"
       @save="handleModalSave"
       @close="editingTask = null"
       @delete="handleModalDelete"
@@ -317,7 +580,10 @@ watch(() => props.vaultPath, () => {
       :projects="projects"
       :isMobileOpen="isMobileSidebarOpen"
       @update:activeCategory="activeCategory = $event"
+      :filters="filters"
       @create-project="handleCreateProjectClick"
+      @delete-filter="deleteFilterById"
+      @rename-filter="renameFilterById"
       @close-mobile="isMobileSidebarOpen = false"
     />
 
@@ -347,6 +613,34 @@ watch(() => props.vaultPath, () => {
       @close="showTxModal = false"
       @save="saveFinanceTransaction"
     />
+
+    <!-- Deleting a task that has subtasks: cancel, keep them, or take them too -->
+    <ConfirmModal
+      :show="!!pendingSubtreeDelete"
+      :title="$t('task.delete_parent_title', { title: pendingSubtreeDelete?.task.title || '' })"
+      :message="$t('task.delete_parent_body', { count: pendingSubtreeDelete?.count || 0 })"
+      :confirmText="$t('task.delete_all_subtasks')"
+      :secondaryText="$t('task.delete_keep_subtasks')"
+      :cancelText="$t('task.delete_cancel')"
+      isDestructive
+      @confirm="answerSubtreeDelete('all')"
+      @secondary="answerSubtreeDelete('keep')"
+      @cancel="answerSubtreeDelete(null)"
+    />
+
+    <!-- The few seconds in which a delete can still be taken back -->
+    <UndoToast
+      :show="!!pendingDelete"
+      :restartKey="pendingDelete?.removed[0]?.task.id"
+      :message="pendingDelete?.removed.length === 1
+        ? $t('task.deleted_toast', { title: pendingDelete.label })
+        : $t('task.deleted_many_toast', { count: pendingDelete?.removed.length || 0 })"
+      :undoLabel="$t('task.undo')"
+      :seconds="7"
+      @undo="undoDelete"
+    />
+
+    <TaskShortcutsHelp :show="showShortcuts" @close="showShortcuts = false" />
 
     <ResourceLinkModal
       :show="showEmbedPicker"

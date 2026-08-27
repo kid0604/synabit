@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { X, Wallet, Users, FileText } from 'lucide-vue-next';
 import type { Debt, FinanceAccount, Transaction } from './types';
+import { formatAmountInput, formatMinorForInput, parseAmountInput } from './currency';
 
 const props = defineProps<{
     show: boolean;
@@ -32,7 +33,7 @@ onMounted(() => {
     if (props.editingDebt) {
         type.value = props.editingDebt.type;
         person.value = props.editingDebt.person;
-        totalAmountStr.value = props.editingDebt.totalAmount.toString();
+        totalAmountStr.value = formatMinorForInput(props.editingDebt.totalAmount);
         startDate.value = props.editingDebt.startDate.split('T')[0];
         dueDate.value = props.editingDebt.dueDate ? props.editingDebt.dueDate.split('T')[0] : '';
         accountId.value = props.editingDebt.accountId || '';
@@ -48,21 +49,23 @@ onMounted(() => {
     }
 });
 
+/**
+ * The field holds the amount as it is written, and `parseAmountInput` reads it
+ * back. It used to hold a US-grouped string and read it with `parseInt`, which
+ * stops at the first comma — so a debt of 1,234 was saved as 1. Anything at or
+ * above a thousand was recorded as its leading digits.
+ */
 const formatCurrencyInput = (e: Event) => {
     const input = e.target as HTMLInputElement;
-    let val = input.value.replace(/\D/g, '');
-    if (val) {
-        val = new Intl.NumberFormat('en-US').format(parseInt(val));
-    }
-    input.value = val;
-    totalAmountStr.value = val.replace(/\./g, '');
+    totalAmountStr.value = formatAmountInput(input.value);
+    input.value = totalAmountStr.value;
 };
 
 const save = () => {
     if (!person.value || !totalAmountStr.value || !startDate.value || !accountId.value) return;
 
-    const amount = parseInt(totalAmountStr.value);
-    if (isNaN(amount) || amount <= 0) return;
+    const amount = parseAmountInput(totalAmountStr.value);
+    if (amount <= 0) return;
 
     const now = new Date();
     const dStart = new Date(startDate.value);
@@ -176,7 +179,7 @@ const save = () => {
                         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.amount') }}</label>
                         <div class="relative">
                             <input 
-                                :value="new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0) === '0' ? '' : new Intl.NumberFormat('en-US').format(Number(totalAmountStr) || 0)"
+                                :value="totalAmountStr"
                                 @input="formatCurrencyInput"
                                 type="text" 
                                 placeholder="0"

@@ -1,0 +1,583 @@
+{
+  "$comment": [
+    "Khi nào một sự kiện rơi vào một ngày — dưới dạng dữ liệu.",
+    "",
+    "Quy tắc lặp từng có HAI cài đặt: lịch vẽ các lần xuất hiện trong TypeScript,",
+    "bộ nhắc quyết định có bắn thông báo hay không trong Rust. Hai bên lệch nhau,",
+    "và tạo ra thứ tệ nhất mà một quyển lịch có thể làm — hiện một cuộc hẹn trên",
+    "màn hình rồi im lặng để người dùng lỡ nó. Lặp hằng tháng từ ngày 29-31 và",
+    "lặp hằng năm ngày 29/2 đều bị như vậy.",
+    "",
+    "Giờ chỉ còn MỘT cài đặt: src-tauri/src/calendar/recurrence.rs. Front end",
+    "không giữ bản sao nào nữa — nó hỏi một khoảng ngày và vẽ thứ nhận được.",
+    "File này là đặc tả của cài đặt đó, và là thứ giữ cho nó không đổi ý.",
+    "",
+    "QUYẾT ĐỊNH NGỮ NGHĨA — hằng tháng từ ngày 29, 30, 31:",
+    "File này chốt hành vi KẸP (clamp): lặp hằng tháng từ ngày 31 rơi vào 28/2,",
+    "30/4, 31/5. RFC 5545 với BYMONTHDAY=31 thì BỎ QUA tháng ngắn, và Google",
+    "Calendar cũng vậy. Chọn kẹp vì đó là thứ người dùng đang nhìn thấy trên màn",
+    "hình hôm nay. Khi RRULE thật vào (Pha 2), chỗ này sẽ tách thành hai lựa",
+    "chọn riêng — 'ngày 31 hằng tháng' và 'ngày cuối tháng' — và lúc đó case bên",
+    "dưới sẽ đổi cùng với một mục migration.",
+    "",
+    "RRULE:",
+    "Từ Pha 2, quy tắc lặp được lưu dưới dạng chuỗi RFC 5545 trong `rrule`:",
+    "FREQ, INTERVAL, BYDAY (chỉ cho WEEKLY), COUNT, UNTIL. Hai khoá cũ",
+    "`recurrence` + `recurrence_end_at` vẫn ĐỌC được cho vault viết trước đó,",
+    "nhưng khi có `rrule` thì chỉ `rrule` được đọc — không bao giờ trộn hai bên,",
+    "vì trộn là cách tạo ra hai nguồn sự thật.",
+    "",
+    "Tuần bắt đầu từ Thứ Hai khi tính INTERVAL và BYDAY, theo mặc định WKST=MO",
+    "của RFC. Đây là chuyện khác với ngày đầu tuần của lưới, vốn theo locale:",
+    "cái sau quyết định cách VẼ, cái này quyết định 'cách một tuần' nghĩa là gì.",
+    "",
+    "Thêm một case là cách thay đổi quy tắc. Sửa một case thì phải có lý do."
+  ],
+  "cases": [
+    {
+      "name": "sự kiện không lặp chỉ rơi vào đúng ngày của nó",
+      "event": {
+        "start_at": "2026-03-10",
+        "end_at": "2026-03-10",
+        "recurrence": "none"
+      },
+      "occurs": [
+        "2026-03-10"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2026-03-11"
+      ]
+    },
+    {
+      "name": "sự kiện nhiều ngày phủ cả khoảng, kể cả hai đầu",
+      "event": {
+        "start_at": "2026-03-10",
+        "end_at": "2026-03-13",
+        "recurrence": "none"
+      },
+      "occurs": [
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-12",
+        "2026-03-13"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2026-03-14"
+      ]
+    },
+    {
+      "name": "sự kiện có giờ vẫn được so theo phần ngày",
+      "event": {
+        "start_at": "2026-03-10T22:00",
+        "end_at": "2026-03-11T01:30",
+        "recurrence": "none"
+      },
+      "occurs": [
+        "2026-03-10",
+        "2026-03-11"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2026-03-12"
+      ]
+    },
+    {
+      "name": "sự kiện không có start_at không rơi vào ngày nào",
+      "event": {
+        "start_at": "",
+        "end_at": "",
+        "recurrence": "daily"
+      },
+      "occurs": [],
+      "absent": [
+        "2026-03-10",
+        "2026-01-01"
+      ]
+    },
+    {
+      "name": "hằng ngày dừng đúng ở ngày kết thúc chuỗi",
+      "event": {
+        "start_at": "2026-03-01",
+        "end_at": "",
+        "recurrence": "daily",
+        "recurrence_end_at": "2026-03-04"
+      },
+      "occurs": [
+        "2026-03-01",
+        "2026-03-02",
+        "2026-03-03",
+        "2026-03-04"
+      ],
+      "absent": [
+        "2026-02-28",
+        "2026-03-05"
+      ]
+    },
+    {
+      "name": "hằng tuần rơi đúng thứ của ngày bắt đầu",
+      "event": {
+        "start_at": "2026-03-03",
+        "end_at": "",
+        "recurrence": "weekly"
+      },
+      "occurs": [
+        "2026-03-03",
+        "2026-03-10",
+        "2026-03-17",
+        "2026-04-07"
+      ],
+      "absent": [
+        "2026-03-04",
+        "2026-03-09",
+        "2026-03-02"
+      ]
+    },
+    {
+      "name": "hằng tuần nhiều ngày trải hết độ dài của nó trong mỗi tuần",
+      "event": {
+        "start_at": "2026-03-03",
+        "end_at": "2026-03-05",
+        "recurrence": "weekly"
+      },
+      "occurs": [
+        "2026-03-03",
+        "2026-03-04",
+        "2026-03-05",
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-12"
+      ],
+      "absent": [
+        "2026-03-06",
+        "2026-03-09"
+      ]
+    },
+    {
+      "name": "ngoại lệ gỡ đúng một lần xuất hiện khỏi chuỗi",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "weekly",
+        "exceptions": [
+          "2026-03-16"
+        ]
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09",
+        "2026-03-23"
+      ],
+      "absent": [
+        "2026-03-16"
+      ]
+    },
+    {
+      "name": "chuỗi có ngày kết thúc thì im lặng sau đó",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "weekly",
+        "recurrence_end_at": "2026-03-16"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09",
+        "2026-03-16"
+      ],
+      "absent": [
+        "2026-03-23",
+        "2026-03-30"
+      ]
+    },
+    {
+      "name": "không có gì rơi vào trước ngày bắt đầu",
+      "event": {
+        "start_at": "2026-03-10",
+        "end_at": "",
+        "recurrence": "daily"
+      },
+      "occurs": [
+        "2026-03-10"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2025-12-31"
+      ]
+    },
+    {
+      "name": "hằng tháng vào một ngày mà mọi tháng đều có",
+      "event": {
+        "start_at": "2026-01-15",
+        "end_at": "",
+        "recurrence": "monthly"
+      },
+      "occurs": [
+        "2026-01-15",
+        "2026-02-15",
+        "2026-12-15",
+        "2027-01-15"
+      ],
+      "absent": [
+        "2026-02-14",
+        "2026-02-16"
+      ]
+    },
+    {
+      "name": "hằng tháng từ ngày 31 kẹp về ngày cuối của tháng ngắn",
+      "event": {
+        "start_at": "2026-01-31",
+        "end_at": "",
+        "recurrence": "monthly"
+      },
+      "occurs": [
+        "2026-01-31",
+        "2026-02-28",
+        "2026-03-31",
+        "2026-04-30"
+      ],
+      "absent": [
+        "2026-02-27",
+        "2026-03-01",
+        "2026-03-30",
+        "2026-04-29"
+      ]
+    },
+    {
+      "name": "hằng tháng từ ngày 30 cũng kẹp, và tháng 31 ngày vẫn rơi vào 30",
+      "event": {
+        "start_at": "2026-01-30",
+        "end_at": "",
+        "recurrence": "monthly"
+      },
+      "occurs": [
+        "2026-01-30",
+        "2026-02-28",
+        "2026-03-30"
+      ],
+      "absent": [
+        "2026-02-27",
+        "2026-03-31"
+      ]
+    },
+    {
+      "name": "hằng tháng vẫn tôn trọng ngoại lệ và ngày kết thúc cùng lúc",
+      "event": {
+        "start_at": "2026-01-31",
+        "end_at": "",
+        "recurrence": "monthly",
+        "recurrence_end_at": "2026-04-30",
+        "exceptions": [
+          "2026-03-31"
+        ]
+      },
+      "occurs": [
+        "2026-01-31",
+        "2026-02-28",
+        "2026-04-30"
+      ],
+      "absent": [
+        "2026-03-31",
+        "2026-05-31"
+      ]
+    },
+    {
+      "name": "hằng năm rơi đúng ngày tháng ở những năm sau",
+      "event": {
+        "start_at": "2026-06-15",
+        "end_at": "",
+        "recurrence": "yearly"
+      },
+      "occurs": [
+        "2026-06-15",
+        "2027-06-15",
+        "2030-06-15"
+      ],
+      "absent": [
+        "2027-06-14",
+        "2027-07-15",
+        "2025-06-15"
+      ]
+    },
+    {
+      "name": "sinh nhật 29 tháng 2 kẹp về 28 trong năm không nhuận",
+      "event": {
+        "start_at": "2028-02-29",
+        "end_at": "",
+        "recurrence": "yearly"
+      },
+      "occurs": [
+        "2028-02-29",
+        "2029-02-28",
+        "2030-02-28",
+        "2032-02-29"
+      ],
+      "absent": [
+        "2029-02-27",
+        "2029-03-01",
+        "2032-02-28"
+      ]
+    },
+    {
+      "name": "rrule hằng ngày cách 3 ngày",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=DAILY;INTERVAL=3"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-05",
+        "2026-03-08",
+        "2026-03-11"
+      ],
+      "absent": [
+        "2026-03-03",
+        "2026-03-04",
+        "2026-03-06"
+      ]
+    },
+    {
+      "name": "rrule cách tuần rơi vào tuần chẵn kể từ ngày bắt đầu",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-16",
+        "2026-03-30"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2026-03-23"
+      ]
+    },
+    {
+      "name": "BYDAY rơi vào từng thứ được liệt kê",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-04",
+        "2026-03-06",
+        "2026-03-09",
+        "2026-03-11",
+        "2026-03-13"
+      ],
+      "absent": [
+        "2026-03-03",
+        "2026-03-05",
+        "2026-03-07",
+        "2026-03-08"
+      ]
+    },
+    {
+      "name": "BYDAY không rơi vào ngày trước khi chuỗi bắt đầu",
+      "event": {
+        "start_at": "2026-03-04",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+      },
+      "occurs": [
+        "2026-03-04",
+        "2026-03-06",
+        "2026-03-09"
+      ],
+      "absent": [
+        "2026-03-02",
+        "2026-03-03"
+      ]
+    },
+    {
+      "name": "BYDAY cách tuần bỏ nguyên tuần lẻ",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-04",
+        "2026-03-16",
+        "2026-03-18"
+      ],
+      "absent": [
+        "2026-03-09",
+        "2026-03-11",
+        "2026-03-06"
+      ]
+    },
+    {
+      "name": "COUNT dừng chuỗi sau đúng số lần đó",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;COUNT=3"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09",
+        "2026-03-16"
+      ],
+      "absent": [
+        "2026-03-23",
+        "2026-03-30"
+      ]
+    },
+    {
+      "name": "COUNT đếm số lần xuất hiện, không đếm số tuần",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=3"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-04",
+        "2026-03-09"
+      ],
+      "absent": [
+        "2026-03-11",
+        "2026-03-16"
+      ]
+    },
+    {
+      "name": "UNTIL trong rule dừng chuỗi như ngày kết thúc cũ",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;UNTIL=20260316"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09",
+        "2026-03-16"
+      ],
+      "absent": [
+        "2026-03-23"
+      ]
+    },
+    {
+      "name": "rrule hằng tháng cách tháng vẫn kẹp về ngày cuối tháng ngắn",
+      "event": {
+        "start_at": "2025-12-31",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=MONTHLY;INTERVAL=2"
+      },
+      "occurs": [
+        "2025-12-31",
+        "2026-02-28",
+        "2026-04-30"
+      ],
+      "absent": [
+        "2026-01-31",
+        "2026-03-31"
+      ]
+    },
+    {
+      "name": "rrule hằng năm cách 4 năm giữ đúng ngày nhuận",
+      "event": {
+        "start_at": "2028-02-29",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=YEARLY;INTERVAL=4"
+      },
+      "occurs": [
+        "2028-02-29",
+        "2032-02-29"
+      ],
+      "absent": [
+        "2029-02-28",
+        "2030-02-28",
+        "2031-02-28"
+      ]
+    },
+    {
+      "name": "khi có rrule thì các khoá cũ bị bỏ qua hoàn toàn",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "daily",
+        "recurrence_end_at": "2026-03-04",
+        "rrule": "FREQ=WEEKLY"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09",
+        "2026-03-16"
+      ],
+      "absent": [
+        "2026-03-03",
+        "2026-03-04"
+      ]
+    },
+    {
+      "name": "một rrule không đọc được thì sự kiện chỉ còn lần đầu tiên",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "TOTALLY=NOT;A=RULE"
+      },
+      "occurs": [
+        "2026-03-02"
+      ],
+      "absent": [
+        "2026-03-03",
+        "2026-03-09"
+      ]
+    },
+    {
+      "name": "phần rule lạ bị bỏ qua chứ không làm hỏng cả rule",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;BYSETPOS=-1;WKST=SU"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-09"
+      ],
+      "absent": [
+        "2026-03-03"
+      ]
+    },
+    {
+      "name": "BYDAY cùng sự kiện hai ngày trải hết độ dài từ mỗi mốc",
+      "event": {
+        "start_at": "2026-03-02",
+        "end_at": "2026-03-03",
+        "recurrence": "none",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,TH"
+      },
+      "occurs": [
+        "2026-03-02",
+        "2026-03-03",
+        "2026-03-05",
+        "2026-03-06",
+        "2026-03-09"
+      ],
+      "absent": [
+        "2026-03-04",
+        "2026-03-07",
+        "2026-03-08"
+      ]
+    }
+  ]
+}

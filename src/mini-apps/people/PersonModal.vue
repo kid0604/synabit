@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask } from '@tauri-apps/plugin-dialog';
-import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight } from 'lucide-vue-next';
+import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight, Bell } from 'lucide-vue-next';
+import { normalizeRelationships, titleCase } from './composables/relationships';
 import { logger } from '../../utils/logger';
 
 const props = defineProps<{
@@ -13,7 +14,7 @@ const props = defineProps<{
     allRelationships?: string[];
 }>();
 
-const emit = defineEmits(['close', 'saved']);
+const emit = defineEmits(['close', 'saved', 'delete']);
 const ns = useNodeService();
 
 interface DetailField { label: string; value: string; type: 'text' | 'email' | 'phone' | 'url' }
@@ -25,6 +26,7 @@ const form = ref({
     display_name: 'fullname' as 'fullname' | 'nickname' | 'custom',
     custom_display: '',
     relationships: [] as string[],
+    contact_frequency: '',
     birthday: '',
     tags: [] as string[],
     avatar: '',
@@ -102,8 +104,8 @@ onMounted(() => {
         form.value.nickname = p.nickname || '';
         form.value.display_name = p.display_name || 'fullname';
         form.value.custom_display = p.custom_display || '';
-        const relVal = p.relationship_type || '';
-        form.value.relationships = relVal ? relVal.split(',').map((s:string) => s.trim()).filter(Boolean) : [];
+        form.value.relationships = normalizeRelationships(p.relationship_type);
+        form.value.contact_frequency = p.contact_frequency || '';
         form.value.birthday = p.birthday || '';
         form.value.tags = [...(p.tags || [])];
         form.value.avatar = p.avatar || '';
@@ -138,7 +140,7 @@ const addRelationship = (r?: string) => {
     const parts = val.split(',').map(s => s.trim()).filter(Boolean);
     parts.forEach(p => {
         const exactMatch = props.allRelationships?.find(ar => ar.toLowerCase() === p.toLowerCase());
-        const finalVal = exactMatch || p.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const finalVal = exactMatch || titleCase(p);
         if (!form.value.relationships.includes(finalVal)) {
             form.value.relationships.push(finalVal);
         }
@@ -160,6 +162,18 @@ const addImportantDate = () => form.value.important_dates.push({ label: '', date
 const removeImportantDate = (i: number) => form.value.important_dates.splice(i, 1);
 const addExperience = () => { form.value.experiences.push({ company: '', role: '', startMonth: '', startYear: '', endMonth: '', endYear: '', current: false }); showExperiences.value = true; };
 const removeExperience = (i: number) => form.value.experiences.splice(i, 1);
+/**
+ * A month's short name, in the language the app is set to.
+ *
+ * It was pinned to `'en'`, so somebody using the app in Vietnamese picked a
+ * start date from a list of English months. Read through `useI18n` rather
+ * than the global `$i18n`, which only exists when the plugin is installed and
+ * is therefore absent wherever this component is mounted on its own.
+ */
+const { locale } = useI18n();
+const monthLabel = (month: number) =>
+    new Date(2000, month - 1).toLocaleString(locale?.value || 'en', { month: 'short' });
+
 const yearOptions = computed(() => {
     const current = new Date().getFullYear();
     const years = [];
@@ -210,54 +224,55 @@ const savePerson = async () => {
     addRelationship(); // Commit any pending relationship input
     isSaving.value = true;
     try {
-        const properties: Record<string, any> = {};
-        if (form.value.avatar) properties.avatar = form.value.avatar;
-        if (form.value.nickname.trim()) {
-            properties.nickname = form.value.nickname.trim();
-        }
-        properties.display_name = form.value.display_name;
-        if (form.value.display_name === 'custom' && form.value.custom_display.trim()) {
-            properties.custom_display = form.value.custom_display.trim();
-        }
-        if (form.value.birthday) properties.birthday = form.value.birthday;
-        if (form.value.tags.length > 0) properties.tags = form.value.tags;
-        if (form.value.relationships.length > 0) properties.relationship_type = form.value.relationships.join(', ');
-        else properties.relationship_type = '';
-        if (props.person?.properties?.contact_frequency) properties.contact_frequency = props.person.properties.contact_frequency;
+        // Every field this form owns is named on every save, including the
+        // ones the user just emptied — `null` is how a write says "remove
+        // this", and leaving the key out says "keep whatever is on disk". The
+        // two are not the same, and using the second for a cleared field is
+        // what made deleting the last tag, the last detail, or a birthday look
+        // like it worked until the next reload.
         const validDates = form.value.important_dates.filter(d => d.label && d.date);
-        if (validDates.length > 0) properties.important_dates = validDates;
-
-        // Work experience
         const validExperiences = form.value.experiences.filter(e => e.company.trim()).map(e => ({
             company: e.company, role: e.role,
             start: e.startYear ? (e.startMonth ? `${e.startYear}-${e.startMonth}` : e.startYear) : '',
             end: e.current ? '' : (e.endYear ? (e.endMonth ? `${e.endYear}-${e.endMonth}` : e.endYear) : ''),
             current: e.current,
         }));
-        if (validExperiences.length > 0) properties.experiences = validExperiences;
-
-        // Details (the flexible fields)
         const validDetails = form.value.details.filter(d => d.value.trim());
-        if (validDetails.length > 0) properties.details = validDetails;
-
-        // Write backward-compat shortcuts for search + sidebar
         const findDetail = (label: string) => validDetails.find(d => d.label.toLowerCase().includes(label))?.value;
-        const email = findDetail('email'); if (email) properties.email = email;
-        const phone = findDetail('phone'); if (phone) properties.phone = phone;
-        const company = findDetail('company'); if (company) properties.company = company;
 
-        // Preserve runtime-managed fields
-        if (props.person?.properties?.interactions) properties.interactions = props.person.properties.interactions;
-        if (props.person?.properties?.gifts) properties.gifts = props.person.properties.gifts;
-        if (props.person?.properties?.last_contacted) properties.last_contacted = props.person.properties.last_contacted;
-        if (props.person?.properties?.connections) properties.connections = props.person.properties.connections;
-        if (props.person?.properties?.relations) properties.relations = props.person.properties.relations;
-        if (props.person?.properties?.is_owner) properties.is_owner = true;
+        const properties: Record<string, any> = {
+            avatar: form.value.avatar || null,
+            nickname: form.value.nickname.trim() || null,
+            display_name: form.value.display_name,
+            custom_display: form.value.display_name === 'custom'
+                ? (form.value.custom_display.trim() || null)
+                : null,
+            relationship_type: form.value.relationships.length > 0 ? form.value.relationships : null,
+            contact_frequency: form.value.contact_frequency || null,
+            birthday: form.value.birthday || null,
+            tags: form.value.tags.length > 0 ? form.value.tags : null,
+            important_dates: validDates.length > 0 ? validDates : null,
+            experiences: validExperiences.length > 0 ? validExperiences : null,
+            details: validDetails.length > 0 ? validDetails : null,
+            // Backward-compat shortcuts for search + sidebar. They follow the
+            // details they are copied from, removal included, or search keeps
+            // finding people by an address they deleted.
+            email: findDetail('email') || null,
+            phone: findDetail('phone') || null,
+            company: findDetail('company') || null,
+        };
 
+        // Nothing else is listed. Interactions, gifts, last_contacted,
+        // connections, relations and is_owner belong to other screens, and a
+        // write that does not name them leaves them alone — safer than copying
+        // them out of `props.person`, which is as old as whenever this modal
+        // was opened.
         const relPath = props.person ? props.person.id : `People/${crypto.randomUUID()}.md`;
         await ns.writeNode({
             relPath, title: form.value.title,
-            nodeType: 'person', properties, content: props.person?.content || ''
+            nodeType: 'person', properties,
+            // No `content`: this form does not edit the body, and sending the
+            // copy loaded with the list would revert edits made since.
         });
         emit('saved');
         emit('close');
@@ -267,21 +282,27 @@ const savePerson = async () => {
     } finally { isSaving.value = false; }
 };
 
-const deletePerson = async () => {
-    if (!props.person) return;
-    if (props.person.properties?.is_owner) return;
-    const yes = await ask(`This will permanently delete "${props.person.title}" and all associated data. This action cannot be undone.`, { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' });
-    if (yes) {
-        isDeleting.value = true;
-        try {
-            await ns.deleteNode({ relPath: props.person.id });
-            emit('saved'); emit('close');
-        } catch (e) { logger.error('Failed to delete person', e); }
-        finally { isDeleting.value = false; }
-    }
+// Deleting is handled by the screen that owns the list, because it also has
+// to strip this person out of everybody else's connections — and this modal
+// only knows about one person.
+const deletePerson = () => {
+    if (!props.person || props.person.properties?.is_owner) return;
+    emit('delete', props.person);
+    emit('close');
 };
 
-const frequencyOptions = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'];
+// How often the user wants to be in touch. Empty means "don't track it", and
+// the whole relationship-health readout — the coloured dot, Due Soon, Overdue,
+// the reminders list — stays quiet for that person, which is the right answer
+// for a contact you keep an address for and nothing more.
+const frequencyOptions: Array<{ value: string; labelKey: string }> = [
+    { value: '', labelKey: 'people.freq_none' },
+    { value: 'weekly', labelKey: 'people.freq_weekly' },
+    { value: 'biweekly', labelKey: 'people.freq_biweekly' },
+    { value: 'monthly', labelKey: 'people.freq_monthly' },
+    { value: 'quarterly', labelKey: 'people.freq_quarterly' },
+    { value: 'yearly', labelKey: 'people.freq_yearly' },
+];
 
 const getDetailInputType = (type: string) => {
     if (type === 'email') return 'email';
@@ -307,7 +328,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <User class="w-5 h-5 text-blue-500" />
                     {{ props.person ? 'Edit Person' : 'Add New Person' }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" aria-label="More Options">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" :aria-label="$t('people.close')">
                     <X class="w-5 h-5" />
                 </button>
             </div>
@@ -321,7 +342,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                         <button @click="avatarFileInput?.click()" class="w-20 h-20 rounded-2xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center overflow-hidden hover:border-blue-400 transition-colors group relative">
                             <img v-if="avatarSrc" :src="avatarSrc" class="w-full h-full object-cover" />
                             <div v-else class="flex flex-col items-center text-gray-400 group-hover:text-blue-500 transition-colors">
-                                <Camera class="w-5 h-5" /><span class="text-[10px] mt-0.5">Photo</span>
+                                <Camera class="w-5 h-5" /><span class="text-[10px] mt-0.5">{{ $t('people.photo') }}</span>
                             </div>
                             <div v-if="avatarSrc" class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><Camera class="w-5 h-5 text-white" /></div>
                             <div v-if="isUploadingAvatar" class="absolute inset-0 bg-white/60 flex items-center justify-center"><div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div></div>
@@ -335,28 +356,28 @@ const getDetailPlaceholder = (d: DetailField) => {
                         </div>
                         <div class="relative mt-2">
                             <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                            <input v-model="form.nickname" type="text" placeholder="Nickname" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
+                            <input v-model="form.nickname" type="text" :placeholder="$t('people.nickname')" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                         <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-                            <span class="text-[11px] text-gray-400">Display as:</span>
+                            <span class="text-[11px] text-gray-400">{{ $t('people.display_as') }}</span>
                             <button @click="form.display_name = 'fullname'"
                                 :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
                                     form.display_name === 'fullname'
                                         ? 'bg-blue-500 text-white border-blue-500'
                                         : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
-                                ]">Full Name</button>
+                                ]">{{ $t('people.full_name') }}</button>
                             <button v-if="form.nickname.trim()" @click="form.display_name = 'nickname'"
                                 :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
                                     form.display_name === 'nickname'
                                         ? 'bg-blue-500 text-white border-blue-500'
                                         : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
-                                ]">Nickname</button>
+                                ]">{{ $t('people.nickname') }}</button>
                             <button @click="form.display_name = 'custom'"
                                 :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
                                     form.display_name === 'custom'
                                         ? 'bg-blue-500 text-white border-blue-500'
                                         : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
-                                ]">Custom</button>
+                                ]">{{ $t('people.custom') }}</button>
                             <input v-if="form.display_name === 'custom'" v-model="form.custom_display" type="text" :placeholder="$t('people.custom_display_ph')" class="ml-1 px-2 py-0.5 text-[11px] bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-md focus:ring-2 focus:ring-blue-500 outline-none w-36" />
                         </div>
                     </div>
@@ -364,13 +385,13 @@ const getDetailPlaceholder = (d: DetailField) => {
 
                 <!-- Relationship -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Relationships</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{{ $t('people.relationships') }}</label>
                     
                     <!-- Selected Relationships (Tags Style) -->
                     <div class="flex flex-wrap gap-2 mb-2" v-if="form.relationships.length > 0">
                         <span v-for="(rel, index) in form.relationships" :key="index" class="px-2.5 py-1 text-sm bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50 rounded-md flex items-center gap-1.5">
                             <Heart class="w-3 h-3 opacity-70" /> {{ rel }}
-                            <button @click="removeRelationship(index)" class="ml-1 opacity-50 hover:opacity-100 hover:text-red-500 outline-none" aria-label="Remove Relationship"><X class="w-3 h-3" /></button>
+                            <button @click="removeRelationship(index)" class="ml-1 opacity-50 hover:opacity-100 hover:text-red-500 outline-none" :aria-label="$t('people.remove_relationship')"><X class="w-3 h-3" /></button>
                         </span>
                     </div>
 
@@ -405,42 +426,53 @@ const getDetailPlaceholder = (d: DetailField) => {
                             </button>
                         </div>
                     </div>
+
+                    <!-- Keep in touch cadence -->
+                    <div class="mt-3 flex items-center gap-2 flex-wrap">
+                        <label for="contact-frequency" class="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1.5">
+                            <Bell class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.keep_in_touch') }}
+                        </label>
+                        <select id="contact-frequency" v-model="form.contact_frequency" class="px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                            <option v-for="f in frequencyOptions" :key="f.value" :value="f.value">{{ $t(f.labelKey) }}</option>
+                        </select>
+                        <span v-if="form.contact_frequency" class="text-[11px] text-gray-400">{{ $t('people.keep_in_touch_hint') }}</span>
+                    </div>
                 </div>
 
                 <!-- Details (Flexible Fields) -->
                 <div>
                     <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <AlignLeft class="w-4 h-4 text-blue-500" /> Details
+                        <AlignLeft class="w-4 h-4 text-blue-500" /> {{ $t('people.details') }}
                     </h3>
                     <div v-for="(d, i) in form.details" :key="i" class="flex items-center gap-2 mb-2">
-                        <input v-model="d.label" @input="onLabelChange(d)" type="text" placeholder="Label"
+                        <input v-model="d.label" @input="onLabelChange(d)" type="text" :placeholder="$t('people.label')"
                             class="w-28 flex-shrink-0 px-2.5 py-2 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" />
                         <div class="flex-1 relative">
                             <input v-model="d.value" :type="getDetailInputType(d.type)" :placeholder="getDetailPlaceholder(d)"
                                 class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
-                        <button @click="removeDetail(i)" class="p-1.5 text-gray-400 hover:text-red-500 transition-colors" aria-label="Remove Detail"><X class="w-4 h-4" /></button>
+                        <button @click="removeDetail(i)" class="p-1.5 text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_detail')"><X class="w-4 h-4" /></button>
                     </div>
 
                     <!-- Add detail: presets or custom -->
                     <div class="relative">
                         <div class="flex items-center gap-2">
                             <button @click="addDetail()" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
-                                <Plus class="w-3.5 h-3.5" /> Add Field
+                                <Plus class="w-3.5 h-3.5" /> {{ $t('people.add_field') }}
                             </button>
                             <span class="text-gray-300 dark:text-gray-600">|</span>
                             <button @click="showPresetPicker = !showPresetPicker" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 font-medium">
-                                Quick Add ▾
+                                {{ $t('people.quick_add') }}
                             </button>
                         </div>
                         <div v-if="showPresetPicker" class="absolute left-0 top-full mt-1 z-10 bg-white dark:bg-[#242426] border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-2 flex flex-wrap gap-1 w-80">
                             <button @click="addExperience(); showPresetPicker = false;"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
-                                <Building class="w-3.5 h-3.5 text-gray-400" /> Company
+                                <Building class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.company') }}
                             </button>
                             <button @click="addBirthdayFromQuickAdd"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
-                                <Gift class="w-3.5 h-3.5 text-gray-400" /> Birthday
+                                <Gift class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.birthday') }}
                             </button>
                             <button v-for="p in DETAIL_PRESETS" :key="p.label"
                                 @click="addDetail(p)"
@@ -455,15 +487,15 @@ const getDetailPlaceholder = (d: DetailField) => {
                 <div class="border-t border-border dark:border-border-dark pt-4">
                     <button @click="showExperiences = !showExperiences" class="w-full flex items-center gap-2 text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
                         <ChevronRight :class="['w-4 h-4 transition-transform', showExperiences ? 'rotate-90' : '']" />
-                        <Briefcase class="w-4 h-4 text-blue-500" /> Work Experience
+                        <Briefcase class="w-4 h-4 text-blue-500" /> {{ $t('people.work_experience') }}
                         <span v-if="form.experiences.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ form.experiences.length }}</span>
                     </button>
                     <div v-show="showExperiences" class="mt-3">
                     <div v-for="(exp, i) in form.experiences" :key="i" class="mb-3 bg-gray-50 dark:bg-[#1a1a1a] border border-border dark:border-border-dark rounded-xl p-3 relative group">
-                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" aria-label="More Options"><X class="w-3.5 h-3.5" /></button>
+                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" :aria-label="$t('people.remove_experience')"><X class="w-3.5 h-3.5" /></button>
                         <div class="grid grid-cols-2 gap-2 mb-2">
                             <div>
-                                <label class="block text-[11px] text-gray-400 mb-0.5">Company</label>
+                                <label class="block text-[11px] text-gray-400 mb-0.5">{{ $t('people.company') }}</label>
                                 <input v-model="exp.company" type="text" :placeholder="$t('people.company_ph')" class="w-full px-3 py-1.5 bg-white dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                             </div>
                             <div>
@@ -477,7 +509,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                                 <div class="flex gap-1.5">
                                     <select v-model="exp.startMonth" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.month') }}</option>
-                                        <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ new Date(2000, m-1).toLocaleString('en', { month: 'short' }) }}</option>
+                                        <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ monthLabel(m) }}</option>
                                     </select>
                                     <select v-model="exp.startYear" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.year') }}</option>
@@ -490,7 +522,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                                 <div class="flex gap-1.5">
                                     <select v-model="exp.endMonth" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.month') }}</option>
-                                        <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ new Date(2000, m-1).toLocaleString('en', { month: 'short' }) }}</option>
+                                        <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ monthLabel(m) }}</option>
                                     </select>
                                     <select v-model="exp.endYear" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.year') }}</option>
@@ -504,12 +536,12 @@ const getDetailPlaceholder = (d: DetailField) => {
                                         ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
                                         : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
                                 ]">
-                                Current
+                                {{ $t('people.current') }}
                             </button>
                         </div>
                     </div>
                     <button @click="addExperience" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
-                        <Plus class="w-3.5 h-3.5" /> Add Experience
+                        <Plus class="w-3.5 h-3.5" /> {{ $t('people.add_experience') }}
                     </button>
                     </div>
                 </div>
@@ -518,12 +550,12 @@ const getDetailPlaceholder = (d: DetailField) => {
                 <div class="border-t border-border dark:border-border-dark pt-4">
                     <button @click="showKeyDates = !showKeyDates" class="w-full flex items-center gap-2 text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
                         <ChevronRight :class="['w-4 h-4 transition-transform', showKeyDates ? 'rotate-90' : '']" />
-                        <Calendar class="w-4 h-4 text-blue-500" /> Key Dates
+                        <Calendar class="w-4 h-4 text-blue-500" /> {{ $t('people.key_dates') }}
                         <span v-if="form.birthday || form.important_dates.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ (form.birthday ? 1 : 0) + form.important_dates.length }}</span>
                     </button>
                     <div v-show="showKeyDates" class="mt-3">
                     <div class="mb-3">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Birthday</label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.birthday') }}</label>
                         <div class="relative w-48">
                             <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input ref="birthdayInputRef" v-model="form.birthday" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
@@ -532,21 +564,21 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <div v-for="(d, i) in form.important_dates" :key="i" class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                         <input v-model="d.label" type="text" :placeholder="$t('people.label_ph')" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                         <input v-model="d.date" type="date" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                        <button @click="removeImportantDate(i)" class="p-2 text-gray-400 hover:text-red-500 transition-colors" aria-label="Remove Important Date"><X class="w-4 h-4" /></button>
+                        <button @click="removeImportantDate(i)" class="p-2 text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_date')"><X class="w-4 h-4" /></button>
                     </div>
                     <button @click="addImportantDate" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
-                        <Plus class="w-3.5 h-3.5" /> Add Date
+                        <Plus class="w-3.5 h-3.5" /> {{ $t('people.add_date') }}
                     </button>
                     </div>
                 </div>
 
                 <!-- Tags -->
                 <div class="border-t border-border dark:border-border-dark pt-5">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tags</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.tags') }}</label>
                     <div class="flex flex-wrap gap-2 mb-2">
                         <span v-for="(tag, index) in form.tags" :key="index" class="px-2.5 py-1 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md flex items-center gap-1.5">
                             <Hash class="w-3 h-3 text-gray-400" /> {{ tag }}
-                            <button @click="removeTag(index)" class="ml-1 text-gray-400 hover:text-red-500 outline-none" aria-label="Remove Tag"><X class="w-3 h-3" /></button>
+                            <button @click="removeTag(index)" class="ml-1 text-gray-400 hover:text-red-500 outline-none" :aria-label="$t('people.remove_tag')"><X class="w-3 h-3" /></button>
                         </span>
                     </div>
                     <div class="relative">
@@ -561,7 +593,7 @@ const getDetailPlaceholder = (d: DetailField) => {
             <!-- Footer -->
             <div class="px-6 py-4 border-t border-border dark:border-border-dark flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
                 <button v-if="props.person && !props.person.properties?.is_owner" @click="deletePerson" :disabled="isDeleting || isSaving" class="flex items-center gap-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 px-3 py-1.5 rounded-lg transition-colors font-medium text-sm disabled:opacity-50">
-                    <Trash2 class="w-4 h-4" /> Delete
+                    <Trash2 class="w-4 h-4" /> {{ $t('people.delete') }}
                 </button>
                 <div v-else></div>
                 <div class="flex items-center gap-3">

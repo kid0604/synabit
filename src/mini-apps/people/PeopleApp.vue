@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus } from 'lucide-vue-next';
+import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
 import GiftModal from './GiftModal.vue';
 import OverviewTab from './OverviewTab.vue';
@@ -16,7 +16,17 @@ import NavButtons from '../../shared/components/NavButtons.vue';
 import RemindersWidget from './RemindersWidget.vue';
 import LinkPersonModal from './LinkPersonModal.vue';
 import PeopleManager from './PeopleManager.vue';
+import ImportContactsModal from './ImportContactsModal.vue';
 
+import { contactPercent, contactDotClass, contactStatus } from './composables/useRelationshipHealth';
+import { linkRemovalPatches, namesFor, pointsAt, type Connection } from './composables/connections';
+import { parseAnnualDate } from './composables/anniversaries';
+import { relationshipsOf, relationshipLabel } from './composables/relationships';
+import { searchPeople } from './composables/search';
+import { segmentFromNode, segmentToProperties, peopleIn, type Segment } from './composables/segments';
+import { useListKeyboard } from './composables/useListKeyboard';
+import SegmentModal from './SegmentModal.vue';
+import { useContactExchange } from './composables/useContactExchange';
 import { logger } from '../../utils/logger';
 
 const bus = useEventBus();
@@ -61,16 +71,50 @@ const allDebts = ref<any[]>([]);
 const allTransactions = ref<any[]>([]);
 
 const isMobile = ref(window.innerWidth < 768);
+const handleResize = () => { isMobile.value = window.innerWidth < 768; };
 const isSidebarOpen = ref(false);
 
+const exchange = useContactExchange(ns, () => props.vaultPath);
+const showImportModal = ref(false);
+
+/**
+ * Write the whole address book to a file.
+ *
+ * vCard, because that is what another contact app will read. The spreadsheet
+ * is offered from the same place for anybody taking the list somewhere that
+ * is not a contact app at all.
+ */
+const exportAll = async () => {
+    try {
+        await exchange.exportContacts('vcard');
+    } catch (e) {
+        logger.error('Failed to export contacts', e);
+    }
+};
+
+/**
+ * The list, without the bodies.
+ *
+ * `getNodes` sends every person's body as well, and the list renders none of
+ * it — only the one person who is open needs a body, and `selectPerson`
+ * fetches that one. On a vault of a few thousand contacts the difference is
+ * most of the payload.
+ */
 const fetchPeople = async () => {
     loading.value = true;
     try {
-        const nodes = await ns.getNodes('person');
-        people.value = nodes;
+        const [summaries, lastSeen] = await Promise.all([
+            ns.getNodeSummaries('person'),
+            // A vault with no links yet answers with nothing, and an older
+            // build answers with nothing at all. Neither is a reason for the
+            // list of people to fail to load.
+            invoke<Record<string, string>>('last_contact_dates').catch(() => ({})),
+        ]);
+        people.value = summaries.map((person: any) => withDerivedContact(person, lastSeen));
         if (selectedPerson.value) {
-            const updated = nodes.find(n => n.id === selectedPerson.value.id);
-            selectedPerson.value = updated || null;
+            // Re-read the open person in full: the summary in the list has no
+            // body, and the Notes tab shows it.
+            selectedPerson.value = await ns.getNode(selectedPerson.value.id);
         }
         // Ensure owner person exists
         await ensureOwner();
@@ -78,6 +122,35 @@ const fetchPeople = async () => {
         logger.error('Failed to fetch people nodes', e);
     } finally {
         loading.value = false;
+    }
+};
+
+/**
+ * Fold in when the vault last saw this person, if that is later.
+ *
+ * A note that mentions somebody is a touch, and the reminder engine already
+ * counts it. Doing the same here is what keeps the dot beside their name and
+ * the notification about them telling the same story. Nothing is written: the
+ * database works this out from links that already exist, and storing it would
+ * mean a write and a sync round every time a note is saved.
+ */
+const withDerivedContact = (person: any, lastSeen: Record<string, string> | null | undefined) => {
+    const seen = lastSeen?.[person.id];
+    if (!seen) return person;
+    const stored = person.properties?.last_contacted ?? '';
+    // Both are `YYYY-MM-DD`, so comparing as text compares as dates.
+    if (seen <= stored) return person;
+    return { ...person, properties: { ...person.properties, last_contacted: seen } };
+};
+
+/** Open a person, fetching the body the list does not carry. */
+const selectPerson = async (person: any) => {
+    if (!person) { selectedPerson.value = null; return; }
+    try {
+        selectedPerson.value = await ns.getNode(person.id) || person;
+    } catch (e) {
+        logger.error('Failed to load person', e);
+        selectedPerson.value = person;
     }
 };
 
@@ -94,8 +167,7 @@ const ensureOwner = async () => {
             eventType: 'created',
             silent: true,
         });
-        const nodes = await ns.getNodes('person');
-        people.value = nodes;
+        people.value = await ns.getNodeSummaries('person');
     } catch (e) {
         logger.error('Failed to create owner person', e);
     }
@@ -112,6 +184,22 @@ const fetchLinkedNodes = async (personTitle: string, personId: string) => {
     } finally {
         loadingLinks.value = false;
     }
+};
+
+/**
+ * Money owed and money moved, loaded only once the Timeline is looked at.
+ *
+ * These read every month the vault has ever recorded, transactions and all,
+ * to pull out the handful belonging to one person. Doing that on the way into
+ * People made opening a contact list pay for the whole finance history —
+ * before anything had asked to see it.
+ */
+let financeLoaded = false;
+
+const loadFinance = async (force = false) => {
+    if (financeLoaded && !force) return;
+    financeLoaded = true;
+    await Promise.all([fetchDebts(), fetchTransactions()]);
 };
 
 const fetchDebts = async () => {
@@ -144,6 +232,10 @@ const fetchTransactions = async () => {
     }
 };
 
+watch(activeTab, (tab) => {
+    if (tab === 'timeline') loadFinance();
+});
+
 watch(() => selectedPerson.value?.id, (newId, oldId) => {
     if (newId !== oldId) {
         if (selectedPerson.value && selectedPerson.value.title) {
@@ -166,16 +258,30 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
 const debouncedRefreshAll = () => {
     debouncedLoad(() => {
         fetchPeople();
-        fetchDebts();
-        fetchTransactions();
+        if (financeLoaded) loadFinance(true);
         if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
     });
 };
 
 onMounted(async () => {
+    // Move anything still kept the old way before the list is drawn from it.
+    // Safe to run every time: a vault already in the new shape produces an
+    // empty plan and no file is touched.
+    try {
+        const moved = await invoke<{ interactions_moved: number }>('migrate_people_storage', {
+            vaultPath: props.vaultPath,
+        });
+        if (moved.interactions_moved > 0) {
+            logger.info(`Moved ${moved.interactions_moved} interactions into files of their own`);
+        }
+    } catch (e) {
+        // A vault that could not be tidied still works; it just keeps the old
+        // shape for now.
+        logger.error('Could not tidy people storage', e);
+    }
+
     await fetchPeople();
-    fetchDebts();
-    fetchTransactions();
+    fetchSegments();
     
     // Check URL for direct person link
     if (route.query.id) {
@@ -184,7 +290,6 @@ onMounted(async () => {
         router.replace({ query: {} });
     }
 
-    const handleResize = () => { isMobile.value = window.innerWidth < 768; };
     window.addEventListener('resize', handleResize);
 
     bus.on('vault:file-created-deleted', () => {
@@ -205,7 +310,7 @@ onMounted(async () => {
     bus.on('node:created', ({ nodeType }) => {
         if (nodeType === 'person') debouncedLoad(() => fetchPeople());
         if (nodeType === 'finance_month' || nodeType === 'finance_debts') {
-            debouncedLoad(() => { fetchDebts(); fetchTransactions(); });
+            if (financeLoaded) debouncedLoad(() => loadFinance(true));
         }
     });
 
@@ -217,7 +322,7 @@ onMounted(async () => {
             });
         }
         if (nodeType === 'finance_month' || nodeType === 'finance_debts') {
-            debouncedLoad(() => { fetchDebts(); fetchTransactions(); });
+            if (financeLoaded) debouncedLoad(() => loadFinance(true));
         }
     });
 
@@ -226,21 +331,73 @@ onMounted(async () => {
     });
 });
 
+onUnmounted(() => {
+    window.removeEventListener('resize', handleResize);
+    // A refresh queued on the way out would run against a screen that is no
+    // longer there. Event-bus subscriptions clean themselves up; these two
+    // never did.
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+});
+
+// ─── Saved segments ─────────────────────────────────────────
+//
+// A saved question, not a saved list: a list would be wrong the moment
+// somebody new answered it. Kept as `filter` nodes, which the app already
+// has, so a segment syncs and is searchable like anything else.
+const segments = ref<Segment[]>([]);
+const activeSegmentId = ref<string | null>(null);
+const showSegmentModal = ref(false);
+const editingSegment = ref<Segment | null>(null);
+
+const activeSegment = computed(() =>
+    segments.value.find(s => s.id === activeSegmentId.value) ?? null);
+
+const fetchSegments = async () => {
+    try {
+        const nodes = await ns.getNodeSummaries('filter');
+        segments.value = nodes
+            .filter((n: any) => n.properties?.subject === 'person')
+            .map(segmentFromNode);
+    } catch (e) {
+        logger.error('Failed to load segments', e);
+        segments.value = [];
+    }
+};
+
+const saveSegment = async (draft: Omit<Segment, 'id'>, existingId?: string) => {
+    const name = draft.name.trim();
+    if (!name) return;
+    try {
+        const relPath = existingId || `Filters/people-${crypto.randomUUID()}.md`;
+        await ns.writeNode({
+            relPath,
+            title: name,
+            nodeType: 'filter',
+            properties: segmentToProperties(draft),
+            eventType: existingId ? 'updated' : 'created',
+        });
+        await fetchSegments();
+        activeSegmentId.value = relPath;
+        showSegmentModal.value = false;
+    } catch (e) {
+        logger.error('Failed to save the segment', e);
+    }
+};
+
+const deleteSegment = async (id: string) => {
+    try {
+        await ns.deleteNode({ relPath: id });
+        if (activeSegmentId.value === id) activeSegmentId.value = null;
+        await fetchSegments();
+    } catch (e) {
+        logger.error('Failed to delete the segment', e);
+    }
+};
+
 const filteredPeople = computed(() => {
     let list = people.value.filter(p => !p.properties?.is_owner);
-    if (searchQuery.value) {
-        const q = searchQuery.value.toLowerCase();
-        list = list.filter(p => {
-            if (p.title.toLowerCase().includes(q)) return true;
-            if (p.properties.relationship_type && p.properties.relationship_type.toLowerCase().includes(q)) return true;
-            // Search across all details
-            if (p.properties.details?.some((d: any) => d.value.toLowerCase().includes(q) || d.label.toLowerCase().includes(q))) return true;
-            // Legacy fallback
-            if (p.properties.email && p.properties.email.toLowerCase().includes(q)) return true;
-            if (p.properties.company && p.properties.company.toLowerCase().includes(q)) return true;
-            return false;
-        });
-    }
+    if (activeSegment.value) list = peopleIn(activeSegment.value, list);
+    list = searchPeople(list, searchQuery.value);
     // Sort
     if (sortMode.value === 'alpha') {
         list = [...list].sort((a, b) => a.title.localeCompare(b.title));
@@ -264,21 +421,33 @@ const sidebarPeople = computed(() => {
     return filteredPeople.value.slice(0, 20);
 });
 
+// Arrow keys move through the list; Enter opens whoever is on. Focus follows,
+// so the browser does the scrolling rather than a hand-rolled one fighting it.
+const activeRow = ref<HTMLElement | null>(null);
+const listKeys = useListKeyboard(
+    computed(() => sidebarPeople.value),
+    person => selectPerson(person)
+);
+watch(listKeys.activeIndex, async () => {
+    await nextTick();
+    activeRow.value?.focus();
+});
+
 const needsAttentionCount = computed(() => {
+    // Asking the status directly rather than reading it back out of a colour
+    // class — the colour is how it is drawn, not what it means.
     return people.value.filter(p => {
-        const dot = getContactHealthDot(p);
-        return dot === 'bg-red-500' || dot === 'bg-yellow-500';
+        const status = contactStatus(p);
+        return status === 'overdue' || status === 'due_soon';
     }).length;
 });
 
 const topRelationships = computed(() => {
     const counts: Record<string, number> = {};
     people.value.forEach(p => {
-        if (p.properties?.relationship_type) {
-            const relsArr = p.properties.relationship_type.split(',').map((s: string) => s.toLowerCase().trim());
-            relsArr.forEach((r: string) => {
-                if (r) counts[r] = (counts[r] || 0) + 1;
-            });
+        for (const relationship of relationshipsOf(p)) {
+            const key = relationship.toLowerCase();
+            counts[key] = (counts[key] || 0) + 1;
         }
     });
     return Object.entries(counts)
@@ -287,14 +456,21 @@ const topRelationships = computed(() => {
         .map(([r]) => r.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
 });
 
+const allTags = computed(() => {
+    const tags = new Set<string>();
+    for (const person of people.value) {
+        for (const tag of person.properties?.tags ?? []) {
+            if (typeof tag === 'string' && tag.trim()) tags.add(tag.toLowerCase());
+        }
+    }
+    return Array.from(tags).sort();
+});
+
 const allRelationships = computed(() => {
     const rels = new Set<string>();
     people.value.forEach(p => {
-        if (p.properties?.relationship_type) {
-            const relsArr = p.properties.relationship_type.split(',').map((s: string) => s.toLowerCase().trim());
-            relsArr.forEach((r: string) => {
-                if (r) rels.add(r);
-            });
+        for (const relationship of relationshipsOf(p)) {
+            rels.add(relationship.toLowerCase());
         }
     });
     return Array.from(rels)
@@ -319,8 +495,8 @@ const openNewModal = () => {
     showModal.value = true;
 };
 
-const editPerson = (person: any) => {
-    selectedPerson.value = person;
+const editPerson = async (person: any) => {
+    await selectPerson(person);
     showModal.value = true;
 };
 
@@ -349,29 +525,10 @@ const getAvatarSrc = (person: any) => {
     return convertFileSrc(`${props.vaultPath}/${person.properties.avatar}`);
 };
 
-const FREQ_DAYS: Record<string, number> = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 90, yearly: 365 };
-
-const getHealthScore = (person: any): number => {
-    const last = person?.properties?.last_contacted;
-    const freq = person?.properties?.contact_frequency;
-    if (!last || !freq) return 50;
-    const days = Math.floor((Date.now() - new Date(last).getTime()) / (1000 * 60 * 60 * 24));
-    const threshold = FREQ_DAYS[freq] || 60;
-    return Math.max(0, Math.min(100, Math.round((1 - days / threshold) * 100)));
-};
-
-const getContactHealthDot = (person: any) => {
-    const last = person?.properties?.last_contacted;
-    const freq = person?.properties?.contact_frequency;
-    if (!last || !freq) return '';
-    const days = Math.floor((Date.now() - new Date(last).getTime()) / (1000 * 60 * 60 * 24));
-    const threshold = FREQ_DAYS[freq] || 60;
-    const ratio = days / threshold;
-    if (ratio <= 0.5) return 'bg-green-500';
-    if (ratio <= 0.85) return 'bg-blue-500';
-    if (ratio <= 1.2) return 'bg-yellow-500';
-    return 'bg-red-500';
-};
+// Both of these come from the shared cadence table, so the sidebar dot, the
+// reminders widget and the person's own card cannot disagree about a status.
+const getHealthScore = contactPercent;
+const getContactHealthDot = contactDotClass;
 
 const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -387,13 +544,18 @@ const handleTimelineUpdated = () => {
 const handleGiftSaved = async (gift: any) => {
     if (!selectedPerson.value) return;
     try {
-        const currentGifts = [...(selectedPerson.value.properties.gifts || [])];
-        currentGifts.unshift(gift);
-        const properties = { ...selectedPerson.value.properties, gifts: currentGifts };
+        // Re-read before appending. This screen's copy of the person is as old
+        // as the last refresh, and spreading it into the write sent every
+        // other field back as it stood then — the last place in People still
+        // doing that, and a way to lose an interaction logged in another
+        // window between one gift and the next.
+        const current = await ns.getNode(selectedPerson.value.id);
+        const gifts = [gift, ...(current?.properties?.gifts || [])];
         await ns.writeNode({
             relPath: selectedPerson.value.id,
-            title: selectedPerson.value.title, nodeType: 'person',
-            properties, content: selectedPerson.value.content || ''
+            title: current?.title || selectedPerson.value.title,
+            nodeType: 'person',
+            properties: { gifts },
         });
         fetchPeople();
     } catch (e) {
@@ -409,51 +571,83 @@ const openPersonById = async (id: string) => {
         const slug = id.replace(/[^a-z0-9]/gi, '_').toLowerCase();
         if (slug.length > 2) p = people.value.find(p => p.id.toLowerCase().includes(slug));
     }
-    if (p) selectedPerson.value = p;
+    if (p) await selectPerson(p);
 };
 
+/**
+ * Put every birthday on the calendar, as one repeating entry each.
+ *
+ * It used to write an event per person per year, named after the year. That
+ * meant the calendar was right until the 31st of December and then silently
+ * empty until somebody pressed the button again, and it left a trail of dead
+ * events behind for anybody deleted in the meantime.
+ *
+ * One yearly rule instead, on a path derived from the person rather than from
+ * the date, so pressing this twice updates rather than duplicates. The
+ * recurrence engine already knows what to do with the 29th of February.
+ *
+ * These entries are for *looking at*. The announcement comes from the person
+ * themselves — see `plan_birthday` — and `source_person_id` is what tells the
+ * reminder engine not to say it twice.
+ */
 const syncBirthdaysToCalendar = async () => {
-    const withBirthdays = people.value.filter(p => p.properties?.birthday);
+    const withBirthdays = people.value.filter(p => parseAnnualDate(p.properties?.birthday ?? ''));
     if (withBirthdays.length === 0) return;
 
     let synced = 0;
-    const thisYear = new Date().getFullYear();
-    for (const p of withBirthdays) {
-        const bday = p.properties.birthday;
-        const parts = bday.split('-');
-        let month: string, day: string;
-        if (parts.length === 3) {
-            month = parts[1]; day = parts[2];
-        } else if (parts.length === 2) {
-            month = parts[0]; day = parts[1];
-        } else continue;
-
-        const eventDate = `${thisYear}-${month}-${day}`;
-        const eventTitle = `🎂 ${p.title}'s Birthday`;
-        const relPath = `Events/bday_${p.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${thisYear}.md`;
+    for (const person of withBirthdays) {
+        const date = parseAnnualDate(person.properties.birthday)!;
+        const month = String(date.month).padStart(2, '0');
+        const day = String(date.day).padStart(2, '0');
+        // Anchored to a leap year so a 29 February birthday can be written at
+        // all; the recurrence engine moves it to the 28th in the years that
+        // do not have one.
+        const anchor = `2024-${month}-${day}`;
 
         try {
             await ns.writeNode({
-                relPath,
-                title: eventTitle,
+                relPath: `Events/birthday-${slugForPerson(person)}.md`,
+                title: `🎂 ${person.title}`,
                 nodeType: 'event',
                 properties: {
                     is_all_day: true,
-                    start_at: eventDate,
-                    end_at: eventDate,
+                    start_at: anchor,
+                    end_at: anchor,
+                    recurrence: 'yearly',
                     tags: ['birthday', 'people'],
-                    source_person: p.title,
+                    source_person_id: person.id,
+                    source_person: person.title,
                 },
-                content: `Birthday reminder for ${p.title}.`,
+                content: `Birthday of [${person.title}](synabit://person/${person.id}).`,
                 eventType: 'created',
+                silent: true,
             });
             synced++;
         } catch (e) {
-            logger.error(`Failed to sync birthday for ${p.title}`, e);
+            logger.error(`Failed to sync birthday for ${person.title}`, e);
         }
     }
     logger.info(`Synced ${synced} birthdays to calendar`);
 };
+
+/**
+ * What to call a person in a link.
+ *
+ * Their `node_id`, which follows them when their file moves. Somebody whose
+ * file has not been written since identities landed has none yet; their path
+ * is used, and the link is rewritten as an identity the next time it is
+ * touched.
+ */
+const identityOf = (person: any): string => person?.properties?.node_id || person?.id;
+
+/**
+ * A stable file name for a person's derived entries.
+ *
+ * Taken from their id, not their name: a name changes, and a path built from
+ * one leaves the old file behind as a duplicate the next time it is written.
+ */
+const slugForPerson = (person: any): string =>
+    person.id.replace(/\.md$/, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
 
 // --- Person-to-Person Linking ---
 const showLinkModal = ref(false);
@@ -473,24 +667,26 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
     if (!selectedPerson.value) return;
     const src = selectedPerson.value;
     const srcProps = { ...(src.properties || {}) };
-    const srcConns: Array<{person_id: string; name: string; relation_type: string}> = [...(srcProps.connections || [])];
+    const srcConns: Connection[] = [...(srcProps.connections || [])];
     
     // Update if exists, otherwise push
-    const existingIdx = srcConns.findIndex(c => c.person_id === targetPerson.id);
+    const targetNames = namesFor(targetPerson);
+    const existingIdx = srcConns.findIndex(c => pointsAt(c, targetNames));
     if (existingIdx >= 0) {
         srcConns[existingIdx].relation_type = relationType;
     } else {
-        srcConns.push({ person_id: targetPerson.id, name: targetPerson.title, relation_type: relationType });
+        // The other person's identity, not their path: a path breaks the
+        // moment they are moved or renamed. No name is stored either — it is
+        // read from their own node when the link is drawn.
+        srcConns.push({ person_id: identityOf(targetPerson), relation_type: relationType });
     }
     srcProps.connections = srcConns;
 
-    // Add the relation link to the markdown content (for graph edge)
-    const mention = `[${targetPerson.title}](synabit://person/${targetPerson.id})`;
-    const relations = [...(srcProps.relations || [])];
-    if (!relations.find((r: string) => r.includes(targetPerson.id))) {
-        relations.push(mention);
-        srcProps.relations = relations;
-    }
+    // `relations` used to hold the same links again as markdown mentions,
+    // purely so the edge index would notice them. It reads `connections`
+    // directly now, so the duplicate goes — and goes for good, not just for
+    // new links.
+    srcProps.relations = null;
 
     try {
         await ns.writeNode({
@@ -498,7 +694,6 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
             title: src.title,
             nodeType: 'person',
             properties: srcProps,
-            content: src.content || ''
         });
 
         // Bidirectional: also add connection on target ONLY if it doesn't exist
@@ -518,30 +713,22 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
         };
         const reverseType = REVERSE_RELATIONS[relationType] || 'linked';
         
-        const tgtConns: Array<{person_id: string; name: string; relation_type: string}> = [...(tgtProps.connections || [])];
-        if (!tgtConns.find(c => c.person_id === src.id)) {
-            tgtConns.push({ person_id: src.id, name: src.title, relation_type: reverseType });
+        const srcNames = namesFor(src);
+        const tgtConns: Connection[] = [...(tgtProps.connections || [])];
+        if (!tgtConns.some(c => pointsAt(c, srcNames))) {
+            tgtConns.push({ person_id: identityOf(src), relation_type: reverseType });
             tgtProps.connections = tgtConns;
-            const tgtRelations = [...(tgtProps.relations || [])];
-            const srcMention = `[${src.title}](synabit://person/${src.id})`;
-            if (!tgtRelations.find((r: string) => r.includes(src.id))) {
-                tgtRelations.push(srcMention);
-                tgtProps.relations = tgtRelations;
-            }
+            tgtProps.relations = null;
             await ns.writeNode({
                 relPath: targetPerson.id,
                 title: targetPerson.title,
                 nodeType: 'person',
                 properties: tgtProps,
-                content: targetPerson.content || ''
             });
         }
 
         showLinkModal.value = false;
         await fetchPeople();
-        // Re-select to refresh
-        const updated = people.value.find(p => p.id === src.id);
-        if (updated) selectedPerson.value = updated;
     } catch (e) {
         logger.error('Failed to link person', e);
     }
@@ -550,39 +737,72 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
 const unlinkPerson = async (targetPersonId: string) => {
     if (!selectedPerson.value) return;
     const src = selectedPerson.value;
-    const srcProps = { ...(src.properties || {}) };
-    srcProps.connections = (srcProps.connections || []).filter((c: any) => c.person_id !== targetPersonId);
-    srcProps.relations = (srcProps.relations || []).filter((r: string) => !r.includes(targetPersonId));
+    const targetPerson = people.value.find(p => p.id === targetPersonId);
 
     try {
-        await ns.writeNode({
-            relPath: src.id,
-            title: src.title,
-            nodeType: 'person',
-            properties: srcProps,
-            content: src.content || ''
-        });
-
-        // Remove bidirectional link
-        const target = people.value.find(p => p.id === targetPersonId);
-        if (target) {
-            const tgtProps = { ...(target.properties || {}) };
-            tgtProps.connections = (tgtProps.connections || []).filter((c: any) => c.person_id !== src.id);
-            tgtProps.relations = (tgtProps.relations || []).filter((r: string) => !r.includes(src.id));
+        // A link is held on both ends, so unlinking is two writes: take the
+        // target out of the source, and the source out of the target.
+        const patches = [
+            ...linkRemovalPatches([src], targetPerson ?? targetPersonId),
+            ...(targetPerson ? linkRemovalPatches([targetPerson], src) : []),
+        ];
+        for (const patch of patches) {
             await ns.writeNode({
-                relPath: target.id,
-                title: target.title,
+                relPath: patch.id,
+                title: patch.title,
                 nodeType: 'person',
-                properties: tgtProps,
-                content: target.content || ''
+                properties: patch.properties,
             });
         }
 
         await fetchPeople();
-        const updated = people.value.find(p => p.id === src.id);
-        if (updated) selectedPerson.value = updated;
     } catch (e) {
         logger.error('Failed to unlink person', e);
+    }
+};
+
+/**
+ * Delete a person, and take their links with them.
+ *
+ * A connection is recorded on both ends. Deleting only the node left the
+ * other end pointing at a file that no longer exists — an orphan the graph
+ * still drew, using the name it had cached, for somebody who had been
+ * deleted. Nothing ever cleared those.
+ */
+const deletePerson = async (person: any) => {
+    if (!person || person.properties?.is_owner) return;
+
+    const yes = await ask(
+        `This will permanently delete "${person.title}" and all associated data. This action cannot be undone.`,
+        { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }
+    );
+    if (!yes) return;
+
+    try {
+        // Everyone who names them, before the node goes.
+        for (const patch of linkRemovalPatches(people.value, person)) {
+            await ns.writeNode({
+                relPath: patch.id,
+                title: patch.title,
+                nodeType: 'person',
+                properties: patch.properties,
+            });
+        }
+
+        // The birthday entry on the calendar is derived from this person and
+        // has nobody left to be about. Nothing used to clear it, so deleting
+        // somebody left their birthday coming round every year forever.
+        try {
+            await ns.deleteNode({ relPath: `Events/birthday-${slugForPerson(person)}.md`, silent: true });
+        } catch {
+            // There may not be one; that is the ordinary case.
+        }
+
+        await ns.deleteNode({ relPath: person.id });
+        if (selectedPerson.value?.id === person.id) selectedPerson.value = null;
+        await fetchPeople();
+    } catch (e) {
+        logger.error('Failed to delete person', e);
     }
 };
 
@@ -604,10 +824,16 @@ defineExpose({ openPersonById });
                     <span>{{ $t('people.people') }}</span>
                 </div>
                 <div class="flex items-center gap-1">
-                    <button @click="openNewModal" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-blue-500" title="Add contact">
+                    <button @click="openNewModal" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-blue-500" :title="$t('people.add_contact')">
                         <Plus class="w-5 h-5" />
                     </button>
-                    <button @click="syncBirthdaysToCalendar" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-pink-500" title="{{ $t('people.sync_birthdays') }}">
+                    <button @click="showImportModal = true" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-blue-500" :title="$t('people.import_contacts')">
+                        <Upload class="w-4 h-4" />
+                    </button>
+                    <button @click="exportAll" :disabled="exchange.busy.value" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-blue-500 disabled:opacity-40" :title="$t('people.export_contacts')">
+                        <Download class="w-4 h-4" />
+                    </button>
+                    <button @click="syncBirthdaysToCalendar" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-pink-500" :title="$t('people.sync_birthdays')">
                         <CalendarPlus class="w-4 h-4" />
                     </button>
                 </div>
@@ -617,7 +843,7 @@ defineExpose({ openPersonById });
             <div class="p-3 border-b border-border dark:border-border-dark space-y-2">
                 <div class="relative">
                     <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input v-model="searchQuery" type="text" placeholder="Search..." class="w-full pl-9 pr-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                    <input v-model="searchQuery" type="text" :placeholder="$t('people.search_btn')" class="w-full pl-9 pr-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                 </div>
                 <div class="flex items-center justify-between">
                     <button @click="cycleSortMode" class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 transition-colors px-1.5 py-1 rounded">
@@ -633,20 +859,66 @@ defineExpose({ openPersonById });
                 </div>
             </div>
 
+            <!-- Saved segments -->
+            <div v-if="segments.length > 0 || people.length > 3" class="px-3 pb-2 flex items-center gap-1.5 flex-wrap">
+                <button @click="activeSegmentId = null"
+                    :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-colors',
+                        activeSegmentId === null ? 'bg-blue-500 text-white border-blue-500'
+                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-border dark:border-border-dark hover:border-blue-300']">
+                    {{ $t('people.everyone') }}
+                </button>
+                <button v-for="segment in segments" :key="segment.id"
+                    @click="activeSegmentId = segment.id"
+                    @dblclick="editingSegment = segment; showSegmentModal = true"
+                    :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-colors truncate max-w-[9rem]',
+                        activeSegmentId === segment.id ? 'bg-blue-500 text-white border-blue-500'
+                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-border dark:border-border-dark hover:border-blue-300']"
+                    :title="segment.name">
+                    {{ segment.name }}
+                </button>
+                <button @click="editingSegment = null; showSegmentModal = true"
+                    class="px-1.5 py-0.5 text-[11px] rounded-md text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                    :title="$t('people.new_segment')">
+                    <Plus class="w-3 h-3" />
+                </button>
+            </div>
+
             <!-- List -->
             <div class="flex-1 overflow-y-auto p-2">
                 <!-- Reminders Widget -->
-                <RemindersWidget :people="people" @select-person="(p: any) => selectedPerson = p" />
+                <RemindersWidget :people="people" @select-person="selectPerson" @updated="fetchPeople" />
 
                 <div v-if="loading" class="flex justify-center p-4">
                     <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                 </div>
+                <div v-else-if="people.length === 0" class="text-center px-4 py-8">
+                    <Users class="w-8 h-8 mx-auto text-gray-300 dark:text-gray-600" />
+                    <p class="mt-3 text-sm font-medium">{{ $t('people.no_people_yet') }}</p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $t('people.no_people_yet_desc') }}</p>
+                    <button @click="showImportModal = true" class="mt-4 w-full px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
+                        {{ $t('people.import_contacts') }}
+                    </button>
+                    <button @click="openNewModal" class="mt-2 w-full px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                        {{ $t('people.add_one_by_hand') }}
+                    </button>
+                </div>
                 <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500">{{ $t('people.no_contacts') }}</div>
-                <div v-else class="space-y-1">
+                <!--
+                    One tab stop, and the arrows move within it. With two
+                    thousand contacts, Tab through every row is not a way
+                    through a list.
+                -->
+                <div v-else class="space-y-1" role="listbox" :aria-label="$t('people.people')"
+                    @keydown="listKeys.onKeydown">
                     <button
-                        v-for="person in sidebarPeople" :key="person.id"
-                        @click="selectedPerson = person"
-                        :class="['w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors',
+                        v-for="(person, index) in sidebarPeople" :key="person.id"
+                        :ref="(el: any) => { if (index === listKeys.activeIndex.value) activeRow = el; }"
+                        role="option"
+                        :aria-selected="selectedPerson?.id === person.id"
+                        :tabindex="listKeys.tabIndexFor(index)"
+                        @focus="listKeys.onRowFocus(index)"
+                        @click="selectPerson(person)"
+                        :class="['w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
                             selectedPerson?.id === person.id
                                 ? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-500/50'
                                 : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'
@@ -666,7 +938,7 @@ defineExpose({ openPersonById });
                                 <Building class="w-3 h-3 flex-shrink-0" />
                                 <span class="truncate">{{ getPersonDetail(person, 'company') }}</span>
                             </p>
-                            <p v-else-if="person.properties?.relationship_type" class="text-xs text-gray-400 truncate mt-0.5 capitalize">{{ person.properties.relationship_type }}</p>
+                            <p v-else-if="relationshipLabel(person)" class="text-xs text-gray-400 truncate mt-0.5 capitalize">{{ relationshipLabel(person) }}</p>
                             <p v-else-if="person.properties?.tags?.length" class="text-xs text-gray-500 dark:text-gray-400 truncate flex items-center gap-1 mt-0.5">
                                 <Hash class="w-3 h-3 flex-shrink-0" />
                                 <span class="truncate">{{ person.properties.tags.join(', ') }}</span>
@@ -675,7 +947,7 @@ defineExpose({ openPersonById });
                     </button>
                     
                     <button v-if="filteredPeople.length > 20" @click="selectedPerson = null" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
-                        Show {{ filteredPeople.length - 20 }} more...
+                        {{ $t('people.show_more', { count: filteredPeople.length - 20 }) }}
                     </button>
                 </div>
             </div>
@@ -687,9 +959,9 @@ defineExpose({ openPersonById });
             <PeopleManager v-if="!selectedPerson"
                 :people="filteredPeople"
                 :vault-path="vaultPath"
-                @select="(p: any) => { selectedPerson = p; }"
+                @select="selectPerson"
                 @edit="(p: any) => editPerson(p)"
-                @delete="async (p: any) => { if (p.properties?.is_owner) return; const yes = await ask(`This will permanently delete &quot;${p.title}&quot; and all associated data. This action cannot be undone.`, { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }); if (yes) { await ns.deleteNode({ relPath: p.id }); fetchPeople(); } }"
+                @delete="deletePerson"
             />
 
             <div v-if="selectedPerson" class="flex-1 flex flex-col overflow-hidden">
@@ -701,7 +973,7 @@ defineExpose({ openPersonById });
                         </button>
                     </div>
                     <div class="flex items-start gap-3 md:gap-5 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 md:p-5 shadow-sm relative group">
-                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all" aria-label="More Options">
+                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all" :aria-label="$t('people.edit')">
                             <Edit2 class="w-4 h-4" />
                         </button>
 
@@ -715,8 +987,8 @@ defineExpose({ openPersonById });
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-3 mb-1">
                                 <h1 class="text-xl font-bold text-gray-900 dark:text-white truncate">{{ getDisplayName(selectedPerson) }}</h1>
-                                <span v-if="selectedPerson.properties?.relationship_type" class="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 capitalize flex-shrink-0">
-                                    {{ selectedPerson.properties.relationship_type }}
+                                <span v-if="relationshipLabel(selectedPerson)" class="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 capitalize flex-shrink-0">
+                                    {{ relationshipLabel(selectedPerson) }}
                                 </span>
                             </div>
 
@@ -786,10 +1058,10 @@ defineExpose({ openPersonById });
                         </button>
                         <div class="w-full md:w-auto md:ml-auto md:-mb-px flex items-center gap-1 mt-1 md:mt-0 justify-end">
                             <button @click="showLinkModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors">
-                                <UserPlus class="w-3.5 h-3.5" /> Link Person
+                                <UserPlus class="w-3.5 h-3.5" /> {{ $t('people.link_person') }}
                             </button>
                             <button @click="showGiftModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-pink-500 hover:bg-pink-50 dark:hover:bg-pink-900/20 rounded-lg transition-colors">
-                                <Gift class="w-3.5 h-3.5" /> Log Gift
+                                <Gift class="w-3.5 h-3.5" /> {{ $t('people.log_gift') }}
                             </button>
                         </div>
                     </div>
@@ -798,14 +1070,31 @@ defineExpose({ openPersonById });
                 <!-- Tab Content -->
                 <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark p-4 md:p-8">
                     <div class="max-w-3xl mx-auto">
-                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" />
+                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
                         <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" :all-debts="allDebts" :all-transactions="allTransactions" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />
                         <NotesTab v-else-if="activeTab === 'notes'" :person="selectedPerson" :linked-nodes="linkedNodes" :loading-links="loadingLinks" @open-linked-node="openLinkedNode" />
-                        <GraphTab v-else-if="activeTab === 'graph'" :person="selectedPerson" :all-people="people" :vault-path="vaultPath" @select-person="(p: any) => selectedPerson = p" @unlink="unlinkPerson" @edit-link="openEditLink" />
+                        <GraphTab v-else-if="activeTab === 'graph'" :person="selectedPerson" :all-people="people" :vault-path="vaultPath" @select-person="selectPerson" @unlink="unlinkPerson" @edit-link="openEditLink" />
                     </div>
                 </div>
             </div>
         </div>
+
+        <SegmentModal
+            v-if="showSegmentModal"
+            :segment="editingSegment"
+            :all-relationships="allRelationships"
+            :all-tags="allTags"
+            @close="showSegmentModal = false"
+            @save="saveSegment"
+            @delete="deleteSegment"
+        />
+
+        <ImportContactsModal
+            v-if="showImportModal"
+            :vault-path="vaultPath"
+            @close="showImportModal = false"
+            @imported="fetchPeople"
+        />
 
         <PersonModal
             v-if="showModal"
@@ -815,6 +1104,7 @@ defineExpose({ openPersonById });
             :all-relationships="allRelationships"
             @close="showModal = false"
             @saved="fetchPeople"
+            @delete="deletePerson"
         />
 
         <GiftModal

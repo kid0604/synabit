@@ -43,9 +43,9 @@ onMounted(() => {
             <div class="px-5 py-4 border-b border-border dark:border-border-dark flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
                 <h2 class="text-base font-semibold flex items-center gap-2">
                     <Gift class="w-4 h-4 text-pink-500" />
-                    Log Gift — {{ person.title }}
+                    {{ $t('people.log_gift') }} — {{ person.title }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" aria-label="More Options">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" :aria-label="$t('people.close')">
                     <X class="w-4 h-4" />
                 </button>
             </div>
@@ -63,7 +63,7 @@ onMounted(() => {
                                     : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 hover:border-gray-300'
                             ]"
                         >
-                            <ArrowUpRight class="w-4 h-4" /> I gave
+                            <ArrowUpRight class="w-4 h-4" /> {{ $t('people.i_gave') }}
                         </button>
                         <button
                             @click="form.direction = 'received'"
@@ -73,7 +73,7 @@ onMounted(() => {
                                     : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 hover:border-gray-300'
                             ]"
                         >
-                            <ArrowDownLeft class="w-4 h-4" /> I received
+                            <ArrowDownLeft class="w-4 h-4" /> {{ $t('people.i_received') }}
                         </button>
                     </div>
                 </div>
@@ -104,7 +104,7 @@ onMounted(() => {
             <div class="px-5 py-4 border-t border-border dark:border-border-dark flex justify-end gap-3 bg-gray-50/50 dark:bg-gray-800/50">
                 <button @click="emit('close')" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
                 <button @click="save" :disabled="!form.description.trim()" class="px-4 py-2 text-sm bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition-colors disabled:opacity-50 font-medium flex items-center gap-1.5">
-                    <Gift class="w-3.5 h-3.5" /> Log Gift
+                    <Gift class="w-3.5 h-3.5" /> {{ $t('people.log_gift') }}
                 </button>
             </div>
         </div>

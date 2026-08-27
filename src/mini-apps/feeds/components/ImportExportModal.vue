@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useFocusTrap } from '../composables/useFocusTrap';
 import { useI18n } from 'vue-i18n';
 import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 
 const emit = defineEmits<{ close: []; imported: [] }>();
 const { t } = useI18n();
 const feedService = useArticleService();
 
+// This dialog has no input to autofocus, so nothing used to hold focus — and
+// with nothing focused inside it, its own Escape handler never fired.
+const dialog = ref<HTMLElement | null>(null);
+useFocusTrap(dialog);
+
 const activeTab = ref<'import' | 'export'>('import');
 const importing = ref(false);
 const exporting = ref(false);
-const importResult = ref<{ success: boolean; count: number; error?: string } | null>(null);
+const importResult = ref<{ success: boolean; count: number; skipped: number; error?: string } | null>(null);
 const exportResult = ref<{ success: boolean; error?: string } | null>(null);
 
 const handleImport = async () => {
@@ -27,12 +33,16 @@ const handleImport = async () => {
     importing.value = true;
     importResult.value = null;
 
-    await feedService.importOpml(filePath as string);
+    // The dialog hands back a path; the command parses OPML. Passing the path
+    // where the document belonged meant every import failed to parse and then
+    // reported success, because nothing checked what came back.
+    const opmlContent = await readTextFile(filePath as string);
+    const result = await feedService.importOpml(opmlContent);
 
-    importResult.value = { success: true, count: 0 };
+    importResult.value = { success: true, count: result.added, skipped: result.skipped };
     emit('imported');
   } catch (e: any) {
-    importResult.value = { success: false, count: 0, error: e?.toString() || 'Import failed' };
+    importResult.value = { success: false, count: 0, skipped: 0, error: e?.toString() || 'Import failed' };
   } finally {
     importing.value = false;
   }
@@ -67,7 +77,7 @@ const handleKeydown = (e: KeyboardEvent) => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[200] flex items-center justify-center" @keydown="handleKeydown">
+  <div ref="dialog" class="fixed inset-0 z-[200] flex items-center justify-center" role="dialog" aria-modal="true" :aria-label="t('feeds.import_export_opml')" tabindex="-1" @keydown="handleKeydown">
     <!-- Backdrop -->
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="emit('close')"></div>
 
@@ -79,7 +89,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           <FileText class="w-5 h-5 text-orange-500" />
           {{ t('feeds.import_export_opml') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.a11y_close')">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -134,7 +144,12 @@ const handleKeydown = (e: KeyboardEvent) => {
           <!-- Import result -->
           <div v-if="importResult && importResult.success" class="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 text-sm">
             <Check class="w-5 h-5 shrink-0" />
-            {{ t('feeds.import_success', { count: importResult.count }) }}
+            <span>
+              {{ t('feeds.import_success', { count: importResult.count }) }}
+              <template v-if="importResult.skipped > 0">
+                · {{ t('feeds.import_skipped', { count: importResult.skipped }) }}
+              </template>
+            </span>
           </div>
           <div v-if="importResult && !importResult.success" class="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
             <AlertCircle class="w-5 h-5 shrink-0" />

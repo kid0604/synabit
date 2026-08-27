@@ -3,6 +3,7 @@ import type { Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { NoteItem } from '../helpers';
 import { logger } from '../../../utils/logger';
+import { looseIncludes } from '../../../utils/diacritics';
 
 export function useNoteManager(
   notes: Ref<NoteItem[]>,
@@ -31,10 +32,11 @@ export function useNoteManager(
            const q = managerSearchQuery.value.trim();
            const isTagSearch = q.startsWith('#');
            const searchTerm = isTagSearch ? q.slice(1) : q;
-           const searchStr = isCaseSensitiveSearch.value ? searchTerm : searchTerm.toLowerCase();
            const match = (text: string) => {
               if (!text) return false;
-              return isCaseSensitiveSearch.value ? text.includes(searchStr) : text.toLowerCase().includes(searchStr);
+              return isCaseSensitiveSearch.value
+                ? text.includes(searchTerm)
+                : looseIncludes(text, searchTerm);
            };
            result = result.filter(n => {
               if (isTagSearch) return n.tags.some(t => match(t));

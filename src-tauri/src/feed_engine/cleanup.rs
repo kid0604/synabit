@@ -14,7 +14,11 @@ pub struct CleanupResult {
 /// - Deletes read articles older than `max_age_days` (keeps starred & read_later)
 /// - Deletes excess articles per feed beyond `max_per_feed` (keeps starred & read_later)
 /// - Deletes old fetch logs (> 7 days)
-/// - Rebuilds FTS5 index after cleanup
+///
+/// The search index looks after itself: `feed_articles` carries triggers, so
+/// deleting an article here removes its index entry in the same statement.
+/// This used to end by emptying and refilling the whole index, which was both
+/// the only thing keeping the index honest and a full reindex every six hours.
 pub fn run_cleanup(
     conn: &rusqlite::Connection,
     max_age_days: i64,
@@ -88,14 +92,6 @@ pub fn run_cleanup(
             params![log_cutoff_str],
         )
         .map_err(|e| format!("Cleanup log error: {}", e))?;
-
-    // 4. Rebuild FTS5 index after cleanup
-    let _ = conn.execute("DELETE FROM feed_articles_fts", []);
-    let _ = conn.execute(
-        "INSERT INTO feed_articles_fts (rowid, title, author, content, summary)
-         SELECT rowid, title, author, content, summary FROM feed_articles",
-        [],
-    );
 
     Ok(CleanupResult {
         deleted_articles: total_deleted_articles,

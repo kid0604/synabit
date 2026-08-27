@@ -108,6 +108,32 @@ onUnmounted(() => {
     document.removeEventListener('click', handleGlobalClick);
 });
 
+/**
+ * A write names the keys it is changing and leaves the rest of the file alone,
+ * so a field the user cleared has to be named too — as `null` — or it simply
+ * stays at its old value and the change appears not to have taken.
+ *
+ * Everything this form can empty goes through here: a custom property whose
+ * row was removed, and the WIP limit and budget, which are omitted rather than
+ * blanked when their input is empty.
+ */
+const clearedKeys = (kept: Record<string, string>): Record<string, null> => {
+    const cleared: Record<string, null> = {};
+    for (const key of Object.keys(props.project?.custom_fields || {})) {
+        // Only the keys this form governs. It never shows `created_at`, `type`
+        // or the node's `node_id` — they are filtered out of the rows above —
+        // so their absence from the payload means the form has nothing to say
+        // about them, not that they should go. Nulling those would reset every
+        // project's creation date and, in the case of `node_id`, hand the file
+        // a fresh identity and split it into two documents on the next sync.
+        const governed = !standardKeys.includes(key.toLowerCase())
+            || key === 'wip_limit'
+            || key === 'budget';
+        if (governed && !(key in kept)) cleared[key] = null;
+    }
+    return cleared;
+};
+
 const save = () => {
     const custom_fields: Record<string, string> = {};
     for (const prop of customProperties.value) {
@@ -127,7 +153,7 @@ const save = () => {
     emit('save', {
         ...editingProject.value,
         tags: [...editingProject.value.tags],
-        custom_fields
+        custom_fields: { ...clearedKeys(custom_fields), ...custom_fields }
     });
 };
 
@@ -177,9 +203,9 @@ const handleBackgroundClick = () => {
                   <div class="flex items-center gap-2">
                       <div class="w-[120px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent rounded p-1.5 text-gray-500 dark:text-gray-400 font-medium flex items-center"><Calendar class="w-3 h-3 mr-2 opacity-70"/> Dates</div>
                       <div class="flex-1 flex items-center gap-1 bg-gray-50 dark:bg-[#2c2c2c] rounded px-1.5 border border-transparent focus-within:border-gray-200 dark:focus-within:border-gray-700 transition-colors">
-                          <input type="date" v-model="editingProject.start_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
+                          <input type="date" v-model="editingProject.start_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Project start date" />
                           <span class="text-gray-400 text-xs px-1">→</span>
-                          <input type="date" v-model="editingProject.due_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" />
+                          <input type="date" v-model="editingProject.due_date" class="w-full text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] py-1.5 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Project due date" />
                       </div>
                       <div class="w-[22px]"></div>
                   </div>
@@ -224,7 +250,7 @@ const handleBackgroundClick = () => {
                               #{{ tag }}
                               <button @click.prevent="removeTag(index)" class="hover:text-red-500 focus:outline-none" aria-label="Remove Tag"><X class="w-3 h-3"/></button>
                           </span>
-                          <input v-model="tagInput" @keydown.enter.prevent="addTag" @blur="addTag" placeholder="Add tag..." class="flex-1 min-w-[80px] text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 py-0.5 px-1" />
+                          <input v-model="tagInput" @keydown.enter.prevent="addTag" @blur="addTag" :placeholder="$t('task.add_tag_placeholder')" class="flex-1 min-w-[80px] text-xs bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 py-0.5 px-1" />
                       </div>
                       <div class="w-[22px]"></div>
                   </div>

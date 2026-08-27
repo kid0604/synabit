@@ -11,7 +11,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <div v-if="show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[400px] p-6">
+      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[95vw] max-w-[400px] p-6">
         <h3 class="text-base font-semibold text-[#111827] dark:text-[#f4f4f5] mb-1">Embed PDF</h3>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">Select a PDF file to embed in this note</p>
         <button

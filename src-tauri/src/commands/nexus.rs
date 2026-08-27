@@ -211,6 +211,25 @@ pub fn search_files(
     db.search_fts(&parsed, 1, 200)
 }
 
+/// FTS5-powered search scoped to quickcaps only.
+/// Used by the QuickCap mini-app search bar.
+///
+/// Quickcaps are deliberately absent from the Nexus item list and the graph —
+/// they are fleeting notes, not knowledge — but they are still indexed, so
+/// they stay findable. This is the scoped entry point that makes that true.
+#[tauri::command]
+pub fn search_quickcaps(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+) -> AppResult<crate::search::SearchResponse> {
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.type_filter = Some("quickcap".to_string());
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.search_fts(&parsed, 1, 200)
+}
+
 #[tauri::command]
 pub fn get_nexus_graph_data(
     _app_handle: tauri::AppHandle,
@@ -348,4 +367,21 @@ pub fn get_nexus_graph_data(
     }
 
     Ok(GraphData { nodes, links })
+}
+
+/// Run a saved query and return the notes it matches, with the columns it
+/// asked for.
+///
+/// Separate from `search_nexus` because the two answer different questions:
+/// search asks which notes mention some words, a query asks which notes *are*
+/// something — every task still open, every note over budget. Only the second
+/// reads frontmatter as data and returns columns.
+#[tauri::command]
+pub fn run_node_query(
+    state: tauri::State<'_, DbState>,
+    query: String,
+) -> AppResult<crate::db::QueryResult> {
+    let parsed = crate::search::parse_query(&query);
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    db.run_node_query(&parsed)
 }

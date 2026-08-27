@@ -20,13 +20,59 @@ export function useNodeOperations(
   };
 
   /**
+   * Give a node on the canvas the size it carries in the board file.
+   *
+   * Shapes and pictures are sized by the user rather than by their content,
+   * and the size has to reach the canvas node itself: the resizer drags that
+   * element, so a component sizing its own box instead would stay put until
+   * the drag ended. The z-index is by area for the same reason it is for
+   * shapes — whatever is smaller sits on top, so a picture inside a frame
+   * stays clickable.
+   */
+  const SIZED_TYPES = new Set(['shape', 'image']);
+  const applySize = (vfNode: any, width?: number, height?: number) => {
+    if (!SIZED_TYPES.has(vfNode.type)) return;
+    const w = width || vfNode.data?.width || (vfNode.type === 'image' ? 320 : 160);
+    const h = height || vfNode.data?.height || (vfNode.type === 'image' ? 240 : 80);
+    vfNode.zIndex = computeShapeZIndex(w, h);
+
+    if (vfNode.type === 'image') {
+      // A style *function*, because a turned picture needs the whole node
+      // turned — outline, resize handles and all — and the canvas writes the
+      // node's `transform` itself, once per pan, to place it. The canvas
+      // spreads this over its own style, so what is returned here wins; the
+      // translate has to be reproduced, which means it has to be read at the
+      // moment of drawing rather than baked in now.
+      vfNode.style = (n: any) => {
+        const size = {
+          width: `${n.data?.width || 320}px`,
+          height: `${n.data?.height || 240}px`,
+        };
+        const rotation = n.data?.rotation || 0;
+        if (!rotation) return size;
+        return {
+          ...size,
+          transform: `translate(${n.computedPosition.x}px, ${n.computedPosition.y}px) rotate(${rotation}deg)`,
+        };
+      };
+      return;
+    }
+
+    vfNode.style = { ...vfNode.style, width: `${w}px`, height: `${h}px` };
+  };
+
+  /**
    * Delete multiple nodes by ID. For each: remove from store, filter out
    * from vfNodes, filter out edges that reference the node. Saves once at end.
    */
   const deleteNodes = (nodeIds: string[]) => {
+    // Deleting a selection is one thing the user did, however many nodes it
+    // covers, so it is one step to come back from.
+    store.beginUndoBatch();
     for (const id of nodeIds) {
       store.removeNode(id);
     }
+    store.endUndoBatch();
     vfNodes.value = vfNodes.value.filter((n: any) => !nodeIds.includes(n.id));
     vfEdges.value = vfEdges.value.filter((e: any) => !nodeIds.includes(e.source) && !nodeIds.includes(e.target));
     scheduleSave();
@@ -39,7 +85,9 @@ export function useNodeOperations(
     if (!store.currentBoardData.value) return;
     const wbNode = store.currentBoardData.value.nodes.find((n: WBNode) => n.id === nodeId);
     if (!wbNode) return;
-    wbNode.data = { ...wbNode.data, ...data };
+    // Through the store, which is what records the step back and stamps the
+    // node as changed.
+    store.updateNodeData(nodeId, data);
 
     // Sync to VueFlow
     const idx = vfNodes.value.findIndex((n: any) => n.id === nodeId);
@@ -84,5 +132,5 @@ export function useNodeOperations(
     return edgeObj;
   };
 
-  return { computeShapeZIndex, deleteNodes, updateNodeData, buildVfEdge };
+  return { computeShapeZIndex, applySize, deleteNodes, updateNodeData, buildVfEdge };
 }

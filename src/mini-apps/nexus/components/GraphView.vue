@@ -552,7 +552,7 @@ onUnmounted(() => {
                             <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Node Size</label>
                             <span class="text-xs text-gray-500 font-mono">{{ nodeSize.toFixed(1) }}x</span>
                         </div>
-                        <input type="range" v-model.number="nodeSize" min="0.5" max="3" step="0.1" class="w-full range-slider" />
+                        <input type="range" v-model.number="nodeSize" min="0.5" max="3" step="0.1" class="w-full range-slider" aria-label="Node size" />
                     </div>
 
                     <div class="space-y-2">
@@ -560,7 +560,7 @@ onUnmounted(() => {
                             <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Link Thickness</label>
                             <span class="text-xs text-gray-500 font-mono">{{ linkThickness.toFixed(1) }}x</span>
                         </div>
-                        <input type="range" v-model.number="linkThickness" min="0.5" max="3" step="0.1" class="w-full range-slider" />
+                        <input type="range" v-model.number="linkThickness" min="0.5" max="3" step="0.1" class="w-full range-slider" aria-label="Link thickness" />
                     </div>
                 </div>
 
@@ -571,7 +571,7 @@ onUnmounted(() => {
                             <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Repel Force</label>
                             <span class="text-xs text-gray-500 font-mono">{{ repelForce }}</span>
                         </div>
-                        <input type="range" v-model.number="repelForce" min="50" max="400" step="10" class="w-full range-slider" />
+                        <input type="range" v-model.number="repelForce" min="50" max="400" step="10" class="w-full range-slider" aria-label="Repel force" />
                         <p class="text-[11px] text-gray-400">Push nodes further apart</p>
                     </div>
 
@@ -580,7 +580,7 @@ onUnmounted(() => {
                             <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Link Distance</label>
                             <span class="text-xs text-gray-500 font-mono">{{ linkDist }}</span>
                         </div>
-                        <input type="range" v-model.number="linkDist" min="20" max="150" step="5" class="w-full range-slider" />
+                        <input type="range" v-model.number="linkDist" min="20" max="150" step="5" class="w-full range-slider" aria-label="Link distance" />
                         <p class="text-[11px] text-gray-400">Length of links between nodes</p>
                     </div>
                 </div>

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { Inbox, Sun, Calendar, Coffee, Send, Plus, X } from 'lucide-vue-next';
+import { ref, nextTick } from 'vue';
+import { Inbox, Sun, Calendar, Coffee, Send, Plus, X, Filter, Pencil} from 'lucide-vue-next';
 
 const props = defineProps<{
+  /** Saved searches, shown below the projects. */
+  filters?: { id: string; name: string }[];
   activeCategory: string;
   categoryCounts: { all: number; today: number; upcoming: number; someday: number; transferred: number };
   projects: any[];
@@ -9,9 +12,53 @@ const props = defineProps<{
   variant: 'desktop' | 'mobile';
 }>();
 
+/**
+ * The saved search being renamed, if any.
+ *
+ * Typed in place rather than through a dialog, the same way the search was
+ * named when it was saved — and for the same reason: this app's WebView has no
+ * text prompt to fall back on.
+ */
+const renamingId = ref<string | null>(null);
+const draftName = ref('');
+const renameInput = ref<HTMLInputElement | null>(null);
+
+/**
+ * Set by the field itself rather than by a `ref="…"` attribute.
+ *
+ * A named ref inside a `v-for` collects an *array*, even when only one row
+ * renders the element — and an array is truthy, so `renameInput.value?.select()`
+ * sailed past the optional chain and threw on every rename.
+ */
+const setRenameInput = (el: unknown) => {
+  renameInput.value = (el as HTMLInputElement | null) ?? null;
+};
+
+const startRename = async (id: string, current: string) => {
+  renamingId.value = id;
+  draftName.value = current;
+  await nextTick();
+  renameInput.value?.select();
+};
+
+const cancelRename = () => {
+  renamingId.value = null;
+  draftName.value = '';
+};
+
+const commitRename = (id: string) => {
+  const trimmed = draftName.value.trim();
+  // An empty name would leave a row with nothing to click on, and an unchanged
+  // one is a write for no reason.
+  if (trimmed) emit('rename-filter', id, trimmed);
+  cancelRename();
+};
+
 const emit = defineEmits<{
   (e: 'update:activeCategory', value: string): void;
   (e: 'create-project'): void;
+  (e: 'delete-filter', id: string): void;
+  (e: 'rename-filter', id: string, name: string): void;
   (e: 'close-mobile'): void;
 }>();
 
@@ -58,6 +105,56 @@ const selectCategory = (cat: string) => {
                   <span class="truncate">{{ proj.title }}</span>
               </div>
           </button>
+
+          <!--
+            Saved searches, below the projects. A project is a place work
+            lives; a search is a way of looking at it. One list would suggest
+            they are the same kind of thing.
+          -->
+          <!--
+            The heading shows even with nothing under it. Hiding the section
+            until the first search is saved means the only way to find out that
+            searches can be saved is to already know.
+          -->
+          <div class="pt-4 pb-1 px-3">
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('task.filters') }}</span>
+          </div>
+          <p v-if="!props.filters?.length" class="px-3 pb-1 text-[11px] leading-relaxed text-gray-400 dark:text-gray-600">
+            {{ $t('task.filter_empty_hint') }}
+          </p>
+          <template v-if="props.filters?.length">
+            <div v-for="f in props.filters" :key="f.id" class="group/f flex items-center">
+              <template v-if="renamingId === f.id">
+                <div class="flex-1 min-w-0 flex items-center px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800">
+                  <Filter class="w-4 h-4 mr-3 shrink-0 text-blue-500" />
+                  <input
+                    :ref="setRenameInput"
+                    v-model="draftName"
+                    @keydown.enter.prevent="commitRename(f.id)"
+                    @keydown.escape.prevent="cancelRename"
+                    @blur="commitRename(f.id)"
+                    type="text"
+                    class="w-full min-w-0 bg-transparent border-none outline-none text-sm text-[#1c1c1e] dark:text-[#f4f4f5]"
+                    :aria-label="$t('task.filter_rename')"
+                  />
+                </div>
+              </template>
+
+              <template v-else>
+                <button @click="selectCategory('filter:' + f.id)" class="flex-1 min-w-0 flex items-center px-3 py-2 rounded-lg transition-colors cursor-pointer" :class="activeCategory === 'filter:' + f.id ? 'bg-white dark:bg-[#2c2c2c] text-blue-600 dark:text-blue-400 shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#242424]'">
+                  <Filter class="w-4 h-4 mr-3 shrink-0" />
+                  <span class="truncate">{{ f.name }}</span>
+                </button>
+                <button @click.stop="startRename(f.id, f.name)" class="shrink-0 p-1 rounded-md text-gray-300 hover:text-blue-500 opacity-0 group-hover/f:opacity-100 focus:opacity-100 transition-opacity cursor-pointer" :title="$t('task.filter_rename')" :aria-label="$t('task.filter_rename')">
+                  <Pencil class="w-3.5 h-3.5" />
+                </button>
+                <button @click.stop="emit('delete-filter', f.id)" class="shrink-0 p-1 mr-1 rounded-md text-gray-300 hover:text-red-500 opacity-0 group-hover/f:opacity-100 focus:opacity-100 transition-opacity cursor-pointer" :title="$t('task.filter_delete')" :aria-label="$t('task.filter_delete')">
+                  <X class="w-3.5 h-3.5" />
+                </button>
+              </template>
+            </div>
+          </template>
+
       </div>
   </div>
 
@@ -71,7 +168,7 @@ const selectCategory = (cat: string) => {
           <!-- Header with Close Button -->
           <div class="flex items-center justify-between px-5 pb-4 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
               <h2 class="text-xl font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('task.views') }}</h2>
-              <button @click="emit('close-mobile')" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" aria-label="More Options">
+              <button @click="emit('close-mobile')" class="p-2 -mr-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" :aria-label="$t('task.a11y_close_sidebar')">
                   <X class="w-5 h-5" />
               </button>
           </div>
@@ -111,6 +208,47 @@ const selectCategory = (cat: string) => {
                       <span class="truncate">{{ proj.title }}</span>
                   </div>
               </button>
+
+              <div class="pt-4 pb-1 px-3">
+                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('task.filters') }}</span>
+              </div>
+              <p v-if="!props.filters?.length" class="px-3 pb-1 text-[11px] leading-relaxed text-gray-400 dark:text-gray-600">
+                {{ $t('task.filter_empty_hint') }}
+              </p>
+              <template v-if="props.filters?.length">
+                <!--
+                  The actions sit open here rather than on hover: a phone has
+                  no hover, and a control that only appears on one is a control
+                  that does not exist on a phone.
+                -->
+                <div v-for="f in props.filters" :key="f.id" class="flex items-center">
+                  <div v-if="renamingId === f.id" class="flex-1 min-w-0 flex items-center px-3 py-2.5 rounded-xl border border-blue-300 dark:border-blue-800">
+                    <Filter class="w-5 h-5 mr-3 shrink-0 text-blue-500" />
+                    <input
+                      :ref="setRenameInput"
+                      v-model="draftName"
+                      @keydown.enter.prevent="commitRename(f.id)"
+                      @keydown.escape.prevent="cancelRename"
+                      type="text"
+                      class="w-full min-w-0 bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5]"
+                      :aria-label="$t('task.filter_rename')"
+                    />
+                  </div>
+                  <template v-else>
+                    <button @click="selectCategory('filter:' + f.id)" class="flex-1 min-w-0 flex items-center px-3 py-3 rounded-xl transition-colors cursor-pointer" :class="activeCategory === 'filter:' + f.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-[#242424]'">
+                      <Filter class="w-5 h-5 mr-3 shrink-0" />
+                      <span class="truncate">{{ f.name }}</span>
+                    </button>
+                    <button @click.stop="startRename(f.id, f.name)" class="shrink-0 p-2 rounded-lg text-gray-400 hover:text-blue-500 transition-colors cursor-pointer" :aria-label="$t('task.filter_rename')">
+                      <Pencil class="w-4 h-4" />
+                    </button>
+                    <button @click.stop="emit('delete-filter', f.id)" class="shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 transition-colors cursor-pointer" :aria-label="$t('task.filter_delete')">
+                      <X class="w-4 h-4" />
+                    </button>
+                  </template>
+                </div>
+              </template>
+
           </div>
       </div>
   </div>

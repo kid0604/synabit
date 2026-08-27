@@ -9,6 +9,15 @@ const props = defineProps<{
   formatSize: (bytes: number) => string;
   pullingModel?: boolean;
   pullProgress?: number;
+  /**
+   * Why the last pull stopped, when it stopped badly.
+   *
+   * `useSynModels` has always recorded this and nothing ever read it, so a pull
+   * that failed — no disk space, no such model, Ollama gone away — looked
+   * exactly like one that succeeded: the progress bar disappeared and the model
+   * was simply absent from the list.
+   */
+  pullError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -134,6 +143,20 @@ const cancelConfirm = () => {
           </div>
           <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1 text-center">
             {{ $t('syn.pulling_model') }} {{ Math.round(pullProgress || 0) }}%
+          </p>
+        </div>
+
+        <!--
+          Why the last pull failed. Not shown while one is in flight: `pullError`
+          is cleared when a pull starts, but showing both at once would still
+          read as the new attempt having already failed.
+        -->
+        <div v-else-if="pullError" class="px-3 py-2 border-t border-border dark:border-border-dark">
+          <p class="text-[11px] text-red-500 dark:text-red-400 text-center">
+            {{ $t('syn.pull_failed') }}
+          </p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 text-center break-words">
+            {{ pullError }}
           </p>
         </div>
 

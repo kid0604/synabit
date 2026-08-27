@@ -37,6 +37,11 @@ useSwipe(mainRef, {
 
 <template>
   <div class="flex flex-col h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none" style="padding-top: max(env(safe-area-inset-top), 36px);">
+    <!-- Full-width notices, above the content rather than over it. This has to
+         live inside the column: the app's outer container is a horizontal flex
+         row, and anything dropped in there becomes a column of its own. -->
+    <slot name="banner" />
+
     <div ref="mainRef" class="flex-1 flex flex-col overflow-hidden relative">
       <!-- Main Content Area -->
       <slot />

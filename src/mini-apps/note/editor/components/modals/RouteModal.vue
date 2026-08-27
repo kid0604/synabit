@@ -20,7 +20,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <div v-if="show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[420px] max-w-[95vw] p-5" @keydown.esc="emit('close')">
+      <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl border border-[#e5e7eb] dark:border-[#333] w-[95vw] max-w-[420px] max-w-[95vw] p-5" @keydown.esc="emit('close')">
         <div class="flex items-center gap-2 mb-4">
           <NavigationIcon class="w-4 h-4 text-indigo-500" />
           <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Insert Route</h3>
