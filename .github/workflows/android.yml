@@ -171,7 +171,10 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          find src-tauri/gen/android -name 'mapping.txt' -path '*release*' \
+          # -ipath, not -path. The directory AGP writes is `universalRelease`,
+          # and -path is case sensitive, so '*release*' matched nothing at all —
+          # the mapping was never collected and the check below silently skipped.
+          find src-tauri/gen/android -name 'mapping.txt' -ipath '*release*' \
             -exec cp {} artifacts/mapping.txt \; || true
           ls -l artifacts || true
 
@@ -182,9 +185,14 @@ jobs:
         # rule in proguard-rules.pro holds them.
         run: |
           MAP=artifacts/mapping.txt
+          # A release build always runs R8 — isMinifyEnabled is on for the
+          # release type, signed or not — so by the time this step runs there
+          # is always a mapping. Its absence means the collection step failed,
+          # not that there was nothing to collect, and skipping on that made
+          # this step report success having verified nothing at all.
           if [ ! -f "$MAP" ]; then
-            echo "::warning::No R8 mapping produced; skipping the keep-rule check."
-            exit 0
+            echo "::error::No R8 mapping was collected. The release build produces one, so this means the collection step did not find it — the keep-rule check cannot run and must not pass."
+            exit 1
           fi
           if ! grep -q 'com.synabit.app.SecureStore' "$MAP"; then
             echo "::error::SecureStore is absent from the R8 mapping — it was removed."
