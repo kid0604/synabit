@@ -1,0 +1,521 @@
+<title>Synabit Play Runbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* Palette taken from the app's own tokens: --color-base / --color-base-dark
+     in src/style.css, and the indigo of the boot spinner in index.html. The
+     neutrals are biased a few degrees toward that indigo rather than being
+     pure grey, so they read as chosen. */
+  :root {
+    --ground:      #fdfdfc;
+    --surface:     #ffffff;
+    --surface-2:   #f4f4f8;
+    --border:      #e4e4ec;
+    --border-firm: #cfcfdc;
+    --ink:         #1c1c1e;
+    --ink-muted:   #63636f;
+    --accent:      #4f46e5;
+    --accent-soft: #eef0fe;
+    --ok:          #15803d;
+    --ok-soft:     #e8f5ec;
+    --warn:        #b45309;
+    --warn-soft:   #fdf3e3;
+    --bad:         #b91c1c;
+    --bad-soft:    #fdeceb;
+
+    --step: clamp(1rem, 0.9rem + 0.5vw, 1.0625rem);
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #242424;
+      --surface:     #2c2c31;
+      --surface-2:   #33333a;
+      --border:      #3d3d47;
+      --border-firm: #52525f;
+      --ink:         #f4f4f5;
+      --ink-muted:   #a3a3b0;
+      --accent:      #949cf9;
+      --accent-soft: #30304a;
+      --ok:          #5ee08b;
+      --ok-soft:     #23372b;
+      --warn:        #fbbf24;
+      --warn-soft:   #3b3122;
+      --bad:         #fb8a84;
+      --bad-soft:    #3d2523;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #242424;
+    --surface:     #2c2c31;
+    --surface-2:   #33333a;
+    --border:      #3d3d47;
+    --border-firm: #52525f;
+    --ink:         #f4f4f5;
+    --ink-muted:   #a3a3b0;
+    --accent:      #949cf9;
+    --accent-soft: #30304a;
+    --ok:          #5ee08b;
+    --ok-soft:     #23372b;
+    --warn:        #fbbf24;
+    --warn-soft:   #3b3122;
+    --bad:         #fb8a84;
+    --bad-soft:    #3d2523;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: var(--step);
+    line-height: 1.65;
+    margin: 0;
+    padding: clamp(1.5rem, 1rem + 3vw, 4rem) 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 3rem; }
+  .prose { max-width: var(--measure); }
+
+  h1, h2, h3 {
+    font-family: Sora, "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    text-wrap: balance;
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: -0.018em;
+  }
+  h1 { font-size: clamp(1.85rem, 1.4rem + 2.1vw, 2.7rem); font-weight: 700; }
+  h2 { font-size: clamp(1.25rem, 1.1rem + 0.7vw, 1.5rem); font-weight: 600; }
+  h3 { font-size: 1.0625rem; font-weight: 600; }
+  p { margin: 0; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  code, kbd, pre { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code:not(pre code) {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.1em 0.36em;
+    font-size: 0.86em;
+    word-break: break-word;
+  }
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin: 0;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  /* ── header ─────────────────────────────────────────────── */
+  header { display: flex; flex-direction: column; gap: 1rem; }
+  .lede { color: var(--ink-muted); max-width: var(--measure); }
+
+  .snapshot {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .snapshot div { background: var(--surface); padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.2rem; }
+  .snapshot dt { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-muted); font-family: "IBM Plex Mono", monospace; }
+  .snapshot dd { margin: 0; font-weight: 600; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+
+  /* ── pills ──────────────────────────────────────────────── */
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.4em;
+    font-size: 0.75rem; font-weight: 600;
+    padding: 0.15em 0.6em; border-radius: 999px;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .pill.ok   { background: var(--ok-soft);   color: var(--ok);   border-color: color-mix(in oklab, var(--ok) 30%, transparent); }
+  .pill.bad  { background: var(--bad-soft);  color: var(--bad);  border-color: color-mix(in oklab, var(--bad) 30%, transparent); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in oklab, var(--warn) 35%, transparent); }
+  .pill.idle { background: var(--surface-2); color: var(--ink-muted); border-color: var(--border); }
+
+  /* ── steps: a real dependency chain, hence the numbers ──── */
+  .steps { display: flex; flex-direction: column; gap: 1.25rem; counter-reset: step; }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.4rem 1.5rem;
+    display: flex; flex-direction: column; gap: 0.9rem;
+    position: relative;
+  }
+  .step > .head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+  .step > .head::before {
+    counter-increment: step;
+    content: counter(step);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem; font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+    border-radius: 7px;
+    min-width: 1.7rem; height: 1.7rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: center; flex: none;
+  }
+  .step .who { margin-left: auto; }
+  .step .body { display: flex; flex-direction: column; gap: 0.75rem; }
+  .step p { max-width: var(--measure); }
+
+  .dep {
+    display: flex; gap: 0.6rem; align-items: flex-start;
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 0.6rem 0.85rem;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.9rem;
+  }
+  .dep b { font-weight: 600; }
+
+  /* ── tables ─────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th {
+    background: var(--surface-2);
+    font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase;
+    font-family: "IBM Plex Mono", monospace; font-weight: 500; color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+
+  /* ── checklist ──────────────────────────────────────────── */
+  .check { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+  .check li { display: flex; gap: 0.65rem; align-items: flex-start; padding: 0.4rem 0.5rem; border-radius: 8px; }
+  .check li:hover { background: var(--surface-2); }
+  .check input { margin: 0.35rem 0 0; accent-color: var(--accent); width: 1rem; height: 1rem; flex: none; }
+  .check label { cursor: pointer; }
+  .check input:checked + label { color: var(--ink-muted); text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--ink-muted) 50%, transparent); }
+
+  /* ── traps ──────────────────────────────────────────────── */
+  .traps { display: flex; flex-direction: column; gap: 0.9rem; }
+  .trap {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warn);
+    background: var(--surface);
+    border-radius: 0 12px 12px 0;
+    padding: 0.9rem 1.1rem;
+    display: flex; flex-direction: column; gap: 0.35rem;
+  }
+  .trap h3 { font-size: 0.98rem; }
+  .trap p { font-size: 0.92rem; color: var(--ink-muted); max-width: var(--measure); }
+  .trap p strong { color: var(--ink); font-weight: 600; }
+
+  .fingerprint {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    background: var(--surface-2);
+    border: 1px dashed var(--border-firm);
+    border-radius: 9px;
+    padding: 0.7rem 0.9rem;
+    overflow-x: auto;
+    user-select: all;
+  }
+
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, .check input:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="page">
+
+  <header>
+    <p class="eyebrow">Synabit · Android · 27/08/2026</p>
+    <h1>Từ đây tới Google Play</h1>
+    <p class="lede">
+      Mọi thứ trong repo đã xong và đã push. Những gì còn lại nằm ngoài repo —
+      Play Console, Google Cloud, GitHub Secrets — và có ràng buộc thứ tự thật,
+      nên các bước dưới đây đánh số theo phụ thuộc chứ không phải theo ý thích.
+    </p>
+
+    <dl class="snapshot">
+      <div><dt>Nhánh main</dt><dd><code>8b84a88</code></dd></div>
+      <div><dt>Phiên bản</dt><dd>0.9.7-3 · vc 9007</dd></div>
+      <div><dt>CI job checks</dt><dd><span class="pill ok">xanh</span></dd></div>
+      <div><dt>CI job AAB</dt><dd><span class="pill bad">thiếu secret</span></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2>Đang đứng ở đâu</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Run</th><th>Commit</th><th>Kết quả</th><th>Nguyên nhân</th></tr></thead>
+        <tbody>
+          <tr><td>#1</td><td><code>0095245</code></td><td><span class="pill bad">fail</span></td><td>Thiếu <code>libwebkit2gtk</code> trên runner Linux</td></tr>
+          <tr><td>#2</td><td><code>35c4b5e</code></td><td><span class="pill bad">fail</span></td><td><code>AssetRef</code> trong test thiếu 2 field</td></tr>
+          <tr><td>—</td><td><code>c32c2e3</code></td><td><span class="pill idle">không chạy</span></td><td>paths filter thiếu <code>sync-server/**</code></td></tr>
+          <tr><td>#3</td><td><code>8b84a88</code></td><td><span class="pill warn">1/3 đỏ</span></td><td>Chỉ còn <code>Build AAB</code>, dừng ở preflight</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">
+      Ba lần chạy, ba lỗi thật — hai trong số đó là bug có sẵn trong repo mà không
+      công cụ nào từng chạm tới. Job <code>Type-check, lint and tests</code> và
+      <code>Android Lint</code> giờ đều xanh. <code>Build AAB</code> dừng sau
+      <strong>0 giây</strong>, tức là chết ở preflight kiểm tra secret chứ không
+      phải trong lúc build — đúng cái khoá đã dựng có chủ đích.
+    </p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Sáu bước còn lại</h2>
+
+    <div class="steps">
+
+      <article class="step">
+        <div class="head">
+          <h2>Tạo app trên Play Console, bật Play App Signing</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <p>Làm trước tiên vì bước 2 cần <em>hai</em> vân tay, và vân tay thứ hai
+          chỉ tồn tại sau khi Play App Signing được bật.</p>
+          <ul class="check">
+            <li><input type="checkbox" id="p1"><label for="p1">Tạo app draft, package <code>com.synabit.app</code></label></li>
+            <li><input type="checkbox" id="p2"><label for="p2">Bật Play App Signing</label></li>
+            <li><input type="checkbox" id="p3"><label for="p3">Chép SHA-1 của <strong>app signing key</strong> tại <em>Test and release → Setup → App signing</em></label></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Tạo OAuth client type Android</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <p>Trên Google Cloud Console → <em>Credentials → Create OAuth client ID →
+          Android</em>. Package name là <code>com.synabit.app</code>.</p>
+          <p>SHA-1 của upload key — đã lấy sẵn từ keystore trong repo:</p>
+          <div class="fingerprint">F8:E9:B7:D4:43:50:C6:5F:5A:FF:23:65:80:33:4B:40:F8:6C:45:D6</div>
+          <div class="dep">
+            <span aria-hidden="true">⚠︎</span>
+            <span><b>Phải khai cả hai vân tay.</b> Google ký lại app bằng app
+            signing key trước khi phát hành, nên nếu chỉ khai upload key thì bản
+            sideload chạy còn bản tải từ Play sẽ hỏng Google Drive — một lỗi chỉ
+            lộ ra sau khi đã phát hành.</span>
+          </div>
+          <p>Kết quả là một client id dạng <code>…apps.googleusercontent.com</code>.
+          Đó là giá trị cho <code>SYNABIT_ANDROID_CLIENT_ID</code> ở bước sau.</p>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Điền 7 secret trên GitHub</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <p><em>Settings → Secrets and variables → Actions.</em> Hai cái đầu nhiều
+          khả năng đã có sẵn vì <code>release.yml</code> vẫn đang dùng chúng.</p>
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>Secret</th><th>Lấy từ đâu</th></tr></thead>
+              <tbody>
+                <tr><td><code>SYNABIT_GOOGLE_CLIENT_ID</code></td><td>đã có — OAuth client desktop</td></tr>
+                <tr><td><code>SYNABIT_GOOGLE_CLIENT_SECRET</code></td><td>đã có — OAuth client desktop</td></tr>
+                <tr><td><code>SYNABIT_ANDROID_CLIENT_ID</code></td><td>bước 2</td></tr>
+                <tr><td><code>ANDROID_KEYSTORE_BASE64</code></td><td>lệnh bên dưới</td></tr>
+                <tr><td><code>ANDROID_KEYSTORE_PASSWORD</code></td><td><code>storePassword</code> trong <code>keystore.properties</code></td></tr>
+                <tr><td><code>ANDROID_KEY_ALIAS</code></td><td><code>upload_key</code></td></tr>
+                <tr><td><code>ANDROID_KEY_PASSWORD</code></td><td><code>keyPassword</code> trong <code>keystore.properties</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Keystore nằm ở <code>src-tauri/synabit-release-key.jks</code> — không
+          phải trong <code>gen/android/</code>; đường dẫn trong
+          <code>keystore.properties</code> là tương đối với thư mục gradle.</p>
+          <pre><code>base64 -i src-tauri/synabit-release-key.jks | tr -d '\n' | pbcopy</code></pre>
+          <p>Ba mật khẩu đọc từ <code>src-tauri/gen/android/keystore.properties</code>.
+          File đó gitignored và chưa từng bị commit — đã kiểm cả lịch sử git.</p>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Chạy lại CI, lấy AAB và mapping</h2>
+          <span class="pill ok who">tao làm được</span>
+        </div>
+        <div class="body">
+          <p>Có secret rồi thì <code>Build AAB</code> qua được preflight. Workflow
+          sẽ tự kiểm một thứ nữa: grep <code>mapping.txt</code> để chắc chắn R8
+          không xoá mất <code>SecureStore</code> và hai method JNI của nó — đúng
+          lỗi từng làm mọi bản release không đọc nổi khoá mã hoá của chính nó.</p>
+          <div class="dep">
+            <span aria-hidden="true">⌁</span>
+            <span><b>Giữ <code>mapping.txt</code>.</b> R8 đổi tên mỗi lần build,
+            nên không có file này thì crash report từ Play đọc không ra gì. CI giữ
+            artifact 90 ngày.</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Smoke test bản ký thật trên AVD sạch</h2>
+          <span class="pill warn who">bắt buộc</span>
+        </div>
+        <div class="body">
+          <p>R8 <em>chỉ</em> chạy ở bản release, và đường JNI Rust→Java là thứ duy
+          nhất R8 không nhìn thấy. Bản debug chạy được <strong>không chứng minh
+          gì</strong> về bản release.</p>
+          <ul class="check">
+            <li><input type="checkbox" id="s1"><label for="s1">Cold start, không crash</label></li>
+            <li><input type="checkbox" id="s2"><label for="s2">Tạo vault, viết note, kill từ Recents, mở lại → note còn</label></li>
+            <li><input type="checkbox" id="s3"><label for="s3"><strong>Bật E2EE → tắt app → mở lại → khoá vẫn đọc được</strong> — đây là bài test R8/SecureStore</label></li>
+            <li><input type="checkbox" id="s4"><label for="s4">Kết nối Google Drive → quay về được app — bài test bước 2</label></li>
+            <li><input type="checkbox" id="s5"><label for="s5">Share text từ Chrome → cap xuất hiện trong QuickCap</label></li>
+            <li><input type="checkbox" id="s6"><label for="s6">Gõ thẳng vào notification → cap xuất hiện</label></li>
+            <li><input type="checkbox" id="s7"><label for="s7">Quick settings tile và widget → mở compose box</label></li>
+            <li><input type="checkbox" id="s8"><label for="s8">Cold start ở light mode → không nháy đen</label></li>
+            <li><input type="checkbox" id="s9"><label for="s9">Xoay màn hình ở mọi mini-app</label></li>
+            <li><input type="checkbox" id="s10"><label for="s10">Bật “Don't keep activities” → process death → quay lại</label></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="head">
+          <h2>Hoàn tất hồ sơ Play</h2>
+          <span class="pill idle who">mày làm</span>
+        </div>
+        <div class="body">
+          <ul class="check">
+            <li><input type="checkbox" id="r1"><label for="r1">Data Safety form — khai đúng <code>RECORD_AUDIO</code>, sync relay, license server. <code>legal/PRIVACY_POLICY.md</code> đã đủ chi tiết để điền</label></li>
+            <li><input type="checkbox" id="r2"><label for="r2">Privacy policy URL công khai</label></li>
+            <li><input type="checkbox" id="r3"><label for="r3">Store listing, screenshots, feature graphic</label></li>
+            <li><input type="checkbox" id="r4"><label for="r4">Content rating questionnaire</label></li>
+            <li><input type="checkbox" id="r5"><label for="r5">Backup upload key ra ngoài máy cá nhân</label></li>
+          </ul>
+          <div class="dep">
+            <span aria-hidden="true">◷</span>
+            <span><b>Mốc chặn có thể không phải code.</b> Nếu đây là personal
+            developer account tạo sau 13/11/2023, Google bắt buộc closed testing
+            với <b>12 tester trong 14 ngày liên tục</b> trước khi được apply
+            production access. Tính từ ngày bắt đầu closed test, không phải từ
+            hôm nay.</span>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Bẫy đã biết</h2>
+    <div class="traps">
+
+      <div class="trap">
+        <h3>Hậu tố <code>-N</code> vô hình với Play</h3>
+        <p>Tauri tính <code>versionCode = major×1000000 + minor×1000 + patch</code>
+        và <strong>bỏ qua prerelease</strong>. Nên <code>0.9.7-1</code>,
+        <code>0.9.7-2</code>, <code>0.9.7-3</code> đều ra <strong>9007</strong>.
+        Play từ chối upload trùng versionCode, nên muốn bump thật thì đổi patch,
+        hoặc pin <code>bundle.android.versionCode</code> trong
+        <code>tauri.conf.json</code>. Hiện tại 9007 chưa từng upload nên vẫn dùng được.</p>
+      </div>
+
+      <div class="trap">
+        <h3><code>.env</code> nằm ở <code>src-tauri/</code>, không phải gốc repo</h3>
+        <p><code>build.rs</code> khai <code>cargo:rerun-if-changed=.env</code>
+        tương đối với crate. Bản đặt ở gốc repo vẫn được <code>dotenvy</code> tìm
+        thấy nhưng <strong>không được theo dõi</strong> — sửa nó không rebuild gì cả.</p>
+      </div>
+
+      <div class="trap">
+        <h3>Thiếu secret thì CI đỏ, không phải im lặng</h3>
+        <p>Fallback từ Android client sang desktop client đã bị gỡ bỏ hẳn, và có
+        thêm một <code>const</code> assert chặn chuỗi rỗng — vì secret chưa cấu
+        hình trên GitHub expand thành <code>""</code>, thứ mà <code>env!</code>
+        chấp nhận. <strong>Fail lúc build là cố ý</strong>, tốt hơn một AAB ký
+        xong mà Drive chết trên máy người dùng.</p>
+      </div>
+
+      <div class="trap">
+        <h3>targetSdk 36 — hạn siết của Play là 31/08/2026</h3>
+        <p>Đang <strong>đáp ứng</strong>, chỉ là không còn dư địa. Cùng nhóm:
+        16 KB page alignment (bắt buộc từ 01/11/2025) đã xác minh trên
+        <code>.so</code> thật — mọi <code>PT_LOAD</code> đều align <code>0x4000</code>.</p>
+      </div>
+
+      <div class="trap">
+        <h3>ABI: arm64 + x86_64, không có 32-bit</h3>
+        <p>Máy <code>armeabi-v7a</code> sẽ không được Play phục vụ. Đây là
+        <strong>quyết định độ phủ</strong>, không phải bug — <code>minSdk 24</code>
+        vẫn có nghĩa vì máy 64-bit chạy Android 7 vẫn cài được. Nâng minSdk lên
+        26/28 sẽ loại thêm người dùng chứ không sửa được gì.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Việc nhỏ, không gấp</h2>
+    <p class="prose">Không cái nào chặn phát hành.</p>
+    <ul class="check">
+      <li><input type="checkbox" id="n1"><label for="n1">Bump <code>actions/checkout</code> và <code>actions/setup-node</code> lên <code>@v5</code> — GitHub đang cảnh báo Node 20 deprecated</label></li>
+      <li><input type="checkbox" id="n2"><label for="n2">35 ESLint warning còn lại: 17 <code>catch (e)</code> không dùng, 6 props/emit, 12 tham số hàm</label></li>
+      <li><input type="checkbox" id="n3"><label for="n3">Accessibility: 232 <code>aria-label</code> trên 897 <code>&lt;button&gt;</code> — chưa ai đo bằng TalkBack thật</label></li>
+      <li><input type="checkbox" id="n4"><label for="n4">Gỡ worktree <code>.claude/worktrees/nice-gauss-0b4a11</code> (15 MB) nếu không còn dùng</label></li>
+      <li><input type="checkbox" id="n5"><label for="n5">43 lint warning Android: icon round không tròn, thiếu <code>&lt;monochrome&gt;</code> cho themed icon, màu template thừa</label></li>
+    </ul>
+  </section>
+
+</div>
+
+<script>
+  // Tick state survives a reload within the session where storage is allowed;
+  // where it is not, the boxes still work, they just start empty.
+  (function () {
+    var KEY = 'synabit-play-runbook';
+    var boxes = document.querySelectorAll('.check input[type="checkbox"]');
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+
+    boxes.forEach(function (box) {
+      if (saved[box.id]) box.checked = true;
+      box.addEventListener('change', function () {
+        saved[box.id] = box.checked;
+        try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* no storage, no problem */ }
+      });
+    });
+  })();
+</script>
