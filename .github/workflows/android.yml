@@ -209,9 +209,21 @@ jobs:
       - name: Record what was built
         if: always()
         run: |
+          # Whether this bundle is signed has to be written down. A missing
+          # keystore no longer fails the build — it produces an unsigned bundle
+          # on purpose, so that a fork still exercises R8 — which means a green
+          # run no longer tells you which of the two you got, and an unsigned
+          # bundle cannot be uploaded to Play.
+          if [ -f src-tauri/gen/android/keystore.properties ]; then
+            SIGNED="yes (upload key)"
+          else
+            SIGNED="NO — unsigned, cannot be uploaded to Play"
+            echo "::warning::This bundle is unsigned; the signing secrets were not available."
+          fi
           {
             echo "commit: ${{ github.sha }}"
             echo "built:  $(date -u +%FT%TZ)"
+            echo "signed: $SIGNED"
             echo
             find src-tauri/gen/android -name '*.aab' -exec sha256sum {} \;
           } > artifacts/build-info.txt || true
