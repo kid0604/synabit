@@ -1,0 +1,236 @@
+name: Android
+
+# Runs on every push and pull request that touches the app, not only on a tag.
+#
+# The reason is specific. The release build is the only one where R8 runs, and
+# R8 is what removed the JNI methods the app needs to read its own encryption
+# key — a defect that existed for weeks because nothing ever built a release
+# AAB except by hand. A build that only happens at release time cannot catch a
+# problem that only appears in a release build.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  # Cheap gates first, so an obvious mistake does not wait behind a Rust build.
+  checks:
+    name: Type-check, lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npx eslint 'src/**/*.{ts,vue}' --max-warnings 200
+
+      - name: Frontend tests
+        run: npx vitest run
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      # The protocol crate lives in its own workspace, so `cargo test` from the
+      # server directory does not reach it. Its tests failed to compile for
+      # weeks without anybody noticing for exactly that reason.
+      - name: Protocol crate tests
+        working-directory: sync-server
+        run: cargo test -p synabit-protocol
+
+      - name: Sync server tests
+        working-directory: sync-server
+        run: cargo test
+
+  aab:
+    name: Signed release AAB
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the pinned NDK
+        # Must match ndkVersion in app/build.gradle.kts. Left to whatever the
+        # image happens to ship, the same source produces different binaries on
+        # different runners.
+        run: sdkmanager --install "ndk;27.1.12297006"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Restore the signing keystore
+        # Absent on a fork or a pull request from one; the build then produces
+        # an unsigned bundle, which still proves the code compiles and that R8
+        # did not eat anything.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No signing keystore available; the bundle will be unsigned."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/release.jks
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build AAB
+        env:
+          # The Android client is the one that matters here: the mobile flow
+          # redirects to a custom scheme, which Google accepts only from a
+          # client of type Android. Absent, the build fails outright rather
+          # than producing an AAB whose Drive integration is dead on arrival —
+          # see the comment on CLIENT_ID in src-tauri/src/gdrive/mod.rs.
+          #
+          # Its fingerprint must be the Play App Signing key, not the upload
+          # key, or Drive works when sideloaded and fails once Play re-signs.
+          SYNABIT_ANDROID_CLIENT_ID: ${{ secrets.SYNABIT_ANDROID_CLIENT_ID }}
+          # Still read by the desktop-only arms of gdrive/, which are compiled
+          # out here but must exist for the crate to build.
+          SYNABIT_GOOGLE_CLIENT_ID: ${{ secrets.SYNABIT_GOOGLE_CLIENT_ID }}
+          SYNABIT_GOOGLE_CLIENT_SECRET: ${{ secrets.SYNABIT_GOOGLE_CLIENT_SECRET }}
+        run: |
+          # Checked here as well as in Rust, only because the Rust error
+          # arrives several minutes into the build and this one arrives now.
+          # An unset secret expands to an empty string, so -z is the test that
+          # matters; `env!` alone would accept it.
+          if [ -z "$SYNABIT_ANDROID_CLIENT_ID" ]; then
+            echo "::error::SYNABIT_ANDROID_CLIENT_ID is not set. Android needs its own Google OAuth client (type: Android), registered against the Play App Signing fingerprint. See .env.example."
+            exit 1
+          fi
+          # Resolve the NDK from whichever variable the setup action exported.
+          export NDK_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk/27.1.12297006"
+          test -d "$NDK_HOME" || { echo "::error::NDK not found at $NDK_HOME"; exit 1; }
+          # arm64 for phones, x86_64 for Chromebooks and the emulators Play's
+          # review runs on. The other two ABIs are 32-bit and are not shipped,
+          # which is also why this is not `build:android` — that one builds all
+          # four and would need Rust targets nothing here installs.
+          npm run build:android:play
+
+      # Without the mapping file a crash report from Play is unreadable, and
+      # R8 renames on every build — a mapping kept only on the machine that
+      # happened to run the build is a mapping you do not have.
+      - name: Collect the R8 mapping
+        if: always()
+        run: |
+          mkdir -p artifacts
+          find src-tauri/gen/android -name 'mapping.txt' -path '*release*' \
+            -exec cp {} artifacts/mapping.txt \; || true
+          ls -l artifacts || true
+
+      - name: Verify the keep rule survived
+        # The one check that would have caught the defect that made every
+        # release build unusable: SecureStore is reached from Rust by name over
+        # JNI, so R8 sees no callers and removes its methods unless the keep
+        # rule in proguard-rules.pro holds them.
+        run: |
+          MAP=artifacts/mapping.txt
+          if [ ! -f "$MAP" ]; then
+            echo "::warning::No R8 mapping produced; skipping the keep-rule check."
+            exit 0
+          fi
+          if ! grep -q 'com.synabit.app.SecureStore' "$MAP"; then
+            echo "::error::SecureStore is absent from the R8 mapping — it was removed."
+            exit 1
+          fi
+          for method in getSecret saveSecret; do
+            if ! grep -q "$method" "$MAP"; then
+              echo "::error::SecureStore.$method did not survive R8. The app cannot read its encryption key."
+              exit 1
+            fi
+          done
+          echo "SecureStore and its JNI methods survived R8."
+
+      - name: Record what was built
+        if: always()
+        run: |
+          {
+            echo "commit: ${{ github.sha }}"
+            echo "built:  $(date -u +%FT%TZ)"
+            echo
+            find src-tauri/gen/android -name '*.aab' -exec sha256sum {} \;
+          } > artifacts/build-info.txt || true
+          find src-tauri/gen/android -name '*.aab' -exec cp {} artifacts/ \; || true
+          cat artifacts/build-info.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-release
+          # The mapping is needed for as long as this build is installed on
+          # anybody's phone; the default retention is far shorter than that.
+          retention-days: 90
+          path: artifacts/
+
+  lint:
+    name: Android Lint
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Android Lint
+        working-directory: src-tauri/gen/android
+        # Reports rather than fails: the project has never run this, so the
+        # first run is a baseline to read, not a gate to trip over.
+        run: ./gradlew lint --continue || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-lint-report
+          path: src-tauri/gen/android/app/build/reports/
