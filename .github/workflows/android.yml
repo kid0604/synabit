@@ -55,6 +55,17 @@ jobs:
 
       - name: Rust tests
         working-directory: src-tauri
+        env:
+          # Placeholders, deliberately not secrets. gdrive/mod.rs resolves these
+          # with `env!`, so the crate does not compile without them and a fresh
+          # checkout has no .env — it is ignored. Nothing under test calls
+          # Google, so the values only have to exist and be non-empty.
+          #
+          # Hard-coding them also keeps this job working for a pull request from
+          # a fork, which is given no secrets at all. The real credentials are
+          # needed only where a shippable artifact is produced, in the aab job.
+          SYNABIT_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
+          SYNABIT_GOOGLE_CLIENT_SECRET: ci-placeholder
         run: cargo test --lib
 
       # The protocol crate lives in its own workspace, so `cargo test` from the
