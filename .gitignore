@@ -31,11 +31,40 @@ test_*.rs
 test_*.vue
 fix_*.py
 replace_*.py
+move_*.py
+patch_*.py
+generate_*.py
+
+# One-off codemod and codegen workspace. Everything here is written to be run
+# once against a specific file and then forgotten; twenty-eight such scripts had
+# accumulated, thirteen of them successive versions of the same generator.
+/scratch/
+
+# Console dumps and oracle run output that were committed as if they were
+# source. Every path here is ANCHORED with a leading slash on purpose: the repo
+# has six real `tests.rs` modules under src-tauri/src/, and a bare `tests.rs`
+# rule would silently stop all of them from ever being committed.
+/tests.rs
+/tests_content.txt
+/tests_dump.txt
+/scratch_tests.txt
+/verify.txt
+
+# Claude Code worktrees — a full second checkout of this repo (~15 MB) that
+# lives inside it. Previously only in .git/info/exclude, which is local to one
+# clone; here it applies to every clone and to CI.
+.claude/worktrees/
 
 # Build and error logs
 build.log
 build_log.txt
 ts_errors*.txt
+# Compiler/test output pasted into a file. These carry absolute paths from
+# whichever machine produced them, so they leak a local directory layout on top
+# of being stale the moment they are written.
+*_errors.txt
+test_errors.txt
+cargo_output.txt
 
 # Database cache files
 *.db
