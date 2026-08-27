@@ -34,3 +34,23 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ---------------------------------------------------------------------------
+# Google Tink references JSR-305 annotations that are not on the classpath.
+#
+# Tink arrives through androidx.security:security-crypto, which is what backs
+# EncryptedSharedPreferences and therefore SecureStore above. It is compiled
+# against javax.annotation.Nullable and javax.annotation.concurrent.GuardedBy,
+# neither of which ships with Android or with Tink itself — they are
+# compile-time only and have no runtime effect.
+#
+# R8 treats a missing referenced class as an error, not a warning, so the
+# release build failed at :app:minifyUniversalReleaseWithR8 before it ever
+# reached packaging or signing. Nothing was wrong with the code; the annotation
+# classes are simply absent by design.
+#
+# These are the two rules R8 itself generated into
+# app/build/outputs/mapping/universalRelease/missing_rules.txt.
+# ---------------------------------------------------------------------------
+-dontwarn javax.annotation.Nullable
+-dontwarn javax.annotation.concurrent.GuardedBy

@@ -16,7 +16,10 @@ val tauriProperties = Properties().apply {
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties()
-if (keystorePropertiesFile.exists()) {
+// Whether this machine can sign at all. A fork, a pull request from one, or a
+// checkout made before the signing secrets were added has no keystore.
+val hasKeystore = keystorePropertiesFile.exists()
+if (hasKeystore) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
@@ -58,7 +61,15 @@ android {
             }
         }
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            // Attached only when there is a keystore to attach. Assigned
+            // unconditionally, a missing keystore left storeFile null and AGP
+            // failed the build outright — after the seventeen minutes it takes
+            // to compile the Rust for both ABIs, and with an error about a
+            // signing config rather than about the missing secret. Null here
+            // means an unsigned bundle instead, which is what the CI workflow
+            // has always claimed happens: R8 still runs, so the build still
+            // proves the code compiles and that nothing was stripped.
+            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else null
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
