@@ -26,14 +26,56 @@ pub(crate) const CLIENT_ID: &str = env!(
     "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"
 );
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub(crate) const CLIENT_ID: &str = match option_env!("SYNABIT_ANDROID_CLIENT_ID") {
-    Some(val) => val,
-    None => env!(
-        "SYNABIT_GOOGLE_CLIENT_ID",
-        "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"
-    ),
-};
+/// Android needs an OAuth client of its own, and there is no falling back to
+/// the desktop one.
+///
+/// Both mobile flows — vault sync in `auth.rs` and the OmniDrive browser in
+/// `browse.rs` — redirect to `com.synabit.app:/oauth2callback`, the package
+/// name as a custom scheme. Google accepts a custom-scheme redirect only from a
+/// client registered as type **Android**. Ask with a Web or Desktop client and
+/// the authorization request comes back `invalid_request`: the user is left
+/// looking at a browser tab that never returns to the app, and nothing in the
+/// log says why.
+///
+/// This used to fall back to `SYNABIT_GOOGLE_CLIENT_ID` when unset. That builds
+/// and ships perfectly happily, then fails on every phone. Build time is the
+/// only place the failure is cheap — no test in this repo can reach it, because
+/// nothing is actually wrong until Google is asked.
+///
+/// Registering the client needs the package name and **two** SHA-1
+/// fingerprints: the upload key, and the separate key Play App Signing re-signs
+/// with. Only the first is on a developer machine, so a locally signed build can
+/// work while the one Play distributes does not.
+#[cfg(target_os = "android")]
+pub(crate) const CLIENT_ID: &str = env!(
+    "SYNABIT_ANDROID_CLIENT_ID",
+    "Android needs its own Google OAuth client (type: Android). Set \
+     SYNABIT_ANDROID_CLIENT_ID at build time — the desktop client ID will not \
+     work here, because Google rejects the custom-scheme redirect this flow uses."
+);
+
+/// iOS has no generated project yet — `src-tauri/gen/` holds `android` alone —
+/// so this arm exists to keep the crate compiling for the target, not because
+/// anything ships from it. Whoever runs `tauri ios init` has to give iOS a
+/// client of its own for the same reason Android needs one: the redirect is a
+/// custom scheme, and a Desktop client will not answer it.
+#[cfg(target_os = "ios")]
+pub(crate) const CLIENT_ID: &str = env!(
+    "SYNABIT_GOOGLE_CLIENT_ID",
+    "Set SYNABIT_GOOGLE_CLIENT_ID env var at build time"
+);
+
+// `env!` is satisfied by an empty string, and an unconfigured GitHub Actions
+// secret expands to exactly that — so "the variable is set" is not the same
+// claim as "there is a client ID here", and the requirement above would pass
+// while the value stayed useless. Whichever platform this compiled for, an
+// empty client ID can only produce an authorization request Google refuses.
+const _: () = assert!(
+    !CLIENT_ID.is_empty(),
+    "the Google OAuth client ID is empty — the variable is set but carries no \
+     value. Check the secret exists in whatever environment ran this build."
+);
+
 // Desktop OAuth clients: Google still requires client_secret for token exchange/refresh.
 // It's considered "not truly secret" for desktop apps, but mandatory for the endpoint.
 // PKCE is added as an additional security layer on top.

@@ -62,54 +62,37 @@ export function useGDrive(
   // --- Global Deep Link Listener (For Android Cold Starts) ---
   async function handleDeepLink(url: string) {
       if (!url) return;
-      logger.info(`Received deep link: ${url}`);
-      // DEBUG: surface the deep link visually to verify intent reception
-      gdriveSyncError.value = `Intent captured: ${url}`;
+      // Path only, never the query. This URL is the OAuth redirect, so its
+      // query string carries the authorization code — a live credential until
+      // it is exchanged. It used to be logged whole, and also written to
+      // `gdriveSyncError`, which App.vue renders on screen in red: connecting
+      // Drive on a phone printed the authorization code to the display.
+      logger.info(`Received deep link: ${url.split('?')[0]}`);
+
       if (url.includes('?code=') || url.includes('&code=')) {
           const codeMatch = url.match(/[?&]code=([^&]+)/);
-          const stateMatch = url.match(/[?&]state=([^&]+)/);
-          
+
           if (codeMatch && codeMatch[1]) {
               const code = decodeURIComponent(codeMatch[1]);
-              const state = stateMatch ? decodeURIComponent(stateMatch[1]) : '';
-              
-              if (state === 'omnidrive') {
-                  // Forward to OmniDrive (File Manager)
-                  import('@tauri-apps/api/event').then(({ emit }) => {
-                      emit('omnidrive-auth-code', { code });
-                  });
-              } else if (state === 'omni_browse') {
-                  // File manager browse flow
-                  gdriveAuthLoading.value = true;
-                  gdriveSyncError.value = 'OmniBrowse Exchange started...';
-                  try {
-                      await invoke('connect_gdrive_complete', {
-                        authCode: code,
-                        vaultPath: vaultPath.value,
-                      });
-                      gdriveConnected.value = true;
-                      window.dispatchEvent(new CustomEvent('gdrive-browse-connected'));
-                  } catch(err: any) {
-                      gdriveSyncError.value = err?.toString() || 'OmniDrive OAuth failed';
-                  } finally {
-                      gdriveAuthLoading.value = false;
-                  }
-              } else {
-                  // Vault Sync flow
-                  gdriveAuthLoading.value = true;
-                  gdriveSyncError.value = 'Step 1: Exchanging Token...';
-                  try {
-                      await invoke('gdrive_auth_complete', { authCode: code });
-                      gdriveSyncError.value = 'Step 2: Token exchanged! Finishing connect...';
-                      await finishConnect();
-                  } catch(err: any) {
-                      gdriveSyncError.value = 'Error: ' + (err?.toString() || 'OAuth Exchange failed');
-                      gdriveAuthLoading.value = false;
-                  }
+
+              // No branch on `state` any more. The `omnidrive` and
+              // `omni_browse` states belonged to the Files app's Drive browser,
+              // which is withdrawn: it wrote what it fetched into the legacy
+              // `files` table while the list on screen reads the `nodes` table,
+              // so connecting only ever produced an empty folder. Vault sync —
+              // everything below — is a separate feature on a separate command
+              // set and is unaffected.
+              gdriveAuthLoading.value = true;
+              try {
+                  await invoke('gdrive_auth_complete', { authCode: code });
+                  await finishConnect();
+              } catch(err: any) {
+                  gdriveSyncError.value = 'Error: ' + (err?.toString() || 'OAuth Exchange failed');
+                  gdriveAuthLoading.value = false;
               }
           }
       } else {
-          gdriveSyncError.value = `Intent captured but NO CODE: ${url}`;
+          gdriveSyncError.value = 'That sign-in did not return an authorization code. Please try connecting again.';
       }
   }
 
