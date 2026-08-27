@@ -520,6 +520,14 @@ mod tests {
         // 3. AssetReference
         let asset_ref = AssetRef {
             asset_id: [7; 32],
+            // Both were added to AssetRef and never to this literal, so the
+            // crate's tests stopped compiling — unnoticed, because the protocol
+            // is its own workspace and no `cargo test` in the repository reached
+            // it. They are the two fields a receiver cannot do without: the
+            // entry's `doc_hash` is a hash of the path and cannot be inverted,
+            // so without them the bytes arrive with nowhere to go.
+            rel_path: "assets/diagram.png".into(),
+            node_id: "node_2".into(),
             mime_type: "image/png".into(),
             total_bytes: 1024,
             plaintext_hash: [8; 32],
