@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the "color-base-dark" token in src/style.css. -->
+    <color name="app_background">#242424</color>
+
+    <color name="widget_surface">#1E1E1E</color>
+    <color name="widget_border">#2C2C2C</color>
+    <color name="widget_hint">#6B7280</color>
+    <color name="widget_glyph">#F4F4F5</color>
+</resources>

@@ -7,4 +7,23 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!--
+      The app's own ground colour, matching the "color-base" token in
+      src/style.css. Used for both the splash and the window behind the WebView,
+      so that starting up is one continuous surface instead of a white flash,
+      then a splash, then the app.
+    -->
+    <color name="app_background">#FDFDFC</color>
+
+    <!--
+      The home-screen widget. Kept in step with the compose bar inside the
+      app (src/mini-apps/quickcap/QuickCapApp.vue), because the widget is
+      pretending to be that field and the pretence breaks if it looks unlike
+      it.
+    -->
+    <color name="widget_surface">#FFFFFF</color>
+    <color name="widget_border">#E6E6E6</color>
+    <color name="widget_hint">#9CA3AF</color>
+    <color name="widget_glyph">#1C1C1E</color>
 </resources>

@@ -1,16 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- AndroidTV support -->
-    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <!--
+      Voice capture. The WebView's own permission handler asks the user for
+      these at the moment recording starts (see the generated
+      RustWebChromeClient), but it can only ask for what the manifest declares.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- A phone without a microphone should still be offered the app. -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+    <!--
+      RECEIVE_BOOT_COMPLETED is not declared here on purpose. The notification
+      plugin needs it to restore scheduled notifications and declares it in its
+      own manifest, so the merger still supplies it. Declaring it a second time
+      here only hides which component actually depends on it.
+    -->
+
+
+    <!--
+      allowBackup defaults to true when it is not declared, which sends the
+      whole app data directory to the user's Google Drive: the vault, every
+      note in it, and the SQLite cache, all in plain text. For an app whose
+      entire premise is that notes stay on the device unless the user encrypts
+      and syncs them deliberately, that default is the opposite of what was
+      promised, and it would also make the Play Data Safety declaration false.
+
+      Turning it off also disables device-to-device transfer, so a user moving
+      to a new phone gets nothing. That is a real cost, and it is why an export
+      the user controls has to exist — not because backup is unwanted, but
+      because the only backup Android offers here is the wrong one.
+    -->
     <application
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.synabit"
+        android:localeConfig="@xml/locales_config"
+        android:theme="@style/Theme.synabit.Starting"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
@@ -18,12 +49,23 @@
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
             android:exported="true">
+            <!--
+              No LEANBACK_LAUNCHER. Declaring it tells Play this is an Android
+              TV app, which brings requirements this app does not meet — a TV
+              banner asset, and every screen reachable with a D-pad. It is
+              designed for touch. Claiming the form factor would either fail
+              review or, worse, pass it and put the app on televisions where it
+              cannot be operated.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <!-- AndroidTV support -->
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+
+            <!-- Long-press the launcher icon; see res/xml/shortcuts.xml. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             
             <!-- Custom URI Scheme for Google Drive OAuth -->
             <intent-filter>
@@ -50,6 +92,57 @@
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
+        <!--
+          Capture without opening the app.
+          
+          No window, no task of its own, gone from Recents: it reads the
+          intent, writes the text into the handoff directory and finishes, so
+          a person selecting a sentence while reading stays where they were.
+          Routing these through MainActivity worked but launched the whole app
+          to save one line, which is the friction this phase exists to remove.
+        -->
+        <activity
+            android:name=".CaptureActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:exported="true">
+
+            <intent-filter android:label="@string/capture_action">
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.synabit.app" />
+                
+                
+                
+                
+                
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+        </activity>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"
@@ -59,5 +152,44 @@
             android:name="android.support.FILE_PROVIDER_PATHS"
             android:resource="@xml/file_paths" />
         </provider>
+        <!--
+          The quick settings tile. Exported and permission-guarded in the way
+          the system requires: only the system may bind it, and it must be
+          able to.
+        -->
+        <service
+            android:name=".CaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_shortcut_quickcap"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!--
+          The typed reply from the notification. Not exported: only the system
+          delivers this, from a PendingIntent this app created.
+        -->
+        <receiver
+            android:name=".CaptureReplyReceiver"
+            android:exported="false" />
+
+        <!--
+          The home-screen widget. Exported because the launcher, not this app,
+          is what broadcasts the update.
+        -->
+        <receiver
+            android:name=".QuickCapWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quickcap_widget_info" />
+        </receiver>
+
     </application>
 </manifest>

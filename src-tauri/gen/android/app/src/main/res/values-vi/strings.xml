@@ -1,0 +1,27 @@
+<resources>
+    <!--
+      The app ships in Vietnamese too (see xml/locales_config.xml), and the
+      text-selection menu is the one piece of app text Android renders outside
+      the WebView — so it is the only place the app's own i18n cannot reach.
+    -->
+    <string name="capture_action">Lưu vào Synabit</string>
+    <string name="capture_saved">Đã lưu vào Synabit</string>
+    <string name="capture_empty">Không có gì để lưu</string>
+    <string name="shortcut_new_capture_short">Ghi nhanh</string>
+    <string name="shortcut_new_capture_long">Quick Cap mới</string>
+
+    <!-- The home-screen widget: its own placeholder, and what the widget
+         picker shows when the user is choosing one. -->
+    <string name="widget_hint">Ghi nhanh…</string>
+    <string name="widget_description">Ghi lại một ý nghĩ ngay từ màn hình chính</string>
+
+    <!-- The notification you can type into; see CaptureNotification.kt. -->
+    <string name="notification_title">Synabit</string>
+    <string name="notification_hint">Ghi lại một ý nghĩ</string>
+    <string name="notification_action">Ghi nhanh</string>
+    <string name="notification_channel">Ghi nhanh</string>
+    <string name="notification_channel_desc">Một thông báo im lặng, luôn ở đó, gõ được ghi chú vào mà không cần mở app.</string>
+
+    <!-- The quick settings tile. Short: the panel truncates hard. -->
+    <string name="tile_label">Ghi nhanh</string>
+</resources>

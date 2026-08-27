@@ -1,4 +1,38 @@
 <resources>
     <string name="app_name">Synabit</string>
     <string name="main_activity_title">Synabit</string>
+
+    <!--
+      What the text-selection menu says. Android shows the label of the
+      intent-filter, not the app, and a bare "Synabit" beside "Copy" and
+      "Translate" reads as a name rather than something to do. Short: the menu
+      truncates, and it competes with every other app that claims PROCESS_TEXT.
+    -->
+    <string name="capture_action">Save to Synabit</string>
+
+    <!-- Shown by the no-window capture activity, which has nothing else to say with. -->
+    <string name="capture_saved">Saved to Synabit</string>
+    <string name="capture_empty">Nothing to save</string>
+
+    <!--
+      The launcher long-press menu. Android truncates the short label hard, so
+      it carries the verb and the long one carries the rest.
+    -->
+    <string name="shortcut_new_capture_short">Capture</string>
+    <string name="shortcut_new_capture_long">New quick cap</string>
+
+    <!-- The home-screen widget: its own placeholder, and what the widget
+         picker shows when the user is choosing one. -->
+    <string name="widget_hint">Quick cap…</string>
+    <string name="widget_description">Capture a thought from the home screen</string>
+
+    <!-- The notification you can type into; see CaptureNotification.kt. -->
+    <string name="notification_title">Synabit</string>
+    <string name="notification_hint">Capture a thought</string>
+    <string name="notification_action">Quick cap</string>
+    <string name="notification_channel">Quick capture</string>
+    <string name="notification_channel_desc">A permanent, silent notification you can type a note into without opening the app.</string>
+
+    <!-- The quick settings tile. Short: the panel truncates hard. -->
+    <string name="tile_label">Quick cap</string>
 </resources>

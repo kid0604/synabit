@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Long-press the launcher icon and the compose box is one tap away, instead of
+  four: open, wait for the vault, find the tab, tap the field.
+
+  The target is a deep link rather than a bare activity launch, so the app
+  knows *why* it was opened. Without it the shortcut would drop the user on
+  whichever mini-app they last used.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="quickcap-new"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_quickcap"
+        android:shortcutShortLabel="@string/shortcut_new_capture_short"
+        android:shortcutLongLabel="@string/shortcut_new_capture_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="com.synabit.app://quickcap/compose"
+            android:targetPackage="com.synabit.app"
+            android:targetClass="com.synabit.app.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>

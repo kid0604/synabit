@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A home-screen widget cannot contain a real text field — RemoteViews has no
+  EditText — so this is a field-shaped button. Tapping anywhere on it opens
+  the app's compose box, already focused.
+
+  That is not a compromise so much as the point: the widget's job is to be
+  visible without opening anything, and to remove the hunt for the app.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_surface"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="18dp"
+    android:paddingEnd="18dp">
+
+    <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/widget_hint"
+        android:textColor="@color/widget_hint"
+        android:textSize="15sp" />
+
+    <ImageView
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_marginStart="12dp"
+        android:contentDescription="@string/widget_description"
+        android:src="@drawable/ic_shortcut_quickcap"
+        android:tint="@color/widget_glyph" />
+</LinearLayout>

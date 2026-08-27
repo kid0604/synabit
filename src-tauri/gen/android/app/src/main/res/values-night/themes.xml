@@ -1,6 +1,12 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!-- Same structure as values/themes.xml; `app_background` resolves to the
+         dark ground colour through values-night/colors.xml. -->
     <style name="Theme.synabit" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <item name="android:windowBackground">@color/app_background</item>
+    </style>
+
+    <style name="Theme.synabit.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/app_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.synabit</item>
     </style>
 </resources>

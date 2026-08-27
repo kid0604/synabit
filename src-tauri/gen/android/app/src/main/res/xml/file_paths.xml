@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  What FileProvider may hand to another app as a content:// URI.
+
+  This used to be `<external-path path="." />`, which is the *root of shared
+  external storage* — every photo, download and document on the device, offered
+  up whether or not this app has anything to do with it. Nothing needed that:
+  the vault lives inside the app's own storage, so the blanket grant covered
+  everything except the files actually being shared.
+
+  The three below are the app's own directories and nothing else. `files-path`
+  is where the vault sits today; `external-files-path` is where `documentDir()`
+  resolves on Android, so a vault moved there keeps working without another
+  edit here.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <files-path name="app_files" path="." />
+  <external-files-path name="app_external_files" path="." />
+  <cache-path name="app_cache" path="." />
 </paths>

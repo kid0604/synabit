@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Permissions every platform needs. updater:default is deliberately NOT here — it is granted only in desktop.json, because Google Play forbids an app that downloads and installs its own updates, and a capability without a `platforms` field applies to Android too. The frontend already refuses to check for updates on mobile; this is the second lock, not the first.",
   "windows": [
     "*"
   ],
@@ -47,7 +47,6 @@
     },
     "opener:allow-open-url",
     "notification:default",
-    "updater:default",
     "process:default"
   ]
 }

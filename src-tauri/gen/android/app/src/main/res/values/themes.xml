@@ -1,6 +1,31 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!--
+      Cold start on this app is not quick: the WebView has to come up, Rust has
+      to open SQLite and run migrations, and a large JavaScript bundle has to
+      parse. With no theme of its own the window was plain white for all of it,
+      which on a slower phone is several seconds of nothing.
+
+      `windowBackground` is the fix that matters. It paints the app's own ground
+      colour from the first frame, so the gap is the app's colour rather than a
+      flash of white — and it applies again in every moment the WebView has not
+      painted yet, not only at launch.
+    -->
     <style name="Theme.synabit" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <item name="android:windowBackground">@color/app_background</item>
+    </style>
+
+    <!--
+      The theme the launcher actually starts. Hands over to Theme.synabit once
+      the activity is up; MainActivity calls installSplashScreen() to make that
+      handover happen at the right moment.
+
+      No animated icon on purpose: an adaptive icon's foreground carries a large
+      safe-area margin and renders oversized here, and that is not something to
+      guess at without seeing it on a device. A clean colour field is a better
+      answer than a badly cropped logo.
+    -->
+    <style name="Theme.synabit.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/app_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.synabit</item>
     </style>
 </resources>

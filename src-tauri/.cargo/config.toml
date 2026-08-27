@@ -1,0 +1,32 @@
+# Align Android shared libraries to 16 KB pages.
+#
+# Google Play requires 16 KB page-size support for apps targeting Android 15 and
+# above. A library linked with the older 4 KB maximum will not load at all on a
+# 16 KB device, which is a crash on startup rather than a degraded experience.
+#
+# Recent NDKs default to this, but the NDK used here is chosen by whatever the
+# Tauri CLI resolves at build time rather than pinned by this repository, so the
+# flag is set explicitly instead of relying on that default. Setting it when the
+# linker already does it is harmless.
+#
+# Caveat worth knowing: a `RUSTFLAGS` environment variable replaces these rather
+# than adding to them. If a build script or CI job sets `RUSTFLAGS`, this
+# alignment is silently lost — verify the built library rather than assuming:
+#
+#   $ANDROID_HOME/ndk/<version>/toolchains/llvm/prebuilt/*/bin/llvm-readelf \
+#       -l src-tauri/target/aarch64-linux-android/release/libsynabit_lib.so \
+#       | grep LOAD
+#
+# Every LOAD segment must show an alignment of 0x4000 (16384) or larger.
+
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.i686-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

@@ -1,3 +1,18 @@
+# ---------------------------------------------------------------------------
+# SecureStore is reached only from Rust, by name, over JNI.
+#
+# R8 has no way to see that. The generated proguard-wry.pro carries
+# `-keep class com.synabit.app.* { native <methods>; }`, which keeps the class
+# itself but only its *native* members — and saveSecret/getSecret are ordinary
+# static Java methods with zero callers on the Java side. R8 therefore removes
+# or renames them, JNI's method lookup fails, and the app cannot read its own
+# encryption key.
+#
+# Keep every member. The class is two methods; there is nothing to gain by
+# being narrower, and being narrower is how this broke in the first place.
+# ---------------------------------------------------------------------------
+-keep class com.synabit.app.SecureStore { *; }
+
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.

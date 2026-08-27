@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The languages the app actually ships, so Android 13 and later can offer it in
+  the per-app language picker under system settings.
+
+  Without this the app is absent from that list, and a user whose phone is in
+  English cannot read Synabit in Vietnamese without changing their whole device
+  — despite both translations being complete and shipped.
+
+  Keep in step with src/i18n/locales/.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="vi" />
+</locale-config>
