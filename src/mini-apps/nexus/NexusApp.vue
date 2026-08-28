@@ -76,11 +76,11 @@ interface GraphData {
 const allItems = ref<NexusItem[]>([]);
 const graphData = ref<GraphData | null>(null);
 /**
- * The graph's own filter, which is not the omnibar: typing in the omnibar
- * opens the results overlay *over* the graph, so it can say nothing about what
- * the graph should show. Both speak the same query language.
+ * Ids the current query matched, for the graph to narrow itself to. Null when
+ * nothing is being searched, which is not the same as an empty array — that
+ * one means the query matched nothing, and the graph should say so by being
+ * empty rather than by showing everything.
  */
-const graphQuery = ref('');
 const graphMatchIds = ref<string[] | null>(null);
 const searchResults = ref<SearchResult[]>([]);
 const searchQuery = ref('');
@@ -102,44 +102,6 @@ const hideSyntaxHints = () => {
 const selectedItem = ref<NexusItem | null>(null);
 
 let searchTimeout: ReturnType<typeof setTimeout>;
-let graphFilterTimeout: ReturnType<typeof setTimeout>;
-let currentGraphFilterId = 0;
-
-/**
- * Run the graph's filter query. Answers can arrive out of order, so a stale
- * one is dropped rather than overwriting the newer set — the same guard the
- * omnibar search uses.
- */
-const runGraphFilter = async () => {
-    const query = graphQuery.value.trim();
-    if (!query) {
-        currentGraphFilterId++;   // strand any answer still in flight
-        graphMatchIds.value = null;
-        return;
-    }
-
-    const filterId = ++currentGraphFilterId;
-    try {
-        const ids = await invoke<string[]>('search_nexus_ids', {
-            vaultPath: props.vaultPath,
-            query,
-            caseSensitive: caseSensitive.value,
-        });
-        if (filterId === currentGraphFilterId) graphMatchIds.value = ids;
-    } catch (e) {
-        logger.error("Failed to filter graph", e);
-    }
-};
-
-const onGraphQuery = (query: string) => {
-    graphQuery.value = query;
-    clearTimeout(graphFilterTimeout);
-    if (!query.trim()) {
-        runGraphFilter();
-        return;
-    }
-    graphFilterTimeout = setTimeout(runGraphFilter, 250);
-};
 
 const loadAllData = async () => {
     try {
@@ -149,9 +111,6 @@ const loadAllData = async () => {
         ]);
         allItems.value = items;
         graphData.value = data;
-        // The vault changed under the filter: its matches may name nodes that
-        // no longer exist, or miss ones that now qualify.
-        if (graphQuery.value.trim()) await runGraphFilter();
     } catch (e) {
         logger.error("Failed to load nexus data", e);
     }
@@ -161,24 +120,37 @@ let currentSearchId = 0;
 
 const performSearch = async () => {
     if (!searchQuery.value.trim()) {
+        currentSearchId++;   // strand any answer still in flight
         searchResults.value = [];
         totalCount.value = 0;
         queryTimeMs.value = 0;
+        graphMatchIds.value = null;
         return;
     }
 
     isSearching.value = true;
     const searchId = ++currentSearchId;
     try {
-        const response = await invoke<SearchResponse>('search_nexus', { 
-            vaultPath: props.vaultPath, 
-            query: searchQuery.value,
-            caseSensitive: caseSensitive.value,
-        });
+        // Two questions about one query. The list shows the first page, ranked
+        // and with snippets; the graph needs every id that matched, which is
+        // why it cannot simply reuse the page the list is showing.
+        const [response, matchIds] = await Promise.all([
+            invoke<SearchResponse>('search_nexus', {
+                vaultPath: props.vaultPath,
+                query: searchQuery.value,
+                caseSensitive: caseSensitive.value,
+            }),
+            invoke<string[]>('search_nexus_ids', {
+                vaultPath: props.vaultPath,
+                query: searchQuery.value,
+                caseSensitive: caseSensitive.value,
+            }),
+        ]);
         if (searchId === currentSearchId) {
             searchResults.value = response.results;
             totalCount.value = response.total_count;
             queryTimeMs.value = response.query_time_ms;
+            graphMatchIds.value = matchIds;
         }
     } catch(e) { logger.error(String(e)); } finally {
         if (searchId === currentSearchId) {
@@ -196,7 +168,6 @@ watch(searchQuery, () => {
 
 watch(caseSensitive, () => {
     if (searchQuery.value.trim()) performSearch();
-    if (graphQuery.value.trim()) runGraphFilter();
 });
 
 // Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
@@ -206,23 +177,27 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
     _debounceTimer = setTimeout(fn, ms);
 };
 
+/**
+ * Re-read the vault, and re-run the query if one is open. The query has to go
+ * with it: its results name nodes, and after a reload some of those nodes may
+ * be gone and others may now qualify. The graph is drawn from that set, so a
+ * stale one shows a picture of a vault that no longer exists.
+ */
+const reload = () => {
+    loadAllData();
+    if (searchQuery.value.trim()) performSearch();
+};
+
 onMounted(() => {
     loadAllData();
-    bus.on('vault:file-modified', () => {
-        debouncedLoad(() => { loadAllData(); if (searchQuery.value) performSearch(); });
-    });
-    bus.on('vault:file-created-deleted', () => {
-        debouncedLoad(() => { loadAllData(); if (searchQuery.value) performSearch(); });
-    });
-
-    bus.on('vault:sync-completed', () => {
-        debouncedLoad(() => loadAllData());
-    });
+    bus.on('vault:file-modified', () => debouncedLoad(reload));
+    bus.on('vault:file-created-deleted', () => debouncedLoad(reload));
+    bus.on('vault:sync-completed', () => debouncedLoad(reload));
 
     // Cross-app subscribers: reload when nodes are mutated elsewhere
-    bus.on('node:created', () => { debouncedLoad(() => loadAllData()); });
-    bus.on('node:updated', () => { debouncedLoad(() => loadAllData()); });
-    bus.on('node:deleted', () => { debouncedLoad(() => loadAllData()); });
+    bus.on('node:created', () => debouncedLoad(reload));
+    bus.on('node:updated', () => debouncedLoad(reload));
+    bus.on('node:deleted', () => debouncedLoad(reload));
 });
 
 const getTypeIcon = (type: string) => {
@@ -307,8 +282,11 @@ const cleanSnippet = (snippet: string) => {
         
         <template v-if="currentView === 'graph_search'">
             <!-- Background Graph View -->
-        <div class="absolute inset-0 z-0">
-            <GraphView v-if="graphData" :graph-data="graphData" :match-ids="graphMatchIds" @node-click="openPreviewFromGraph" @filter-query="onGraphQuery" />
+        <div
+            class="absolute inset-y-0 right-0 z-0"
+            :class="searchQuery ? 'left-0 sm:left-[420px] lg:left-[480px]' : 'left-0'"
+        >
+            <GraphView v-if="graphData" :graph-data="graphData" :match-ids="graphMatchIds" @node-click="openPreviewFromGraph" />
             <div v-else class="w-full h-full flex items-center justify-center">
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
             </div>
@@ -372,12 +350,15 @@ const cleanSnippet = (snippet: string) => {
             </div>
         </div>
 
-        <!-- Search Results Overlay -->
-        <div v-if="searchQuery" class="absolute inset-0 z-10 bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in duration-200">
+        <!-- Search Results Column
+             Full width on a phone, where there is no room for both; a column
+             beside the graph everywhere else, so one query is answered as a
+             list and as a picture at the same time. -->
+        <div v-if="searchQuery" class="absolute inset-y-0 left-0 z-10 w-full sm:w-[420px] lg:w-[480px] sm:border-r border-gray-200 dark:border-[#2c2c2e] bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in slide-in-from-left-4 duration-200">
             <!-- OmniBar Backdrop Spacer to prevent scroll overlap -->
             <div class="h-[116px] flex-shrink-0 w-full bg-[#fdfdfc]/90 dark:bg-[#1a1a1c]/90 backdrop-blur-3xl border-b border-gray-200 dark:border-[#2c2c2e] z-10 shadow-sm"></div>
             
-            <div class="flex-1 overflow-y-auto px-4 sm:px-8 pb-16 pt-8">
+            <div class="flex-1 overflow-y-auto px-4 sm:px-6 pb-16 pt-8">
                 <div class="max-w-3xl mx-auto">
                 <div v-if="isSearching" class="text-center py-10 opacity-50 flex items-center justify-center gap-2">
                     <div class="w-5 h-5 rounded-full border-2 border-black dark:border-white border-t-transparent animate-spin"></div>

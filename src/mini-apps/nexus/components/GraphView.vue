@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
-import { Settings2, Eye, GitMerge, ListFilter, Focus, Search, X } from 'lucide-vue-next';
+import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
 
 interface GraphNode {
     id: string;
@@ -33,7 +33,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'node-click', node: GraphNode): void
-    (e: 'filter-query', query: string): void
 }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -44,7 +43,6 @@ const isPanelOpen = ref(false);
 const activeTab = ref<'filters' | 'display' | 'forces'>('filters');
 
 // Filters
-const filterQuery = ref('');
 const showNotes = ref(true);
 const showTasks = ref(true);
 const showEvents = ref(true);
@@ -86,6 +84,13 @@ let hoveredNode: SimNode | null = null;
 let dragSubject: SimNode | null = null;
 let currentNodes: SimNode[] = [];
 let currentLinks: SimLink[] = [];
+
+/**
+ * How many nodes the last rebuild drew. Not the size of the match set: some
+ * matches are of kinds the graph never shows, and tag and ghost nodes are
+ * drawn without ever having matched anything.
+ */
+const drawnCount = ref(0);
 
 /** Canvas size in CSS pixels. The backing store is this times the pixel ratio. */
 let viewWidth = 0;
@@ -397,6 +402,7 @@ const rebuildGraph = () => {
     const { nodes, links, settled } = getFilteredData();
     currentNodes = nodes;
     currentLinks = links;
+    drawnCount.value = nodes.length;
     hoveredNode = null;
 
     const linkForce = simulation.force("link") as d3.ForceLink<SimNode, SimLink>;
@@ -575,8 +581,6 @@ watch([showNotes, showTasks, showEvents, showTags, showFiles, showPeople, showOr
 // The query result arrives from the parent as a new array each time.
 watch(() => props.matchIds, () => rebuildGraph());
 
-watch(filterQuery, (q) => emit('filter-query', q));
-
 // A vault reload only matters if the graph actually changed.
 watch(() => props.graphData, (data) => {
     const signature = graphSignature(data);
@@ -619,6 +623,14 @@ onUnmounted(() => {
          aria-label="Is Panel Open = !is Panel Open">
             <Settings2 class="w-5 h-5 text-gray-700 dark:text-gray-300" />
         </button>
+
+        <!-- Match count, while the search is narrowing the graph -->
+        <div
+            v-if="matchIds"
+            class="absolute bottom-24 left-6 z-20 px-3 py-1.5 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg border border-gray-200 dark:border-[#3a3a3c] text-xs font-semibold text-gray-600 dark:text-gray-300"
+        >
+            {{ drawnCount }} {{ drawnCount === 1 ? 'node' : 'nodes' }}
+        </div>
 
         <!-- Fit View Button -->
         <button 
@@ -664,33 +676,6 @@ onUnmounted(() => {
             <div class="p-6 overflow-y-auto">
                 <!-- Filters Tab -->
                 <div v-show="activeTab === 'filters'" class="space-y-4">
-                    <h3 class="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Query</h3>
-                    <div class="relative">
-                        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                        <input
-                            v-model="filterQuery"
-                            type="text"
-                            class="w-full h-9 pl-9 pr-8 bg-gray-50 dark:bg-[#1a1a1c] border border-gray-200 dark:border-[#3a3a3c] rounded-lg text-[13px] text-black dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                            placeholder="is:task #urgent"
-                            aria-label="Filter graph by query"
-                            @keydown.esc="filterQuery = ''"
-                        />
-                        <button
-                            v-if="filterQuery"
-                            @click="filterQuery = ''"
-                            class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-black dark:hover:text-white"
-                            aria-label="Clear filter query"
-                        >
-                            <X class="w-3.5 h-3.5" />
-                        </button>
-                    </div>
-                    <p v-if="filterQuery && matchIds" class="text-[11px] text-gray-400">
-                        {{ matchIds.length }} {{ matchIds.length === 1 ? 'match' : 'matches' }}, same syntax as search
-                    </p>
-                    <p v-else class="text-[11px] text-gray-400">Same syntax as search: <code class="font-mono">is:</code>, <code class="font-mono">#tag</code>, <code class="font-mono">status:</code></p>
-
-                    <div class="h-px bg-gray-200 dark:bg-[#3a3a3c] my-4"></div>
-
                     <h3 class="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Node Types</h3>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">

@@ -230,17 +230,6 @@ describe('GraphView', () => {
     wrapper.unmount();
   });
 
-  it('hands the query to the parent to run', async () => {
-    const wrapper = await mountGraph();
-
-    await wrapper.find('input[aria-label="Filter graph by query"]').setValue('is:task #urgent');
-    await nextTick();
-
-    expect(wrapper.emitted('filter-query')).toEqual([['is:task #urgent']]);
-
-    wrapper.unmount();
-  });
-
   it('lays out a graph that did change', async () => {
     const wrapper = await mountGraph();
     const data = graphData();
