@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { nextTick } from 'vue';
 import { mount } from '@vue/test-utils';
 import GraphView from '../GraphView.vue';
+import { iconPartsFor } from '../nodeIcons';
 
 /**
  * The graph draws to a canvas, so what it did is only observable in the calls it
@@ -12,6 +13,10 @@ interface Frame {
   transform: number[];
   circles: Array<{ x: number, y: number, r: number }>;
   labels: Array<{ text: string, font: string }>;
+  /** Icon subpaths drawn this frame. Plain dots and links draw no path. */
+  iconParts: number;
+  /** Discs actually painted, as opposed to circle paths merely built. */
+  discFills: number;
 }
 
 const last = (frames: Frame[]): Frame | undefined => frames[frames.length - 1];
@@ -21,15 +26,21 @@ const recorder = () => {
   let font = '';
   const ctx: any = {
     canvas: null as HTMLCanvasElement | null,
-    setTransform: (...t: number[]) => frames.push({ transform: t, circles: [], labels: [] }),
+    setTransform: (...t: number[]) => frames.push({ transform: t, circles: [], labels: [], iconParts: 0, discFills: 0 }),
     clearRect: () => {}, translate: () => {}, scale: () => {},
     save: () => {}, restore: () => {}, beginPath: () => {},
-    moveTo: () => {}, lineTo: () => {}, stroke: () => {}, fill: () => {},
+    moveTo: () => {}, lineTo: () => {},
+    // Only icons pass a path; links and dots stroke the current path.
+    stroke: (path?: unknown) => { if (path) frames[frames.length - 1].iconParts += 1; },
+    fill: (path?: unknown) => {
+      const frame = frames[frames.length - 1];
+      if (path) frame.iconParts += 1; else frame.discFills += 1;
+    },
     arc: (x: number, y: number, r: number) => last(frames)?.circles.push({ x, y, r }),
     fillText: (text: string) => last(frames)?.labels.push({ text, font }),
   };
   Object.defineProperty(ctx, 'font', { get: () => font, set: (v) => { font = v; } });
-  for (const prop of ['fillStyle', 'strokeStyle', 'lineWidth', 'globalAlpha']) {
+  for (const prop of ['fillStyle', 'strokeStyle', 'lineWidth', 'globalAlpha', 'lineCap', 'lineJoin']) {
     Object.defineProperty(ctx, prop, { get: () => undefined, set: () => {} });
   }
   return { ctx, frames };
@@ -69,6 +80,12 @@ const filterFixture = () => ({
   ],
 });
 
+/** One unconnected node, so its drawn size follows only the Node Size slider. */
+const oneNode = (item_type: string) => ({
+  nodes: [{ id: 'solo', item_type, title: 'Solo', tags: [] }],
+  links: [],
+});
+
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** Positions in a frame, keyed so two frames can be compared node by node. */
@@ -82,6 +99,11 @@ describe('GraphView', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(rec.ctx);
     vi.stubGlobal('ResizeObserver', class {
       observe() {} unobserve() {} disconnect() {}
+    });
+    // jsdom has no canvas, so no Path2D either; the icon geometry only needs
+    // it to exist and accept the calls.
+    vi.stubGlobal('Path2D', class {
+      arc() {} rect() {} roundRect() {} moveTo() {} lineTo() {}
     });
   });
 
@@ -226,6 +248,40 @@ describe('GraphView', () => {
     await nextTick();
 
     expect(positions(last(rec.frames)!)).toEqual(positions(before));
+
+    wrapper.unmount();
+  });
+
+  it('grows a node into its type icon once it is drawn big enough', async () => {
+    const wrapper = mount(GraphView, { props: { graphData: oneNode('note') } });
+    await wait(150);
+
+    // A dot at its default size: too small to hold a glyph.
+    expect(last(rec.frames)!.circles).toHaveLength(1);
+    expect(last(rec.frames)!.iconParts).toBe(0);
+
+    await range(wrapper, 'Node size').setValue(3);
+    await nextTick();
+
+    // Now large enough — and the disc is still painted underneath, so colour
+    // keeps carrying the type at every size.
+    expect(last(rec.frames)!.circles).toHaveLength(1);
+    expect(last(rec.frames)!.discFills).toBe(1);
+    expect(last(rec.frames)!.iconParts).toBe(iconPartsFor('note')!.length);
+
+    wrapper.unmount();
+  });
+
+  it('leaves a type it has no glyph for as a plain dot', async () => {
+    const wrapper = mount(GraphView, { props: { graphData: oneNode('whiteboard') } });
+    await wait(150);
+
+    await range(wrapper, 'Node size').setValue(3);
+    await nextTick();
+
+    expect(iconPartsFor('whiteboard')).toBeNull();
+    expect(last(rec.frames)!.circles).toHaveLength(1);
+    expect(last(rec.frames)!.iconParts).toBe(0);
 
     wrapper.unmount();
   });

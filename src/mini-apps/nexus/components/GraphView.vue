@@ -2,6 +2,7 @@
 import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
+import { iconPartsFor } from './nodeIcons';
 
 interface GraphNode {
     id: string;
@@ -110,6 +111,14 @@ const positions = new Map<string, { x: number, y: number }>();
  * fingerprints keeps those reloads from disturbing the layout at all.
  */
 let lastSignature = '';
+
+/**
+ * Screen radius, in pixels, at which a node stops being only a dot: the icon
+ * fades in from the first and is fully drawn by the second. Below that there
+ * is no room for a glyph, and a coloured dot says everything that fits.
+ */
+const ICON_MIN_PX = 9;
+const ICON_FULL_PX = 13;
 
 const colorMap: Record<string, string> = {
     'note': '#3b82f6',     // blue
@@ -544,6 +553,60 @@ const draw = () => {
         ctx.globalAlpha = 1.0;
     });
 
+    const k = transform.k;
+
+    // Draw Icons
+    //
+    // A node large enough on screen grows from a coloured dot into the glyph
+    // its type already wears everywhere else in Nexus. Screen size is what
+    // decides, so zooming in reveals icons and zooming out puts them away —
+    // and the dot underneath never goes anywhere, so colour still carries the
+    // type at every size.
+    //
+    // Icons cost several strokes each, and zooming in far enough to see them is
+    // exactly when most of the graph has left the screen, so only what is on
+    // screen is drawn.
+    const view = {
+        left: -transform.x / k - 50 / k,
+        top: -transform.y / k - 50 / k,
+        right: (viewWidth - transform.x) / k + 50 / k,
+        bottom: (viewHeight - transform.y) / k + 50 / k,
+    };
+
+    currentNodes.forEach(node => {
+        const r = node.val * 1.5 * nodeSize.value;
+        const iconFade = Math.min(1, (r * k - ICON_MIN_PX) / (ICON_FULL_PX - ICON_MIN_PX));
+        if (iconFade <= 0) return;
+        if (node.x! < view.left || node.x! > view.right) return;
+        if (node.y! < view.top || node.y! > view.bottom) return;
+
+        const parts = iconPartsFor(node.item_type);
+        if (!parts) return;
+
+        let alpha = iconFade;
+        if (isHovering && !connectedNodes.has(node.id)) alpha *= 0.2;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = '#fff';
+        ctx.fillStyle = '#fff';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 2;   // scaled with the icon, as an SVG stroke would be
+
+        // The glyph lives in a 24x24 box; sit it inside the circle of radius r.
+        const scale = (r * 1.4) / 24;
+        ctx.translate(node.x!, node.y!);
+        ctx.scale(scale, scale);
+        ctx.translate(-12, -12);
+
+        for (const part of parts) {
+            if (part.filled) ctx.fill(part.path);
+            else ctx.stroke(part.path);
+        }
+        ctx.restore();
+    });
+
     // Draw Labels
     //
     // Text is sized in screen space: the canvas is scaled by `transform.k`, so
@@ -551,7 +614,6 @@ const draw = () => {
     // reader has zoomed. Zoomed far out there is no room for text at all, so
     // labels fade to nothing below the threshold — only the hovered node keeps
     // its own, which is the only one being asked for down there.
-    const k = transform.k;
     const fade = Math.min(1, Math.max(0, (k - textFade.value) / 0.3));
     currentNodes.forEach(node => {
         const isHovered = node === hoveredNode;
