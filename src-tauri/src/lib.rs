@@ -683,6 +683,7 @@ pub fn run() {
             nexus::get_nexus_item,
             nexus::get_nexus_graph_data,
             nexus::search_nexus,
+            nexus::search_nexus_ids,
             nexus::run_node_query,
             nexus::search_notes,
             nexus::search_tasks,

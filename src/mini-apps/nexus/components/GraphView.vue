@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
-import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
+import { Settings2, Eye, GitMerge, ListFilter, Focus, Search, X } from 'lucide-vue-next';
 
 interface GraphNode {
     id: string;
@@ -22,10 +22,18 @@ interface GraphData {
 
 const props = defineProps<{
     graphData: GraphData;
+    /**
+     * Ids matching the current filter query, or null when no query is running.
+     * The search itself belongs to the parent — this component draws what it
+     * is given — but an empty array is a real answer (nothing matched) and is
+     * drawn as an empty graph, not as no filter.
+     */
+    matchIds?: string[] | null;
 }>();
 
 const emit = defineEmits<{
     (e: 'node-click', node: GraphNode): void
+    (e: 'filter-query', query: string): void
 }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -36,6 +44,7 @@ const isPanelOpen = ref(false);
 const activeTab = ref<'filters' | 'display' | 'forces'>('filters');
 
 // Filters
+const filterQuery = ref('');
 const showNotes = ref(true);
 const showTasks = ref(true);
 const showEvents = ref(true);
@@ -134,16 +143,47 @@ const rememberPositions = () => {
     }
 };
 
+/**
+ * Tag and ghost nodes the query cannot speak for.
+ *
+ * A filter query is answered by the search index, which knows about notes,
+ * tasks, events, files and people — the things that have text. Tags and ghosts
+ * are derived: the graph invents them from properties and unresolved links, so
+ * no query will ever return one. Dropping them would leave every match sitting
+ * alone with the links that explain it cut away, so a derived node is kept
+ * whenever something that did match is attached to it.
+ */
+const derivedNodesToKeep = (matched: Set<string>) => {
+    const derivedTypes = new Map<string, string>();
+    for (const node of props.graphData.nodes) {
+        if (node.item_type === 'tag' || node.item_type === 'ghost') {
+            derivedTypes.set(node.id, node.item_type);
+        }
+    }
+
+    const keep = new Set<string>();
+    for (const link of props.graphData.links) {
+        if (matched.has(link.source) && derivedTypes.has(link.target)) keep.add(link.target);
+        if (matched.has(link.target) && derivedTypes.has(link.source)) keep.add(link.source);
+    }
+    return keep;
+};
+
 const getFilteredData = () => {
     let nodes: SimNode[] = [];
     const links: SimLink[] = [];
     const nodeMap = new Map<string, SimNode>();
     let restoredCount = 0;
 
+    const matched = props.matchIds ? new Set(props.matchIds) : null;
+    const derivedKeep = matched ? derivedNodesToKeep(matched) : null;
+
     // Pass 1: Add allowed nodes
     for (const node of props.graphData.nodes) {
         // Exclude PDF annotations from the graph
         if (node.item_type.startsWith('pdf_')) continue;
+
+        if (matched && !matched.has(node.id) && !derivedKeep!.has(node.id)) continue;
 
         if (!showNotes.value && (node.item_type === 'note' || node.item_type === 'ghost')) continue;
         if (!showTasks.value && node.item_type === 'task') continue;
@@ -532,6 +572,11 @@ watch([showNotes, showTasks, showEvents, showTags, showFiles, showPeople, showOr
     rebuildGraph();
 });
 
+// The query result arrives from the parent as a new array each time.
+watch(() => props.matchIds, () => rebuildGraph());
+
+watch(filterQuery, (q) => emit('filter-query', q));
+
 // A vault reload only matters if the graph actually changed.
 watch(() => props.graphData, (data) => {
     const signature = graphSignature(data);
@@ -619,6 +664,33 @@ onUnmounted(() => {
             <div class="p-6 overflow-y-auto">
                 <!-- Filters Tab -->
                 <div v-show="activeTab === 'filters'" class="space-y-4">
+                    <h3 class="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Query</h3>
+                    <div class="relative">
+                        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        <input
+                            v-model="filterQuery"
+                            type="text"
+                            class="w-full h-9 pl-9 pr-8 bg-gray-50 dark:bg-[#1a1a1c] border border-gray-200 dark:border-[#3a3a3c] rounded-lg text-[13px] text-black dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            placeholder="is:task #urgent"
+                            aria-label="Filter graph by query"
+                            @keydown.esc="filterQuery = ''"
+                        />
+                        <button
+                            v-if="filterQuery"
+                            @click="filterQuery = ''"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-black dark:hover:text-white"
+                            aria-label="Clear filter query"
+                        >
+                            <X class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                    <p v-if="filterQuery && matchIds" class="text-[11px] text-gray-400">
+                        {{ matchIds.length }} {{ matchIds.length === 1 ? 'match' : 'matches' }}, same syntax as search
+                    </p>
+                    <p v-else class="text-[11px] text-gray-400">Same syntax as search: <code class="font-mono">is:</code>, <code class="font-mono">#tag</code>, <code class="font-mono">status:</code></p>
+
+                    <div class="h-px bg-gray-200 dark:bg-[#3a3a3c] my-4"></div>
+
                     <h3 class="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Node Types</h3>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">

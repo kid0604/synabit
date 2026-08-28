@@ -75,6 +75,13 @@ interface GraphData {
 
 const allItems = ref<NexusItem[]>([]);
 const graphData = ref<GraphData | null>(null);
+/**
+ * The graph's own filter, which is not the omnibar: typing in the omnibar
+ * opens the results overlay *over* the graph, so it can say nothing about what
+ * the graph should show. Both speak the same query language.
+ */
+const graphQuery = ref('');
+const graphMatchIds = ref<string[] | null>(null);
 const searchResults = ref<SearchResult[]>([]);
 const searchQuery = ref('');
 const isSearching = ref(false);
@@ -95,6 +102,44 @@ const hideSyntaxHints = () => {
 const selectedItem = ref<NexusItem | null>(null);
 
 let searchTimeout: ReturnType<typeof setTimeout>;
+let graphFilterTimeout: ReturnType<typeof setTimeout>;
+let currentGraphFilterId = 0;
+
+/**
+ * Run the graph's filter query. Answers can arrive out of order, so a stale
+ * one is dropped rather than overwriting the newer set — the same guard the
+ * omnibar search uses.
+ */
+const runGraphFilter = async () => {
+    const query = graphQuery.value.trim();
+    if (!query) {
+        currentGraphFilterId++;   // strand any answer still in flight
+        graphMatchIds.value = null;
+        return;
+    }
+
+    const filterId = ++currentGraphFilterId;
+    try {
+        const ids = await invoke<string[]>('search_nexus_ids', {
+            vaultPath: props.vaultPath,
+            query,
+            caseSensitive: caseSensitive.value,
+        });
+        if (filterId === currentGraphFilterId) graphMatchIds.value = ids;
+    } catch (e) {
+        logger.error("Failed to filter graph", e);
+    }
+};
+
+const onGraphQuery = (query: string) => {
+    graphQuery.value = query;
+    clearTimeout(graphFilterTimeout);
+    if (!query.trim()) {
+        runGraphFilter();
+        return;
+    }
+    graphFilterTimeout = setTimeout(runGraphFilter, 250);
+};
 
 const loadAllData = async () => {
     try {
@@ -104,6 +149,9 @@ const loadAllData = async () => {
         ]);
         allItems.value = items;
         graphData.value = data;
+        // The vault changed under the filter: its matches may name nodes that
+        // no longer exist, or miss ones that now qualify.
+        if (graphQuery.value.trim()) await runGraphFilter();
     } catch (e) {
         logger.error("Failed to load nexus data", e);
     }
@@ -148,6 +196,7 @@ watch(searchQuery, () => {
 
 watch(caseSensitive, () => {
     if (searchQuery.value.trim()) performSearch();
+    if (graphQuery.value.trim()) runGraphFilter();
 });
 
 // Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
@@ -259,7 +308,7 @@ const cleanSnippet = (snippet: string) => {
         <template v-if="currentView === 'graph_search'">
             <!-- Background Graph View -->
         <div class="absolute inset-0 z-0">
-            <GraphView v-if="graphData" :graph-data="graphData" @node-click="openPreviewFromGraph" />
+            <GraphView v-if="graphData" :graph-data="graphData" :match-ids="graphMatchIds" @node-click="openPreviewFromGraph" @filter-query="onGraphQuery" />
             <div v-else class="w-full h-full flex items-center justify-center">
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
             </div>

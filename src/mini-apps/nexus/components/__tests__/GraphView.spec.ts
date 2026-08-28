@@ -46,6 +46,29 @@ const graphData = () => {
   return { nodes, links };
 };
 
+/**
+ * A hand-built graph for the filter tests: two notes and a task, with a tag on
+ * each note and one unresolved link, so "what survives a filter" has a single
+ * obvious answer.
+ */
+const filterFixture = () => ({
+  nodes: [
+    { id: 'a', item_type: 'note', title: 'A', tags: [] },
+    { id: 'b', item_type: 'note', title: 'B', tags: [] },
+    { id: 'c', item_type: 'task', title: 'C', tags: [] },
+    { id: 'tag-x', item_type: 'tag', title: '#x', tags: [] },
+    { id: 'tag-y', item_type: 'tag', title: '#y', tags: [] },
+    { id: 'ghost-z', item_type: 'ghost', title: 'Z', tags: [] },
+  ],
+  links: [
+    { source: 'a', target: 'tag-x' },
+    { source: 'b', target: 'tag-y' },
+    { source: 'a', target: 'ghost-z' },
+    { source: 'a', target: 'b' },
+    { source: 'c', target: 'b' },
+  ],
+});
+
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** Positions in a frame, keyed so two frames can be compared node by node. */
@@ -75,6 +98,18 @@ describe('GraphView', () => {
 
   const range = (wrapper: any, label: string) =>
     wrapper.findAll('input[type="range"]').find((i: any) => i.attributes('aria-label') === label)!;
+
+  const toggle = (wrapper: any, text: string) =>
+    wrapper.findAll('label').find((l: any) => l.text().trim() === text)!.find('input[type="checkbox"]');
+
+  /** Titles of the nodes drawn in the last frame, with labels forced on. */
+  const drawnTitles = async (wrapper: any) => {
+    if (!(toggle(wrapper, 'Show Labels').element as HTMLInputElement).checked) {
+      await toggle(wrapper, 'Show Labels').setValue(true);
+      await nextTick();
+    }
+    return last(rec.frames)!.labels.map(l => l.text).sort();
+  };
 
   it('draws every node once the layout starts', async () => {
     const wrapper = await mountGraph();
@@ -122,7 +157,7 @@ describe('GraphView', () => {
     const beforeByTitle = new Map(before.circles.map((c, i) => [before.circles[i], c]));
     expect(beforeByTitle.size).toBe(20);
 
-    const tagsToggle = wrapper.findAll('input[type="checkbox"]')[3];
+    const tagsToggle = toggle(wrapper, 'Tags');
     await tagsToggle.setValue(false);
     await nextTick();
     const withoutTags = last(rec.frames)!;
@@ -148,6 +183,60 @@ describe('GraphView', () => {
     await nextTick();
 
     expect(rec.frames.length).toBe(framesBefore);
+
+    wrapper.unmount();
+  });
+
+  it('draws only what the filter query matched', async () => {
+    const wrapper = mount(GraphView, { props: { graphData: filterFixture(), matchIds: null } });
+    await wait(150);
+    expect(await drawnTitles(wrapper)).toEqual(['#x', '#y', 'A', 'B', 'C', 'Z']);
+
+    await wrapper.setProps({ matchIds: ['a'] });
+    await nextTick();
+
+    // A matched, and kept the tag and the unresolved link that explain it —
+    // neither of which a text search could ever have returned on its own.
+    expect(await drawnTitles(wrapper)).toEqual(['#x', 'A', 'Z']);
+
+    wrapper.unmount();
+  });
+
+  it('draws an empty graph when the query matched nothing', async () => {
+    const wrapper = mount(GraphView, { props: { graphData: filterFixture(), matchIds: null } });
+    await wait(150);
+
+    await wrapper.setProps({ matchIds: [] });
+    await nextTick();
+
+    // An empty match set is an answer, not the absence of a filter.
+    expect(last(rec.frames)!.circles).toHaveLength(0);
+
+    wrapper.unmount();
+  });
+
+  it('puts every node back where it was when the filter is cleared', async () => {
+    const wrapper = mount(GraphView, { props: { graphData: filterFixture(), matchIds: null } });
+    await wait(150);
+    const before = last(rec.frames)!;
+
+    await wrapper.setProps({ matchIds: ['a'] });
+    await nextTick();
+    await wrapper.setProps({ matchIds: null });
+    await nextTick();
+
+    expect(positions(last(rec.frames)!)).toEqual(positions(before));
+
+    wrapper.unmount();
+  });
+
+  it('hands the query to the parent to run', async () => {
+    const wrapper = await mountGraph();
+
+    await wrapper.find('input[aria-label="Filter graph by query"]').setValue('is:task #urgent');
+    await nextTick();
+
+    expect(wrapper.emitted('filter-query')).toEqual([['is:task #urgent']]);
 
     wrapper.unmount();
   });

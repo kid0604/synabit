@@ -165,6 +165,38 @@ pub fn search_nexus(
     db.search_fts(&parsed, page.unwrap_or(1), per_page.unwrap_or(50))
 }
 
+/// How many matches the graph filter will draw.
+///
+/// A graph showing more nodes than this is unreadable anyway, and the cap
+/// keeps one careless query — `is:note` on a large vault — from serialising
+/// the entire index across the IPC boundary to draw a hairball.
+const GRAPH_FILTER_LIMIT: u32 = 5000;
+
+/// The ids a query matches, for filtering the Nexus graph.
+///
+/// The graph wants the set of matches, not the ranked, snippet-bearing results
+/// the search panel shows. It still goes through `search_fts` rather than
+/// growing a second query builder beside it: the filter semantics here
+/// (`is:`, `#tag`, `status:`, the property lookups) have been subtly wrong
+/// before, and two implementations would be two chances to be wrong
+/// differently. Ranking and snippets are built and then dropped, which is the
+/// price — and not entirely waste, since the case-sensitive post-filter reads
+/// the snippet to decide what stays.
+#[tauri::command]
+pub fn search_nexus_ids(
+    _app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    _vault_path: String,
+    query: String,
+    case_sensitive: Option<bool>,
+) -> AppResult<Vec<String>> {
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.case_sensitive = case_sensitive.unwrap_or(false);
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let response = db.search_fts(&parsed, 1, GRAPH_FILTER_LIMIT)?;
+    Ok(response.results.into_iter().map(|r| r.id).collect())
+}
+
 /// FTS5-powered search scoped to notes only.
 /// Used by the Note mini-app sidebar search.
 #[tauri::command]
