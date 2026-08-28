@@ -57,26 +57,48 @@ const onCancel = (e: Event) => {
 </script>
 
 <template>
-    <!-- The dialog fills the viewport and is the dim itself, so a click that
-         lands on it rather than on the card is a click outside. -->
+    <!--
+      No layout classes on the `<dialog>` itself. See the note in the style
+      block below: a `display` utility here makes every dialog in the app
+      permanently visible.
+
+      The dim and the centring live on the sheet inside, which is also what a
+      click outside the card lands on.
+    -->
     <dialog ref="dialog"
             :aria-labelledby="labelledBy"
-            class="w-full h-full max-w-none max-h-none m-0 p-4 bg-black/40 backdrop-blur-sm
-                   flex items-center justify-center overflow-hidden"
+            class="w-full h-full max-w-none max-h-none m-0 p-0 bg-transparent overflow-hidden"
             @cancel="onCancel"
-            @keydown.esc="onCancel"
-            @click.self="emit('close')">
-        <div class="bg-white dark:bg-[#1e1e1e] w-full rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col"
-             :class="cardClass ?? 'max-w-md max-h-[90vh]'">
-            <slot />
+            @keydown.esc="onCancel">
+        <div class="w-full h-full p-4 bg-black/40 backdrop-blur-sm flex items-center justify-center"
+             @click.self="emit('close')">
+            <div class="bg-white dark:bg-[#1e1e1e] w-full rounded-2xl shadow-2xl overflow-hidden border border-[#e6e6e6] dark:border-[#333] flex flex-col"
+                 :class="cardClass ?? 'max-w-md max-h-[90vh]'">
+                <slot />
+            </div>
         </div>
     </dialog>
 </template>
 
 <style scoped>
-/* The UA gives `<dialog>` a border, padding and auto margins; the layout
-   above supplies its own. `::backdrop` is left alone because the element is
-   already the dim. */
+/*
+ * A closed dialog is not shown. This should go without saying — the browser's
+ * own stylesheet says `dialog:not([open]) { display: none }` — and it does
+ * not: a stylesheet written by the page beats the browser's whatever the
+ * specificity, so a single `flex` class on the element made every dialog in
+ * this app visible from the moment it loaded. Three full-screen overlays
+ * stacked over the calendar, nothing beneath them clickable, and the app
+ * looking broken on open.
+ *
+ * So it is said here, out loud, where it cannot be undone by a utility class.
+ */
+dialog:not([open]) {
+    display: none;
+}
+
+/* The UA gives `<dialog>` a border, padding and auto margins; the sheet
+   inside supplies its own. `::backdrop` stays transparent because that sheet
+   is already the dim. */
 dialog {
     border: 0;
     color: inherit;
