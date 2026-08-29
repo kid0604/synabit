@@ -27,6 +27,17 @@ pub struct AppSecrets {
     pub auto_lock_timeout_secs: Option<u64>, // Default 300
     #[serde(default)]
     pub app_lock_active: Option<bool>, // Tier 1 toggle (independent of PIN)
+    /// API keys for Syn's chat providers, keyed by `SynProvider::key_slot()`.
+    ///
+    /// Here rather than in `SynSettings` because that struct is serialised to
+    /// `{vault}/Syn/settings.json` — a file inside the vault, which syncs
+    /// between devices, is readable in any editor, and on a vault kept in git
+    /// gets committed. A key belongs to one machine's keychain.
+    ///
+    /// A map rather than one field so that switching provider does not
+    /// silently discard the key for the one being left.
+    #[serde(default)]
+    pub syn_api_keys: HashMap<String, String>,
 }
 
 /// Read one value out of the Android keystore-backed store.
@@ -367,6 +378,45 @@ impl SecretManager {
 
     pub fn has_e2ee_key(app_handle: Option<&tauri::AppHandle>) -> bool {
         Self::get_e2ee_key(app_handle).is_some()
+    }
+
+    // ──────────────────────────────────────────────
+    // Syn provider API keys
+    // ──────────────────────────────────────────────
+
+    /// The stored key for a provider slot, or `None` if there is not one.
+    ///
+    /// Blank is the same as absent: a settings field that was opened and left
+    /// empty must not become an `Authorization: Bearer ` header.
+    pub fn get_syn_api_key(app_handle: Option<&tauri::AppHandle>, slot: &str) -> Option<String> {
+        Self::load_secrets(app_handle)
+            .syn_api_keys
+            .get(slot)
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+    }
+
+    /// Store a key, or remove it when the value is blank.
+    ///
+    /// Clearing the field in the UI is how a user revokes a key, so an empty
+    /// string has to delete rather than store nothing.
+    pub fn set_syn_api_key(
+        app_handle: Option<&tauri::AppHandle>,
+        slot: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        let mut secrets = Self::load_secrets(app_handle);
+        let key = key.trim();
+        if key.is_empty() {
+            secrets.syn_api_keys.remove(slot);
+        } else {
+            secrets.syn_api_keys.insert(slot.to_string(), key.to_string());
+        }
+        Self::save_secrets(app_handle, &secrets)
+    }
+
+    pub fn has_syn_api_key(app_handle: Option<&tauri::AppHandle>, slot: &str) -> bool {
+        Self::get_syn_api_key(app_handle, slot).is_some()
     }
 
 

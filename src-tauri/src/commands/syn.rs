@@ -1,55 +1,116 @@
 use crate::error::AppError;
 use crate::models::syn::{
-    ModelInfo, OllamaStatus, RagConfig, SynChatRequest, SynConversation, SynConversationFull,
-    SynMessage, SynSettings,
+    ModelInfo, ProviderStatus, RagConfig, SynChatRequest, SynConversation, SynConversationFull,
+    SynMessage, SynProvider, SynSettings,
 };
+use crate::syn::provider::{ollama::OllamaProvider, openai::OpenAiCompatProvider, ChatProvider};
 use crate::syn::{conversation, engine::SynEngine, rag};
 
-// ═══════════════════════════════════════════════════════════════
-//  OLLAMA STATUS & MODEL MANAGEMENT
-// ═══════════════════════════════════════════════════════════════
-
-/// Check if Ollama is running and reachable.
-/// Uses the Ollama URL from vault settings (falls back to default if no vault).
-#[tauri::command]
-pub async fn syn_check_status(vault_path: String) -> Result<OllamaStatus, AppError> {
-    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
-    let engine = SynEngine::with_url(&settings.ollama_url);
-    engine.check_status().await
+/// Build the provider the vault's settings ask for.
+///
+/// The API key is fetched here, from the keychain, rather than read out of
+/// `settings` — it is never in `settings`, on purpose. See the doc comment on
+/// `SynSettings`.
+fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
+    match settings.provider {
+        SynProvider::Ollama => Box::new(OllamaProvider::new(&settings.ollama_url)),
+        SynProvider::OpenAiCompat => Box::new(OpenAiCompatProvider::new(
+            &settings.openai_base_url,
+            crate::secrets::SecretManager::get_syn_api_key(
+                Some(app),
+                SynProvider::OpenAiCompat.key_slot(),
+            ),
+            settings.openai_reasoning_effort.clone(),
+        )),
+    }
 }
 
-/// List all locally available Ollama models.
+fn settings_for(vault_path: &str) -> SynSettings {
+    crate::syn::settings::load_settings(vault_path).unwrap_or_default()
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDER STATUS & MODEL MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+/// Check whether the configured provider is reachable.
 #[tauri::command]
-pub async fn syn_list_models(vault_path: String) -> Result<Vec<ModelInfo>, AppError> {
-    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
-    let engine = SynEngine::with_url(&settings.ollama_url);
-    engine.list_models().await
+pub async fn syn_check_status(
+    app: tauri::AppHandle,
+    vault_path: String,
+) -> Result<ProviderStatus, AppError> {
+    let settings = settings_for(&vault_path);
+    provider_for(&app, &settings).check_status().await
+}
+
+/// List the models the configured provider will accept.
+#[tauri::command]
+pub async fn syn_list_models(
+    app: tauri::AppHandle,
+    vault_path: String,
+) -> Result<Vec<ModelInfo>, AppError> {
+    let settings = settings_for(&vault_path);
+    provider_for(&app, &settings).list_models().await
 }
 
 /// Pull (download) a model from Ollama's registry.
 /// Emits `syn-pull-progress` events during download.
+///
+/// Ollama by name, not through the provider: hosting weights is something
+/// Ollama does and an OpenAI-compatible endpoint does not, so this command
+/// talks to Ollama whatever the vault's chat provider happens to be. The UI
+/// hides it when `ProviderStatus::supports_model_management` is false.
 #[tauri::command]
 pub async fn syn_pull_model(
     app: tauri::AppHandle,
     vault_path: String,
     model_name: String,
 ) -> Result<(), AppError> {
-    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
-    let engine = SynEngine::with_url(&settings.ollama_url);
-    engine.pull_model(&app, &model_name).await
+    let settings = settings_for(&vault_path);
+    OllamaProvider::new(&settings.ollama_url)
+        .pull_model(&app, &model_name)
+        .await
 }
 
 /// Delete a locally stored model from Ollama.
 #[tauri::command]
 pub async fn syn_delete_model(vault_path: String, model_name: String) -> Result<(), AppError> {
-    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
-    let engine = SynEngine::with_url(&settings.ollama_url);
-    engine.delete_model(&model_name).await
+    let settings = settings_for(&vault_path);
+    OllamaProvider::new(&settings.ollama_url)
+        .delete_model(&model_name)
+        .await
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  SETTINGS & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
+
+/// Store the API key for a provider, or clear it when `key` is blank.
+///
+/// The key goes to the OS keychain and never to the vault. There is
+/// deliberately no command that reads one back: the frontend needs to know
+/// *whether* a key is set, never what it is.
+#[tauri::command]
+pub async fn syn_set_api_key(
+    app: tauri::AppHandle,
+    provider: SynProvider,
+    key: String,
+) -> Result<(), AppError> {
+    crate::secrets::SecretManager::set_syn_api_key(Some(&app), provider.key_slot(), &key)
+        .map_err(AppError::General)
+}
+
+/// Whether a key is stored for a provider.
+#[tauri::command]
+pub async fn syn_has_api_key(
+    app: tauri::AppHandle,
+    provider: SynProvider,
+) -> Result<bool, AppError> {
+    Ok(crate::secrets::SecretManager::has_syn_api_key(
+        Some(&app),
+        provider.key_slot(),
+    ))
+}
 
 /// Get current Syn settings for the vault.
 #[tauri::command]
@@ -93,11 +154,34 @@ pub async fn syn_send_message(
     // 2. Load existing conversation
     let mut conv = conversation::get_conversation(&vault_path, &request.conversation_id)?;
 
-    // Determine which model to use (request override > conversation default > settings default > fallback)
+    // Which model to use: what this send asked for, then what the conversation
+    // has been using, then the vault default.
+    //
+    // The conversation's pin is only honoured while it still means something.
+    // A model name is only valid for the provider it came from — `gemma4:e4b`
+    // is a real model on Ollama and a 404 on OpenAI — so a conversation
+    // started under a different provider has its pin ignored rather than sent
+    // to an endpoint that has never heard of it. A conversation written before
+    // providers existed records none, and those were all Ollama.
+    let pinned_provider = conv.meta.provider.unwrap_or(SynProvider::Ollama);
+    let conversation_model = if pinned_provider == settings.provider {
+        conv.meta.model.clone()
+    } else {
+        if let Some(stale) = &conv.meta.model {
+            log::info!(
+                "[Syn] Ignoring `{}`, pinned to this conversation under {:?}, now that the provider is {:?}",
+                stale,
+                pinned_provider,
+                settings.provider
+            );
+        }
+        None
+    };
+
     let model = request
         .model
         .clone()
-        .or_else(|| conv.meta.model.clone())
+        .or(conversation_model)
         .or_else(|| settings.default_model.clone())
         .unwrap_or_else(|| "llama3.2".to_string());
 
@@ -194,8 +278,8 @@ pub async fn syn_send_message(
     // Use settings temperature as default, allow per-request override
     let temperature = request.temperature.or(Some(settings.temperature));
 
-    // 8. Call Ollama with tool calling loop + final response
-    let engine = SynEngine::with_url(&settings.ollama_url);
+    // 8. Run the tool-calling loop against whichever provider is configured
+    let engine = SynEngine::new(provider_for(&app, &settings));
     let assistant_message_id = uuid::Uuid::new_v4().to_string();
 
     let mut assistant_message = engine
@@ -229,10 +313,12 @@ pub async fn syn_send_message(
     // 10. Add the assistant response to the conversation
     conv.messages.push(assistant_message.clone());
 
-    // Update conversation model if not set
-    if conv.meta.model.is_none() {
-        conv.meta.model = Some(model);
-    }
+    // Record what answered, so the conversation keeps using it — and record
+    // the provider with it, since the name alone does not identify a model.
+    // Rewritten rather than only filled in: a conversation that has just
+    // switched provider must not keep pointing at the old one's model.
+    conv.meta.model = Some(model);
+    conv.meta.provider = Some(settings.provider);
 
     // Update message count
     conv.meta.message_count = conv.messages.len();
@@ -261,7 +347,7 @@ pub async fn syn_stop_generation(conversation_id: Option<String>) -> Result<(), 
 /// Cancel an ongoing model pull.
 #[tauri::command]
 pub fn syn_cancel_pull() {
-    SynEngine::cancel_pull();
+    OllamaProvider::cancel_pull();
 }
 
 // ═══════════════════════════════════════════════════════════════

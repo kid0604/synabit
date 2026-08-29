@@ -803,6 +803,8 @@ pub fn run() {
             syn_commands::syn_rename_conversation,
             syn_commands::syn_get_settings,
             syn_commands::syn_save_settings,
+            syn_commands::syn_set_api_key,
+            syn_commands::syn_has_api_key,
             syn_commands::syn_pin_conversation,
             syn_commands::syn_export_conversation,
             // P2P Sync

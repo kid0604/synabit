@@ -1,33 +1,31 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
 import { appInPlatformScope } from '../shared/platformScope';
+import { BUILT_IN_APPS } from '../shared/appRegistry';
 
-// Mini App Components — lazy loaded for code splitting
-const NoteApp = () => import('../mini-apps/note/NoteApp.vue');
-const QuickCap = () => import('../mini-apps/quickcap/QuickCapApp.vue');
-const Tasks = () => import('../mini-apps/task/TaskApp.vue');
-const CalendarApp = () => import('../mini-apps/calendar/CalendarApp.vue');
-const Nexus = () => import('../mini-apps/nexus/NexusApp.vue');
-const FilesApp = () => import('../mini-apps/files/FilesApp.vue');
-const WhiteboardApp = () => import('../mini-apps/whiteboard/WhiteboardApp.vue');
-const PeopleApp = () => import('../mini-apps/people/PeopleApp.vue');
-const FinanceApp = () => import('../mini-apps/finance/FinanceApp.vue');
-const FeedsApp = () => import('../mini-apps/feeds/FeedsApp.vue');
-const MessagesApp = () => import('../mini-apps/messages/MessagesApp.vue');
+/**
+ * One route per mini-app, generated from the registry.
+ *
+ * An app's id is its route name and its path, so the registry is enough to
+ * build these: a route named `task` at `/task`. Written out by hand, this list
+ * was a third copy of "what apps exist" and could fall out of step with the two
+ * in the UI — an app could be offered in Settings and be unreachable, or be
+ * routable and invisible.
+ *
+ * Components stay lazily loaded; the registry holds the same `() => import()`
+ * this file used to declare, so each app is still its own chunk.
+ */
+const appRoutes: Array<RouteRecordRaw> = BUILT_IN_APPS.map((app) => ({
+  path: `/${app.id}`,
+  name: app.id,
+  component: app.view,
+}));
 
 const routes: Array<RouteRecordRaw> = [
   { path: '/', redirect: '/nexus' },
-  { path: '/nexus', name: 'nexus', component: Nexus },
-  { path: '/messages', name: 'messages', component: MessagesApp },
+  ...appRoutes,
+  // Two names that outlived their screens. Kept as redirects because they are
+  // in users' restored sessions and in deep links already sent.
   { path: '/chat', redirect: '/messages' },
-  { path: '/note', name: 'note', component: NoteApp },
-  { path: '/quickcap', name: 'quickcap', component: QuickCap },
-  { path: '/task', name: 'task', component: Tasks },
-  { path: '/calendar', name: 'calendar', component: CalendarApp },
-  { path: '/file', name: 'file', component: FilesApp },
-  { path: '/whiteboard', name: 'whiteboard', component: WhiteboardApp },
-  { path: '/people', name: 'people', component: PeopleApp },
-  { path: '/finance', name: 'finance', component: FinanceApp },
-  { path: '/feeds', name: 'feeds', component: FeedsApp },
   { path: '/syn', redirect: '/messages' },
 ];
 

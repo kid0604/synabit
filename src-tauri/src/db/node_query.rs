@@ -40,6 +40,14 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<QueryRow>,
     /// How many notes matched, which may exceed the rows returned.
+    /// How many nodes match, ignoring `limit`.
+    ///
+    /// A real count, not `rows.len()`. It was the latter until an assistant
+    /// asked `type:task limit:1` in order to read this number and told the
+    /// user they had two tasks out of a hundred and twenty-six: the read
+    /// fetched `limit + 1` rows as a cheap "there is more" signal, and every
+    /// comment around it — including the one on this field — described that
+    /// signal as a count.
     pub total: usize,
     pub query_time_ms: u64,
 }
@@ -116,10 +124,10 @@ impl DbBridge {
             ));
         }
 
-        let mut sql = String::from(
-            "SELECT id, node_type, title, properties, created_at, updated_at \
-             FROM nodes WHERE node_type NOT LIKE 'finance_%'",
-        );
+        // Built on its own so the count and the page ask the same question.
+        // `total` used to be whatever the paged read happened to return, which
+        // is a different number from "how many match" whenever a limit bites.
+        let mut sql = String::from("FROM nodes WHERE node_type NOT LIKE 'finance_%'");
         let mut params: Vec<rusqlite::types::Value> = Vec::new();
         let mut next = 1usize;
 
@@ -134,6 +142,24 @@ impl DbBridge {
                 " AND lower(CAST(json_extract(properties, '$.status') AS TEXT)) = ?{next}"
             ));
             params.push(text(&status.to_lowercase()));
+            next += 1;
+        }
+
+        // A property the node must not have this value for.
+        //
+        // `IS NULL OR <>` rather than a bare `<>`: SQL comparison against NULL
+        // is NULL, which filters the row out, so a task that never had a
+        // status would be excluded by `-status:done` — the opposite of what
+        // "not done" means.
+        for (key, value) in &parsed.property_exclusions {
+            let Some(path) = crate::search::json_path_for(key) else {
+                continue;
+            };
+            sql.push_str(&format!(
+                " AND (json_extract(properties, '{path}') IS NULL
+                       OR lower(CAST(json_extract(properties, '{path}') AS TEXT)) <> ?{next})"
+            ));
+            params.push(text(&value.to_lowercase()));
             next += 1;
         }
 
@@ -205,6 +231,19 @@ impl DbBridge {
             }
         }
 
+        // How many match, before any limit. One extra statement over the same
+        // WHERE clause, which is what makes `total` an answer rather than a
+        // hint — see the doc comment on the field.
+        let total: usize = self
+            .conn()
+            .query_row(
+                &format!("SELECT COUNT(*) {sql}"),
+                rusqlite::params_from_iter(params.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| AppError::General(format!("Query count error: {e}")))?
+            as usize;
+
         // Newest first when nothing else is asked for, matching the note list.
         let order = parsed
             .sort
@@ -218,11 +257,12 @@ impl DbBridge {
         ));
 
         let limit = parsed.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
-        // One more than asked for, so the caller can say "and more" without a
-        // second count over the same rows.
-        sql.push_str(&format!(" LIMIT {}", limit as usize + 1));
+        sql.push_str(&format!(" LIMIT {limit}"));
 
         let columns = requested_columns(parsed);
+        let sql = format!(
+            "SELECT id, node_type, title, properties, created_at, updated_at {sql}"
+        );
         let mut stmt = self
             .conn()
             .prepare(&sql)
@@ -265,9 +305,6 @@ impl DbBridge {
                 cells,
             });
         }
-
-        let total = collected.len();
-        collected.truncate(limit as usize);
 
         Ok(QueryResult {
             columns,
@@ -460,16 +497,130 @@ mod tests {
         assert!(got.rows.is_empty(), "{:?}", ids(&got));
     }
 
+    /// Proof that "0 events" is an answer and not a silence.
+    ///
+    /// A count of zero looks identical whether nothing matched or the filter
+    /// was dropped on the floor — which is exactly what `type:` used to do to
+    /// every type outside a list of five. Seeding one event and finding it is
+    /// the only way to tell the two apart.
     #[test]
-    fn a_limit_is_honoured_and_the_full_count_still_reported() {
+    fn an_event_is_found_when_there_is_one_to_find() {
         let d = tasks();
-        let got = run(&d, "#work limit:2");
+        d.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Events/standup.md".into(),
+            node_type: "event".into(),
+            title: "Standup".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "start_date": "2026-09-01" }),
+            created_at: "2026-08-01T00:00:00Z".into(),
+            updated_at: "2026-08-01T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("seed an event");
 
-        assert_eq!(got.rows.len(), 2);
+        assert_eq!(run(&d, "type:event").total, 1);
+        assert_eq!(run(&d, "is:event").total, 1);
+        // And the type actually narrows: tasks must not come back as events.
+        assert_eq!(run(&d, "type:event").rows[0].title, "Standup");
+    }
+
+    /// "Everything that is not done", which is what people actually ask.
+    ///
+    /// Measured before it existed: asked how many tasks were unfinished
+    /// against a vault of seven, the assistant answered 7 on one run and 0 on
+    /// another. `-status:done` was parsed as a word to avoid, so it either
+    /// did nothing or excluded everything.
+    #[test]
+    fn a_property_can_be_excluded_rather_than_only_required() {
+        let d = tasks();
+        let all = run(&d, "is:task").total;
+        let done = run(&d, "is:task status:done").total;
+        let not_done = run(&d, "is:task -status:done").total;
+
+        assert!(done > 0 && done < all, "the fixture needs a mix");
+        assert_eq!(
+            not_done,
+            all - done,
+            "not-done plus done must account for every task"
+        );
+    }
+
+    /// A node that never had the property is not excluded by a filter on it.
+    ///
+    /// `NOT (status = 'done')` is NULL for a node with no status, and SQL
+    /// drops the row — so a task with no status set would vanish from "not
+    /// done", which is precisely where it belongs.
+    #[test]
+    fn a_node_without_the_property_counts_as_not_having_the_value() {
+        let d = tasks();
+        d.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Tasks/statusless.md".into(),
+            node_type: "task".into(),
+            title: "No status at all".into(),
+            content: String::new(),
+            properties: serde_json::json!({}),
+            created_at: "2026-08-01T00:00:00Z".into(),
+            updated_at: "2026-08-01T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("seed");
+
+        let titles: Vec<String> = run(&d, "is:task -status:done")
+            .rows
+            .iter()
+            .map(|r| r.title.clone())
+            .collect();
         assert!(
-            got.total > 2,
-            "total should say there is more: {}",
-            got.total
+            titles.iter().any(|t| t == "No status at all"),
+            "a task with no status is not done: {titles:?}"
+        );
+    }
+
+    /// A limit caps the rows, never the count.
+    ///
+    /// This used to assert `total > 2`, which the old implementation satisfied
+    /// by reading `limit + 1` rows — so `total` was `3` whether three matched
+    /// or three hundred did. A boolean dressed as a number: enough for the "and
+    /// more" label in the note table, which was its only reader, and wrong for
+    /// anything that treats it as an answer.
+    ///
+    /// It is now asserted as an exact number, because that is the whole claim.
+    #[test]
+    fn a_limit_caps_the_rows_and_never_the_count() {
+        let d = tasks();
+        let all = run(&d, "#work");
+        let matching = all.total;
+        assert!(matching >= 3, "the fixture needs enough rows to limit");
+
+        for limit in 1..matching {
+            let got = run(&d, &format!("#work limit:{limit}"));
+            assert_eq!(got.rows.len(), limit, "limit:{limit} returned the wrong page");
+            assert_eq!(
+                got.total, matching,
+                "limit:{limit} changed the count from {matching} to {}",
+                got.total
+            );
+        }
+    }
+
+    /// The exact shape that misreported a vault.
+    ///
+    /// `type:task limit:1` is what an assistant asks when it wants the number
+    /// and not the rows. It answered "2" against a hundred and twenty-six
+    /// tasks, because `total` was however many rows the capped read returned.
+    #[test]
+    fn asking_for_one_row_still_reports_how_many_there_are() {
+        let d = tasks();
+        let everything = run(&d, "is:task");
+        let got = run(&d, "is:task limit:1");
+
+        assert_eq!(got.rows.len(), 1);
+        assert_eq!(
+            got.total,
+            everything.total,
+            "a caller reading `total` off a one-row page must get the real count"
         );
     }
 

@@ -18,7 +18,16 @@ const props = defineProps<{
    * was simply absent from the list.
    */
   pullError?: string | null;
+  /**
+   * Whether pulling a model is something this provider can do at all.
+   *
+   * Defaults to true so the Ollama case — every case there has ever been —
+   * keeps behaving exactly as it did.
+   */
+  canPullModels?: boolean;
 }>();
+
+const canPull = computed(() => props.canPullModels !== false);
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
@@ -161,7 +170,7 @@ const cancelConfirm = () => {
         </div>
 
         <!-- Pull new model -->
-        <div class="p-2 border-t border-border dark:border-border-dark">
+        <div v-if="canPull" class="p-2 border-t border-border dark:border-border-dark">
           <!-- Confirm step -->
           <div v-if="pendingPullName" class="space-y-2">
             <p class="text-xs text-text dark:text-text-dark px-1">

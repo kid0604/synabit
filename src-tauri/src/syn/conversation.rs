@@ -18,6 +18,10 @@ struct ConversationFile {
     id: String,
     title: String,
     model: Option<String>,
+    /// Which provider `model` names. Absent in files written before providers
+    /// existed; those are Ollama.
+    #[serde(default)]
+    provider: Option<crate::models::syn::SynProvider>,
     messages: Vec<SynMessage>,
     created_at: String,
     updated_at: String,
@@ -78,6 +82,7 @@ fn to_metadata(conv: &ConversationFile) -> SynConversation {
         id: conv.id.clone(),
         title: conv.title.clone(),
         model: conv.model.clone(),
+        provider: conv.provider,
         message_count: conv.messages.len(),
         created_at: conv.created_at.clone(),
         updated_at: conv.updated_at.clone(),
@@ -193,6 +198,7 @@ pub fn create_conversation(vault_path: &str, title: Option<String>) -> AppResult
         id: id.clone(),
         title: title.unwrap_or_else(|| "New Conversation".to_string()),
         model: None,
+        provider: None,
         messages: Vec::new(),
         created_at: now.clone(),
         updated_at: now,
@@ -223,6 +229,7 @@ pub fn save_conversation(vault_path: &str, conversation: &SynConversationFull) -
         id: conversation.meta.id.clone(),
         title: conversation.meta.title.clone(),
         model: conversation.meta.model.clone(),
+        provider: conversation.meta.provider,
         messages: conversation.messages.clone(),
         created_at: conversation.meta.created_at.clone(),
         updated_at: chrono::Utc::now().to_rfc3339(),

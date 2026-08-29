@@ -28,6 +28,7 @@ import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 import { useBackGuard } from './composables/useBackGuard';
 import { appInPlatformScope } from './shared/platformScope';
+import { BUILT_IN_APPS, appName } from './shared/appRegistry';
 import { ensureNotificationPermission } from './composables/useNotificationPermission';
 import { useAppUpdate } from './composables/useAppUpdate';
 import { useCaptureIntake } from './mini-apps/quickcap/useQuickCapWriter';
@@ -66,23 +67,7 @@ const {
   showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, showE2eeOnboarding, showRecoveryModal
 } = useSettings();
 
-const ALL_APPS = [
-  { id: 'nexus', name: 'Nexus', icon: Globe },
-  { id: 'messages', name: 'Messages', icon: MessageCircle },
-  { id: 'quickcap', name: 'QuickCap', icon: Zap },
-  { id: 'note', name: 'Notes', icon: FileText },
-  { id: 'task', name: 'Tasks', icon: CheckSquare },
-  { id: 'calendar', name: 'Calendar', icon: Calendar },
-  { id: 'file', name: 'Files', icon: FolderOpen },
-  { id: 'whiteboard', name: 'Whiteboard', icon: Palette },
-  { id: 'people', name: 'People', icon: Users },
-  { id: 'finance', name: 'Finance', icon: Wallet },
-  { id: 'feeds', name: 'Feeds', icon: Rss },
-];
-
-const getAppName = (appId: string): string => {
-  return ALL_APPS.find(a => a.id === appId)?.name || appId;
-};
+const getAppName = (appId: string): string => appName(appId);
 
 /**
  * The mini-apps this platform ships at all.
@@ -94,7 +79,7 @@ const getAppName = (appId: string): string => {
  * Note this keys off `isMobileOS` and not `useMobileLayout`: a desktop window
  * dragged narrow adopts the mobile layout, and must keep every app.
  */
-const platformApps = computed(() => ALL_APPS.filter(a => appInPlatformScope(a.id)));
+const platformApps = computed(() => BUILT_IN_APPS.filter(a => appInPlatformScope(a.id)));
 
 const mobileVisibleApps = computed(() => {
     return platformApps.value

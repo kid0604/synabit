@@ -2,6 +2,17 @@ export interface OllamaStatus {
   connected: boolean;
   version: string | null;
   url: string;
+  /**
+   * Whether this provider can pull and delete models on the user's behalf.
+   *
+   * True for Ollama, which hosts the weights. False behind an
+   * OpenAI-compatible API, where the catalogue is the server's business — the
+   * pull field has to be hidden rather than offered and left to fail.
+   *
+   * Optional because a status object built locally as a placeholder, before
+   * the backend has answered, has nothing to say about it.
+   */
+  supports_model_management?: boolean;
 }
 
 export interface ModelInfo {

@@ -12,6 +12,18 @@ pub struct ParsedQuery {
     pub tag_filters: Vec<String>,
     /// Excluded terms (without -)
     pub exclude_terms: Vec<String>,
+    /// `-status:done` — property values a node must *not* have.
+    ///
+    /// Split from `exclude_terms` because they are different questions. A bare
+    /// `-draft` means "no note whose text says draft"; `-status:done` means
+    /// "not finished", and a note that never had a status at all satisfies it.
+    /// Written as a word exclusion, the second reads as "no note containing the
+    /// literal text status:done", which is every note.
+    ///
+    /// Measured cost of not having it: asked how many tasks were unfinished,
+    /// the assistant answered 7 (all of them) and 0 (none of them) on two
+    /// separate runs. The number was 4, and neither run had a way to say so.
+    pub property_exclusions: Vec<(String, String)>,
     /// Status filter for tasks: todo, in-progress, done
     pub status_filter: Option<String>,
     /// Date filter: today, this-week, this-month
@@ -35,6 +47,19 @@ pub struct ParsedQuery {
     pub is_empty: bool,
     /// Whether to enforce case-sensitive matching (post-filter)
     pub case_sensitive: bool,
+    /// Match a node that has *any* of the terms, rather than all of them.
+    ///
+    /// Off for anything a person types. Somebody searching "meeting notes"
+    /// wants notes about meetings, and OR would hand them every note.
+    ///
+    /// On for a question fed in by the assistant's retrieval, where the terms
+    /// are whatever survived stopword removal — `decide`, `pricing`,
+    /// `disagreed` — and requiring all of them means requiring the asker to
+    /// have guessed the note's exact vocabulary. Measured before it was
+    /// changed: a question about a decision recorded in two notes retrieved
+    /// nothing, because one of its words was `decide` and the note says
+    /// "we settled on".
+    pub match_any: bool,
 }
 
 /// A single search result returned to the frontend
@@ -219,23 +244,41 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
         let lower = token.to_lowercase();
 
         // is: filter
-        if let Some(stripped) = lower.strip_prefix("is:") {
-            let val = stripped.to_string();
-            match val.as_str() {
-                "note" | "task" | "event" | "quickcap" | "file" => {
-                    pq.type_filter = Some(val);
-                }
-                _ => {}
+        // `type:` and `is:` are the same filter. `is:` came first and is what
+        // the Tasks search bar sends; `type:` is what the frontmatter field is
+        // called, so it is what anyone writing a query — or an assistant
+        // reading `list_schemas` — reaches for first.
+        if let Some(stripped) = lower
+            .strip_prefix("is:")
+            .or_else(|| lower.strip_prefix("type:"))
+        {
+            // Any type, not a list of five.
+            //
+            // This used to accept `note | task | event | quickcap | file` and
+            // silently drop everything else — so `is:book` did not filter to
+            // books, it filtered to nothing at all and returned the whole
+            // vault. The rest of the engine never had that limit: `node_type`
+            // is a free string in the schema, the column is compared through a
+            // bound parameter, and search already indexes every type.
+            //
+            // A list in the code deciding which of the user's types are real
+            // is the same mistake `NodeType::Other` exists to prevent, one
+            // layer up.
+            if !stripped.is_empty() {
+                pq.type_filter = Some(stripped.to_string());
+                pq.is_empty = false;
             }
             continue;
         }
         if let Some(stripped) = lower.strip_prefix("status:") {
-            let val = stripped.to_string();
-            match val.as_str() {
-                "todo" | "in-progress" | "done" => {
-                    pq.status_filter = Some(val);
-                }
-                _ => {}
+            // Same widening, and here it was not merely narrow but wrong:
+            // the list read `in-progress` while every task in every vault is
+            // written `in_progress`, and `backlog` and `canceled` — both real
+            // statuses the Tasks app writes — were not on it at all. All three
+            // were dropped without a word.
+            if !stripped.is_empty() {
+                pq.status_filter = Some(stripped.to_string());
+                pq.is_empty = false;
             }
             continue;
         }
@@ -281,6 +324,15 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
 
         // -exclude term
         if token.starts_with('-') && token.len() > 1 && !token.starts_with("--") {
+            // `-key:value` is a property exclusion, not a word to avoid.
+            if let Some((key, value)) = lower[1..].split_once(':') {
+                if !key.is_empty() && !value.is_empty() && is_queryable_key(key) {
+                    pq.property_exclusions
+                        .push((key.to_string(), value.to_string()));
+                    pq.is_empty = false;
+                    continue;
+                }
+            }
             let mut val = token[1..].to_string();
             if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
                 && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
@@ -412,6 +464,16 @@ pub fn build_fts_match(pq: &ParsedQuery) -> Option<String> {
     // Exclude terms with NOT
     for term in &pq.exclude_terms {
         parts.push(format!("NOT {}", quote(term)));
+    }
+
+    // Exclusions are always AND: "any of these words, but none of those" is
+    // the only reading of a mixed query that makes sense.
+    if pq.match_any && !pq.fts_terms.is_empty() {
+        let matches = parts[..pq.fts_terms.len()].join(" OR ");
+        let excluded = &parts[pq.fts_terms.len()..];
+        let mut all = vec![format!("({matches})")];
+        all.extend(excluded.iter().cloned());
+        return Some(all.join(" AND "));
     }
 
     Some(parts.join(" AND "))
@@ -604,18 +666,31 @@ mod tests {
         assert_eq!(pq3.date_filter, Some("this-month".to_string()));
     }
 
+    /// A type this app has not heard of is filtered on, not discarded.
+    ///
+    /// These two tests used to assert the opposite — `is:banana` and
+    /// `status:banana` were expected to be dropped — and they were the reason
+    /// the limit went unnoticed for so long: they read as careful input
+    /// validation. They were not. There is no such thing as an unknown type in
+    /// a vault where a type is whatever somebody wrote in a `type:` field, and
+    /// `banana` is a perfectly good one. What the old behaviour actually did
+    /// was answer a different question from the one asked: `is:banana meeting`
+    /// returned every note mentioning "meeting" regardless of type, which is
+    /// wrong far more quietly than returning nothing would have been.
+    ///
+    /// The filter is bound as a SQL parameter, so an unrecognised value costs
+    /// an empty result set and nothing else.
     #[test]
-    fn test_unknown_type_filter_ignored() {
+    fn a_type_this_app_has_not_heard_of_is_still_a_filter() {
         let pq = parse_query("is:banana meeting");
-        // Unknown type should be ignored, not set as type_filter
-        assert!(pq.type_filter.is_none());
+        assert_eq!(pq.type_filter.as_deref(), Some("banana"));
         assert_eq!(pq.fts_terms, vec!["meeting"]);
     }
 
     #[test]
-    fn test_unknown_status_ignored() {
+    fn a_status_this_app_has_not_heard_of_is_still_a_filter() {
         let pq = parse_query("status:banana");
-        assert!(pq.status_filter.is_none());
+        assert_eq!(pq.status_filter.as_deref(), Some("banana"));
     }
 
     #[test]
@@ -663,6 +738,140 @@ mod tests {
         assert_eq!(pq.status_filter, Some("done".to_string()));
         assert!(pq.title_only);
         assert_eq!(pq.fts_terms, vec!["hello"]);
+    }
+
+    /// `-key:value` excludes a property; `-word` still excludes a word.
+    #[test]
+    fn a_negated_filter_is_told_apart_from_a_negated_word() {
+        let pq = parse_query("is:task -status:done");
+        assert_eq!(pq.property_exclusions, vec![("status".into(), "done".into())]);
+        assert!(pq.exclude_terms.is_empty(), "it is not a word to avoid");
+
+        let pq = parse_query("meeting -draft");
+        assert_eq!(pq.exclude_terms, vec!["draft"]);
+        assert!(pq.property_exclusions.is_empty());
+    }
+
+    /// The negative form reads a token exactly as the positive form does.
+    ///
+    /// Any frontmatter key is queryable — that is the point — so `key:value`
+    /// cannot be told apart from a colon that happens to be in a word, and a
+    /// bare `http://example.com` has always parsed as a filter on a key named
+    /// `http`. That is a pre-existing wart, and the thing worth pinning is that
+    /// negation does not invent a *second* rule: whatever `x:y` means,
+    /// `-x:y` means the opposite of it.
+    #[test]
+    fn negation_reads_a_token_the_same_way_the_positive_form_does() {
+        for token in ["http://example.com", "author:Herbert", "rating:5"] {
+            let positive = parse_query(token);
+            let negative = parse_query(&format!("-{token}"));
+            assert_eq!(
+                positive.property_filters, negative.property_exclusions,
+                "`{token}` and `-{token}` disagree about what kind of token this is"
+            );
+        }
+    }
+
+    /// `status` has a dedicated branch on the positive side and goes through
+    /// the generic one when negated. The asymmetry is in the parser only —
+    /// both end up reading `json_extract(properties, '$.status')`, so
+    /// `status:done` and `-status:done` are exact opposites where it counts.
+    #[test]
+    fn status_is_filtered_one_way_and_excluded_the_other_but_means_the_same_field() {
+        assert_eq!(parse_query("status:done").status_filter.as_deref(), Some("done"));
+        assert_eq!(
+            parse_query("-status:done").property_exclusions,
+            vec![("status".to_string(), "done".to_string())]
+        );
+    }
+
+    /// `match_any` is off unless something asks for it, because everything a
+    /// person types goes through here. Widening the search box to OR would
+    /// turn "meeting notes" into every note.
+    #[test]
+    fn a_query_a_person_typed_still_requires_every_word() {
+        let pq = parse_query("meeting notes");
+        assert!(!pq.match_any);
+        let expr = build_fts_match(&pq).expect("an expression");
+        assert!(expr.contains(" AND "), "{expr}");
+        assert!(!expr.contains(" OR "), "{expr}");
+    }
+
+    #[test]
+    fn match_any_widens_the_terms_but_never_the_exclusions() {
+        let mut pq = parse_query("decide pricing -draft");
+        pq.match_any = true;
+        let expr = build_fts_match(&pq).expect("an expression");
+
+        assert!(expr.contains(" OR "), "terms should widen: {expr}");
+        assert!(
+            expr.contains("AND NOT"),
+            "an exclusion stays an exclusion: {expr}"
+        );
+    }
+
+    /// A type nobody hard-coded still filters.
+    ///
+    /// Found by running the roadmap's own gate: the assistant read the vault's
+    /// schema correctly, wrote a correct query, and got nothing back, because
+    /// the parser recognised five type names and dropped the rest without a
+    /// word. Dropping a filter is the worst of the three options — refusing it
+    /// would have been visible, honouring it would have been right, and
+    /// ignoring it answers a question nobody asked.
+    #[test]
+    fn any_type_can_be_filtered_on_not_a_list_of_five() {
+        for known in ["note", "task", "event", "quickcap", "file"] {
+            assert_eq!(parse_query(&format!("is:{known}")).type_filter.as_deref(), Some(known));
+        }
+        // The point of the whole exercise.
+        for invented in ["book", "recipe", "habit", "réunion"] {
+            assert_eq!(
+                parse_query(&format!("is:{invented}")).type_filter.as_deref(),
+                Some(invented),
+                "`is:{invented}` must filter to {invented}, not to everything"
+            );
+        }
+    }
+
+    /// `type:` is what the frontmatter field is called, so it is what anyone
+    /// writing a query reaches for. It used to fall through to the generic
+    /// property filter and look for a frontmatter key named `type`, which no
+    /// node has — the type is a column.
+    #[test]
+    fn type_and_is_are_the_same_filter() {
+        assert_eq!(parse_query("type:book").type_filter.as_deref(), Some("book"));
+        assert_eq!(
+            parse_query("type:task status:todo").type_filter.as_deref(),
+            Some("task")
+        );
+        assert!(
+            parse_query("type:book").property_filters.is_empty(),
+            "`type:` must not also become a property filter on a key named `type`"
+        );
+    }
+
+    /// The status list was not merely narrow, it was wrong: it read
+    /// `in-progress` while every task ever written by this app says
+    /// `in_progress`, so the Tasks search bar's own in-progress filter was
+    /// being discarded before it reached SQL.
+    #[test]
+    fn every_status_the_app_writes_can_be_filtered_on() {
+        for status in ["todo", "in_progress", "done", "backlog", "canceled"] {
+            assert_eq!(
+                parse_query(&format!("status:{status}")).status_filter.as_deref(),
+                Some(status),
+                "`status:{status}` is a status the Tasks app writes and must filter"
+            );
+        }
+    }
+
+    /// A bare `is:` or `status:` says nothing and must not become a filter on
+    /// the empty string, which would match no node at all.
+    #[test]
+    fn an_empty_filter_is_not_a_filter() {
+        assert!(parse_query("is:").type_filter.is_none());
+        assert!(parse_query("type:").type_filter.is_none());
+        assert!(parse_query("status:").status_filter.is_none());
     }
 
     #[test]

@@ -399,6 +399,7 @@ defineExpose({ refresh, fetchNotifications });
                   :pulling-model="pullingModel"
                   :pull-progress="pullProgress"
                   :pull-error="pullError"
+                  :can-pull-models="status.supports_model_management !== false"
                   @pull-model="handlePullModel"
                 />
 
