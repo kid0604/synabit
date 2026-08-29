@@ -1,8 +1,24 @@
-//! Tool definitions and executors for Syn function calling (Phase 3).
+//! What Syn can do, and how.
 //!
-//! Defines 10 read-only tools that the LLM can call to query the user's vault
-//! via the existing `DbBridge` methods. Each tool returns a JSON string that is
-//! sent back to Ollama as a `tool` role message.
+//! There used to be twenty tools, one per data model: `create_note`,
+//! `create_task`, `create_event`, `search_vault`, `get_nodes_by_type`,
+//! `person_brief`. That shape charged three times for every new kind of thing
+//! — a Rust enum arm, a mini-app, and three or four tools — and the third
+//! charge was the worst, because it was paid on *every* turn of *every*
+//! conversation in tokens, and a longer list makes the model likelier to pick
+//! the wrong entry from it. Worse, the assistant could only ever see the types
+//! somebody had written tools for: a `book` the user invented was invisible.
+//!
+//! The tools are now shaped like the storage rather than like the apps. There
+//! is one table of nodes, one query engine over it, and one write path that
+//! takes any type — so there is one tool to search, one to read, one to
+//! create, one to change, and `list_schemas` to say what is there. Those five
+//! reach every type in the vault, including ones this app has never heard of.
+//!
+//! Six specialised tools survive, and each earns it by reaching a store the
+//! node tools cannot: feed articles have their own table, file search runs
+//! over extracted document text, and finance keeps its transactions inside a
+//! month node as an array, which no node query can add up or append to.
 
 use serde_json::Value;
 
@@ -18,10 +34,15 @@ const MAX_CONTENT_CHARS: usize = 4000;
 
 /// Context passed to tool execution, providing access to DB, vault path, and app handle.
 /// Write tools need vault_path and app; read tools only need db.
-pub struct ToolContext<'a> {
+///
+/// Generic over the Tauri runtime for the same reason `scan_vault_into_db` is:
+/// `tauri::AppHandle` names the real one, and nothing in a test can produce it.
+/// Without this the write tools — which is to say everything Syn changes about
+/// a vault — could only ever be exercised by hand.
+pub struct ToolContext<'a, R: tauri::Runtime> {
     pub db: &'a crate::db::DbBridge,
     pub vault_path: &'a str,
-    pub app: &'a tauri::AppHandle,
+    pub app: &'a tauri::AppHandle<R>,
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -31,207 +52,156 @@ pub struct ToolContext<'a> {
 /// Build the complete list of tool definitions for the Ollama chat API.
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     vec![
-        // 1. search_vault — Universal FTS5 search
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
-                name: "search_vault".to_string(),
-                description: "Search the user's vault using full-text search. Supports advanced syntax: is:task, is:note, #tag, status:done, -exclude, \"exact phrase\". Returns matching nodes with snippets.".to_string(),
+                name: "query_nodes".to_string(),
+                description: "Search and filter everything in the vault: notes, tasks, events, people, projects, and any type the user invented. This is the main tool — prefer it over guessing. Free words are full-text search; the filters below are combined with AND. Call list_schemas first if you do not know what types or fields this vault uses.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["query"],
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "FTS5 search query. Supports: is:task, is:note, is:event, #tag, status:done, status:todo, -exclude, \"exact phrase\""
+                            "description": "Query string. Filters: `type:task` restricts to a type; `#work` requires a tag; `status:reading` matches any frontmatter field; `-status:done` excludes a field value — use this for 'not finished', since a node that never had the field still counts as not having the value; `-draft` excludes a word; `rating:>3` and `due_date:<2026-09-01` compare; `sort:-updated_at` orders (prefix `-` for descending); `columns:title,author` chooses what comes back; `limit:20` caps the rows, while `total_matches` in the reply is the real count regardless — ask for `limit:1` when you only want the number. Free words outside a filter are searched in titles and bodies. Examples: `type:task -status:done` for open tasks, `type:book rating:>3`, `hợp đồng #work`."
                         }
                     }
                 }),
             },
         },
-        // 2. get_node — Read full node content
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "get_node".to_string(),
-                description: "Read the full content of a specific node (note, task, event, etc.) by its ID. Returns complete content, properties, and metadata.".to_string(),
+                description: "Read one node in full: its whole body plus every frontmatter field. query_nodes returns rows for scanning; use this when you need the actual contents of one thing you found.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["node_id"],
                     "properties": {
                         "node_id": {
                             "type": "string",
-                            "description": "The unique ID of the node to retrieve"
+                            "description": "The node's id, which is its path in the vault, e.g. 'Notes/Meeting.md'. Take it from a query_nodes result."
                         }
                     }
                 }),
             },
         },
-        // 3. get_active_tasks_and_events — Upcoming deadlines
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
-                name: "get_active_tasks_and_events".to_string(),
-                description: "Get all active tasks with due dates and upcoming events. Tasks marked as 'done' or 'canceled' are excluded. Returns task status, due dates, and priorities.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
+                name: "list_schemas".to_string(),
+                description: "Describe this vault: every type of thing in it, how many there are, and which frontmatter fields each type actually uses. Call this when you do not know what the user keeps, before searching for a type you are not sure exists, or before creating something of an unfamiliar type so you match the fields they already use.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
             },
         },
-        // 4. get_nodes_by_type — List nodes by type
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
-                name: "get_nodes_by_type".to_string(),
-                description: "List all nodes of a specific type. Returns metadata only (no full content). Sorted by last updated.".to_string(),
+                name: "create_node".to_string(),
+                description: "Create anything in the vault — a note, a task, an event, or a type this app has never heard of. Check list_schemas first so the fields match what the user already uses for that type.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "required": ["node_type"],
+                    "required": ["node_type", "title"],
                     "properties": {
                         "node_type": {
                             "type": "string",
-                            "description": "Node type to filter by. One of: note, task, event, person, quickcap, file",
-                            "enum": ["note", "task", "event", "person", "quickcap", "file"]
+                            "description": "What kind of thing this is: 'note', 'task', 'event', 'person', 'project', or any type the user already uses. Lowercase."
+                        },
+                        "title": { "type": "string", "description": "The title." },
+                        "content": {
+                            "type": "string",
+                            "description": "Markdown body. Optional."
+                        },
+                        "properties": {
+                            "type": "object",
+                            "description": "Frontmatter fields, as an object. For a task: status (todo/in_progress/done/backlog/canceled), due_date and start_date as YYYY-MM-DD, priority, tags. For an event: start_date, end_date. Any other field is allowed and is kept as written."
                         }
                     }
                 }),
             },
         },
-        // 5. search_feed_articles — Search RSS articles
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
-                name: "search_feed_articles".to_string(),
-                description: "Search saved RSS feed articles by keyword. Returns matching article titles, summaries, and publication dates.".to_string(),
+                name: "update_node".to_string(),
+                description: "Change fields on an existing node — mark a task done, set a due date, add a tag, edit any frontmatter field. Only the fields you send are touched; everything else on the node is left exactly as it was. A node's type can never be changed.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "required": ["query"],
+                    "required": ["node_id", "properties"],
                     "properties": {
-                        "query": {
+                        "node_id": {
                             "type": "string",
-                            "description": "Search query for feed articles"
+                            "description": "The node's id, from a query_nodes result."
+                        },
+                        "properties": {
+                            "type": "object",
+                            "description": "Only the fields to change, e.g. {\"status\": \"done\"}. Send null as a value to remove a field. Fields you do not mention keep their current values."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Replaces the whole body. Omit this to leave the body untouched — which is what a field-only change should do."
                         }
                     }
                 }),
             },
         },
-        // 6. get_nodes_by_tag — Filter by tag
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "get_nodes_by_tag".to_string(),
-                description: "Get all nodes tagged with a specific tag. Returns node metadata without full content.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["tag"],
-                    "properties": {
-                        "tag": {
-                            "type": "string",
-                            "description": "Tag name to filter by (without the # prefix)"
-                        }
-                    }
-                }),
-            },
-        },
-        // 7. get_linked_nodes — Backlinks for a node
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "get_linked_nodes".to_string(),
-                description: "Get all nodes that link to (reference) a given node. Useful for discovering backlinks and related content.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["title"],
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Title of the node to find backlinks for"
-                        },
-                        "node_id": {
-                            "type": "string",
-                            "description": "Optional node ID for more precise matching"
-                        }
-                    }
-                }),
-            },
-        },
-        // person_brief — everything about one person, in one answer
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "person_brief".to_string(),
-                description: "Everything the vault knows about one person: when they were last in touch, whether that is overdue, their next meeting, open tasks about them, their birthday, and the balance of gifts and money between you. Use this for any question about a specific person — 'what should I know before I see Nam', 'when did I last speak to An', 'do I owe Bình anything'.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["person"],
-                    "properties": {
-                        "person": {
-                            "type": "string",
-                            "description": "The person's name, or their vault path if known"
-                        }
-                    }
-                }),
-            },
-        },
-        // find_people — who to get back to
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "find_people".to_string(),
-                description: "Find people by how the relationship stands rather than by name. Use for 'who have I not spoken to in a while', 'whose birthday is coming up', 'who are my colleagues'.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "description": "Only people whose relationship is in this state",
-                            "enum": ["overdue", "due_soon", "on_track", "thriving", "unknown"]
-                        },
-                        "birthday_within_days": {
-                            "type": "integer",
-                            "description": "Only people whose birthday falls within this many days"
-                        },
-                        "relationship": {
-                            "type": "string",
-                            "description": "Only people with this relationship, e.g. colleague, family"
-                        },
-                        "limit": { "type": "integer", "description": "Default 20" }
-                    }
-                }),
-            },
-        },
-        // 8. get_all_tags — Tag overview
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "get_all_tags".to_string(),
-                description: "Get an overview of all tags used in the vault with their usage counts. Useful for understanding how the user organizes their knowledge.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            },
-        },
-        // 9. get_node_edges — Knowledge graph edges
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "get_node_edges".to_string(),
-                description: "Get all knowledge graph edges (links, references, embeds) connected to a specific node. Shows how nodes relate to each other.".to_string(),
+                description: "Follow the links out of and into a node — what it mentions, and what mentions it. Use this to explore around something you already found; query_nodes cannot express 'related to'.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["node_id"],
                     "properties": {
-                        "node_id": {
+                        "node_id": { "type": "string", "description": "The node's id." },
+                        "direction": {
                             "type": "string",
-                            "description": "The node ID to get edges for"
+                            "enum": ["outgoing", "incoming", "both"],
+                            "description": "Which way to follow the links. Defaults to both."
                         }
                     }
                 }),
             },
         },
-        // 10. search_finance — Financial records
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "search_feed_articles".to_string(),
+                description: "Search articles pulled in from the user's RSS feeds. These are not vault nodes and query_nodes cannot reach them.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query for feed articles" }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "search_files".to_string(),
+                description: "Search files in the vault's Files app by their contents, filename, extension, tags, or linked people. Use this when the user asks about files, images, documents, PDFs, or anything they believe is written inside a document. The 'query' parameter searches the text inside documents (PDF, Word, PowerPoint, spreadsheets, EPUB, HTML, plain text and code) as well as filenames and linked people names. Returns file metadata including path, size, extension, tags, people, and an 'excerpt' quoting the passage that matched when the match came from inside the document.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Text to look for inside documents, in filenames, or in linked people's names" },
+                        "extension": { "type": "string", "description": "Filter by file extension, e.g. 'pdf'" },
+                        "tag": { "type": "string", "description": "Filter by tag" },
+                        "person": { "type": "string", "description": "Filter by a linked person's name" }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "get_finance_summary".to_string(),
+                description: "Totals and category breakdown for the user's money this month: income, expenses, balance, budgets. Finance transactions live inside a month node rather than as separate nodes, so query_nodes cannot add them up.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -241,252 +211,30 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "type": "object",
                     "required": ["query"],
                     "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query for financial records"
-                        }
+                        "query": { "type": "string", "description": "Search query for financial records" }
                     }
                 }),
             },
         },
-        // 11. search_files — Search files by name, extension, tags, or linked people
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "search_files".to_string(),
-                description: "Search files in the vault's Files app by their contents, filename, extension, tags, or linked people. Use this when the user asks about files, images, documents, PDFs, or anything they believe is written inside a document. The 'query' parameter searches the text inside documents (PDF, Word, PowerPoint, spreadsheets, EPUB, HTML, plain text and code) as well as filenames and linked people names. Returns file metadata including path, size, extension, tags, people, and an 'excerpt' quoting the passage that matched when the match came from inside the document.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search term to match against the text inside documents, filenames, AND linked people names (case-insensitive). Use a distinctive phrase the user remembers from a document, or a person name like 'Lê Anh Khôi'."
-                        },
-                        "extension": {
-                            "type": "string",
-                            "description": "Filter by file extension (e.g. 'png', 'jpg', 'pdf', 'md'). Without the dot."
-                        },
-                        "tag": {
-                            "type": "string",
-                            "description": "Filter by tag assigned to the file"
-                        },
-                        "person": {
-                            "type": "string",
-                            "description": "Filter by person name linked to the file (case-insensitive substring match)"
-                        }
-                    }
-                }),
-            },
-        },
-        // 12. create_note — Create a new note
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "create_note".to_string(),
-                description: "Create a new note in the user's vault. Use when the user asks to write, save, or create a note. Returns the created note's ID and path.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["title", "content"],
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Title of the note (will become the filename)"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Markdown content of the note"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Optional tags to assign"
-                        }
-                    }
-                }),
-            },
-        },
-        // 13. create_task — Create a new task
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "create_task".to_string(),
-                description: "Create a new task in the user's vault. Use when the user wants to add a to-do, action item, or reminder.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["title"],
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Title of the task"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Optional detailed description"
-                        },
-                        "start_date": {
-                            "type": "string",
-                            "description": "Start date in YYYY-MM-DD format. When the task should begin."
-                        },
-                        "due_date": {
-                            "type": "string",
-                            "description": "Due date in YYYY-MM-DD format. When the task should be completed."
-                        },
-                        "priority": {
-                            "type": "string",
-                            "enum": ["P1", "P2", "P3", "P4"],
-                            "description": "Priority level. Only set if the user explicitly mentions priority."
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Optional tags"
-                        }
-                    }
-                }),
-            },
-        },
-        // 14. update_task_status — Update task status
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "update_task_status".to_string(),
-                description: "Update the status of an existing task. Use when the user marks a task as done, in progress, or wants to change its priority/due date.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["node_id", "status"],
-                    "properties": {
-                        "node_id": {
-                            "type": "string",
-                            "description": "The ID of the task node to update"
-                        },
-                        "status": {
-                            "type": "string",
-                            "enum": ["todo", "in_progress", "done", "canceled", "backlog"],
-                            "description": "New status"
-                        },
-                        "due_date": {
-                            "type": "string",
-                            "description": "Optional new due date (YYYY-MM-DD)"
-                        },
-                        "priority": {
-                            "type": "string",
-                            "enum": ["P1", "P2", "P3", "P4"],
-                            "description": "Optional new priority"
-                        }
-                    }
-                }),
-            },
-        },
-        // 15. create_event — Create a calendar event
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "create_event".to_string(),
-                description: "Create a new calendar event. Use when the user wants to schedule a meeting, appointment, or event.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["title"],
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Event title"
-                        },
-                        "is_all_day": {
-                            "type": "boolean",
-                            "description": "Set to true for all-day events (no specific time). When true, only date is needed in start_at (e.g., '2026-06-20')."
-                        },
-                        "start_at": {
-                            "type": "string",
-                            "description": "Start date/time. Use ISO 8601 for timed events (e.g., '2026-06-20T14:00:00') or just a date for all-day events (e.g., '2026-06-20'). Defaults to today if omitted."
-                        },
-                        "end_at": {
-                            "type": "string",
-                            "description": "Optional end time in ISO 8601 format"
-                        },
-                        "location": {
-                            "type": "string",
-                            "description": "Optional location"
-                        },
-                        "recurrence": {
-                            "type": "string",
-                            "enum": ["none", "daily", "weekly", "monthly", "yearly"],
-                            "description": "Simple recurrence. Use `rrule` instead for anything with an interval, specific weekdays, or an end."
-                        },
-                        "rrule": {
-                            "type": "string",
-                            "description": "An RFC 5545 recurrence rule, for repeats the simple options cannot express. Supported parts: FREQ (DAILY, WEEKLY, MONTHLY, YEARLY), INTERVAL, BYDAY (weekly only), COUNT, UNTIL. Examples: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' for every other Tuesday, 'FREQ=WEEKLY;BYDAY=MO,WE,FR' for Mondays, Wednesdays and Fridays, 'FREQ=MONTHLY;COUNT=6' for six months."
-                        },
-                        "reminders": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Reminder offsets before the event. Use format like '15m' (15 minutes), '1h' (1 hour), '1d' (1 day)."
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Optional description/notes"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Optional tags"
-                        }
-                    }
-                }),
-            },
-        },
-        // ── FINANCE TOOLS ──────────────────────────────────────────
-        // 16. get_finance_summary — Get finance accounts, balances, categories
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "get_finance_summary".to_string(),
-                description: "Get a summary of the user's financial state: accounts with balances, available categories, currency, and this month's income/expense totals. Call this first when the user mentions money, spending, or finances.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            },
-        },
-        // 17. create_transaction — Create a financial transaction
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "create_transaction".to_string(),
-                description: "Create a new financial transaction (income or expense). Call get_finance_summary first to know the available accounts and categories. The transaction is saved to the Finance app.".to_string(),
+                description: "Record a financial transaction — money spent, earned, or moved between accounts. Transactions live inside the month's finance node rather than as nodes of their own, so create_node cannot make one. Call get_finance_summary first to learn which accounts and categories this user actually has.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["amount", "category"],
                     "properties": {
-                        "type": {
-                            "type": "string",
-                            "enum": ["income", "expense"],
-                            "description": "Transaction type. Defaults to 'expense'."
-                        },
-                        "amount": {
-                            "type": "number",
-                            "description": "Transaction amount as a positive number (e.g., 150000 for 150k VND)"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Category name. Must match one from get_finance_summary (e.g., 'Food & Dining', 'Transportation', 'Salary')"
-                        },
-                        "account_id": {
-                            "type": "string",
-                            "description": "Account ID (e.g., 'acc-1'). Defaults to the first account if omitted."
-                        },
-                        "note": {
-                            "type": "string",
-                            "description": "Optional note describing the transaction (e.g., 'Đi chợ', 'Lunch with team')"
-                        },
-                        "date": {
-                            "type": "string",
-                            "description": "Transaction date in YYYY-MM-DD format. Defaults to today."
-                        }
+                        "amount": { "type": "number", "description": "Amount, as a positive number" },
+                        "type": { "type": "string", "enum": ["income", "expense", "transfer"], "description": "Defaults to expense" },
+                        "category": { "type": "string", "description": "Category name, matching one the user already uses" },
+                        "account": { "type": "string", "description": "Account name. Defaults to the user's first account." },
+                        "note": { "type": "string", "description": "What it was for" },
+                        "date": { "type": "string", "description": "YYYY-MM-DD. Defaults to today." }
                     }
                 }),
             },
         },
-        // 18. get_transactions — List transactions for a month
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -495,19 +243,9 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "month": {
-                            "type": "string",
-                            "description": "Month in YYYY-MM format (e.g., '2026-06'). Defaults to current month."
-                        },
-                        "type": {
-                            "type": "string",
-                            "enum": ["income", "expense", "transfer"],
-                            "description": "Optional filter by transaction type"
-                        },
-                        "limit": {
-                            "type": "number",
-                            "description": "Maximum number of transactions to return. Defaults to 20."
-                        }
+                        "month": { "type": "string", "description": "Month in YYYY-MM format (e.g., '2026-06'). Defaults to current month." },
+                        "type": { "type": "string", "enum": ["income", "expense", "transfer"], "description": "Optional filter by transaction type" },
+                        "limit": { "type": "number", "description": "Maximum number of transactions to return. Defaults to 20." }
                     }
                 }),
             },
@@ -524,30 +262,34 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
 /// Returns a JSON string result that will be sent to Ollama as the content
 /// of a `tool` role message. On failure, returns a JSON error object rather
 /// than propagating the error, so the LLM can gracefully handle it.
-pub fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> AppResult<String> {
+pub fn execute_tool<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
+    name: &str,
+    args: &Value,
+) -> AppResult<String> {
     log::info!("[Syn Tools] Executing tool: {} with args: {}", name, args);
 
     let result = match name {
-        "search_vault" => tool_search_vault(ctx.db, args),
+        // Generic — these reach every type in the vault, including ones this
+        // app has never heard of.
+        "query_nodes" => tool_query_nodes(ctx.db, args),
         "get_node" => tool_get_node(ctx.db, args),
-        "get_active_tasks_and_events" => tool_get_active_tasks_and_events(ctx.db),
-        "get_nodes_by_type" => tool_get_nodes_by_type(ctx.db, args),
-        "search_feed_articles" => tool_search_feed_articles(ctx.db, args),
-        "get_nodes_by_tag" => tool_get_nodes_by_tag(ctx.db, args),
+        "list_schemas" => tool_list_schemas(ctx.db),
+        "create_node" => tool_create_node(ctx, args),
+        "update_node" => tool_update_node(ctx, args),
         "get_linked_nodes" => tool_get_linked_nodes(ctx.db, args),
-        "person_brief" => tool_person_brief(ctx.db, args),
-        "find_people" => tool_find_people(ctx.db, args),
-        "get_all_tags" => tool_get_all_tags(ctx.db),
-        "get_node_edges" => tool_get_node_edges(ctx.db, args),
-        "search_finance" => tool_search_finance(ctx.db, args),
+
+        // Stores that are not nodes, or not node-shaped: feed articles have
+        // their own table, file search filters on indexed document text, and
+        // finance keeps its transactions inside a month node as an array,
+        // which no node query can add up.
+        "search_feed_articles" => tool_search_feed_articles(ctx.db, args),
         "search_files" => tool_search_files(ctx.db, args),
-        "create_note" => tool_create_note(ctx, args),
-        "create_task" => tool_create_task(ctx, args),
-        "update_task_status" => tool_update_task_status(ctx, args),
-        "create_event" => tool_create_event(ctx, args),
         "get_finance_summary" => tool_get_finance_summary(ctx.db),
-        "create_transaction" => tool_create_transaction(ctx, args),
+        "search_finance" => tool_search_finance(ctx.db, args),
         "get_transactions" => tool_get_transactions(ctx.db, args),
+        "create_transaction" => tool_create_transaction(ctx, args),
+
         _ => return Err(AppError::General(format!("Unknown tool: {}", name))),
     };
 
@@ -566,131 +308,15 @@ pub fn execute_tool(ctx: &ToolContext, name: &str, args: &Value) -> AppResult<St
 // ═══════════════════════════════════════════════════════════════
 
 /// Everything about one person, named the way somebody would name them.
-fn tool_person_brief(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let wanted = args
-        .get("person")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: person".to_string()))?
-        .trim();
-
-    let Some(person_id) = resolve_person(db, wanted)? else {
-        return Ok(serde_json::json!({
-            "found": false,
-            "note": format!("Nobody in the vault matches '{}'.", wanted)
-        })
-        .to_string());
-    };
-
-    let today = chrono::Local::now().date_naive();
-    match db.person_brief(&person_id, today)? {
-        Some(brief) => Ok(serde_json::to_string(&brief)?),
-        None => Ok(serde_json::json!({ "found": false }).to_string()),
-    }
-}
 
 /// A person's vault path, from a name or a path.
 ///
 /// An exact name first, so two people whose names overlap — "An" and "An
 /// Nguyễn" — do not answer for each other.
-fn resolve_person(db: &DbBridge, wanted: &str) -> AppResult<Option<String>> {
-    let people = db.get_nodes_by_type("person")?;
-    if let Some(exact) = people
-        .iter()
-        .find(|p| p.id == wanted || p.title.eq_ignore_ascii_case(wanted))
-    {
-        return Ok(Some(exact.id.clone()));
-    }
-    let lower = wanted.to_lowercase();
-    Ok(people
-        .iter()
-        .find(|p| p.title.to_lowercase().contains(&lower))
-        .map(|p| p.id.clone()))
-}
 
 /// People filtered by how the relationship stands, not by name.
-fn tool_find_people(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let status = args.get("status").and_then(|v| v.as_str());
-    let relationship = args
-        .get("relationship")
-        .and_then(|v| v.as_str())
-        .map(str::to_lowercase);
-    let within = args.get("birthday_within_days").and_then(|v| v.as_i64());
-    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).max(1) as usize;
-
-    let today = chrono::Local::now().date_naive();
-    let mut found = Vec::new();
-
-    for person in db.get_nodes_by_type("person")? {
-        if person.properties.get("is_owner") == Some(&serde_json::Value::Bool(true)) {
-            continue;
-        }
-        let Some(brief) = db.person_brief(&person.id, today)? else {
-            continue;
-        };
-        if status.is_some_and(|wanted| brief.status != wanted) {
-            continue;
-        }
-        if let Some(wanted) = &relationship {
-            if !brief
-                .relationships
-                .iter()
-                .any(|r| r.to_lowercase().contains(wanted))
-            {
-                continue;
-            }
-        }
-        if let Some(within) = within {
-            match brief.days_until_birthday {
-                Some(days) if days <= within => {}
-                _ => continue,
-            }
-        }
-        found.push(brief);
-        if found.len() >= limit {
-            break;
-        }
-    }
-
-    // Whoever has waited longest first, which is the order the question is
-    // nearly always asked in.
-    found.sort_by(|a, b| b.days_since_contact.cmp(&a.days_since_contact));
-    Ok(serde_json::json!({ "count": found.len(), "people": found }).to_string())
-}
 
 /// 1. search_vault — Universal FTS5 search
-fn tool_search_vault(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let query = args
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: query".to_string()))?;
-
-    let parsed = crate::search::parse_query(query);
-    let response = db.search_fts(&parsed, 1, 15)?;
-
-    let results: Vec<Value> = response
-        .results
-        .iter()
-        .map(|r| {
-            let snippet: String = r.snippet.chars().take(200).collect();
-            serde_json::json!({
-                "id": r.id,
-                "type": r.item_type,
-                "title": r.title,
-                "snippet": snippet,
-                "tags": r.tags,
-                "score": r.score,
-            })
-        })
-        .collect();
-
-    let output = serde_json::json!({
-        "results": results,
-        "_total": response.total_count,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 2. get_node — Read full node content
 fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -724,96 +350,8 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
 }
 
 /// 3. get_active_tasks_and_events — Upcoming deadlines
-fn tool_get_active_tasks_and_events(db: &DbBridge) -> AppResult<String> {
-    let nodes = db.get_active_tasks_and_events()?;
-
-    let results: Vec<Value> = nodes
-        .iter()
-        .take(30)
-        .map(|n| {
-            let status = n
-                .properties
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let due_date = n
-                .properties
-                .get("due_date")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let priority = n
-                .properties
-                .get("priority")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let start_at = n
-                .properties
-                .get("start_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            serde_json::json!({
-                "id": n.id,
-                "title": n.title,
-                "type": n.node_type,
-                "status": status,
-                "due_date": due_date,
-                "start_at": start_at,
-                "priority": priority,
-            })
-        })
-        .collect();
-
-    let total = nodes.len();
-    let output = serde_json::json!({
-        "results": results,
-        "_total": total,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 4. get_nodes_by_type — List nodes by type (metadata only)
-fn tool_get_nodes_by_type(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let node_type = args
-        .get("node_type")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: node_type".to_string()))?;
-
-    // Validate node type to prevent unexpected queries
-    let valid_types = ["note", "task", "event", "person", "quickcap", "file"];
-    if !valid_types.contains(&node_type) {
-        return Ok(serde_json::json!({
-            "error": format!("Invalid node_type '{}'. Must be one of: note, task, event, person, quickcap", node_type)
-        })
-        .to_string());
-    }
-
-    let nodes = db.get_nodes_by_type(node_type)?;
-
-    // Metadata only, no content — limit to 50 items
-    let results: Vec<Value> = nodes
-        .iter()
-        .take(50)
-        .map(|n| {
-            serde_json::json!({
-                "id": n.id,
-                "title": n.title,
-                "updated_at": n.updated_at,
-            })
-        })
-        .collect();
-
-    let total = nodes.len();
-    let output = serde_json::json!({
-        "results": results,
-        "_total": total,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 5. search_feed_articles — Search RSS articles
 fn tool_search_feed_articles(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -847,36 +385,6 @@ fn tool_search_feed_articles(db: &DbBridge, args: &Value) -> AppResult<String> {
 }
 
 /// 6. get_nodes_by_tag — Filter by tag
-fn tool_get_nodes_by_tag(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let tag = args
-        .get("tag")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: tag".to_string()))?;
-
-    let nodes = db.get_nodes_by_tag(tag)?;
-
-    let results: Vec<Value> = nodes
-        .iter()
-        .take(30)
-        .map(|n| {
-            serde_json::json!({
-                "id": n.id,
-                "title": n.title,
-                "type": n.node_type,
-                "updated_at": n.updated_at,
-            })
-        })
-        .collect();
-
-    let total = nodes.len();
-    let output = serde_json::json!({
-        "results": results,
-        "_total": total,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 7. get_linked_nodes — Backlinks for a node
 fn tool_get_linked_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -913,61 +421,8 @@ fn tool_get_linked_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
 }
 
 /// 8. get_all_tags — Tag overview
-fn tool_get_all_tags(db: &DbBridge) -> AppResult<String> {
-    let tags = db.get_all_tags_with_counts()?;
-
-    let results: Vec<Value> = tags
-        .iter()
-        .take(100)
-        .map(|(tag, count)| {
-            serde_json::json!({
-                "tag": tag,
-                "count": count,
-            })
-        })
-        .collect();
-
-    let total = tags.len();
-    let output = serde_json::json!({
-        "results": results,
-        "_total": total,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 9. get_node_edges — Knowledge graph edges for a node
-fn tool_get_node_edges(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let node_id = args
-        .get("node_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: node_id".to_string()))?;
-
-    let edges = db.get_node_edges_for_node(node_id)?;
-
-    let results: Vec<Value> = edges
-        .iter()
-        .take(30)
-        .map(|e| {
-            serde_json::json!({
-                "source_id": e.source_id,
-                "target_id": e.target_id,
-                "edge_type": e.edge_type,
-                "relation": e.relation,
-            })
-        })
-        .collect();
-
-    let total = edges.len();
-    let output = serde_json::json!({
-        "results": results,
-        "_total": total,
-        "_returned": results.len(),
-    });
-
-    Ok(output.to_string())
-}
 
 /// 10. search_finance — Financial records
 fn tool_search_finance(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -1089,8 +544,8 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
 /// [`free_node_path`] for the name, [`resolve_properties`] for the keys.
 ///
 /// [`write_node_file`]: crate::commands::nodes::write_node_file
-fn write_tool_node(
-    ctx: &ToolContext,
+fn write_tool_node<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
     node_type: &str,
     title: &str,
     content: &str,
@@ -1211,181 +666,232 @@ fn write_tool_node(
     Ok((rel_path, title.to_string()))
 }
 
-/// 12. create_note
-fn tool_create_note(ctx: &ToolContext, args: &Value) -> AppResult<String> {
+// ═══════════════════════════════════════════════════════════════
+//  GENERIC TOOLS
+// ═══════════════════════════════════════════════════════════════
+
+/// Search and filter every node, whatever its type.
+///
+/// This is one call onto the query engine the app already runs for query
+/// blocks in notes, for the Tasks search bar and for saved filters. It
+/// replaced five hard-coded tools — full-text search, by-type, by-tag, active
+/// tasks and events, and people — none of which could see a type nobody had
+/// written a tool for.
+fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: query".into()))?;
+
+    let parsed = crate::search::parse_query(query);
+    let result = db.run_node_query(&parsed)?;
+
+    let rows: Vec<Value> = result
+        .rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id,
+                "type": r.node_type,
+                "title": r.title,
+                "columns": r.cells,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "columns": result.columns,
+        "results": rows,
+        // `total` is what matched, `_returned` is what fitted under the limit.
+        // Reporting only the second would let the model answer "you have 20
+        // overdue tasks" when the true number is several hundred.
+        "total_matches": result.total,
+        "_returned": rows.len(),
+    })
+    .to_string())
+}
+
+/// What this vault contains, in the vault's own vocabulary.
+///
+/// The convergence point of the whole malleability argument, in its cheapest
+/// possible form: there is no schema anywhere to read, so this reports what is
+/// observably there. It is what lets the assistant work with a type nobody
+/// wrote code for — it can see that `book` exists and that books here carry
+/// `author`, `rating` and `status`, and then query and create them.
+fn tool_list_schemas(db: &DbBridge) -> AppResult<String> {
+    // Enough keys to describe a type, few enough that one node with a large
+    // generated blob cannot crowd out the other types.
+    const KEYS_PER_TYPE: usize = 25;
+
+    let schemas: Vec<Value> = db
+        .observed_schemas(KEYS_PER_TYPE)?
+        .into_iter()
+        .map(|(node_type, count, fields)| {
+            serde_json::json!({
+                "type": node_type,
+                "count": count,
+                "fields": fields,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "types": schemas,
+        "_note": "Fields are what nodes of this type actually carry, not a list of what is allowed. A node may be missing any of them, and may carry others.",
+    })
+    .to_string())
+}
+
+/// Create a node of any type.
+///
+/// Replaced `create_note`, `create_task`, `create_event` and
+/// `create_transaction`, which between them could make four things. This can
+/// make anything, because `write_node_file` has always accepted an arbitrary
+/// type string and the frontmatter writer has always kept what it was given.
+fn tool_create_node<R: tauri::Runtime>(
+    ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let node_type = args
+        .get("node_type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: node_type".into()))?
+        .trim()
+        .to_lowercase();
+
+    if node_type.is_empty() {
+        return Err(AppError::General("node_type cannot be empty".into()));
+    }
+
     let title = args
         .get("title")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
 
-    let properties = serde_json::json!({ "tags": tags });
-    let (id, created_title) = write_tool_node(ctx, "note", title, content, properties)?;
+    let mut properties = match args.get("properties") {
+        Some(Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+
+    // A task with no status is invisible to every bucket and filter in the
+    // Tasks app. `create_task` used to set this; nothing else would.
+    if node_type == "task" && !properties.contains_key("status") {
+        properties.insert("status".to_string(), serde_json::json!("todo"));
+    }
+
+    let (id, created_title) = write_tool_node(
+        ctx,
+        &node_type,
+        title,
+        content,
+        Value::Object(properties),
+    )?;
 
     Ok(serde_json::json!({
         "success": true,
         "id": id,
+        "type": node_type,
         "title": created_title,
-        "message": format!("Note '{}' created successfully", created_title),
+        "message": format!("Created {} '{}'", node_type, created_title),
     })
     .to_string())
 }
 
-/// 13. create_task
-fn tool_create_task(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let title = args
-        .get("title")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
-    let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let start_date = args
-        .get("start_date")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let due_date = args.get("due_date").and_then(|v| v.as_str()).unwrap_or("");
-    let priority = args.get("priority").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+/// Change fields on a node, leaving everything it did not mention alone.
+///
+/// The patch semantics are not a convenience — they are what makes a generic
+/// writer safe. A tool that rebuilt frontmatter from its arguments would erase
+/// every field the model did not happen to know about, which on a
+/// user-invented type is all of them.
+///
+/// The type is never written from an argument. `nodeRoutes.ts` records what
+/// happens when a writer decides a node's type for itself: a task opened in
+/// the note editor was saved as a note on the first autosave and the task was
+/// gone. Here the type comes from the node on disk and nowhere else.
+fn tool_update_node<R: tauri::Runtime>(
+    ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use crate::commands::nodes::{
+        existing_body, existing_properties, markdown_with_frontmatter, resolve_properties,
+    };
 
-    let properties = serde_json::json!({
-        "status": "todo",
-        "priority": priority,
-        "start_date": start_date,
-        "due_date": due_date,
-        "tags": tags,
-    });
-    let (id, created_title) = write_tool_node(ctx, "task", title, content, properties)?;
-
-    let mut msg = format!("Task '{}' created (status: todo", created_title);
-    if !priority.is_empty() {
-        msg.push_str(&format!(", priority: {}", priority));
-    }
-    if !due_date.is_empty() {
-        msg.push_str(&format!(", due: {}", due_date));
-    }
-    msg.push(')');
-
-    Ok(serde_json::json!({
-        "success": true,
-        "id": id,
-        "title": created_title,
-        "message": msg,
-    })
-    .to_string())
-}
-
-/// 14. update_task_status
-fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String> {
     let node_id = args
         .get("node_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
-    let new_status = args
-        .get("status")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: status".into()))?;
 
-    let valid_statuses = ["todo", "in_progress", "done", "canceled", "backlog"];
-    if !valid_statuses.contains(&new_status) {
-        return Ok(serde_json::json!({
-            "error": format!("Invalid status '{}'. Must be one of: {}", new_status, valid_statuses.join(", "))
-        }).to_string());
-    }
+    let patch = args
+        .get("properties")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
 
-    let node = ctx.db.get_node(node_id)?;
-    let Some(mut node) = node else {
-        return Ok(serde_json::json!({"error": "Node not found", "node_id": node_id}).to_string());
+    let Some(mut node) = ctx.db.get_node(node_id)? else {
+        return Ok(
+            serde_json::json!({ "error": "Node not found", "node_id": node_id }).to_string(),
+        );
     };
 
-    if node.node_type != "task" {
-        return Ok(
-            serde_json::json!({"error": "Node is not a task", "node_type": node.node_type})
-                .to_string(),
-        );
-    }
+    let full_path = std::path::Path::new(ctx.vault_path).join(&node.id);
+    let ext = full_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("md")
+        .to_string();
 
-    // Update properties
-    let mut props = node.properties.clone();
-    if let Some(obj) = props.as_object_mut() {
-        obj.insert("status".to_string(), serde_json::json!(new_status));
+    let mut properties = resolve_properties(existing_properties(&full_path, &ext), &patch);
 
-        // Set completed_at when marking done (matches TaskApp behavior)
-        if new_status == "done" {
-            let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-            obj.insert("completed_at".to_string(), serde_json::json!(today));
-        } else {
-            // Clear completed_at when un-doing
-            obj.insert("completed_at".to_string(), serde_json::json!(""));
-        }
-
-        if let Some(due_date) = args.get("due_date").and_then(|v| v.as_str()) {
-            if !due_date.is_empty() {
-                obj.insert("due_date".to_string(), serde_json::json!(due_date));
-            }
-        }
-        if let Some(priority) = args.get("priority").and_then(|v| v.as_str()) {
-            if !priority.is_empty() {
-                obj.insert("priority".to_string(), serde_json::json!(priority));
+    // `completed_at` is derived from `status` by every other writer in the
+    // app, and the Tasks views read it. A generic write that set one without
+    // the other would leave a task that looks done and is not dated, which is
+    // worse than either state on its own.
+    if node.node_type == "task" {
+        if let Some(status) = patch.get("status").and_then(|v| v.as_str()) {
+            if let Some(obj) = properties.as_object_mut() {
+                let stamp = if status == "done" {
+                    serde_json::json!(chrono::Utc::now().format("%Y-%m-%d").to_string())
+                } else {
+                    serde_json::json!("")
+                };
+                obj.insert("completed_at".to_string(), stamp);
             }
         }
     }
-    node.properties = props;
-    node.updated_at = chrono::Utc::now().to_rfc3339();
-    node.timestamp = chrono::Utc::now().timestamp_millis();
 
+    // A body only changes when one was sent. Omitting it is how a field-only
+    // update says "leave what I wrote alone".
+    let body = match args.get("content").and_then(|v| v.as_str()) {
+        Some(new_body) => new_body.to_string(),
+        None => existing_body(&full_path, &ext),
+    };
+
+    let title = properties
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&node.title)
+        .to_string();
+
+    if ext == "md" {
+        let file_content =
+            markdown_with_frontmatter(&title, &node.node_type, &properties, &body);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&full_path, &file_content)?;
+    } else {
+        return Ok(serde_json::json!({
+            "error": format!("Cannot edit a .{} node; only markdown nodes can be updated here", ext),
+            "node_id": node_id,
+        })
+        .to_string());
+    }
+
+    let now = chrono::Utc::now();
+    node.title = title.clone();
+    node.content = body.clone();
+    node.properties = properties.clone();
+    node.updated_at = now.to_rfc3339();
+    node.timestamp = now.timestamp_millis();
     ctx.db.upsert_node(&node)?;
 
-    // Update file on disk using serde_yaml (matches CalendarApp pipeline)
-    let full_path = std::path::Path::new(ctx.vault_path).join(&node.id);
-    if full_path.exists() {
-        let mut props_map = serde_yaml::Mapping::new();
-        props_map.insert(
-            serde_yaml::Value::String("title".to_string()),
-            serde_yaml::Value::String(node.title.clone()),
-        );
-        props_map.insert(
-            serde_yaml::Value::String("type".to_string()),
-            serde_yaml::Value::String("task".to_string()),
-        );
-        if let Some(obj) = node.properties.as_object() {
-            for (key, val) in obj {
-                if key == "title" || key == "type" || key == "updated_at" {
-                    continue;
-                }
-                if let Ok(yaml_val) = serde_yaml::to_value(val) {
-                    props_map.insert(serde_yaml::Value::String(key.clone()), yaml_val);
-                }
-            }
-        }
-        props_map.insert(
-            serde_yaml::Value::String("updated_at".to_string()),
-            serde_yaml::Value::String(node.updated_at.clone()),
-        );
-        let frontmatter = serde_yaml::to_string(&props_map).unwrap_or_default();
-        let yaml_str = frontmatter.trim_start_matches("---\n");
-        let file_content = format!("---\n{}---\n{}", yaml_str, node.content);
-        let _ = std::fs::write(&full_path, &file_content);
-    }
-
-    // Update search index
-    let tags_str = node
-        .properties
+    let tags_str = properties
         .get("tags")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -1395,135 +901,50 @@ fn tool_update_task_status(ctx: &ToolContext, args: &Value) -> AppResult<String>
                 .join(" ")
         })
         .unwrap_or_default();
-    let props_json = serde_json::to_string(&node.properties).unwrap_or_default();
+    let props_json = serde_json::to_string(&properties).unwrap_or_default();
     ctx.db.upsert_search_entry(
         &node.id,
-        "task",
-        &node.title,
+        &node.node_type,
+        &title,
         &tags_str,
-        &node.content,
+        &body,
         &props_json,
-        Some(new_status),
+        properties.get("status").and_then(|v| v.as_str()),
         &node.updated_at,
         &node.id,
     );
 
-    // Emit event
     let _ = ctx.app.emit(
         "node:updated",
         serde_json::json!({
             "id": node.id,
-            "node_type": "task",
-            "title": node.title,
-            "status": new_status,
+            "node_type": node.node_type,
+            "title": title,
         }),
     );
+
+    let changed: Vec<&String> = patch
+        .as_object()
+        .map(|o| o.keys().collect())
+        .unwrap_or_default();
 
     Ok(serde_json::json!({
         "success": true,
         "id": node.id,
-        "title": node.title,
-        "new_status": new_status,
-        "message": format!("Task '{}' status updated to '{}'", node.title, new_status),
+        "type": node.node_type,
+        "title": title,
+        "changed": changed,
     })
     .to_string())
 }
+
+/// 12. create_note
+
+/// 13. create_task
+
+/// 14. update_task_status
 
 /// 15. create_event
-fn tool_create_event(ctx: &ToolContext, args: &Value) -> AppResult<String> {
-    let title = args
-        .get("title")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
-    let is_all_day = args
-        .get("is_all_day")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // Default start_at to today if not provided
-    let default_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start_at = args
-        .get("start_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&default_date);
-
-    // For all-day events, strip time part and auto-set end_at = start_at
-    let start_at = if is_all_day {
-        start_at.split('T').next().unwrap_or(start_at)
-    } else {
-        start_at
-    };
-
-    let end_at = if is_all_day {
-        args.get("end_at")
-            .and_then(|v| v.as_str())
-            .map(|s| s.split('T').next().unwrap_or(s))
-            .unwrap_or(start_at)
-    } else {
-        args.get("end_at").and_then(|v| v.as_str()).unwrap_or("")
-    };
-
-    let location = args.get("location").and_then(|v| v.as_str()).unwrap_or("");
-    // Whatever the model expressed, one shape reaches the vault. A bare
-    // `recurrence` is promoted rather than stored beside a rule, because two
-    // places recording the same thing is how they end up disagreeing.
-    let rrule = {
-        let given = args.get("rrule").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let parsed = if given.is_empty() {
-            let legacy = args.get("recurrence").and_then(|v| v.as_str()).unwrap_or("none");
-            crate::calendar::rrule::RRule::from_legacy(legacy, "")
-        } else {
-            crate::calendar::rrule::RRule::parse(given)
-        };
-        parsed.map(|r| r.to_rrule_string()).unwrap_or_default()
-    };
-    let reminders: Vec<String> = args
-        .get("reminders")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let tags: Vec<String> = args
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let properties = serde_json::json!({
-        "is_all_day": is_all_day,
-        "start_at": start_at,
-        "end_at": end_at,
-        "location": location,
-        "rrule": rrule,
-        "reminders": reminders,
-        "tags": tags,
-    });
-    let (id, created_title) = write_tool_node(ctx, "event", title, content, properties)?;
-
-    let time_desc = if is_all_day {
-        format!("{} (all day)", start_at)
-    } else {
-        start_at.to_string()
-    };
-
-    Ok(serde_json::json!({
-        "success": true,
-        "id": id,
-        "title": created_title,
-        "start_at": start_at,
-        "is_all_day": is_all_day,
-        "message": format!("Event '{}' created for {}", created_title, time_desc),
-    })
-    .to_string())
-}
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -1709,7 +1130,117 @@ fn compute_account_balances(db: &DbBridge, accounts_val: &Value) -> Value {
 }
 
 /// 17. create_transaction — Create a financial transaction
-fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String> {
+
+/// 18. get_transactions — List transactions for a specific month
+fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let now = chrono::Local::now();
+    let month = args
+        .get("month")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| now.format("%Y-%m").to_string());
+    let type_filter = args.get("type").and_then(|v| v.as_str());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+    let month_node_id = format!("Finance/{}.json", month);
+    let month_node = db.get_node(&month_node_id)?;
+
+    let transactions = match &month_node {
+        Some(node) => node
+            .properties
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // Filter by type if specified
+    let filtered: Vec<&Value> = transactions
+        .iter()
+        .filter(|tx| {
+            if let Some(filter) = type_filter {
+                tx.get("type").and_then(|v| v.as_str()) == Some(filter)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Sort by date descending (most recent first)
+    let mut sorted: Vec<&Value> = filtered;
+    sorted.sort_by(|a, b| {
+        let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let db_date = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        db_date.cmp(da)
+    });
+
+    // Apply limit
+    let limited: Vec<Value> = sorted
+        .into_iter()
+        .take(limit)
+        .map(|v| {
+            // Slim down for LLM — only essential fields
+            serde_json::json!({
+                "id": v.get("id"),
+                "type": v.get("type"),
+                "amount": v.get("amount"),
+                "category": v.get("category"),
+                "accountId": v.get("accountId"),
+                "date": v.get("date"),
+                "note": v.get("note")
+            })
+        })
+        .collect();
+
+    // Read config for currency
+    let config_node = db.get_node("Finance/Config.json")?;
+    let currency = config_node
+        .as_ref()
+        .and_then(|n| n.properties.get("currency"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("VND");
+
+    // Calculate totals
+    let total_income: f64 = transactions
+        .iter()
+        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("income"))
+        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
+        .sum();
+    let total_expense: f64 = transactions
+        .iter()
+        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("expense"))
+        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
+        .sum();
+
+    let output = serde_json::json!({
+        "month": month,
+        "currency": currency,
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "net": total_income - total_expense,
+        "total_transactions": transactions.len(),
+        "results": limited,
+        "_returned": limited.len()
+    });
+
+    Ok(output.to_string())
+}
+
+/// Helper: Write a JSON node file to disk + upsert DB + emit event.
+/// This matches the write_node_file format for .json files.
+
+/// Helper: Simple random u16 for ID generation (matches frontend pattern)
+
+/// Helper: Format amount with currency
+
+
+// ═══════════════════════════════════════════════════════════════
+//  TESTS
+// ═══════════════════════════════════════════════════════════════
+
+fn tool_create_transaction<R: tauri::Runtime>(
+    ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     let amount = args
         .get("amount")
         .and_then(|v| v.as_f64())
@@ -1869,106 +1400,8 @@ fn tool_create_transaction(ctx: &ToolContext, args: &Value) -> AppResult<String>
     Ok(output.to_string())
 }
 
-/// 18. get_transactions — List transactions for a specific month
-fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
-    let now = chrono::Local::now();
-    let month = args
-        .get("month")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| now.format("%Y-%m").to_string());
-    let type_filter = args.get("type").and_then(|v| v.as_str());
-    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-
-    let month_node_id = format!("Finance/{}.json", month);
-    let month_node = db.get_node(&month_node_id)?;
-
-    let transactions = match &month_node {
-        Some(node) => node
-            .properties
-            .get("transactions")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default(),
-        None => Vec::new(),
-    };
-
-    // Filter by type if specified
-    let filtered: Vec<&Value> = transactions
-        .iter()
-        .filter(|tx| {
-            if let Some(filter) = type_filter {
-                tx.get("type").and_then(|v| v.as_str()) == Some(filter)
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    // Sort by date descending (most recent first)
-    let mut sorted: Vec<&Value> = filtered;
-    sorted.sort_by(|a, b| {
-        let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        let db_date = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        db_date.cmp(da)
-    });
-
-    // Apply limit
-    let limited: Vec<Value> = sorted
-        .into_iter()
-        .take(limit)
-        .map(|v| {
-            // Slim down for LLM — only essential fields
-            serde_json::json!({
-                "id": v.get("id"),
-                "type": v.get("type"),
-                "amount": v.get("amount"),
-                "category": v.get("category"),
-                "accountId": v.get("accountId"),
-                "date": v.get("date"),
-                "note": v.get("note")
-            })
-        })
-        .collect();
-
-    // Read config for currency
-    let config_node = db.get_node("Finance/Config.json")?;
-    let currency = config_node
-        .as_ref()
-        .and_then(|n| n.properties.get("currency"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("VND");
-
-    // Calculate totals
-    let total_income: f64 = transactions
-        .iter()
-        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("income"))
-        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
-        .sum();
-    let total_expense: f64 = transactions
-        .iter()
-        .filter(|tx| tx.get("type").and_then(|v| v.as_str()) == Some("expense"))
-        .filter_map(|tx| tx.get("amount").and_then(|v| v.as_f64()))
-        .sum();
-
-    let output = serde_json::json!({
-        "month": month,
-        "currency": currency,
-        "total_income": total_income,
-        "total_expense": total_expense,
-        "net": total_income - total_expense,
-        "total_transactions": transactions.len(),
-        "results": limited,
-        "_returned": limited.len()
-    });
-
-    Ok(output.to_string())
-}
-
-/// Helper: Write a JSON node file to disk + upsert DB + emit event.
-/// This matches the write_node_file format for .json files.
-fn write_json_node(
-    ctx: &ToolContext,
+fn write_json_node<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
     rel_path: &str,
     node_type: &str,
     title: &str,
@@ -2054,7 +1487,6 @@ fn write_json_node(
     Ok(())
 }
 
-/// Helper: Simple random u16 for ID generation (matches frontend pattern)
 fn rand_u16() -> u16 {
     use std::time::SystemTime;
     let nanos = SystemTime::now()
@@ -2064,7 +1496,6 @@ fn rand_u16() -> u16 {
     (nanos % 1000) as u16
 }
 
-/// Helper: Format amount with currency
 fn format_amount(amount: f64, currency: &str) -> String {
     if currency == "VND" {
         // VND: no decimals, use comma separator
@@ -2089,10 +1520,6 @@ fn format_number_with_separator(n: i64) -> String {
     }
     result
 }
-
-// ═══════════════════════════════════════════════════════════════
-//  TESTS
-// ═══════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -2149,35 +1576,121 @@ mod tests {
         assert_eq!(before, names.len(), "a tool name is used twice");
     }
 
+    /// The set the model is offered, named one by one.
+    ///
+    /// Spelled out rather than counted, because the point of this list is not
+    /// how many there are but *which*: the first five reach every type in the
+    /// vault, and every other entry has to justify itself by reaching a store
+    /// they cannot. A tool added here without that justification is the old
+    /// per-model shape growing back.
     #[test]
-    fn test_tool_definitions_have_unique_names() {
+    fn the_generic_tools_reach_every_type_and_the_rest_earn_their_place() {
         let defs = get_tool_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
 
-        assert!(names.contains(&"search_vault"));
-        assert!(names.contains(&"get_node"));
-        assert!(names.contains(&"get_active_tasks_and_events"));
-        assert!(names.contains(&"get_nodes_by_type"));
-        assert!(names.contains(&"search_feed_articles"));
-        assert!(names.contains(&"get_nodes_by_tag"));
-        assert!(names.contains(&"get_linked_nodes"));
-        assert!(names.contains(&"get_all_tags"));
-        assert!(names.contains(&"get_node_edges"));
-        assert!(names.contains(&"search_finance"));
-        assert!(names.contains(&"search_files"));
-        assert!(names.contains(&"create_note"));
-        assert!(names.contains(&"create_task"));
-        assert!(names.contains(&"update_task_status"));
-        assert!(names.contains(&"create_event"));
-        assert!(names.contains(&"get_finance_summary"));
-        assert!(names.contains(&"create_transaction"));
-        assert!(names.contains(&"get_transactions"));
+        // Generic: these work on notes, tasks, people, and on `book` — a type
+        // nobody wrote a line of code for.
+        for generic in [
+            "query_nodes",
+            "get_node",
+            "list_schemas",
+            "create_node",
+            "update_node",
+            "get_linked_nodes",
+        ] {
+            assert!(names.contains(&generic), "the generic tool {generic} is missing");
+        }
 
-        // Ensure all names are unique
-        let mut unique_names = names.clone();
-        unique_names.sort();
-        unique_names.dedup();
-        assert_eq!(names.len(), unique_names.len());
+        // Specialised, and each for a reason: feed articles have their own
+        // table, file search runs over extracted document text, and finance
+        // keeps transactions inside a month node as an array.
+        for specialised in [
+            "search_feed_articles",
+            "search_files",
+            "get_finance_summary",
+            "search_finance",
+            "get_transactions",
+            "create_transaction",
+        ] {
+            assert!(names.contains(&specialised), "{specialised} is missing");
+        }
+
+        assert_eq!(
+            names.len(),
+            12,
+            "the tool list changed; every entry costs tokens on every turn of \
+             every conversation, so a new one needs a store the generic tools \
+             cannot reach: {names:?}"
+        );
+    }
+
+    /// The per-model tools are gone and must not come back.
+    ///
+    /// Each of these could only ever see one kind of thing. Re-adding one is
+    /// how the list grows back to twenty.
+    #[test]
+    fn no_tool_is_tied_to_a_single_data_model() {
+        let defs = get_tool_definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
+
+        for retired in [
+            "search_vault",
+            "get_nodes_by_type",
+            "get_nodes_by_tag",
+            "get_active_tasks_and_events",
+            "person_brief",
+            "find_people",
+            "get_all_tags",
+            "get_node_edges",
+            "create_note",
+            "create_task",
+            "create_event",
+            "update_task_status",
+        ] {
+            assert!(
+                !names.contains(&retired),
+                "{retired} is back; `query_nodes`, `create_node` or `update_node` covers it"
+            );
+        }
+    }
+
+    /// The prompt and the tool list have to agree.
+    ///
+    /// They are written in different files and nothing links them, so a tool
+    /// renamed on one side leaves the other telling the model to call
+    /// something that does not exist — which reads to the user as the
+    /// assistant refusing to do its job.
+    #[test]
+    fn the_system_prompt_only_names_tools_that_exist() {
+        let prompt = crate::syn::rag::build_system_prompt("", "auto");
+        let names: Vec<String> = get_tool_definitions()
+            .iter()
+            .map(|d| d.function.name.clone())
+            .collect();
+
+        for retired in [
+            "search_vault",
+            "get_nodes_by_type",
+            "create_note",
+            "create_task",
+            "create_event",
+            "update_task_status",
+            "person_brief",
+            "find_people",
+            "get_all_tags",
+            "get_node_edges",
+        ] {
+            assert!(
+                !prompt.contains(retired),
+                "the system prompt still tells the model to call `{retired}`, which no longer exists"
+            );
+        }
+
+        // And the ones it does name are real.
+        for named in ["query_nodes", "list_schemas", "create_node", "update_node"] {
+            assert!(prompt.contains(named), "the prompt never mentions `{named}`");
+            assert!(names.iter().any(|n| n == named));
+        }
     }
 
     #[test]
