@@ -284,7 +284,13 @@ const STOP_WORDS: &[&str] = &[
 
 /// Minimum BM25 relevance score to include a result in RAG context.
 /// Results below this threshold are considered noise and filtered out.
-const MIN_RELEVANCE_SCORE: f64 = 1.5;
+/// How far below the best hit a result may score and still be kept.
+///
+/// Replaces a fixed `MIN_RELEVANCE_SCORE` of 1.5. Scores are only meaningful
+/// against other scores for the same query, so the cut is relative: keep
+/// anything within this fraction of the strongest match, and let a query that
+/// found only weak things still return them rather than nothing.
+const RELEVANCE_FRACTION: f64 = 0.25;
 
 // ═══════════════════════════════════════════════════════════════
 //  A. EXTRACT SEARCH TERMS
@@ -426,7 +432,16 @@ pub fn retrieve_context(
     let mut seen_ids: HashSet<String> = HashSet::new();
 
     // Step 2: Search main FTS5 index (notes, tasks, events, quickcaps, files, blocks)
-    let parsed_query = search::parse_query(&terms_joined);
+    //
+    // `match_any`, because these terms are the leftovers of a *question* after
+    // stopword removal, not something a person typed into a search box.
+    // Requiring all of them requires the asker to have used the note's own
+    // vocabulary: measured on a seeded vault, "What did I decide about
+    // pricing, and who disagreed?" retrieved nothing from two notes that were
+    // entirely about that decision, because neither contains the word
+    // "decide".
+    let mut parsed_query = search::parse_query(&terms_joined);
+    parsed_query.match_any = true;
     match db.search_fts(&parsed_query, 1, 10) {
         Ok(response) => {
             log::info!(
@@ -434,9 +449,24 @@ pub fn retrieve_context(
                 response.results.len(),
                 response.query_time_ms
             );
+            // Established once per query, from the best hit.
+            let floor = response
+                .results
+                .iter()
+                .map(|r| r.score)
+                .fold(f64::NEG_INFINITY, f64::max)
+                * RELEVANCE_FRACTION;
+
             for result in &response.results {
-                // Filter out low-relevance results (noise)
-                if result.score < MIN_RELEVANCE_SCORE {
+                // Filter out low-relevance results (noise), relative to the
+                // best hit for *this* query rather than against a fixed
+                // number. A relevance score is not comparable between
+                // queries — it moves with how rare the words are and how long
+                // the document is — so an absolute floor rejects a good match
+                // for a rare word and admits a poor one for a common phrase.
+                // The old floor of 1.5 discarded the only note containing
+                // "disagreed", which scored 1.34 and was exactly right.
+                if result.score < floor {
                     log::debug!(
                         "[RAG] Skipping low-score result: {} (score: {:.2})",
                         result.title,
@@ -947,31 +977,58 @@ pub fn build_system_prompt(context: &str, personality: &str) -> String {
     } else {
         format!(
             "\n\n=== VAULT CONTEXT ===\n\
-             The following is relevant data from the user's Synabit vault. \
-             Use this to answer the user's question accurately.\n\n\
+             A few things from the user's vault that looked relevant to this \
+             question. They are a starting point, not the answer, and this is \
+             a sample rather than everything that matches.\n\
+             - If what you need is here, use it and do not search again.\n\
+             - If the question asks how many, how much, or anything else that \
+             has to be counted or added up, this cannot answer it. Use \
+             `query_nodes` and read `total_matches`.\n\
+             - If nothing here answers the question, search rather than \
+             saying you could not find anything.\n\n\
              {}\
              === END CONTEXT ===",
             context
         )
     };
 
+    // Named after the tools that exist. This block used to teach a tool per
+    // data model — create_note, create_task, create_event, search_vault,
+    // get_nodes_by_type — and every one of them had to be listed here as well
+    // as defined, so the prompt grew with the tool list and went stale with
+    // it. It now teaches the shape of the vault instead: everything is a node,
+    // one tool reads them and one writes them.
     let tool_guidelines = "Tool usage guidelines:\n\
-         - You have tools available. USE THEM proactively when the user's request involves \
-         searching, finding, listing, querying, creating, or modifying data.\n\
-         - For file/image/video/document queries: ALWAYS call search_files. \
-         Example: \"tìm ảnh\", \"find images\", \"list PDFs\" → use search_files.\n\
-         - For vault content queries about notes/tasks: use search_vault or get_nodes_by_type.\n\
-         - For person-related queries: use search_files with the person parameter, \
-         or search_vault to find linked content.\n\
-         - When the user asks to create, write, or save something: use create_note, create_task, or create_event.\n\
-         - When the user asks to mark a task as done/complete: use search_vault to find the task first, then update_task_status.\n\
-         - FINANCE: When the user mentions spending, buying, paying, earning, or any money-related activity:\n\
-           1. Call get_finance_summary FIRST to know available accounts and categories.\n\
-           2. Then call create_transaction with the correct amount, category, and account.\n\
+         - You have tools. USE THEM rather than guessing or answering from memory \
+         when the request involves finding, listing, creating or changing the user's data.\n\
+         - Almost everything in this vault is a node: notes, tasks, events, people, \
+         projects, and any type this user invented. `query_nodes` finds them and \
+         `get_node` reads one in full.\n\
+         - If you do not know what the user keeps, or are unsure a type or field \
+         exists, call `list_schemas` first. It tells you every type in this vault \
+         and the fields each one actually uses. Do this before inventing a field name.\n\
+         - Query syntax: `type:task status:todo sort:due_date`, `type:book rating:>3`, \
+         `#work due_date:<2026-09-01`, plus free words for full-text search. \
+         `limit:` caps results; check `total_matches` before saying how many there are.\n\
+         - To create anything: `create_node` with the type, title and fields. \
+         Match the field names `list_schemas` reports for that type.\n\
+         - To change anything — mark a task done, set a due date, add a tag: \
+         `update_node`. Send only the fields that change; everything else is kept. \
+         Find the node with `query_nodes` first to get its id.\n\
+         - `get_linked_nodes` follows links out of and into a node. Use it for \
+         'what else is related to this', which no query can express.\n\
+         - For files, images, documents or PDFs: `search_files`. It searches inside \
+         documents as well as filenames. Example: \"tìm ảnh\", \"find PDFs\".\n\
+         - For articles from RSS feeds: `search_feed_articles`. These are not nodes.\n\
+         - FINANCE is the exception to all of the above: transactions live inside a \
+         month node as a list, not as nodes of their own, so the generic tools \
+         cannot reach them.\n\
+           1. Call `get_finance_summary` FIRST to learn the real accounts and categories.\n\
+           2. Then `create_transaction` with the amount, category and account.\n\
            3. Example: \"nay đi chợ hết 150k\" → create_transaction(amount=150000, category=\"Food & Dining\", note=\"Đi chợ\").\n\
-           4. To review spending history, use get_transactions with the month parameter.\n\
-         - ALWAYS confirm what you created/updated with the result details.\n\
-         - Do NOT just reply with text when a tool can provide concrete results.\n\
+           4. To review history, `get_transactions` with the month parameter.\n\
+         - ALWAYS confirm what you created or changed, with the details from the result.\n\
+         - Do NOT reply with text alone when a tool can give a concrete answer.\n\
          - Call tools FIRST, then summarize the results for the user.";
 
     format!(
@@ -1169,5 +1226,531 @@ mod tests {
         assert_eq!(normalize_type_group("finance_transaction"), "finance");
         assert_eq!(normalize_type_group("person"), "people");
         assert_eq!(normalize_type_group("unknown"), "other");
+    }
+}
+
+/// P1.6: does the RAG pipeline still earn its 1,173 lines?
+///
+/// The pipeline exists to work around a small context window. It extracts
+/// keywords, runs FTS5, expands along the graph, dedupes, truncates to
+/// `max_context_chars`, and staples the result into the system prompt — all so
+/// that a model which cannot go and look is handed something to look at.
+///
+/// The assistant can now go and look. `query_nodes` reads the same index with
+/// the same syntax the app uses, `list_schemas` describes the vault, and the
+/// context window is the model's rather than 8,192 tokens. So the question is
+/// no longer whether retrieval helps; it is whether *pre-fetched* retrieval
+/// still adds anything on top of tools, and what it costs when it does not.
+///
+/// This measures that. Both arms keep the tools, because production has them:
+///
+/// - **stuffed** — retrieval runs and its output goes in the system prompt.
+///   Today's behaviour.
+/// - **agentic** — the system prompt carries no vault context. The model has
+///   to search.
+///
+/// ```bash
+/// cargo test --lib rag_vs_agentic -- --ignored --nocapture
+/// ```
+///
+/// Not a pass/fail gate. It prints a table and leaves the decision to a person,
+/// because "which answer is better" is not a thing an assertion knows.
+#[cfg(test)]
+mod rag_vs_agentic {
+    use super::*;
+    use crate::db::DbBridge;
+    use crate::models::node::NodeMetadata;
+    use crate::models::syn::{SynProvider, SynSettings};
+    use crate::syn::engine::SynEngine;
+    use crate::syn::provider::ChatProvider;
+
+    /// One question, and what a correct answer has to contain.
+    ///
+    /// Substrings rather than a judge model: they are checkable, they are
+    /// cheap, and a wrong answer that happens to contain the right string is
+    /// visible in the transcript this prints anyway.
+    struct Question {
+        ask: &'static str,
+        /// Every one of these must appear in the reply.
+        wants: &'static [&'static str],
+        /// None of these may appear. Catches confident invention.
+        refuses: &'static [&'static str],
+        /// What this question is really testing.
+        about: &'static str,
+    }
+
+    const QUESTIONS: &[Question] = &[
+        Question {
+            ask: "What is the wifi password in the Hanoi office?",
+            wants: &["ha-noi-2026"],
+            refuses: &[],
+            about: "one fact in one note — retrieval's best case",
+        },
+        Question {
+            ask: "How many tasks do I have that are not done? Give me the number.",
+            wants: &["4"],
+            refuses: &["7"],
+            about: "a count — stuffed context cannot count, only sample",
+        },
+        Question {
+            ask: "Which book did I rate highest, and what did I rate it?",
+            wants: &["Sapiens", "5"],
+            refuses: &[],
+            about: "an invented type nothing was written for",
+        },
+        Question {
+            ask: "What did I decide about pricing, and who disagreed?",
+            wants: &["per-seat", "Mai"],
+            refuses: &[],
+            about: "two facts in two different notes",
+        },
+        Question {
+            ask: "Do I have any notes about the Ha Long trip?",
+            wants: &["no", "not"],
+            refuses: &["Ha Long Bay hotel"],
+            about: "the honest no — invention is the failure mode here",
+        },
+    ];
+
+    fn seed(vault: &std::path::Path) -> DbBridge {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+
+        let write = |rel: &str, node_type: &str, title: &str, body: &str, props: serde_json::Value| {
+            let path = vault.join(rel);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(
+                &path,
+                crate::commands::nodes::markdown_with_frontmatter(title, node_type, &props, body),
+            )
+            .expect("write");
+            db.upsert_node(&NodeMetadata {
+                id: rel.to_string(),
+                node_type: node_type.to_string(),
+                title: title.to_string(),
+                content: body.to_string(),
+                properties: props.clone(),
+                created_at: "2026-08-01T00:00:00Z".into(),
+                updated_at: "2026-08-01T00:00:00Z".into(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .expect("upsert");
+            // The pipeline being measured reads the search index, so a node
+            // that is not indexed would make retrieval look worse than it is.
+            let tags = props
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            db.upsert_search_entry(
+                rel,
+                node_type,
+                title,
+                &tags,
+                body,
+                &props.to_string(),
+                props.get("status").and_then(|v| v.as_str()),
+                "2026-08-01T00:00:00Z",
+                rel,
+            );
+        };
+
+        write(
+            "Notes/Office.md",
+            "note",
+            "Hanoi office",
+            "Desk 4B by the window. The wifi password is ha-noi-2026, and it changes every June.",
+            serde_json::json!({ "tags": ["office"] }),
+        );
+        write(
+            "Notes/Pricing decision.md",
+            "note",
+            "Pricing decision",
+            "After three rounds we settled on per-seat pricing rather than usage-based. \
+             It is easier to explain and the finance team can forecast it.",
+            serde_json::json!({ "tags": ["product"] }),
+        );
+        write(
+            "Notes/Pricing pushback.md",
+            "note",
+            "Pricing pushback",
+            "Mai disagreed with the per-seat call. Her argument was that our heaviest \
+             accounts are small teams, so seats undercharge exactly the people who cost most.",
+            serde_json::json!({ "tags": ["product"] }),
+        );
+        write("People/Mai.md", "person", "Mai", "Product lead.", serde_json::json!({}));
+
+        for (file, title, rating) in [
+            ("Books/sapiens.md", "Sapiens", 5),
+            ("Books/dune.md", "Dune", 4),
+            ("Books/ubik.md", "Ubik", 3),
+        ] {
+            write(
+                file,
+                "book",
+                title,
+                "",
+                serde_json::json!({ "rating": rating, "status": "done" }),
+            );
+        }
+
+        for (file, title, status) in [
+            ("Tasks/a.md", "Renew the domain", "todo"),
+            ("Tasks/b.md", "Write the changelog", "todo"),
+            ("Tasks/c.md", "Fix the login bug", "in_progress"),
+            ("Tasks/d.md", "Book the venue", "backlog"),
+            ("Tasks/e.md", "Ship the beta", "done"),
+            ("Tasks/f.md", "Archive old logs", "done"),
+            ("Tasks/g.md", "Update the deps", "done"),
+        ] {
+            write(file, "task", title, "", serde_json::json!({ "status": status }));
+        }
+
+        db
+    }
+
+    struct Outcome {
+        passed: bool,
+        detail: String,
+        tool_calls: usize,
+        prompt_chars: usize,
+        elapsed_ms: u128,
+        reply: String,
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn ask(
+        provider: Box<dyn ChatProvider>,
+        settings: &SynSettings,
+        model: &str,
+        vault: &std::path::Path,
+        db: DbBridge,
+        question: &Question,
+        stuffed: bool,
+    ) -> Outcome {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app")
+            .handle()
+            .clone();
+
+        let system_prompt = if stuffed {
+            let config = RagConfig {
+                enabled: true,
+                max_context_chars: settings.max_context_chars,
+                include_finance: settings.include_finance,
+                include_feeds: settings.include_feeds,
+                graph_expansion_depth: settings.graph_expansion_depth,
+                personality: settings.personality.clone(),
+            };
+            let retrieval =
+                retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
+            build_system_prompt(&format_context(&retrieval), &settings.personality)
+        } else {
+            build_system_prompt("", &settings.personality)
+        };
+
+        let msg = |role: &str, content: String| SynMessage {
+            id: role.into(),
+            role: role.into(),
+            content,
+            model: None,
+            timestamp: String::new(),
+            tokens: None,
+            duration_ms: None,
+            sources: None,
+            tool_calls_log: None,
+            images: None,
+        };
+
+        let history = vec![
+            msg("system", system_prompt.clone()),
+            msg("user", question.ask.to_string()),
+        ];
+
+        let engine = SynEngine::new(provider);
+        let db_state = std::sync::Mutex::new(db);
+        let started = std::time::Instant::now();
+
+        let reply = engine
+            .send_message_with_tools(
+                &app,
+                "rag-eval",
+                "rag-eval-msg",
+                &history,
+                model,
+                Some(settings.temperature),
+                &crate::syn::tools::get_tool_definitions(),
+                &db_state,
+                vault.to_str().expect("utf8"),
+                settings.max_tool_iterations,
+                settings.num_ctx,
+                settings.max_history_messages,
+            )
+            .await;
+
+        let elapsed_ms = started.elapsed().as_millis();
+
+        let (content, tool_calls) = match reply {
+            Ok(m) => (m.content, m.tool_calls_log.map(|l| l.len()).unwrap_or(0)),
+            Err(e) => (format!("<error: {e}>"), 0),
+        };
+
+        let lowered = content.to_lowercase();
+        let missing: Vec<&str> = question
+            .wants
+            .iter()
+            .copied()
+            .filter(|w| !lowered.contains(&w.to_lowercase()))
+            .collect();
+        let invented: Vec<&str> = question
+            .refuses
+            .iter()
+            .copied()
+            .filter(|w| lowered.contains(&w.to_lowercase()))
+            .collect();
+
+        let detail = if !missing.is_empty() {
+            format!("missing {missing:?}")
+        } else if !invented.is_empty() {
+            format!("invented {invented:?}")
+        } else {
+            String::new()
+        };
+
+        Outcome {
+            passed: missing.is_empty() && invented.is_empty(),
+            detail,
+            tool_calls,
+            prompt_chars: system_prompt.chars().count(),
+            elapsed_ms,
+            reply: content,
+        }
+    }
+
+    /// What retrieval actually finds, with no model involved.
+    ///
+    /// Split out from the A/B above because the two halves fail differently:
+    /// retrieval is deterministic and free, the model is neither. Measuring
+    /// them together means a bad retrieval and an unlucky sampling temperature
+    /// look identical in the table.
+    ///
+    /// Runs offline, so it is a normal test rather than an ignored one.
+    #[test]
+    fn what_retrieval_finds_for_each_question() {
+        let vault_dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(vault_dir.path());
+
+        let config = RagConfig {
+            enabled: true,
+            max_context_chars: 12000,
+            include_finance: true,
+            include_feeds: true,
+            graph_expansion_depth: 1,
+            personality: "auto".into(),
+        };
+
+        eprintln!("\n── what RAG retrieves, before any model sees it ──");
+        let mut found_nothing = 0;
+        for q in QUESTIONS {
+            let got = retrieve_context(&db, q.ask, &[], &config).expect("retrieval runs");
+            let titles: Vec<&str> = got.context_chunks.iter().map(|c| c.title.as_str()).collect();
+            eprintln!(
+                "{:>2} chunk(s)  {:>5} ch  {:<60} {:?}",
+                got.context_chunks.len(),
+                format_context(&got).chars().count(),
+                q.ask.chars().take(58).collect::<String>(),
+                titles
+            );
+            if got.context_chunks.is_empty() {
+                found_nothing += 1;
+            }
+        }
+        eprintln!("── {found_nothing}/{} questions retrieved nothing ──\n", QUESTIONS.len());
+    }
+
+    /// Why retrieval comes back empty, measured rather than guessed.
+    ///
+    /// Two filters sit between a question and the vault, and each one alone
+    /// would explain an empty result:
+    ///
+    /// 1. `extract_search_terms` strips stopwords and hands the rest to the
+    ///    parser the *search box* uses, and `build_fts_match` joins terms with
+    ///    `AND`. Right for a search box — someone typing "meeting notes" wants
+    ///    both — and wrong for a question, which is not a bag of words that all
+    ///    appear in one note.
+    /// 2. `MIN_RELEVANCE_SCORE` discards anything scoring under 1.5.
+    ///
+    /// This prints what each costs. Offline, so it is free to re-run after any
+    /// change to either.
+    #[test]
+    fn where_the_recall_goes() {
+        let vault_dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(vault_dir.path());
+        let config = RagConfig {
+            enabled: true,
+            max_context_chars: 12000,
+            include_finance: true,
+            include_feeds: true,
+            graph_expansion_depth: 1,
+            personality: "auto".into(),
+        };
+
+        // What the pipeline returns, after both filters.
+        let after_filters =
+            |q: &str| retrieve_context(&db, q, &[], &config).expect("runs").context_chunks.len();
+
+        // What the index would return, before the relevance floor. Same terms,
+        // same query, so the difference is the floor and nothing else.
+        let raw = |q: &str| {
+            let terms = extract_search_terms(q, &[]);
+            let mut parsed = search::parse_query(&terms.join(" "));
+            parsed.match_any = true;
+            db.search_fts(&parsed, 1, 10)
+                .map(|r| {
+                    let best = r
+                        .results
+                        .iter()
+                        .map(|x| x.score)
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    (r.results.len(), if r.results.is_empty() { 0.0 } else { best })
+                })
+                .unwrap_or((0, 0.0))
+        };
+
+        eprintln!("\n── where the recall goes ─────────────────────────────────────────");
+        eprintln!("{:<52} {:>6} {:>6} {:>7}", "query", "index", "kept", "best");
+        for q in [
+            "pricing",
+            "disagreed",
+            "pricing disagreed",
+            "decide pricing disagreed",
+            "What did I decide about pricing, and who disagreed?",
+            "wifi",
+            "What is the wifi password in the Hanoi office?",
+        ] {
+            let (found, best) = raw(q);
+            eprintln!(
+                "{:<52} {:>6} {:>6} {:>7.2}",
+                q.chars().take(50).collect::<String>(),
+                found,
+                after_filters(q),
+                best
+            );
+        }
+        eprintln!(
+            "── `index` is what FTS returned, `kept` is what survived the relative floor ──\n"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "spends real API credit and needs a network; run by hand"]
+    async fn stuffed_context_versus_letting_it_search() {
+        let vault_dir = tempfile::tempdir().expect("temp vault");
+        let vault = vault_dir.path();
+
+        let settings = crate::syn::settings::load_settings(
+            &std::env::var("SYN_EVAL_VAULT").unwrap_or_else(|_| {
+                format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default())
+            }),
+        )
+        .expect("the real Syn settings");
+        let model = settings
+            .default_model
+            .clone()
+            .expect("a default model must be configured");
+
+        let build_provider = || -> Box<dyn ChatProvider> {
+            match settings.provider {
+                SynProvider::Ollama => Box::new(
+                    crate::syn::provider::ollama::OllamaProvider::new(&settings.ollama_url),
+                ),
+                SynProvider::OpenAiCompat => Box::new(
+                    crate::syn::provider::openai::OpenAiCompatProvider::new(
+                        &settings.openai_base_url,
+                        crate::secrets::SecretManager::get_syn_api_key(None, "openai_compat"),
+                        settings.openai_reasoning_effort.clone(),
+                    ),
+                ),
+            }
+        };
+
+        // One run of five questions is not enough to compare accuracy: the
+        // agentic arm scored 3, 4 and 5 out of 5 on three consecutive runs of
+        // the same build. Cost is stable and accuracy is not, so anyone
+        // drawing a conclusion about the latter should raise this first.
+        let trials: usize = std::env::var("SYN_EVAL_TRIALS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+
+        eprintln!("\n═══ RAG vs agentic search ═══════════════════════");
+        eprintln!("provider {:?}   model {model}", settings.provider);
+        eprintln!("both arms keep the tools; only the system prompt differs");
+        eprintln!("{trials} trial(s) per question — set SYN_EVAL_TRIALS to raise it\n");
+
+        let mut totals = [(0usize, 0usize, 0u128, 0usize); 2]; // passed, calls, ms, prompt
+
+        for q in QUESTIONS {
+            eprintln!("── {}", q.ask);
+            eprintln!("   ({})", q.about);
+
+            for (i, stuffed) in [true, false].into_iter().enumerate() {
+                let mut passes = 0usize;
+                for trial in 0..trials {
+                    let out = ask(
+                        build_provider(),
+                        &settings,
+                        &model,
+                        vault,
+                        seed(vault),
+                        q,
+                        stuffed,
+                    )
+                    .await;
+
+                    passes += usize::from(out.passed);
+                    eprintln!(
+                        "   {:<8} {}  {:>2} call(s)  {:>5}ms  prompt {:>6} ch  {}",
+                        if trial == 0 {
+                            if stuffed { "stuffed" } else { "agentic" }
+                        } else {
+                            ""
+                        },
+                        if out.passed { "PASS" } else { "FAIL" },
+                        out.tool_calls,
+                        out.elapsed_ms,
+                        out.prompt_chars,
+                        out.detail
+                    );
+                    if !out.passed {
+                        eprintln!(
+                            "      → {}",
+                            out.reply.replace('\n', " ").chars().take(200).collect::<String>()
+                        );
+                    }
+
+                    totals[i].0 += usize::from(out.passed);
+                    totals[i].1 += out.tool_calls;
+                    totals[i].2 += out.elapsed_ms;
+                    totals[i].3 += out.prompt_chars;
+                }
+                if trials > 1 {
+                    eprintln!("            └ {passes}/{trials}");
+                }
+            }
+            eprintln!();
+        }
+
+        let n = QUESTIONS.len() * trials;
+        eprintln!("═══ totals over {n} questions ════════════════════");
+        for (i, name) in ["stuffed", "agentic"].into_iter().enumerate() {
+            let (passed, calls, ms, prompt) = totals[i];
+            eprintln!(
+                "{name:<8} {passed}/{n} correct   {calls} tool call(s)   {ms}ms total   {} chars of system prompt",
+                prompt
+            );
+        }
+        eprintln!();
     }
 }
