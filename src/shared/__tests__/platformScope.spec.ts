@@ -6,6 +6,7 @@ import {
   appInPlatformScope,
   taskViewInPlatformScope,
 } from '../platformScope';
+import { BUILT_IN_APPS } from '../appRegistry';
 
 /**
  * What ships on a phone is a product decision, and the kind that drifts
@@ -14,11 +15,16 @@ import {
  * deliberate.
  */
 
-/** Every mini-app the desktop has, mirroring ALL_APPS in App.vue. */
-const DESKTOP_APPS = [
-  'nexus', 'messages', 'quickcap', 'note', 'task',
-  'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds',
-];
+/**
+ * Every mini-app the desktop has.
+ *
+ * Read from the registry rather than copied out of it. This used to be a
+ * hand-written list "mirroring ALL_APPS in App.vue", which is a mirror that
+ * nothing keeps clean: a twelfth app would have been added to the product and
+ * not to this list, and the phone assertions below would have gone on passing
+ * while saying nothing about it.
+ */
+const DESKTOP_APPS = BUILT_IN_APPS.map((a) => a.id);
 
 describe('platform scope', () => {
   afterEach(() => {

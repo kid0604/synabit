@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, MessageSquare, Zap, Calendar, Palette, Users, Wallet, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, Rss } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check } from 'lucide-vue-next';
 import TrashPanel from './TrashPanel.vue';
 import { useSettings } from '../../composables/useSettings';
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
@@ -18,6 +18,7 @@ import { logger } from '../../utils/logger';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppUpdate } from '../../composables/useAppUpdate';
 import { appInPlatformScope, isMobileOS } from '../platformScope';
+import { BUILT_IN_APPS } from '../appRegistry';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import { useVaultArchive, formatBytes } from '../../composables/useVaultArchive';
 
@@ -55,21 +56,7 @@ const {
  * Filtered by platform: offering to hide, or to lock, an app that this build
  * does not ship is a setting with nothing behind it.
  */
-const ALL_SETTABLE_APPS = [
-  { id: 'nexus', name: 'Nexus', icon: Globe },
-  { id: 'messages', name: 'Messages', icon: MessageSquare },
-  { id: 'quickcap', name: 'QuickCap', icon: Zap },
-  { id: 'note', name: 'Notes', icon: FileText },
-  { id: 'task', name: 'Tasks', icon: CheckSquare },
-  { id: 'calendar', name: 'Calendar', icon: Calendar },
-  { id: 'file', name: 'Files', icon: FolderOpen },
-  { id: 'whiteboard', name: 'Whiteboard', icon: Palette },
-  { id: 'people', name: 'People', icon: Users },
-  { id: 'finance', name: 'Finance', icon: Wallet },
-  { id: 'feeds', name: 'Feeds', icon: Rss },
-];
-
-const availableApps = computed(() => ALL_SETTABLE_APPS.filter(a => appInPlatformScope(a.id)));
+const availableApps = computed(() => BUILT_IN_APPS.filter(a => appInPlatformScope(a.id)));
 
 const toggleAppVisibility = (appId: string) => {
   if (defaultApp.value === appId) return;
