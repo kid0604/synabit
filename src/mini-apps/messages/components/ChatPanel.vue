@@ -347,9 +347,19 @@ const handleStop = () => {
           style="animation: messageIn 0.2s ease-out forwards;"
         >
           <AlertCircle class="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-          <div>
+          <div class="min-w-0">
             <p class="text-red-400 font-medium">{{ $t('syn.send_error_title') }}</p>
-            <p class="text-red-400/70 text-xs mt-0.5">{{ $t('syn.send_error_desc') }}</p>
+            <!--
+              The provider's own words, when there are any.
+
+              This used to always read "Ollama may be unavailable", which was
+              a guess dressed as a diagnosis: it was shown for a bad API key,
+              a wrong base URL, a model the endpoint does not have, and a
+              request the model refused — none of which are Ollama being down,
+              and two of which say exactly what to change. The generic line is
+              now the fallback for when the error carried no message at all.
+            -->
+            <p class="text-red-400/70 text-xs mt-0.5 whitespace-pre-wrap break-words">{{ chatError || $t('syn.send_error_desc') }}</p>
           </div>
         </div>
       </div>

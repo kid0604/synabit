@@ -21,10 +21,15 @@ const {
   settings,
   isLoading,
   isSaving,
+  hasApiKey,
+  apiKeyDraft,
   loadSettings,
   saveSettings,
+  clearApiKey,
   resetToDefaults,
 } = useSynSettings(props.vaultPath);
+
+const usingOllama = computed(() => settings.value.provider === 'ollama');
 
 const handleSave = async () => {
   await saveSettings();
@@ -163,8 +168,28 @@ watch(() => props.vaultPath, () => {
               {{ t('syn.settings_connection') }}
             </h3>
             <div class="space-y-3">
-              <!-- Ollama URL -->
+              <!-- Provider -->
               <div>
+                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                  {{ t('syn.provider') }}
+                </label>
+                <select
+                  v-model="settings.provider"
+                  class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                         text-sm text-text dark:text-text-dark outline-none cursor-pointer
+                         focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                         transition-all appearance-none"
+                >
+                  <option value="ollama">{{ t('syn.provider_ollama') }}</option>
+                  <option value="open_ai_compat">{{ t('syn.provider_openai') }}</option>
+                </select>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ usingOllama ? t('syn.provider_ollama_desc') : t('syn.provider_openai_desc') }}
+                </p>
+              </div>
+
+              <!-- Ollama URL -->
+              <div v-if="usingOllama">
                 <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
                   {{ t('syn.ollama_url') }}
                 </label>
@@ -178,6 +203,62 @@ watch(() => props.vaultPath, () => {
                   placeholder="http://localhost:11434"
                 />
               </div>
+
+              <!-- OpenAI-compatible endpoint -->
+              <template v-else>
+                <div>
+                  <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                    {{ t('syn.openai_base_url') }}
+                  </label>
+                  <input
+                    v-model="settings.openai_base_url"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                           text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                           focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                           transition-all"
+                    placeholder="https://api.openai.com/v1"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('syn.openai_base_url_desc') }}
+                  </p>
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                    {{ t('syn.api_key') }}
+                  </label>
+                  <div class="flex gap-2">
+                    <input
+                      v-model="apiKeyDraft"
+                      type="password"
+                      spellcheck="false"
+                      autocomplete="off"
+                      class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                             text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                             focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                             transition-all"
+                      :placeholder="hasApiKey ? t('syn.api_key_stored') : t('syn.api_key_placeholder')"
+                    />
+                    <button
+                      v-if="hasApiKey"
+                      type="button"
+                      @click="clearApiKey"
+                      class="px-3 py-2 rounded-lg text-sm font-medium cursor-pointer
+                             text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10
+                             border border-gray-200 dark:border-gray-700/50 transition-colors"
+                    >
+                      {{ t('syn.api_key_remove') }}
+                    </button>
+                  </div>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('syn.api_key_desc') }}
+                  </p>
+                </div>
+
+              </template>
 
               <!-- Default Model -->
               <div>
