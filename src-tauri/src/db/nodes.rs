@@ -595,6 +595,73 @@ impl DbBridge {
         Ok(nodes)
     }
 
+    /// What types exist in this vault, and which frontmatter keys each one uses.
+    ///
+    /// The vault describing itself. There is no schema anywhere to read — a
+    /// type is whatever somebody wrote in a `type:` field — so the only honest
+    /// answer is what is actually there: every distinct `node_type`, how many
+    /// nodes carry it, and the union of the frontmatter keys those nodes have.
+    ///
+    /// Two things this is deliberately not. It is not a list of *permitted*
+    /// keys: a node missing one is normal and a node with an extra one is the
+    /// user inventing a field, which is the behaviour `NodeType::Other` exists
+    /// to protect. And it is not exhaustive per node — a key that appears on
+    /// one node of a type appears in that type's list.
+    ///
+    /// `key_limit` caps the keys reported per type so that one node with a
+    /// large generated blob cannot flood the answer.
+    pub fn observed_schemas(&self, key_limit: usize) -> AppResult<Vec<(String, i64, Vec<String>)>> {
+        let mut counts = self
+            .conn
+            .prepare(
+                "SELECT node_type, COUNT(*) FROM nodes
+                 GROUP BY node_type ORDER BY COUNT(*) DESC, node_type ASC",
+            )
+            .map_err(|e| AppError::General(format!("DB Query Error (observed_schemas): {}", e)))?;
+
+        let types: Vec<(String, i64)> = counts
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?
+            .flatten()
+            .collect();
+
+        // Keys per type in one pass rather than a query each: a vault with
+        // thirty invented types would otherwise be thirty round trips.
+        let mut keys = self
+            .conn
+            .prepare(
+                "SELECT node_type, json_each.key, COUNT(*) AS n
+                 FROM nodes, json_each(nodes.properties)
+                 WHERE json_valid(nodes.properties)
+                 GROUP BY node_type, json_each.key
+                 ORDER BY node_type ASC, n DESC, json_each.key ASC",
+            )
+            .map_err(|e| AppError::General(format!("DB Query Error (observed_keys): {}", e)))?;
+
+        let mut by_type: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (node_type, key) in keys
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?
+            .flatten()
+        {
+            let entry = by_type.entry(node_type).or_default();
+            if entry.len() < key_limit {
+                entry.push(key);
+            }
+        }
+
+        Ok(types
+            .into_iter()
+            .map(|(node_type, count)| {
+                let keys = by_type.remove(&node_type).unwrap_or_default();
+                (node_type, count, keys)
+            })
+            .collect())
+    }
+
     pub fn get_all_tags_with_counts(&self) -> AppResult<Vec<(String, i64)>> {
         let mut stmt = self
             .conn
@@ -716,6 +783,90 @@ mod tests {
             relation: None,
             created_at: "2026-01-01 00:00:00".to_string(),
         }
+    }
+
+    /// The world model an assistant reads before it knows anything.
+    ///
+    /// The point is the invented type: nobody wrote a line of code for
+    /// `book`, and it still has to appear here with the fields the user
+    /// actually gave it. That is what lets a tool set with no `book` in it
+    /// find, read and create books.
+    #[test]
+    fn a_type_nobody_coded_for_still_describes_itself() {
+        let db = db();
+        db.upsert_node(&node("Notes/a.md", "note", json!({ "tags": ["x"] })))
+            .expect("insert");
+        db.upsert_node(&node(
+            "Books/dune.md",
+            "book",
+            json!({ "author": "Herbert", "rating": 5 }),
+        ))
+        .expect("insert");
+        db.upsert_node(&node(
+            "Books/ubik.md",
+            "book",
+            json!({ "author": "Dick", "status": "reading" }),
+        ))
+        .expect("insert");
+
+        let schemas = db.observed_schemas(25).expect("schemas");
+
+        // Ordered by how much of the vault each type is, so the most useful
+        // answer comes first when the list is long.
+        let books = schemas
+            .iter()
+            .find(|(t, ..)| t == "book")
+            .expect("book is described even though no code mentions it");
+        assert_eq!(books.1, 2);
+
+        // The union across nodes of the type, not the intersection: `rating`
+        // is on one book and `status` on the other, and both are real fields
+        // of this vault's books.
+        let mut fields = books.2.clone();
+        fields.sort();
+        assert_eq!(fields, vec!["author", "rating", "status"]);
+
+        let notes = schemas.iter().find(|(t, ..)| t == "note").expect("note");
+        assert_eq!(notes.1, 1);
+        assert_eq!(notes.2, vec!["tags"]);
+    }
+
+    /// One node carrying a large generated blob must not crowd every other
+    /// type out of the answer.
+    #[test]
+    fn the_field_list_is_capped_per_type() {
+        let db = db();
+        let mut wide = serde_json::Map::new();
+        for i in 0..40 {
+            wide.insert(format!("k{i:02}"), json!(i));
+        }
+        db.upsert_node(&node("Notes/wide.md", "note", json!(wide)))
+            .expect("insert");
+
+        let schemas = db.observed_schemas(5).expect("schemas");
+        let notes = schemas.iter().find(|(t, ..)| t == "note").expect("note");
+        assert_eq!(notes.2.len(), 5);
+    }
+
+    /// Frontmatter that will not parse is a file the user is mid-edit on, not
+    /// a reason to fail the whole description.
+    #[test]
+    fn unreadable_properties_do_not_sink_the_answer() {
+        let db = db();
+        db.upsert_node(&node("Notes/ok.md", "note", json!({ "tags": [] })))
+            .expect("insert");
+        db.conn
+            .execute(
+                "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp, stable_id)
+                 VALUES ('Notes/bad.md', 'note', 'bad', '', 'not json', '', '', 0, 'bad')",
+                [],
+            )
+            .expect("insert raw");
+
+        let schemas = db.observed_schemas(25).expect("schemas");
+        let notes = schemas.iter().find(|(t, ..)| t == "note").expect("note");
+        assert_eq!(notes.1, 2, "both nodes are counted");
+        assert_eq!(notes.2, vec!["tags"], "only the readable one contributes fields");
     }
 
     #[test]

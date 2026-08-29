@@ -290,11 +290,25 @@ impl DbBridge {
                     match_parts.push(with_d_stroke_branch(term));
                 }
             }
+            // How many of the parts are terms to find, before the exclusions
+            // are appended — the split `match_any` joins on.
+            let wanted = match_parts.len();
+
             for term in &parsed.exclude_terms {
                 match_parts.push(format!("NOT \"{}\"", term));
             }
 
-            let fts_expr = match_parts.join(" AND ");
+            // `match_any` widens the terms to OR while exclusions stay AND:
+            // "any of these words, none of those" is the only sensible reading
+            // of a mixed query. Only the assistant's retrieval sets it — see
+            // the field's doc comment for why a search box must not.
+            let fts_expr = if parsed.match_any && wanted > 0 {
+                let mut parts = vec![format!("({})", match_parts[..wanted].join(" OR "))];
+                parts.extend(match_parts[wanted..].iter().cloned());
+                parts.join(" AND ")
+            } else {
+                match_parts.join(" AND ")
+            };
             param_values.push(fts_expr);
             param_idx += 1; // ?1 is used for the MATCH expression
 
