@@ -34,6 +34,13 @@ pub enum NodeType {
     PdfDrawing,
     /// A saved search. Holds a query rather than content of its own.
     Filter,
+    /// A kept way of looking at the vault: a query plus how to arrange it.
+    ///
+    /// Written by Things and read by nothing else. Deliberately not `Filter`,
+    /// which Tasks already writes and lists every one of in its own sidebar —
+    /// sharing the type would have put a view about books in the Tasks filter
+    /// menu, and the point of that app was to leave the other eleven alone.
+    View,
     /// A JSON or canvas file that declared no type of its own.
     Json,
     Canvas,
@@ -60,6 +67,7 @@ impl NodeType {
         "pdf_highlight",
         "pdf_drawing",
         "filter",
+        "view",
         "json",
         "canvas",
     ];
@@ -83,6 +91,7 @@ impl NodeType {
             NodeType::PdfHighlight => "pdf_highlight",
             NodeType::PdfDrawing => "pdf_drawing",
             NodeType::Filter => "filter",
+            NodeType::View => "view",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
             NodeType::Other(raw) => raw,
@@ -114,6 +123,7 @@ impl From<&str> for NodeType {
             "pdf_highlight" => NodeType::PdfHighlight,
             "pdf_drawing" => NodeType::PdfDrawing,
             "filter" => NodeType::Filter,
+            "view" => NodeType::View,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,
             other => NodeType::Other(other.to_string()),

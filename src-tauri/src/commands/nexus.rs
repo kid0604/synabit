@@ -466,6 +466,83 @@ mod things_gate {
     /// protects; the rail could have been a list in the code; and `type:animal`
     /// returned the entire vault until the query parser stopped recognising
     /// exactly five type names.
+    /// A node the assistant made is the same kind of object as one the app made.
+    ///
+    /// They used to be written by two different functions. The assistant's one
+    /// wrote the file, upserted the row and indexed the text; the app's one
+    /// also registered the vault identity, assigned the node's `node_id` and
+    /// wrote it into the frontmatter, recorded that id against the path, and
+    /// handed the content to the CRDT bridge.
+    ///
+    /// `node_id` is the one to check. It is what the sync engine calls the
+    /// file, it is what edges are recorded against, and it is what lets a node
+    /// keep its links through a rename — a file created without one has its
+    /// identity decided later by whatever reaches it first.
+    #[test]
+    fn a_node_the_assistant_creates_is_written_the_way_the_app_writes_one() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        // Canonicalised, and the reason is worth knowing. `/var` on macOS is a
+        // symlink to `/private/var`, so a temporary directory hands back a path
+        // that the write path's own `resolve_safe_path` then resolves to a
+        // different string. A node's id is its path relative to the vault, and
+        // it is worked out by stripping the vault prefix — which fails when the
+        // two spellings disagree, leaving the node indexed under an absolute
+        // path. That is a real fragility for any vault reached through a
+        // symlink, and it is older than this test; pinned here so the test is
+        // measuring the writer rather than the tempdir.
+        let vault = dir.path().canonicalize().expect("canonical temp vault");
+        let vault = vault.as_path();
+
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        let app = tauri::test::mock_builder()
+            .manage(std::sync::Mutex::new(db))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        let db_state = tauri::Manager::state::<crate::db::DbState>(&handle);
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let ctx = crate::syn::tools::ToolContext {
+            db: db_state.inner(),
+            vault_path: &vault_path,
+            app: &handle,
+        };
+
+        crate::syn::tools::execute_tool(
+            &ctx,
+            "create_node",
+            &serde_json::json!({
+                "node_type": "animal",
+                "title": "Mèo Mun",
+                "properties": { "species": "mèo" },
+            }),
+        )
+        .expect("the tool runs");
+
+        // The folder rule, which both writers now share.
+        let written = vault.join("Animal/Mèo Mun.md");
+        assert!(written.exists(), "an animal belongs in Animal/, not Notes/");
+
+        let on_disk = std::fs::read_to_string(&written).expect("readable");
+        assert!(on_disk.contains("type: animal"));
+        assert!(on_disk.contains("species: mèo"));
+
+        // The part that was missing. Written into the file by the shared path,
+        // not left for a later scan to guess at.
+        assert!(
+            on_disk.contains("node_id:"),
+            "a node created by the assistant has no identity:\n{on_disk}"
+        );
+
+        let db = db_state.lock().expect("lock");
+        let indexed = db
+            .get_node("Animal/Mèo Mun.md")
+            .expect("query")
+            .expect("the node is in the index");
+        assert_eq!(indexed.node_type, "animal");
+        assert!(indexed.properties.get("node_id").is_some());
+    }
+
     /// Gate T3: a field somebody typed into a file can be worked with.
     ///
     /// "Custom fields" means nothing unless you can do something with one, so

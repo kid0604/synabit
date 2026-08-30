@@ -30,6 +30,7 @@
       "sidebar": "Sidebar",
       "visible_apps": "Visible Apps",
       "visible_apps_desc": "Choose which apps to show on the sidebar. The default startup app cannot be hidden.",
+        "saved_views_count": "You have {saved} saved views. {pinned} are pinned to the sidebar.",
       "default": "Default",
       "appearance": "Appearance",
       "theme": "Theme",
@@ -317,6 +318,14 @@
     "delete_many_body": "They move to the trash, and are removed for good after 30 days."
   },
   "things": {
+    "create": "Create something",
+    "what_kind": "What kind? e.g. book, animal",
+    "saved_views": "Saved views",
+    "save_view": "Keep this view",
+    "name_this_view": "Name for this view",
+    "pin": "Pin to the sidebar",
+    "unpin": "Take out of the sidebar",
+    "delete_view": "Delete this view",
     "no_value": "No value",
     "no_group": "No grouping",
     "columns": "Columns",

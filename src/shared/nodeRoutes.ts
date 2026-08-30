@@ -54,6 +54,33 @@ const TYPE_FOR_DIRECTORY: Readonly<Record<string, string>> = {
   Whiteboards: 'whiteboard',
 };
 
+/**
+ * Where a new node of a given type is written.
+ *
+ * The inverse of the map above, and it has to stay the inverse: a file written
+ * into a folder this app does not recognise is still found by the scan — the
+ * `type:` in its frontmatter is what counts — but a vault whose folders and
+ * types disagree is one nobody can read without the app, which is most of what
+ * a folder of markdown is for.
+ *
+ * A type nobody has heard of gets a folder named after it. Not pluralised:
+ * Vietnamese has no plural, guessing one for `book` and not for `cá` produces
+ * a vault that looks half-translated, and `Animal/` beside `Notes/` reads
+ * fine. Capitalised so it sits with the folders that were here first.
+ *
+ * Everything used to land in `Notes/`, which is not wrong about the data — the
+ * type is the truth and the folder is only where it sits — but it puts cats
+ * among the notes when the vault is opened in Finder.
+ */
+export function folderForType(nodeType: string): string {
+  const known = Object.entries(TYPE_FOR_DIRECTORY).find(([, type]) => type === nodeType);
+  if (known) return known[0];
+
+  const clean = nodeType.trim();
+  if (!clean) return 'Notes';
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
 /** The node type implied by a vault-relative path, or `null`. */
 export function nodeTypeFromPath(relPath: string | null | undefined): string | null {
   if (!relPath) return null;
