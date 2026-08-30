@@ -27,6 +27,40 @@ use crate::error::{AppError, AppResult};
 use crate::models::syn::{FunctionDefinition, ToolDefinition};
 use tauri::Emitter;
 
+/// Where a new node of a given type is written.
+///
+/// Mirrors `folderForType` in `src/shared/nodeRoutes.ts`, and a test asserts
+/// the two agree — they are the only two writers of new nodes, and a vault
+/// where the assistant files books somewhere the app does not is a vault with
+/// two conventions.
+///
+/// Everything except tasks and events used to land in `Notes/`. Not wrong
+/// about the data, since the `type:` in the frontmatter is what the scan
+/// reads, but it puts cats among the notes when the vault is opened in a file
+/// browser — and being readable without the app is most of the point.
+pub(crate) fn folder_for_type(node_type: &str) -> String {
+    match node_type {
+        "task" => "Tasks".to_string(),
+        "project" => "Projects".to_string(),
+        "event" => "Events".to_string(),
+        "person" => "People".to_string(),
+        "note" => "Notes".to_string(),
+        "quickcap" => "QuickCaps".to_string(),
+        "whiteboard" => "Whiteboards".to_string(),
+        other => {
+            let clean = other.trim();
+            if clean.is_empty() {
+                return "Notes".to_string();
+            }
+            let mut chars = clean.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => "Notes".to_string(),
+            }
+        }
+    }
+}
+
 /// Maximum characters allowed in a single tool result.
 /// Results exceeding this are truncated with a marker.
 const MAX_RESULT_CHARS: usize = 8000;
@@ -40,9 +74,27 @@ const MAX_CONTENT_CHARS: usize = 4000;
 /// Without this the write tools — which is to say everything Syn changes about
 /// a vault — could only ever be exercised by hand.
 pub struct ToolContext<'a, R: tauri::Runtime> {
-    pub db: &'a crate::db::DbBridge,
+    /// The database, unlocked.
+    ///
+    /// Held as the state rather than an open guard so that a tool which writes
+    /// can call `write_node_inner`, which takes the lock itself. The caller
+    /// used to lock once around every tool call and hand the guard down, which
+    /// made the one shared write path unreachable from here — the mutex is not
+    /// reentrant, so calling it would have deadlocked rather than failed.
+    ///
+    /// Each tool now locks for its own duration, which is shorter than before.
+    pub db: &'a crate::db::DbState,
     pub vault_path: &'a str,
     pub app: &'a tauri::AppHandle<R>,
+}
+
+/// The database, for the length of one tool call.
+fn lock<'a, R: tauri::Runtime>(
+    ctx: &ToolContext<'a, R>,
+) -> AppResult<std::sync::MutexGuard<'a, crate::db::DbBridge>> {
+    ctx.db
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error during tool call: {e}")))
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -272,22 +324,22 @@ pub fn execute_tool<R: tauri::Runtime>(
     let result = match name {
         // Generic — these reach every type in the vault, including ones this
         // app has never heard of.
-        "query_nodes" => tool_query_nodes(ctx.db, args),
-        "get_node" => tool_get_node(ctx.db, args),
-        "list_schemas" => tool_list_schemas(ctx.db),
+        "query_nodes" => tool_query_nodes(&*lock(ctx)?, args),
+        "get_node" => tool_get_node(&*lock(ctx)?, args),
+        "list_schemas" => tool_list_schemas(&*lock(ctx)?),
         "create_node" => tool_create_node(ctx, args),
         "update_node" => tool_update_node(ctx, args),
-        "get_linked_nodes" => tool_get_linked_nodes(ctx.db, args),
+        "get_linked_nodes" => tool_get_linked_nodes(&*lock(ctx)?, args),
 
         // Stores that are not nodes, or not node-shaped: feed articles have
         // their own table, file search filters on indexed document text, and
         // finance keeps its transactions inside a month node as an array,
         // which no node query can add up.
-        "search_feed_articles" => tool_search_feed_articles(ctx.db, args),
-        "search_files" => tool_search_files(ctx.db, args),
-        "get_finance_summary" => tool_get_finance_summary(ctx.db),
-        "search_finance" => tool_search_finance(ctx.db, args),
-        "get_transactions" => tool_get_transactions(ctx.db, args),
+        "search_feed_articles" => tool_search_feed_articles(&*lock(ctx)?, args),
+        "search_files" => tool_search_files(&*lock(ctx)?, args),
+        "get_finance_summary" => tool_get_finance_summary(&*lock(ctx)?),
+        "search_finance" => tool_search_finance(&*lock(ctx)?, args),
+        "get_transactions" => tool_get_transactions(&*lock(ctx)?, args),
         "create_transaction" => tool_create_transaction(ctx, args),
 
         _ => return Err(AppError::General(format!("Unknown tool: {}", name))),
@@ -534,16 +586,19 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
 //  WRITE TOOL IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════
 
-/// Helper: Create a node file on disk + upsert into DB + update search index.
+/// Create a node, through the one path the app itself uses.
 ///
-/// The write goes through the same helpers as [`write_node_file`], deliberately.
-/// This path used to build its own frontmatter and write straight to
-/// `{subdir}/{title}.md`, so a title that matched a note already in the vault
-/// destroyed it. Two writers of the same files have to agree on what a write
-/// means, and the answer the app settled on lives over there:
-/// [`free_node_path`] for the name, [`resolve_properties`] for the keys.
+/// This used to be a second implementation: write the file, upsert the row,
+/// index the text, emit an event, done. What it skipped was everything the app
+/// does underneath the frontmatter — registering the vault identity, assigning
+/// the node's `node_id` and writing it into the file, recording that id against
+/// the path, and handing the content to the CRDT bridge.
 ///
-/// [`write_node_file`]: crate::commands::nodes::write_node_file
+/// Nothing was lost by that, because sync notices a local change by hashing
+/// files rather than by watching for CRDT operations. But a node the assistant
+/// made and a node the app made were different objects until something else
+/// came along and reconciled them, and none of the differences were written
+/// down anywhere. One path means there is nothing to keep in step.
 fn write_tool_node<R: tauri::Runtime>(
     ctx: &ToolContext<R>,
     node_type: &str,
@@ -551,35 +606,13 @@ fn write_tool_node<R: tauri::Runtime>(
     content: &str,
     properties: serde_json::Value,
 ) -> AppResult<(String, String)> {
-    use crate::commands::nodes::{
-        existing_properties, free_node_path, markdown_with_frontmatter, resolve_properties,
-    };
-
-    let now = chrono::Utc::now();
-    let timestamp_str = now.to_rfc3339();
-    let timestamp = now.timestamp_millis();
-
-    // Determine subdirectory based on node type
-    let subdir = match node_type {
-        "task" => "Tasks",
-        "event" => "Events",
-        _ => "Notes",
-    };
+    use crate::commands::nodes::{free_node_path, write_node_inner};
 
     // Sanitize title for filename: remove unsafe characters
     let safe_title: String = title
         .chars()
         .map(|c| {
-            if c == '/'
-                || c == '\\'
-                || c == ':'
-                || c == '*'
-                || c == '?'
-                || c == '"'
-                || c == '<'
-                || c == '>'
-                || c == '|'
-            {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
                 '_'
             } else {
                 c
@@ -598,62 +631,26 @@ fn write_tool_node<R: tauri::Runtime>(
     }
 
     let vault = std::path::Path::new(ctx.vault_path);
-    let rel_path = free_node_path(vault, &format!("{}/{}.md", subdir, safe_title));
-    let full_path = vault.join(&rel_path);
-
-    // Fold into whatever is on disk rather than rebuilding from the arguments,
-    // matching the main write path. Normally there is nothing there and this
-    // is the caller's properties unchanged; when there is, its frontmatter
-    // survives a write it did not ask for.
-    let properties = resolve_properties(existing_properties(&full_path, "md"), &properties);
-    let file_content = markdown_with_frontmatter(title, node_type, &properties, content);
-
-    // Write file to disk
-    if let Some(parent) = full_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&full_path, &file_content)?;
-
-    // Upsert into DB
-    let node = crate::models::node::NodeMetadata {
-        id: rel_path.clone(),
-        node_type: node_type.to_string(),
-        title: title.to_string(),
-        content: content.to_string(),
-        properties: properties.clone(),
-        created_at: timestamp_str.clone(),
-        updated_at: timestamp_str.clone(),
-        timestamp,
-        blocks: None,
-    };
-    ctx.db.upsert_node(&node)?;
-
-    // Update search index
-    let tags_str = properties
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default();
-    let status = properties.get("status").and_then(|v| v.as_str());
-    let props_json = serde_json::to_string(&properties).unwrap_or_default();
-    ctx.db.upsert_search_entry(
-        &rel_path,
-        node_type,
-        title,
-        &tags_str,
-        content,
-        &props_json,
-        status,
-        &timestamp_str,
-        &rel_path,
+    let rel_path = free_node_path(
+        vault,
+        &format!("{}/{}.md", folder_for_type(node_type), safe_title),
     );
 
-    // Emit event for UI sync
+    write_node_inner(
+        ctx.app,
+        ctx.db,
+        ctx.vault_path.to_string(),
+        rel_path.clone(),
+        title.to_string(),
+        node_type.to_string(),
+        properties,
+        Some(content.to_string()),
+    )?;
+
+    // `write_node_inner` emits nothing: the command it was split out of is
+    // called from the frontend, which already knows what it just saved. A tool
+    // call is the one write nobody on this side asked for, so the screens are
+    // told here.
     let _ = ctx.app.emit(
         "node:created",
         serde_json::json!({
@@ -823,7 +820,7 @@ fn tool_update_node<R: tauri::Runtime>(
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
 
-    let Some(mut node) = ctx.db.get_node(node_id)? else {
+    let Some(mut node) = lock(ctx)?.get_node(node_id)? else {
         return Ok(
             serde_json::json!({ "error": "Node not found", "node_id": node_id }).to_string(),
         );
@@ -889,7 +886,7 @@ fn tool_update_node<R: tauri::Runtime>(
     node.properties = properties.clone();
     node.updated_at = now.to_rfc3339();
     node.timestamp = now.timestamp_millis();
-    ctx.db.upsert_node(&node)?;
+    lock(ctx)?.upsert_node(&node)?;
 
     let tags_str = properties
         .get("tags")
@@ -902,7 +899,7 @@ fn tool_update_node<R: tauri::Runtime>(
         })
         .unwrap_or_default();
     let props_json = serde_json::to_string(&properties).unwrap_or_default();
-    ctx.db.upsert_search_entry(
+    lock(ctx)?.upsert_search_entry(
         &node.id,
         &node.node_type,
         &title,
@@ -1271,7 +1268,7 @@ fn tool_create_transaction<R: tauri::Runtime>(
         .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
     // Read config to validate account and get defaults
-    let config_node = ctx.db.get_node("Finance/Config.json")?;
+    let config_node = lock(ctx)?.get_node("Finance/Config.json")?;
     let config_meta = match &config_node {
         Some(node) => &node.properties,
         None => {
@@ -1338,7 +1335,7 @@ fn tool_create_transaction<R: tauri::Runtime>(
     let month_node_id = format!("Finance/{}.json", month_key);
 
     // Read or create the month node
-    let existing_month = ctx.db.get_node(&month_node_id)?;
+    let existing_month = lock(ctx)?.get_node(&month_node_id)?;
     let mut transactions: Vec<Value> = match &existing_month {
         Some(node) => node
             .properties
@@ -1414,7 +1411,7 @@ fn write_json_node<R: tauri::Runtime>(
     if let Some(map) = props.as_object_mut() {
         if !map.contains_key("created_at") {
             // Check if node already exists to preserve created_at
-            if let Ok(Some(existing)) = ctx.db.get_node(rel_path) {
+            if let Ok(Some(existing)) = lock(ctx)?.get_node(rel_path) {
                 let existing_created = existing
                     .properties
                     .get("created_at")
@@ -1466,11 +1463,11 @@ fn write_json_node<R: tauri::Runtime>(
         timestamp,
         blocks: None,
     };
-    ctx.db.upsert_node(&node)?;
+    lock(ctx)?.upsert_node(&node)?;
 
     // Update search index
     let props_str = serde_json::to_string(&props).unwrap_or_default();
-    ctx.db.upsert_search_entry(
+    lock(ctx)?.upsert_search_entry(
         rel_path, node_type, title, "", "", &props_str, None, &now, rel_path,
     );
 
@@ -1574,6 +1571,51 @@ mod tests {
         let before = names.len();
         names.dedup();
         assert_eq!(before, names.len(), "a tool name is used twice");
+    }
+
+    /// The assistant and the app file a new node in the same place.
+    ///
+    /// Two writers create nodes — `write_tool_node` here, and Things through
+    /// `writeNode` — and they are in different languages with no link between
+    /// them. A vault where the assistant puts books in `Notes/` and the app
+    /// puts them in `Books/` has two conventions and no way to tell which is
+    /// right, so this reads the frontend's rule and checks it against this one.
+    #[test]
+    fn the_frontend_files_a_new_node_where_the_assistant_does() {
+        let source = include_str!("../../../src/shared/nodeRoutes.ts");
+        let block = source
+            .split("const TYPE_FOR_DIRECTORY: Readonly<Record<string, string>> = {")
+            .nth(1)
+            .expect("the directory map is declared")
+            .split("};")
+            .next()
+            .expect("the declaration closes");
+
+        let mut checked = 0;
+        for line in block.lines() {
+            let Some((folder, node_type)) = line.trim().trim_end_matches(',').split_once(':') else {
+                continue;
+            };
+            let folder = folder.trim();
+            let node_type = node_type.trim().trim_matches('\'');
+            if folder.is_empty() || node_type.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                folder_for_type(node_type),
+                folder,
+                "`{node_type}` goes to a different folder depending on who writes it"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 7, "only read {checked} entries out of nodeRoutes.ts");
+
+        // And the rule for everything else, which is where they would drift
+        // apart most quietly, since neither side has a list to compare.
+        assert_eq!(folder_for_type("animal"), "Animal");
+        assert_eq!(folder_for_type("book"), "Book");
+        assert_eq!(folder_for_type("cá"), "Cá");
+        assert_eq!(folder_for_type(""), "Notes");
     }
 
     /// The set the model is offered, named one by one.

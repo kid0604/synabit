@@ -2123,6 +2123,48 @@ pub fn write_node_file(
     // property-only write should send. See `existing_body`.
     content: Option<String>,
 ) -> AppResult<()> {
+    write_node_inner(
+        &app_handle,
+        &state,
+        vault_path,
+        rel_path,
+        title,
+        node_type,
+        properties,
+        content,
+    )
+}
+
+/// The one way a node reaches disk.
+///
+/// Split out of the command above so the assistant's tools can call it. They
+/// had their own writer — `write_tool_node` — which wrote the file, upserted
+/// the row and indexed the text, and stopped there. What it did not do was
+/// everything below the frontmatter: register the vault identity, assign or
+/// recover the node's `node_id`, record the path against that id, and hand the
+/// content to the CRDT bridge.
+///
+/// Nothing was lost, because sync detects a local change by hashing files
+/// rather than by watching for CRDT operations — so an assistant-written node
+/// did reach other devices, on the next run, by a different road. Two roads is
+/// the problem. A node created by the app and a node created by the assistant
+/// were not the same kind of object until something else came along and made
+/// them one, and every difference between those two states was a thing nobody
+/// had written down.
+///
+/// Generic over the runtime for the reason everything else here is: the tools
+/// are, so that they can be tested at all.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_node_inner<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    state: &DbState,
+    vault_path: String,
+    rel_path: String,
+    title: String,
+    node_type: String,
+    properties: serde_json::Value,
+    content: Option<String>,
+) -> AppResult<()> {
     // The app writing a type it does not itself handle means a caller invented
     // one, which is a bug in the caller rather than something in the user's
     // vault. Still only a warning: the write is honest, and refusing it would
@@ -2291,7 +2333,7 @@ pub fn write_node_file(
         if let Some(old) = old_title {
             if old != node.title {
                 drop(db); // release lock before updating other files
-                let _ = update_node_mentions(&state, vault_path, old, node.title, node.id);
+                let _ = update_node_mentions(state, vault_path, old, node.title, node.id);
             }
         }
     }
@@ -2300,7 +2342,7 @@ pub fn write_node_file(
 }
 
 fn update_node_mentions(
-    state: &tauri::State<'_, DbState>,
+    state: &DbState,
     vault_path: String,
     old_title: String,
     new_title: String,

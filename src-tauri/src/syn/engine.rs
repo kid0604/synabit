@@ -16,7 +16,7 @@ use std::sync::{Arc, RwLock};
 
 use tauri::Emitter;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::models::syn::{SynMessage, SynStreamToken, SynToolCallEvent, ToolDefinition};
 use crate::syn::provider::{ChatMessage, ChatProvider, ChatRequest, ChatReply, StreamSink};
 
@@ -400,11 +400,12 @@ impl SynEngine {
 
             for tc in &reply.tool_calls {
                 let result = {
-                    let db = db_state.lock().map_err(|e| {
-                        AppError::General(format!("DB lock error during tool call: {}", e))
-                    })?;
+                    // The lock is taken inside each tool now, for as long as
+                    // that tool needs it. Holding it across the whole call made
+                    // the app's shared write path unreachable: it locks too, and
+                    // the mutex is not reentrant.
                     let ctx = crate::syn::tools::ToolContext {
-                        db: &db,
+                        db: db_state,
                         vault_path,
                         app,
                     };
@@ -412,7 +413,7 @@ impl SynEngine {
                         .unwrap_or_else(|e| {
                             serde_json::json!({ "error": format!("{}", e) }).to_string()
                         })
-                }; // DB lock dropped here
+                };
 
                 let event = SynToolCallEvent {
                     conversation_id: conversation_id.to_string(),
