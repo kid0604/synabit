@@ -149,6 +149,28 @@ pub struct NodeSummary {
     pub timestamp: i64,
 }
 
+/// One type the vault turns out to contain, and what its nodes carry.
+///
+/// The vault describing itself. Nothing here is declared anywhere — a type
+/// exists because somebody wrote it in a `type:` field, and a field is in the
+/// list because some node of that type has it.
+///
+/// Read by two things that look unrelated and are not: the assistant's
+/// `list_schemas`, and the left rail of Things. Both are asking the same
+/// question — what is in here? — and both have to answer it without a list in
+/// the code, or a type nobody wrote code for is invisible to them.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ObservedType {
+    pub node_type: String,
+    pub count: i64,
+    /// Frontmatter keys nodes of this type actually carry, most common first.
+    ///
+    /// The union across nodes, not the intersection: a node missing one is
+    /// normal, and a node carrying an extra one is somebody inventing a field.
+    /// It is emphatically not a list of permitted keys.
+    pub fields: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NodeMetadata {
     pub id: String,        // Relative path in Vault (e.g., "Projects/Synabit.md")
