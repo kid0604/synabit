@@ -317,6 +317,12 @@
     "delete_many_body": "They move to the trash, and are removed for good after 30 days."
   },
   "task": {
+    "other_fields": "Other fields",
+    "other_fields_hint": "Fields this file has that Tasks has no control for. Kept as written.",
+    "field_name": "Field name…",
+    "field_value": "Value…",
+    "add_field": "Add field",
+    "remove_field": "Remove this field",
     "all_tasks": "All Tasks",
     "today": "Today",
     "upcoming": "Upcoming",

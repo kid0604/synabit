@@ -195,6 +195,49 @@ const TASK_PROPERTY_KEYS = [
   'completed_at',
 ] as const;
 
+/**
+ * Frontmatter keys the edit form already has a control for, or has no business
+ * showing at all.
+ *
+ * Everything a task file carries that is *not* in here is a field the user (or
+ * another tool) put there, and the form shows those rather than pretending they
+ * do not exist. Two groups are excluded for different reasons:
+ *
+ * - The typed keys above, because there is already a date picker or a status
+ *   dropdown for each, and a second raw text box editing the same value is a
+ *   way to lose data.
+ * - `node_id`, `type`, `title`, `created_at`, `updated_at` and `order`, which
+ *   the app owns. `node_id` is the worst of them: it is the file's identity to
+ *   the sync engine, and hand-editing one splits a note into two documents on
+ *   the next sync.
+ *
+ * `checklist` looked at first like the case this section exists for — every
+ * task in an older vault carries one and nothing in the Tasks app reads it.
+ * It is governed anyway, because it is declared on the app's own `TaskMetadata`
+ * in `types/ipc.ts`: it is a feature that was started and left, not something
+ * a user put there. This section is for what the *user* added, and offering
+ * them the app's own debris to edit only invites filling in a field nothing
+ * will read.
+ *
+ * Clearing vestigial fields out of old files is a real job, and a different
+ * one from this.
+ */
+export const FORM_GOVERNED_KEYS: ReadonlySet<string> = new Set<string>([
+  ...TASK_PROPERTY_KEYS,
+  'node_id',
+  'type',
+  'title',
+  'created_at',
+  'updated_at',
+  'order',
+  // Written by dragging a card between quadrants in the Matrix view, which is
+  // a control the form does not contain but the app certainly has. A text box
+  // over it would let someone type a quadrant that does not exist and send the
+  // task somewhere with no way back.
+  'eisenhower_quadrant',
+  'checklist',
+]);
+
 /** As much of a task as any of the write paths happen to hold. */
 export type TaskPropertySource = Partial<
   Pick<TaskMetadata, (typeof TASK_PROPERTY_KEYS)[number]>
