@@ -13,18 +13,22 @@
  */
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table } from 'lucide-vue-next';
+import { Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2 } from 'lucide-vue-next';
 import { useObservedTypes } from './composables/useObservedTypes';
 import { useThingsQuery } from './composables/useThingsQuery';
 import { useThingsNode } from './composables/useThingsNode';
 import { useThingsLinks } from './composables/useThingsLinks';
 import { useThingsArrangement } from './composables/useThingsArrangement';
+import { useThingsViews, type SavedView } from './composables/useThingsViews';
+import { folderForType } from '../../shared/nodeRoutes';
+import { useNodeService } from '../../composables/useNodeService';
 import { iconForNodeType } from '../../shared/views/nodeTypeIcon';
 import ListView from '../../shared/views/ListView.vue';
 import TableView from '../../shared/views/TableView.vue';
 import ObjectDetail from '../../shared/views/ObjectDetail.vue';
 import NoteGraph from '../note/NoteGraph.vue';
 import type { QueryRow } from '../../shared/views/types';
+import { logger } from '../../utils/logger';
 
 const props = defineProps<{ vaultPath: string }>();
 
@@ -32,6 +36,8 @@ const { t } = useI18n();
 
 const { browsable, internal, load: loadTypes, loading: typesLoading, fieldsFor } = useObservedTypes();
 const arrange = useThingsArrangement();
+const saved = useThingsViews();
+const ns = useNodeService();
 const { query, result, loading, error, run, showType } = useThingsQuery();
 const detail = useThingsNode();
 const links = useThingsLinks();
@@ -164,7 +170,78 @@ const graphBacklinks = computed(() =>
 // writes to it.
 const NO_OUTGOING: string[] = [];
 
-onMounted(loadTypes);
+/**
+ * Create a node of whatever type is being browsed.
+ *
+ * No step that defines the type first: writing the file is what makes the type
+ * exist, and it existed already if the rail is showing it. The folder comes
+ * from `folderForType`, which the assistant's own writer uses too.
+ */
+const creating = ref(false);
+const newType = ref('');
+
+const startCreate = () => {
+  newType.value = activeType.value ?? '';
+  creating.value = true;
+};
+
+const create = async () => {
+  const type = newType.value.trim().toLowerCase();
+  if (!type) return;
+  creating.value = false;
+
+  const relPath = `${folderForType(type)}/${crypto.randomUUID()}.md`;
+  try {
+    await ns.writeNode({
+      relPath,
+      nodeType: type as never,
+      title: '',
+      properties: {},
+      content: '',
+      eventType: 'created',
+    });
+    await loadTypes();
+    if (activeType.value !== type) openType(type);
+    else await rerun();
+    await openRow({ id: relPath, node_type: type, title: '', cells: [] });
+  } catch (e) {
+    logger.error('[Things] Could not create', e);
+  }
+};
+
+/** Keep what is on screen, arrangement and all. */
+const saveCurrentView = async () => {
+  const name = window.prompt(t('things.name_this_view'), activeType.value ?? '');
+  if (!name?.trim()) return;
+  await saved.save({
+    name: name.trim(),
+    query: typed.value,
+    layout: layout.value,
+    sort: arrange.sortField.value,
+    sortDescending: arrange.sortDescending.value,
+    group: arrange.groupBy.value,
+    columns: [...arrange.columns.value],
+    home: 'things',
+  });
+};
+
+const openView = (view: SavedView) => {
+  activeType.value = null;
+  selectedId.value = null;
+  detail.close();
+  links.clear();
+  typed.value = view.query;
+  layout.value = view.layout;
+  arrange.sortField.value = view.sort;
+  arrange.sortDescending.value = view.sortDescending;
+  arrange.groupBy.value = view.group;
+  arrange.columns.value = [...view.columns];
+  rerun();
+};
+
+onMounted(async () => {
+  await Promise.all([loadTypes(), saved.load()]);
+});
 </script>
 
 <template>
@@ -185,14 +262,49 @@ onMounted(loadTypes);
         <h2 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
           {{ t('things.in_your_vault') }}
         </h2>
-        <button
-          type="button"
-          @click="refresh"
-          class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
-          :title="t('things.refresh')"
-        >
-          <RefreshCw class="w-3.5 h-3.5" :class="typesLoading ? 'animate-spin' : ''" />
-        </button>
+        <span class="flex items-center gap-0.5">
+          <button
+            type="button"
+            @click="startCreate"
+            class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+            :title="t('things.create')"
+          >
+            <Plus class="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            @click="refresh"
+            class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+            :title="t('things.refresh')"
+          >
+            <RefreshCw class="w-3.5 h-3.5" :class="typesLoading ? 'animate-spin' : ''" />
+          </button>
+        </span>
+      </div>
+
+      <!--
+        Creating something is picking a word. A type nobody has used yet is
+        typed in, and it exists the moment the file lands — there is no step
+        that declares it first.
+      -->
+      <div v-if="creating" class="px-3 pb-2 flex-shrink-0">
+        <input
+          v-model="newType"
+          type="text"
+          spellcheck="false"
+          autofocus
+          @keydown.enter="create"
+          @keydown.esc="creating = false"
+          @blur="creating = false"
+          :placeholder="t('things.what_kind')"
+          list="things-known-types"
+          class="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-white/5
+                 border border-violet-300 dark:border-violet-500/40 text-xs
+                 text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 outline-none"
+        />
+        <datalist id="things-known-types">
+          <option v-for="entry in browsable" :key="entry.node_type" :value="entry.node_type" />
+        </datalist>
       </div>
 
       <div class="max-h-[38%] overflow-y-auto px-2 pb-2 flex-shrink-0">
@@ -252,6 +364,47 @@ onMounted(loadTypes);
             <span class="truncate font-mono text-xs">{{ entry.node_type }}</span>
             <span class="ml-auto text-xs text-gray-400 dark:text-gray-600 tabular-nums">{{ entry.count }}</span>
           </button>
+        </template>
+
+        <!--
+          The ladder, as a list. A view saved here shows up under the types;
+          pinning one moves it into the app sidebar beside Notes and Tasks,
+          which is a change to one field rather than a different feature.
+        -->
+        <template v-if="saved.views.value.length">
+          <div class="px-2 py-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+            {{ t('things.saved_views') }}
+          </div>
+          <div
+            v-for="view in saved.views.value"
+            :key="view.id"
+            class="group w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm
+                   text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+          >
+            <button type="button" @click="openView(view)" class="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer">
+              <Bookmark class="w-4 h-4 flex-shrink-0" :class="view.home === 'sidebar' ? 'text-violet-500' : 'text-gray-400'" />
+              <span class="truncate text-left">{{ view.name }}</span>
+            </button>
+            <button
+              type="button"
+              @click="saved.setHome(view, view.home === 'sidebar' ? 'things' : 'sidebar')"
+              class="p-0.5 rounded text-gray-300 hover:text-violet-500 opacity-0 group-hover:opacity-100
+                     focus:opacity-100 transition-all cursor-pointer"
+              :title="view.home === 'sidebar' ? t('things.unpin') : t('things.pin')"
+            >
+              <PinOff v-if="view.home === 'sidebar'" class="w-3 h-3" />
+              <Pin v-else class="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              @click="saved.remove(view)"
+              class="p-0.5 rounded text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100
+                     focus:opacity-100 transition-all cursor-pointer"
+              :title="t('things.delete_view')"
+            >
+              <Trash2 class="w-3 h-3" />
+            </button>
+          </div>
         </template>
       </div>
 
@@ -317,7 +470,16 @@ onMounted(loadTypes);
           </select>
         </label>
 
-        <span class="ml-auto inline-flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-700/50">
+        <button
+          type="button"
+          @click="saveCurrentView"
+          class="ml-auto p-1 rounded text-gray-400 hover:text-violet-500 transition-colors cursor-pointer"
+          :title="t('things.save_view')"
+        >
+          <Bookmark class="w-3.5 h-3.5" />
+        </button>
+
+        <span class="inline-flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-700/50">
           <button
             v-for="kind in (['list', 'table'] as const)"
             :key="kind"

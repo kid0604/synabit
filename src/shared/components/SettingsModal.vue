@@ -58,6 +58,36 @@ const {
  */
 const availableApps = computed(() => BUILT_IN_APPS.filter(a => appInPlatformScope(a.id)));
 
+/**
+ * How many ways of looking at the vault this person has kept.
+ *
+ * Counted here and shown here, and it goes nowhere else. The roadmap gates its
+ * next stretch of work on whether anybody actually saves a view, and this app
+ * sells "zero telemetry" as a promise rather than an omission — so the number
+ * is computed from nodes already in the vault and displayed to the one person
+ * entitled to it. See `docs/adr-measuring-the-slope-2026-08-29.md`.
+ *
+ * The line is also the only place in the product that mentions views can be
+ * pinned at all, which is the slope's real problem: the rungs exist and
+ * nothing says so.
+ */
+const savedViews = ref(0);
+const pinnedViews = ref(0);
+
+const countViews = async () => {
+  try {
+    const nodes = await invoke<{ properties?: Record<string, unknown> }[]>(
+      'get_node_summaries', { nodeType: 'view' },
+    );
+    savedViews.value = nodes.length;
+    pinnedViews.value = nodes.filter(n => n.properties?.home === 'sidebar').length;
+  } catch (e) {
+    logger.warn('Could not count saved views', e);
+    savedViews.value = 0;
+    pinnedViews.value = 0;
+  }
+};
+
 const toggleAppVisibility = (appId: string) => {
   if (defaultApp.value === appId) return;
   if (hiddenSidebarApps.value.includes(appId)) {
@@ -72,6 +102,7 @@ const isDesktop = ref(true);
 
 onMounted(async () => {
   void readAutostart();
+  void countViews();
   try {
     appVersion.value = await getVersion();
     const osType = type();
@@ -744,6 +775,9 @@ const setupE2ee = () => {
                   <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-4 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c]">
                     <p class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] mb-1">{{ $t('settings.general.visible_apps') }}</p>
                     <p class="text-[11px] text-gray-400 dark:text-gray-500 mb-4">{{ $t('settings.general.visible_apps_desc') }}</p>
+                    <p v-if="savedViews > 0" class="text-[11px] text-gray-400 dark:text-gray-500 mb-4">
+                      {{ $t('settings.general.saved_views_count', { saved: savedViews, pinned: pinnedViews }) }}
+                    </p>
                     
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label v-for="app in availableApps" :key="app.id" 
