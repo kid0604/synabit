@@ -98,7 +98,7 @@ const {
 
 // ── 4. Task CRUD ───────────────────────────────────────────────────
 const {
-  editingTask, editingTaskParams,
+  editingTask, editingTaskParams, customFields,
   toastMessage, showToast,
   loadTasks, archiveDoneTasks,
   openEditModal, openCreateModal,
@@ -547,6 +547,7 @@ watch(() => props.vaultPath, () => {
       :issues="editingTask?.issues"
       :backlinks="backlinks"
       :backlinksLoading="backlinksLoading"
+      :customFields="customFields"
       @open-node="openBacklink"
       @save="handleModalSave"
       @close="editingTask = null"

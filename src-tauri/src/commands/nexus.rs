@@ -408,6 +408,35 @@ pub fn get_nexus_graph_data(
 /// search asks which notes mention some words, a query asks which notes *are*
 /// something — every task still open, every note over budget. Only the second
 /// reads frontmatter as data and returns columns.
+/// What types this vault contains, and which fields each one uses.
+///
+/// Deliberately unfiltered. `run_node_query` hides `finance_%` because those
+/// nodes are a storage detail rather than something anyone browses, but this
+/// command answers "what is in the vault", and hiding part of the answer here
+/// would make two callers disagree about what exists. Whoever displays it
+/// decides what to show.
+#[tauri::command]
+pub fn list_observed_types(
+    state: tauri::State<'_, DbState>,
+) -> AppResult<Vec<crate::models::node::ObservedType>> {
+    // Enough keys to describe a type, few enough that one node carrying a
+    // large generated blob cannot crowd out every other type in the answer.
+    const KEYS_PER_TYPE: usize = 25;
+
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(db
+        .observed_schemas(KEYS_PER_TYPE)?
+        .into_iter()
+        .map(
+            |(node_type, count, fields)| crate::models::node::ObservedType {
+                node_type,
+                count,
+                fields,
+            },
+        )
+        .collect())
+}
+
 #[tauri::command]
 pub fn run_node_query(
     state: tauri::State<'_, DbState>,
@@ -416,4 +445,185 @@ pub fn run_node_query(
     let parsed = crate::search::parse_query(&query);
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.run_node_query(&parsed)
+}
+
+#[cfg(test)]
+mod things_gate {
+    use crate::db::DbBridge;
+
+    /// Gate T1: a type nobody coded for reaches the screen from a plain file.
+    ///
+    /// The whole claim of Things in one test. Somebody writes a markdown file
+    /// with `type: animal` in the frontmatter — in this app, in Obsidian, in
+    /// vim — and without a registration step, a manifest, or a line of code:
+    ///
+    /// 1. the scan indexes it as `animal`, not as a note,
+    /// 2. `list_observed_types` reports the type and the fields it carries,
+    ///    which is what the left rail is drawn from,
+    /// 3. `run_node_query` returns it for `type:animal`, which is the list.
+    ///
+    /// Each of those three has failed before. The scan is what `NodeType::Other`
+    /// protects; the rail could have been a list in the code; and `type:animal`
+    /// returned the entire vault until the query parser stopped recognising
+    /// exactly five type names.
+    /// Gate T3: a field somebody typed into a file can be worked with.
+    ///
+    /// "Custom fields" means nothing unless you can do something with one, so
+    /// this exercises all four operations against a key that exists only
+    /// because it was written into two files by hand:
+    ///
+    /// - filter on it,
+    /// - sort on it,
+    /// - read it back as a column, which is what grouping needs,
+    /// - and count what matched, ignoring the page size.
+    ///
+    /// All four are the engine's work rather than the browser's. Filtering a
+    /// page after it arrives would make `total` a lie and sorting a page would
+    /// sort the wrong rows.
+    #[test]
+    fn a_field_nobody_declared_can_be_filtered_sorted_and_shown() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path();
+        std::fs::create_dir_all(vault.join("Tasks")).expect("mkdir");
+
+        for (file, title, energy) in [
+            ("a.md", "Viết changelog", "low"),
+            ("b.md", "Dọn log cũ", "low"),
+            ("c.md", "Thiết kế lại trang giá", "high"),
+        ] {
+            std::fs::write(
+                vault.join("Tasks").join(file),
+                format!("---\ntitle: {title}\ntype: task\nstatus: todo\nenergy: {energy}\n---\n"),
+            )
+            .expect("write");
+        }
+        // One without the field at all, which must not vanish from a query
+        // that does not mention it.
+        std::fs::write(
+            vault.join("Tasks/d.md"),
+            "---\ntitle: Gia hạn tên miền\ntype: task\nstatus: todo\n---\n",
+        )
+        .expect("write");
+
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        let app = tauri::test::mock_builder()
+            .manage(std::sync::Mutex::new(db))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        let db_state = tauri::Manager::state::<crate::db::DbState>(&handle);
+        crate::commands::nodes::scan_vault_into_db(&handle, db_state.inner(), &vault.to_string_lossy())
+            .expect("the vault scans");
+
+        let db = db_state.lock().expect("lock");
+        let ask = |q: &str| db.run_node_query(&crate::search::parse_query(q)).expect("query runs");
+
+        // The menus are built from this, so it has to see the field first.
+        let observed = db.observed_schemas(25).expect("schemas");
+        let tasks = observed.iter().find(|(t, ..)| t == "task").expect("task");
+        assert!(tasks.2.contains(&"energy".to_string()), "{:?}", tasks.2);
+
+        // Filter.
+        assert_eq!(ask("type:task energy:low").total, 2);
+        assert_eq!(ask("type:task energy:high").total, 1);
+        // And the negation, which is what "everything unfinished" needs.
+        assert_eq!(ask("type:task -energy:low").total, 2, "high, plus the one with no energy");
+
+        // Sort, on a frontmatter key the engine was never taught.
+        let sorted = ask("type:task energy:low sort:title columns:energy");
+        let titles: Vec<&str> = sorted.rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["Dọn log cũ", "Viết changelog"]);
+
+        // The column comes back, which is both how it is displayed and how the
+        // list groups: `QueryRow.cells` holds only the columns that were asked
+        // for, so a group key has to be requested to exist at all.
+        let at = sorted
+            .columns
+            .iter()
+            .position(|c| c == "energy")
+            .expect("`energy` is a column the engine returned");
+        assert!(sorted.rows.iter().all(|r| r.cells[at] == "low"));
+
+        // The count survives a page. This is the shape that once reported two
+        // tasks out of a hundred and twenty-six.
+        let one = ask("type:task limit:1");
+        assert_eq!(one.rows.len(), 1);
+        assert_eq!(one.total, 4);
+    }
+
+    #[test]
+    fn a_type_nobody_coded_for_reaches_the_rail_and_the_list() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path();
+
+        std::fs::create_dir_all(vault.join("Animal")).expect("mkdir");
+        std::fs::write(
+            vault.join("Animal/meo-mun.md"),
+            "---\ntitle: Mèo Mun\ntype: animal\nspecies: mèo\ncolour: đen\n---\nNhặt được ở ngõ.\n",
+        )
+        .expect("write");
+        std::fs::write(
+            vault.join("Animal/cho-vang.md"),
+            "---\ntitle: Chó Vàng\ntype: animal\nspecies: chó\nvaccinated_at: 2026-06-12\n---\n",
+        )
+        .expect("write");
+        std::fs::create_dir_all(vault.join("Notes")).expect("mkdir");
+        std::fs::write(
+            vault.join("Notes/a.md"),
+            "---\ntitle: Ghi chú\ntype: note\n---\nnội dung\n",
+        )
+        .expect("write");
+
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        let app = tauri::test::mock_builder()
+            .manage(std::sync::Mutex::new(db))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        let db_state = tauri::Manager::state::<crate::db::DbState>(&handle);
+        crate::commands::nodes::scan_vault_into_db(&handle, db_state.inner(), &vault.to_string_lossy())
+            .expect("the vault scans");
+
+        let db = db_state.lock().expect("lock");
+
+        // 1. Indexed as what the file says, not as the folder or a fallback.
+        let observed = db.observed_schemas(25).expect("schemas");
+        let animals = observed
+            .iter()
+            .find(|(t, ..)| t == "animal")
+            .expect("`animal` is a type this vault has, whatever the code knows");
+        assert_eq!(animals.1, 2);
+
+        // 2. The fields the rail and the arrangement menus read. The union
+        //    across nodes, not the intersection: `colour` is on one animal and
+        //    `vaccinated_at` on the other, and both are real fields of this
+        //    vault's animals.
+        //
+        //    `title` and `type` are in here too, because they are frontmatter
+        //    like everything else — the scan does not strip them out, and a
+        //    query can sort on either. Whoever builds a menu decides whether to
+        //    offer them; this reports what the file holds.
+        let mut fields = animals.2.clone();
+        fields.sort();
+        assert_eq!(
+            fields,
+            vec!["colour", "species", "title", "type", "vaccinated_at"]
+        );
+
+        // 3. The list. `type:` rather than `is:` because that is what the app
+        //    and the assistant both write.
+        let found = db
+            .run_node_query(&crate::search::parse_query("type:animal"))
+            .expect("query runs");
+        assert_eq!(found.total, 2, "both animals, and nothing else");
+
+        let mut titles: Vec<&str> = found.rows.iter().map(|r| r.title.as_str()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["Chó Vàng", "Mèo Mun"]);
+        assert!(found.rows.iter().all(|r| r.node_type == "animal"));
+
+        // And the note is not swept in, which is the failure mode a dropped
+        // type filter used to produce.
+        assert!(!titles.contains(&"Ghi chú"));
+    }
 }

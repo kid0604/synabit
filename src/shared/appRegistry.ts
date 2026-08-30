@@ -33,6 +33,7 @@ import {
   Users,
   Wallet,
   Rss,
+  Boxes,
 } from 'lucide-vue-next';
 
 export interface AppEntry {
@@ -71,6 +72,7 @@ export const BUILT_IN_APPS: readonly AppEntry[] = [
   { id: 'people',     name: 'People',     icon: Users,         view: () => import('../mini-apps/people/PeopleApp.vue') },
   { id: 'finance',    name: 'Finance',    icon: Wallet,        view: () => import('../mini-apps/finance/FinanceApp.vue') },
   { id: 'feeds',      name: 'Feeds',      icon: Rss,           view: () => import('../mini-apps/feeds/FeedsApp.vue') },
+  { id: 'things',     name: 'Things',     icon: Boxes,         view: () => import('../mini-apps/things/ThingsApp.vue') },
 ];
 
 /** The entry for an app id, or `undefined` for a name nothing ships. */

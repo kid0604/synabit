@@ -62,7 +62,7 @@ describe('the app registry', () => {
   it('keeps the ids that settings on disk refer to', () => {
     expect(BUILT_IN_APPS.map((a) => a.id)).toEqual([
       'nexus', 'messages', 'quickcap', 'note', 'task',
-      'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds',
+      'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds', 'things',
     ]);
   });
 

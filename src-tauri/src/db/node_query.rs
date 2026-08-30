@@ -39,7 +39,6 @@ pub struct QueryResult {
     /// The columns actually shown, after unusable names were dropped.
     pub columns: Vec<String>,
     pub rows: Vec<QueryRow>,
-    /// How many notes matched, which may exceed the rows returned.
     /// How many nodes match, ignoring `limit`.
     ///
     /// A real count, not `rows.len()`. It was the latter until an assistant

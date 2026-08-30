@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useNodeService } from '../../composables/useNodeService';
-import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus, Bell, Repeat, CornerDownRight, TriangleAlert } from 'lucide-vue-next';
+import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus, Bell, Repeat, CornerDownRight, TriangleAlert, PlusCircle } from 'lucide-vue-next';
 import TiptapEditor from '../note/TiptapEditor.vue';
 import { getTodayStr, REMINDER_PRESETS, isValidReminder } from './types';
 import { RECURRENCE_OPTIONS } from './recurrence';
@@ -37,6 +37,14 @@ const props = defineProps<{
     /** What else in the vault points at this task. */
     backlinks?: Backlink[];
     backlinksLoading?: boolean;
+    /**
+     * Fields this file carries that the form has no control for.
+     *
+     * Owned by `useTaskCrud` rather than cloned into local state, because the
+     * save reads the same array: a row edited here has to be the row that is
+     * written, and a second copy is how the two drift.
+     */
+    customFields?: { k: string; v: string }[];
 }>();
 
 const emit = defineEmits(['save', 'close', 'delete', 'open-node']);
@@ -68,6 +76,30 @@ const editingTaskParams = ref({
 // UTC+7 this form labelled tomorrow's date "Today" for the whole evening.
 
 const activeDropdown = ref<string | null>(null);
+
+/**
+ * Whether the section is open because the user just added the first row.
+ *
+ * Without it, adding a field to a task that had none leaves the row hidden:
+ * the section renders on `customFields.length > 0`, and the array is the
+ * parent's.
+ */
+const showAddedField = ref(false);
+
+const addCustomField = () => {
+    props.customFields?.push({ k: '', v: '' });
+    showAddedField.value = true;
+};
+
+/**
+ * Removing a row is how a field is deleted from the file, and the save turns
+ * an absent row into an explicit `null`. Nothing confirms it, unlike the
+ * project form: a task field is one line of text the user can retype, and a
+ * confirmation on every one of them is friction on the common case.
+ */
+const removeCustomField = (index: number) => {
+    props.customFields?.splice(index, 1);
+};
 
 // ── Reminders ──────────────────────────────────────────────────────
 const reminderPreset = ref('');
@@ -346,6 +378,60 @@ const handleBackgroundClick = () => {
             <p v-for="issue in issues" :key="issue.field" class="text-[11px] text-amber-700 dark:text-amber-400/90 leading-relaxed">
               {{ t('task.field_issue_detail', { field: issue.field, value: issue.value }) }}
             </p>
+          </div>
+
+          <!--
+            What this file holds that the form has no control for.
+
+            The app has always kept these across a save and never once shown
+            one, so a field somebody typed into the frontmatter by hand was
+            preserved and invisible at the same time. Older tasks carry a
+            `checklist` nothing has read in a long time; this is where it
+            finally appears.
+
+            Deliberately plain text boxes. The app does not know what any of
+            these mean, and a control that implied it did would be lying.
+          -->
+          <div v-if="customFields && customFields.length > 0 || showAddedField" class="px-5 pb-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">
+              {{ t('task.other_fields') }}
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="(field, index) in customFields" :key="index" class="flex items-center gap-2 group">
+                <input
+                  v-model="field.k"
+                  :placeholder="t('task.field_name')"
+                  spellcheck="false"
+                  class="w-[130px] text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-gray-500 dark:text-gray-400 font-medium placeholder-gray-300"
+                />
+                <input
+                  v-model="field.v"
+                  :placeholder="t('task.field_value')"
+                  spellcheck="false"
+                  class="flex-1 min-w-0 text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300"
+                />
+                <button
+                  type="button"
+                  @click="removeCustomField(index)"
+                  class="p-1 text-gray-300 hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                  :aria-label="t('task.remove_field')"
+                >
+                  <X class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">
+              {{ t('task.other_fields_hint') }}
+            </p>
+          </div>
+          <div class="px-5 pb-3">
+            <button
+              type="button"
+              @click="addCustomField"
+              class="text-[11px] font-medium text-gray-400 hover:text-indigo-500 flex items-center transition-colors cursor-pointer"
+            >
+              <PlusCircle class="w-3 h-3 mr-1" /> {{ t('task.add_field') }}
+            </button>
           </div>
 
           <!--

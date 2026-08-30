@@ -1,7 +1,38 @@
 import { ref, type Ref, type ComputedRef } from 'vue';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { type TaskMetadata, getTodayStr, taskProperties } from '../types';
+import { type TaskMetadata, getTodayStr, taskProperties, FORM_GOVERNED_KEYS } from '../types';
+
+/**
+ * A frontmatter value as one line of text.
+ *
+ * `String(value)` turns a list into `a,b` and an object into
+ * `[object Object]`, and saving that back writes the mangling to disk. Anything
+ * that is not a scalar is shown as the JSON it is, which round-trips.
+ */
+function stringifyFieldValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * The text from a field row, back as a value.
+ *
+ * Mirrors `stringifyFieldValue`: text that parses as JSON and was not a bare
+ * number or word goes back as the structure it came from, so a list the user
+ * did not touch is written out as a list rather than as a string that looks
+ * like one.
+ */
+function parseFieldValue(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return text;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return text;
+  }
+}
 import { advanceRecurrence, repeats } from '../recurrence';
 import { descendantsOf } from '../subtasks';
 import {
@@ -107,9 +138,13 @@ export function useTaskCrud(
       project_id: task.project_id || '',
       completed_at: task.completed_at || ''
     };
+    // Everything the file carries that the form has no control for. Before
+    // this the list held every property including `status` and `due_date`,
+    // which is why nothing could render it: the rows would have duplicated
+    // half the form as raw text boxes.
     customFields.value = Object.entries(task.custom_fields || {})
-      .filter(([k, _]) => k.trim() !== 'order')
-      .map(([k, v]) => ({ k, v: String(v) }));
+      .filter(([k]) => !FORM_GOVERNED_KEYS.has(k.trim()))
+      .map(([k, v]) => ({ k, v: stringifyFieldValue(v) }));
   };
 
   const openEditById = async (id: string) => {
@@ -276,16 +311,26 @@ export function useTaskCrud(
     if (!editingTask.value) return;
     try {
       const tagArray = editingTaskParams.value.tags.split(',').map(t => t.trim()).filter(t => t !== '');
-      const updatedCustomFields: Record<string, string> = {};
-      
+      const updatedCustomFields: Record<string, unknown> = {};
+
       customFields.value.forEach(field => {
         if (field.k.trim()) {
-          updatedCustomFields[field.k.trim()] = field.v;
+          updatedCustomFields[field.k.trim()] = parseFieldValue(field.v);
         }
       });
-      
-      if (editingTask.value.custom_fields && editingTask.value.custom_fields['order'] !== undefined) {
-           updatedCustomFields['order'] = editingTask.value.custom_fields['order'] as string;
+
+      // A write names the keys it changes and leaves the rest of the file
+      // alone, so a row the user removed has to be named as `null` or it
+      // simply stays at its old value and the deletion appears not to have
+      // taken. Only keys this form governs are nulled: the ones filtered out
+      // of the rows — `node_id`, `created_at`, the typed fields — are absent
+      // because the form has nothing to say about them, not because they
+      // should go.
+      for (const key of Object.keys(editingTask.value.custom_fields || {})) {
+        if (FORM_GOVERNED_KEYS.has(key.trim())) continue;
+        if (!(key.trim() in updatedCustomFields)) {
+          updatedCustomFields[key.trim()] = null;
+        }
       }
       
       const edited = taskProperties({
@@ -309,20 +354,17 @@ export function useTaskCrud(
         completed_at: editingTask.value.completed_at || '',
       });
 
-      // A write changes the keys it names and leaves the rest of the file
-      // alone, so a custom field the user deleted has to be named as `null` —
-      // otherwise the key is merely unmentioned, stays where it is, and comes
-      // straight back the next time the task is read.
+      // Deletions are named in `updatedCustomFields` above, one key at a time.
       //
-      // Safe to derive by subtraction here, and only here, because this form
-      // loads every frontmatter key as a row: a key missing from `edited` is
-      // one the user removed, never one the form never showed them.
-      const cleared: Record<string, null> = {};
-      for (const key of Object.keys(editingTask.value.custom_fields || {})) {
-        if (!(key in edited)) cleared[key] = null;
-      }
-
-      const properties = { ...cleared, ...edited };
+      // They used to be derived here by subtraction — anything in the file but
+      // not in `edited` was taken to be a row the user removed — and the
+      // comment said that was safe "here, and only here, because this form
+      // loads every frontmatter key as a row". That premise is gone: the rows
+      // are now only the keys the form has no control for, so subtraction
+      // would null every key it deliberately does not show. `node_id` is the
+      // one that matters — nulling it hands the file a fresh identity and
+      // splits it into two documents on the next sync.
+      const properties = edited;
 
       if (editingTask.value.isNew) {
         const relPath = `Tasks/${crypto.randomUUID()}.md`;
