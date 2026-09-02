@@ -1,3 +1,4 @@
+pub mod rename_property;
 pub mod calendar_subs;
 pub mod capture;
 pub mod chat;

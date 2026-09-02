@@ -30,7 +30,7 @@ import { formatDate, buildNotePayload, rememberRecentNotes, RECENT_NOTES_KEY } f
 import { resolveNoteId } from './resolveNoteId';
 
 // ── Composables ─────────────────────────────────────────────
-import { useSidebarResize } from './composables/useSidebarResize';
+import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useNoteTabs } from './composables/useNoteTabs';
 import { useNoteExport } from './composables/useNoteExport';
 import { useNoteLock } from './composables/useNoteLock';
@@ -98,7 +98,12 @@ const toggleContext = (id: string, e: Event) => {
 const closeContextMenu = () => { activeContextMenu.value = null; };
 
 // ── Composable Wiring ───────────────────────────────────────
-const sidebar = useSidebarResize();
+// The widths Notes has always opened at, now said out loud rather than
+// living as the composable's defaults — Things opens at different ones.
+const sidebar = useSidebarResize({
+  left: { initial: 300, min: 220, max: 600 },
+  right: { initial: 288, min: 200, max: 600 },
+});
 
 const tabs = useNoteTabs(notes, currentNoteId, ns, appLockStore);
 
@@ -279,11 +284,11 @@ const zenMode = ref(false);
 watch(zenMode, (val) => {
     if (val) {
         document.body.classList.add('zen-mode');
-        sidebar.showNoteSidebar.value = false;
-        sidebar.showRightSidebar.value = false;
+        sidebar.showLeft.value = false;
+        sidebar.showRight.value = false;
     } else {
         document.body.classList.remove('zen-mode');
-        sidebar.showNoteSidebar.value = true;
+        sidebar.showLeft.value = true;
     }
 });
 
@@ -308,12 +313,12 @@ async function openDailyNote() {
 
 const handleOpenDailyNote = async () => {
     await openDailyNote();
-    if (window.innerWidth < 768) sidebar.showNoteSidebar.value = false;
+    if (window.innerWidth < 768) sidebar.showLeft.value = false;
 };
 
 const handleCreateNewNote = async () => {
     await createNewNote();
-    if (window.innerWidth < 768) sidebar.showNoteSidebar.value = false;
+    if (window.innerWidth < 768) sidebar.showLeft.value = false;
 };
 
 // ── Note CRUD ───────────────────────────────────────────────
@@ -331,7 +336,7 @@ function handleNoteSelect(id: string) {
     currentNoteId.value = id;
     manager.viewMode.value = 'editor';
     if (window.innerWidth < 768) {
-        sidebar.showNoteSidebar.value = false;
+        sidebar.showLeft.value = false;
     }
 }
 
@@ -514,8 +519,8 @@ onMounted(async () => {
     if (props.isFloatingView && props.floatingNoteId) {
         currentNoteId.value = props.floatingNoteId;
         manager.viewMode.value = 'editor';
-        sidebar.showNoteSidebar.value = false;
-        sidebar.showRightSidebar.value = false;
+        sidebar.showLeft.value = false;
+        sidebar.showRight.value = false;
     }
 
     if (props.vaultPath) { await scanVault(); }
@@ -565,17 +570,17 @@ onMounted(async () => {
 
 <template>
   <div class="flex flex-1 h-full overflow-hidden"
-       :class="{'cursor-col-resize': sidebar.isDraggingNoteSidebar.value || sidebar.isDraggingRightSidebar.value}">
+       :class="{'cursor-col-resize': sidebar.isDraggingLeft.value || sidebar.isDraggingRight.value}">
     <!-- Note Sidebar -->
     <aside
-      v-show="sidebar.showNoteSidebar.value && !isFloatingView"
+      v-show="sidebar.showLeft.value && !isFloatingView"
       class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0 max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-50"
-      :style="{ width: sidebar.wNoteSidebar.value + 'px' }"
+      :style="{ width: sidebar.leftWidth.value + 'px' }"
     >
-      <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragNoteSidebar"></div>
+      <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragLeft($event)"></div>
 
       <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
-         <button @click="sidebar.showNoteSidebar.value = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" :title="$t('note.close_sidebar')">
+         <button @click="sidebar.showLeft.value = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" :title="$t('note.close_sidebar')">
             <X class="w-4 h-4" />
          </button>
          <div class="flex gap-1 ml-auto" @mousedown.stop>
@@ -608,7 +613,7 @@ onMounted(async () => {
          <div class="mb-4" v-if="search.allPinnedNotes.value.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.pinned_notes') }}</span>
-                 <button @click="manager.openNoteManager('pinned', () => { sidebar.showNoteSidebar.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <button @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.topPinnedNotes.value" :key="note.id"
@@ -616,7 +621,7 @@ onMounted(async () => {
                     @select="handleNoteSelect" @toggle-context="toggleContext"
                     @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
                  />
-                 <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showNoteSidebar.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                 <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
                      {{ $t('note.show_more', { count: search.allPinnedNotes.value.length - 5 }) }}
                  </button>
              </div>
@@ -626,7 +631,7 @@ onMounted(async () => {
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.top_tags') }}</span>
-                 <button @click="manager.openNoteManager('tags', () => { sidebar.showNoteSidebar.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <button @click="manager.openNoteManager('tags', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5" v-if="tags.topTags.value.length > 0">
                  <div v-for="tag in tags.topTags.value" :key="tag.name"
@@ -647,7 +652,7 @@ onMounted(async () => {
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
                  <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.recent_notes') }}</span>
-                 <button @click="manager.openNoteManager('notes', () => { sidebar.showNoteSidebar.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <button @click="manager.openNoteManager('notes', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.recentNotes.value" :key="note.id"
@@ -669,8 +674,8 @@ onMounted(async () => {
           <div v-if="!isFloatingView" class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
             <div class="flex gap-2">
               <NavButtons />
-              <button @click="sidebar.showNoteSidebar.value = !sidebar.showNoteSidebar.value" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_sidebar')">
-                <PanelLeftClose v-if="sidebar.showNoteSidebar.value" class="w-4 h-4" />
+              <button @click="sidebar.showLeft.value = !sidebar.showLeft.value" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_sidebar')">
+                <PanelLeftClose v-if="sidebar.showLeft.value" class="w-4 h-4" />
                 <PanelLeft v-else class="w-4 h-4" />
               </button>
             </div>
@@ -695,8 +700,8 @@ onMounted(async () => {
                 <Download class="w-4 h-4" />
               </button>
               <div class="relative flex items-center h-full"></div>
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="sidebar.showRightSidebar.value = !sidebar.showRightSidebar.value" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_right_sidebar')">
-                <PanelRightClose v-if="sidebar.showRightSidebar.value" class="w-4 h-4" />
+              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="sidebar.showRight.value = !sidebar.showRight.value" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_right_sidebar')">
+                <PanelRightClose v-if="sidebar.showRight.value" class="w-4 h-4" />
                 <PanelRight v-else class="w-4 h-4" />
               </button>
             </div>
@@ -742,7 +747,7 @@ onMounted(async () => {
                    </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">
-                   <TiptapEditor :ref="(el) => { const refs = save.editorRefs.value || save.editorRefs; if (el) refs[tabId] = el; else delete refs[tabId]; }" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :notes="notes" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
+                   <TiptapEditor :ref="(el) => { const refs = save.editorRefs.value || save.editorRefs; if (el) refs[tabId] = el; else delete refs[tabId]; }" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
                 </div>
                 </div>
               </div>
@@ -914,12 +919,12 @@ onMounted(async () => {
     </main>
 
     <!-- Right Sidebar: Graph & Backlinks -->
-    <aside v-if="currentNoteId && !isFloatingView && manager.viewMode.value === 'editor'" v-show="sidebar.showRightSidebar.value" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: sidebar.wRightSidebar.value + 'px' }">
-      <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragRightSidebar"></div>
+    <aside v-if="currentNoteId && !isFloatingView && manager.viewMode.value === 'editor'" v-show="sidebar.showRight.value" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: sidebar.rightWidth.value + 'px' }">
+      <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragRight"></div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
           <Globe class="w-4 h-4 text-gray-500 mr-2" />
           <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">{{ $t('note.graph_view') }}</span>
-          <button @click="sidebar.showRightSidebar.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors" aria-label="Sidebar.show Right Sidebar.value = false">
+          <button @click="sidebar.showRight.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors" aria-label="Sidebar.show Right Sidebar.value = false">
              <X class="w-3.5 h-3.5" />
           </button>
       </div>

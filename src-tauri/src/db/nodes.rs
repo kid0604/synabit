@@ -1,6 +1,34 @@
 use super::DbBridge;
 use crate::error::{AppError, AppResult};
 use rusqlite::params;
+use serde_json::Value;
+
+/// A frontmatter key on a type: its name, how many nodes carry it, and a
+/// sample of what it holds.
+pub type ObservedKey = (String, i64, Value);
+
+/// A value small enough to ship, standing in for what the key holds.
+///
+/// Only ever read by `kindOf` on the other side, which needs to tell a date
+/// from a word and a list from a number — and nothing else. So a list travels
+/// as `[]` and an object as `{}`: their contents can be a whiteboard's worth
+/// of JSON, and none of it changes the answer.
+fn sample_for(json_type: &str, text: Option<String>) -> Value {
+    match json_type {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "integer" | "real" => text
+            .and_then(|t| t.parse::<f64>().ok())
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .unwrap_or(Value::Number(0.into())),
+        "array" => Value::Array(Vec::new()),
+        "object" => Value::Object(serde_json::Map::new()),
+        // Already truncated by the query: long enough for `2025-05-26 09:30`,
+        // short enough that a key holding an essay costs nothing to report.
+        _ => Value::String(text.unwrap_or_default()),
+    }
+}
 
 impl DbBridge {
     pub fn upsert_node(&self, node: &crate::models::node::NodeMetadata) -> AppResult<()> {
@@ -610,7 +638,16 @@ impl DbBridge {
     ///
     /// `key_limit` caps the keys reported per type so that one node with a
     /// large generated blob cannot flood the answer.
-    pub fn observed_schemas(&self, key_limit: usize) -> AppResult<Vec<(String, i64, Vec<String>)>> {
+    /// Types in the vault, how many of each, and which keys their nodes carry.
+    ///
+    /// Each key comes with how many nodes of that type have it, because the
+    /// bare list cannot tell a field the type is built on from one somebody
+    /// invented once. `colour` on two animals and `màu` on one is the same
+    /// list without the counts and two different things with them.
+    pub fn observed_schemas(
+        &self,
+        key_limit: usize,
+    ) -> AppResult<Vec<(String, i64, Vec<ObservedKey>)>> {
         let mut counts = self
             .conn
             .prepare(
@@ -627,30 +664,70 @@ impl DbBridge {
 
         // Keys per type in one pass rather than a query each: a vault with
         // thirty invented types would otherwise be thirty round trips.
+        // Grouped by JSON type as well as by key, so a sample of each can come
+        // back with it. What the sample is *for* is settled on the other side:
+        // `kindOf` in the front end is the one place that reads a kind out of a
+        // value, and a second implementation here would be a second opinion.
+        //
+        // `MAX` rather than `MIN` on the sample: a key that is empty on most
+        // nodes and a date on the rest — `due_date` is exactly that — would
+        // otherwise report the empty string and be called text forever.
         let mut keys = self
             .conn
             .prepare(
-                "SELECT node_type, json_each.key, COUNT(*) AS n
+                "SELECT node_type, json_each.key, json_each.type, COUNT(*) AS n,
+                        MAX(substr(CAST(json_each.value AS TEXT), 1, 24)) AS sample
                  FROM nodes, json_each(nodes.properties)
                  WHERE json_valid(nodes.properties)
-                 GROUP BY node_type, json_each.key
+                 GROUP BY node_type, json_each.key, json_each.type
                  ORDER BY node_type ASC, n DESC, json_each.key ASC",
             )
             .map_err(|e| AppError::General(format!("DB Query Error (observed_keys): {}", e)))?;
 
-        let mut by_type: std::collections::HashMap<String, Vec<String>> =
+        // (count so far, count of the winning JSON type, sample of it)
+        let mut tally: std::collections::HashMap<(String, String), (i64, i64, Value)> =
             std::collections::HashMap::new();
-        for (node_type, key) in keys
+        let mut order: Vec<(String, String)> = Vec::new();
+
+        for (node_type, key, json_type, seen, sample) in keys
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
             })
             .map_err(|e| AppError::General(format!("DB Map Error: {}", e)))?
             .flatten()
         {
-            let entry = by_type.entry(node_type).or_default();
-            if entry.len() < key_limit {
-                entry.push(key);
+            let id = (node_type, key);
+            let entry = tally.entry(id.clone()).or_insert_with(|| {
+                order.push(id.clone());
+                (0, 0, Value::Null)
+            });
+            entry.0 += seen;
+            // The commonest shape wins the sample. A key that is a date on
+            // ninety nodes and a stray empty list on one is a date.
+            if seen > entry.1 {
+                entry.1 = seen;
+                entry.2 = sample_for(&json_type, sample);
             }
+        }
+
+        let mut by_type: std::collections::HashMap<String, Vec<ObservedKey>> =
+            std::collections::HashMap::new();
+        // `order` follows the query's own ordering, which is by count.
+        for id in order {
+            let (total, _, sample) = tally.remove(&id).unwrap_or((0, 0, Value::Null));
+            let entry = by_type.entry(id.0).or_default();
+            if entry.len() < key_limit {
+                entry.push((id.1, total, sample));
+            }
+        }
+        for keys in by_type.values_mut() {
+            keys.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         }
 
         Ok(types
@@ -737,7 +814,14 @@ impl DbBridge {
 /// a typo in one of those paths and a list that silently comes back empty.
 #[cfg(test)]
 mod tests {
+    use super::ObservedKey;
     use crate::db::DbBridge;
+
+    /// Key names only, for the assertions that do not care how many carry them.
+    fn keys(fields: &[ObservedKey]) -> Vec<String> {
+        fields.iter().map(|(k, ..)| k.clone()).collect()
+    }
+
     use crate::models::node::NodeMetadata;
     use serde_json::json;
 
@@ -822,13 +906,119 @@ mod tests {
         // The union across nodes of the type, not the intersection: `rating`
         // is on one book and `status` on the other, and both are real fields
         // of this vault's books.
-        let mut fields = books.2.clone();
+        let mut fields: Vec<String> = books.2.iter().map(|(k, ..)| k.clone()).collect();
         fields.sort();
         assert_eq!(fields, vec!["author", "rating", "status"]);
 
         let notes = schemas.iter().find(|(t, ..)| t == "note").expect("note");
         assert_eq!(notes.1, 1);
-        assert_eq!(notes.2, vec!["tags"]);
+        assert_eq!(keys(&notes.2), vec!["tags"]);
+    }
+
+    /// A field the type is built on, told apart from one somebody used once.
+    ///
+    /// This is the whole reason the count travels with the key. The vault this
+    /// was written for holds `colour` on two animals and `màu` on one — the
+    /// same word twice, once in each language, because nothing showed the
+    /// first one when the second was typed. As a bare list of keys those are
+    /// two equal entries and the drift is invisible. With the counts beside
+    /// them it reads for itself, and no similarity guess is involved: `colour`
+    /// and `màu` are not similar strings, they are translations, and anything
+    /// clever enough to match them would be too clever to trust.
+    #[test]
+    fn a_key_carries_how_many_nodes_have_it() {
+        let db = db();
+        for (path, props) in [
+            ("Animal/mun.md", json!({ "species": "mèo", "colour": "đen" })),
+            ("Animal/vang.md", json!({ "species": "vẹt", "colour": "vàng" })),
+            ("Animal/lac.md", json!({ "màu": "vàng" })),
+        ] {
+            db.upsert_node(&node(path, "animal", props)).expect("insert");
+        }
+
+        let schemas = db.observed_schemas(25).expect("schemas");
+        let animals = schemas.iter().find(|(t, ..)| t == "animal").expect("animal");
+        assert_eq!(animals.1, 3);
+
+        let seen = |key: &str| {
+            animals.2.iter().find(|(k, ..)| k == key).map(|(_, n, _)| *n)
+        };
+        assert_eq!(seen("colour"), Some(2), "a habit");
+        assert_eq!(seen("màu"), Some(1), "a stray, and still reported");
+        assert_eq!(seen("species"), Some(2));
+
+        // Ordered by how many carry it, so the habits come first without
+        // anybody sorting them afterwards.
+        assert_eq!(animals.2.first().map(|(_, n, _)| *n), Some(2));
+    }
+
+    /// A sample of each key, small enough to ship and enough to tell a kind.
+    ///
+    /// The shape of a kind was recorded with every field as `text`, because
+    /// nothing here reported what the values were — so `due_date` on a hundred
+    /// tasks was declared text and drew an empty node a text box for a date.
+    ///
+    /// What travels is deliberately not the value. A list comes back as `[]`
+    /// and an object as `{}`: a checklist can be a page of JSON and none of it
+    /// changes the answer, and `kindOf` on the other side needs only enough to
+    /// tell a date from a word.
+    #[test]
+    fn a_key_carries_a_sample_of_what_it_holds() {
+        let db = db();
+        db.upsert_node(&node(
+            "Tasks/a.md",
+            "task",
+            json!({
+                "due_date": "2026-07-09",
+                "priority": 3,
+                "track_progress": false,
+                "tags": ["mdp", "network"],
+                "checklist": { "done": 2 },
+                "comment": "một câu dài hơn hai mươi bốn ký tự để cắt bớt",
+            }),
+        ))
+        .expect("insert");
+
+        let schemas = db.observed_schemas(25).expect("schemas");
+        let tasks = schemas.iter().find(|(t, ..)| t == "task").expect("task");
+        let sample = |key: &str| {
+            tasks.2.iter().find(|(k, ..)| k == key).map(|(_, _, v)| v.clone())
+        };
+
+        assert_eq!(sample("due_date"), Some(json!("2026-07-09")), "a date arrives whole");
+        assert_eq!(sample("track_progress"), Some(json!(false)));
+        assert_eq!(sample("priority"), Some(json!(3.0)));
+        assert_eq!(sample("tags"), Some(json!([])), "a list without its contents");
+        assert_eq!(sample("checklist"), Some(json!({})), "an object without its contents");
+
+        // Long text is cut: what it is can be told from its opening.
+        let comment = sample("comment").expect("comment");
+        assert!(comment.as_str().expect("text").chars().count() <= 24);
+    }
+
+    /// A key that is empty on most nodes and real on the rest.
+    ///
+    /// `due_date` in this vault is `''` on the tasks nobody dated. Taking the
+    /// smallest sample would report the empty string and call the field text
+    /// for good, so the largest is taken instead — a date sorts above nothing.
+    #[test]
+    fn a_mostly_empty_key_is_sampled_by_what_it_holds_when_it_holds_anything() {
+        let db = db();
+        for (path, due) in [
+            ("Tasks/a.md", ""),
+            ("Tasks/b.md", ""),
+            ("Tasks/c.md", "2026-07-09"),
+        ] {
+            db.upsert_node(&node(path, "task", json!({ "due_date": due })))
+                .expect("insert");
+        }
+
+        let schemas = db.observed_schemas(25).expect("schemas");
+        let tasks = schemas.iter().find(|(t, ..)| t == "task").expect("task");
+        let due = tasks.2.iter().find(|(k, ..)| k == "due_date").expect("due_date");
+
+        assert_eq!(due.1, 3, "every node carries the key");
+        assert_eq!(due.2, json!("2026-07-09"), "and the sample is the one that says something");
     }
 
     /// One node carrying a large generated blob must not crowd every other
@@ -866,7 +1056,11 @@ mod tests {
         let schemas = db.observed_schemas(25).expect("schemas");
         let notes = schemas.iter().find(|(t, ..)| t == "note").expect("note");
         assert_eq!(notes.1, 2, "both nodes are counted");
-        assert_eq!(notes.2, vec!["tags"], "only the readable one contributes fields");
+        assert_eq!(
+            keys(&notes.2),
+            vec!["tags"],
+            "only the readable one contributes fields"
+        );
     }
 
     #[test]

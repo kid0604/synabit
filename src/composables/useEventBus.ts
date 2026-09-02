@@ -112,6 +112,40 @@ const TAURI_BRIDGE_MAP: Record<string, EventName> = {
   'feed-refresh-completed': 'feed:refresh-completed',
   'syn-stream-token': 'syn:stream-token',
   'syn-pull-progress': 'syn:pull-progress',
+
+  /*
+   * The assistant's writes, which the apps could not see.
+   *
+   * Every app already listens for these on the bus and reloads — that is how
+   * a task created in Notes shows up in Tasks. But the bus is a frontend
+   * object, and Syn's tools run in Rust: they emitted the same three names
+   * into Tauri, where nothing was listening. So Syn would create a task, say
+   * it had, and the open Tasks list would not have it until the user
+   * navigated away and back.
+   *
+   * Bridged here rather than fixed in each app: the events and the listeners
+   * were both already right, and the only thing missing was the wire.
+   */
+  'node:created': 'node:created',
+  'node:updated': 'node:updated',
+  'node:deleted': 'node:deleted',
+  // What the tools emit after a write that is neither clearly one nor the
+  // other. A reload is a reload.
+  'node:changed': 'node:updated',
+};
+
+/**
+ * Rust speaks snake_case and the bus speaks camelCase.
+ *
+ * Only for the bridged events that carry a node type, which is the field every
+ * listener filters on — `({ nodeType }) => nodeType === 'task' && reload()`.
+ * Passed through unchanged, that filter reads `undefined` and no app reloads,
+ * which looks exactly like the bug this bridge exists to fix.
+ */
+const RESHAPE: Partial<Record<EventName, (payload: any) => unknown>> = {
+  'node:created': p => ({ ...p, nodeType: p?.node_type ?? p?.nodeType ?? '' }),
+  'node:updated': p => ({ ...p, nodeType: p?.node_type ?? p?.nodeType ?? '' }),
+  'node:deleted': p => ({ ...p, nodeType: p?.node_type ?? p?.nodeType ?? '' }),
 };
 
 // ─── Public API ──────────────────────────────────────────────
@@ -129,8 +163,8 @@ export async function initEventBus(): Promise<void> {
   for (const [tauriName, busName] of Object.entries(TAURI_BRIDGE_MAP)) {
     try {
       const unlisten = await listen(tauriName, (event) => {
-        const payload = event.payload;
-        dispatch(busName, payload);
+        const reshape = RESHAPE[busName];
+        dispatch(busName, reshape ? reshape(event.payload) : event.payload);
       });
       tauriUnlistenFns.push(unlisten);
     } catch (err) {

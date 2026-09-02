@@ -25,7 +25,7 @@ use serde_json::Value;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
 use crate::models::syn::{FunctionDefinition, ToolDefinition};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// Where a new node of a given type is written.
 ///
@@ -59,6 +59,24 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
             }
         }
     }
+}
+
+/// Storage the app keeps for itself, rather than something the user keeps.
+///
+/// Mirrors `INTERNAL` in `src/mini-apps/things/composables/useObservedTypes.ts`,
+/// and a test reads that file to assert the two agree — the same arrangement
+/// `folder_for_type` has, for the same reason: two lists of the same fact drift.
+///
+/// It matters here because `observed_schemas` counts rows, and rows do not know
+/// what they are for. In this vault that put `json` at the top of the vault's
+/// own description — 400 of them against 151 notes — so an assistant asked what
+/// the user keeps would answer with the whiteboard payloads before the writing.
+/// Nearly half of all nodes are storage of this sort.
+pub(crate) fn is_internal_type(node_type: &str) -> bool {
+    matches!(
+        node_type,
+        "json" | "canvas" | "pdf_highlight" | "pdf_drawing" | "interaction" | "schema" | "view"
+    ) || node_type.starts_with("finance_")
 }
 
 /// Maximum characters allowed in a single tool result.
@@ -197,6 +215,87 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 }),
             },
         },
+        // ─── Removing, and taking it back ─────────────────────────────
+        //
+        // One tool removes anything: a note, a task, a person, a `book`. The
+        // apps do not each need their own, because a node is a file and the
+        // trash is the vault's, shared by all of them.
+        //
+        // The undo tools are not politeness. Nothing in this loop asks the
+        // user before it acts, so the guard against a wrong deletion is that
+        // it can be reversed — and reversing it has to be something the
+        // assistant can do in the same breath as apologising for it.
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "trash_node".to_string(),
+                description: "Remove a node — a note, task, event, person, or anything else in the vault. It moves to the vault's trash and can be put back with restore_node, so this is reversible; it is not a permanent delete. Removing several things means calling this once each. Say what you removed afterwards, by title.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_id"],
+                    "properties": {
+                        "node_id": {
+                            "type": "string",
+                            "description": "The node's id, which is its path in the vault. Take it from a query_nodes result."
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "list_trash".to_string(),
+                description: "What is in the vault's trash and can still be restored, newest first. Use this when the user asks what was deleted, or wants something back and cannot say exactly what it was called.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "restore_node".to_string(),
+                description: "Put a trashed node back where it came from. Use the trash_path from list_trash, or the one trash_node returned.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["trash_path"],
+                    "properties": {
+                        "trash_path": {
+                            "type": "string",
+                            "description": "The entry's path inside the trash, e.g. '.trash/Notes/Meeting.md'."
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "list_versions".to_string(),
+                description: "The saved history of one node: every sitting in which it was edited, newest first, with how much it grew or shrank. Every save is recorded, frontmatter included, so this is how to answer 'what did this look like before' or undo an edit — including one you just made yourself.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_id"],
+                    "properties": {
+                        "node_id": { "type": "string", "description": "The node's id, which is its path in the vault." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "restore_version".to_string(),
+                description: "Put a node back to how it was at an earlier version. Call list_versions first to choose one. This writes the old text forward as a new edit rather than erasing what came after, so it can itself be undone.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_id", "version_id"],
+                    "properties": {
+                        "node_id": { "type": "string", "description": "The node's id." },
+                        "version_id": { "type": "string", "description": "The version's id, from list_versions." }
+                    }
+                }),
+            },
+        },
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -212,6 +311,84 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                             "enum": ["outgoing", "incoming", "both"],
                             "description": "Which way to follow the links. Defaults to both."
                         }
+                    }
+                }),
+            },
+        },
+        // ─── The shape of things, not the things ──────────────────────
+        //
+        // Generic in the sense that matters: these act on a *kind*, and the
+        // vault's kinds are notes and tasks and whatever the user invented
+        // last week. `rename_field` fixing `due` to `due_date` across 127
+        // tasks is the same call that fixes `writer` to `author` across four
+        // books.
+        //
+        // Each does nothing until told how many nodes it should touch. The
+        // number comes from calling it once without one, which reports the
+        // plan — so the look-before-you-leap is the first call rather than a
+        // separate tool, and a model that guesses wrong is stopped by the
+        // mismatch rather than by luck. One edit here changes a hundred files,
+        // and the undo for that is a hundred separate restores.
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "rename_field".to_string(),
+                description: "Rename one frontmatter field across every node of a type — `due` to `due_date` on all tasks, `writer` to `author` on all books. Call it without confirm_nodes first: it changes nothing and reports how many nodes would be touched. Then call again passing that number. Nodes that already carry the target field are skipped rather than overwritten.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_type", "from", "to"],
+                    "properties": {
+                        "node_type": { "type": "string", "description": "Which kind of node, e.g. 'task'. Only nodes of this type are touched." },
+                        "from": { "type": "string", "description": "The field name now." },
+                        "to": { "type": "string", "description": "The field name it should have." },
+                        "confirm_nodes": { "type": "number", "description": "How many nodes you expect to change, from the reply to the call without it. Omit to preview." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "delete_field".to_string(),
+                description: "Remove one frontmatter field, and its value, from every node of a type. Call without confirm_nodes first to see how many nodes carry it; then call again with that number. The old values stay in each node's history and can be recovered with list_versions, but only one node at a time — so this is not cheap to undo.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_type", "key"],
+                    "properties": {
+                        "node_type": { "type": "string", "description": "Which kind of node, e.g. 'task'." },
+                        "key": { "type": "string", "description": "The field to remove." },
+                        "confirm_nodes": { "type": "number", "description": "How many nodes you expect to change, from the preview call. Omit to preview." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "rename_kind".to_string(),
+                description: "Change what a whole set of nodes is called — every `animal` becomes a `pet`. If the new name is already in use this merges the two sets permanently, and the preview says so. Call without confirm_nodes first to see how many nodes would change.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["from", "to"],
+                    "properties": {
+                        "from": { "type": "string", "description": "The type now, e.g. 'animal'." },
+                        "to": { "type": "string", "description": "The type it should be. Lowercase." },
+                        "confirm_nodes": { "type": "number", "description": "How many nodes you expect to change, from the preview call. Omit to preview." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "delete_kind".to_string(),
+                description: "Remove a type and every node of it. The nodes go to the vault's trash and can be restored one at a time. If the user made the type by mistake and their writing is underneath it, rename_kind is almost always what they actually want — offer that first. Call without confirm_nodes to see how many nodes would go.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_type"],
+                    "properties": {
+                        "node_type": { "type": "string", "description": "The type to remove." },
+                        "confirm_nodes": { "type": "number", "description": "How many nodes you expect to be trashed, from the preview call. Omit to preview." }
                     }
                 }),
             },
@@ -242,6 +419,37 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "extension": { "type": "string", "description": "Filter by file extension, e.g. 'pdf'" },
                         "tag": { "type": "string", "description": "Filter by tag" },
                         "person": { "type": "string", "description": "Filter by a linked person's name" }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "read_file_text".to_string(),
+                description: "Read the text of an imported document — a PDF, a Word file, anything the app extracted text from. get_node on a file returns only what the vault records about it; this returns what the document says. Use it after search_files finds something the user wants read, summarised or quoted.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_id"],
+                    "properties": {
+                        "node_id": { "type": "string", "description": "The file node's id, from a search_files or query_nodes result." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "update_feed_article".to_string(),
+                description: "Mark a feed article read or unread, star it, or put it on the read-later list. Send only the flags you want to change. Articles live in their own table, so query_nodes and update_node cannot touch them.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["article_id"],
+                    "properties": {
+                        "article_id": { "type": "string", "description": "The article's id, from search_feed_articles." },
+                        "read": { "type": "boolean", "description": "Whether it should be marked read." },
+                        "starred": { "type": "boolean", "description": "Whether it should be starred." },
+                        "read_later": { "type": "boolean", "description": "Whether it should be on the read-later list." }
                     }
                 }),
             },
@@ -331,12 +539,28 @@ pub fn execute_tool<R: tauri::Runtime>(
         "update_node" => tool_update_node(ctx, args),
         "get_linked_nodes" => tool_get_linked_nodes(&*lock(ctx)?, args),
 
+        // Reversible by construction: the first moves a file to `.trash/`, the
+        // rest exist so a wrong move can be undone in the same conversation.
+        "trash_node" => tool_trash_node(ctx, args),
+        "list_trash" => tool_list_trash(ctx),
+        "restore_node" => tool_restore_node(ctx, args),
+        "list_versions" => tool_list_versions(ctx, args),
+        "restore_version" => tool_restore_version(ctx, args),
+
+        // Bulk, and gated on a count the caller had to look up first.
+        "rename_field" => tool_rename_field(ctx, args),
+        "delete_field" => tool_delete_field(ctx, args),
+        "rename_kind" => tool_rename_kind(ctx, args),
+        "delete_kind" => tool_delete_kind(ctx, args),
+
         // Stores that are not nodes, or not node-shaped: feed articles have
         // their own table, file search filters on indexed document text, and
         // finance keeps its transactions inside a month node as an array,
         // which no node query can add up.
         "search_feed_articles" => tool_search_feed_articles(&*lock(ctx)?, args),
         "search_files" => tool_search_files(&*lock(ctx)?, args),
+        "read_file_text" => tool_read_file_text(&*lock(ctx)?, args),
+        "update_feed_article" => tool_update_feed_article(ctx, args),
         "get_finance_summary" => tool_get_finance_summary(&*lock(ctx)?),
         "search_finance" => tool_search_finance(&*lock(ctx)?, args),
         "get_transactions" => tool_get_transactions(&*lock(ctx)?, args),
@@ -708,6 +932,497 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
     .to_string())
 }
 
+/// Remove any node, of any type, from any app.
+///
+/// The one verb that was missing outright. Reading, creating and changing all
+/// reach every type in the vault; removing reached none of them, so "dọn task
+/// đã xong đi" was a thing the assistant could describe and not do.
+///
+/// It moves the file to the vault's `.trash/`, which is the same trash the
+/// apps use — not `unlink`. That is what makes it defensible to hand a model
+/// at all: nothing here asks the user first, so the safeguard has to be that
+/// the act comes back.
+fn tool_trash_node<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
+
+    // Read the node before it goes, so the result can name what was removed.
+    // A model told only "ok" reports back the id, which is a file path.
+    let Some(node) = lock(ctx)?.get_node(node_id)? else {
+        return Ok(serde_json::json!({ "error": "Node not found", "node_id": node_id }).to_string());
+    };
+    let (title, node_type) = (node.title.clone(), node.node_type.clone());
+
+    let trash_path = {
+        let db = lock(ctx)?;
+        crate::commands::trash::apply_trash(&db, ctx.vault_path, node_id)?
+    };
+
+    let _ = ctx.app.emit(
+        "node:deleted",
+        serde_json::json!({ "id": node_id, "node_type": node_type }),
+    );
+
+    Ok(serde_json::json!({
+        "success": true,
+        "trashed": title,
+        "type": node_type,
+        "trash_path": trash_path,
+        "_note": "Moved to the trash, not deleted. Pass this trash_path to restore_node to put it back.",
+    })
+    .to_string())
+}
+
+fn tool_list_trash<R: tauri::Runtime>(ctx: &ToolContext<R>) -> AppResult<String> {
+    // Enough to recognise something by; the trash of a long-running vault is
+    // not a thing to read out in full.
+    const MOST: usize = 40;
+
+    let mut entries = crate::commands::trash::list_trash(ctx.vault_path.to_string())?;
+    let total = entries.len();
+    entries.truncate(MOST);
+
+    let rows: Vec<Value> = entries
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "title": e.title,
+                "type": e.node_type,
+                "was_at": e.original_path,
+                "deleted_at": e.deleted_at,
+                "trash_path": e.trash_path,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "trash": rows,
+        "total_in_trash": total,
+        "_returned": rows.len(),
+    })
+    .to_string())
+}
+
+fn tool_restore_node<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let trash_path = args
+        .get("trash_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: trash_path".into()))?;
+
+    let restored = crate::commands::trash::restore_from_trash(
+        ctx.app.clone(),
+        ctx.app.state::<crate::db::DbState>(),
+        ctx.vault_path.to_string(),
+        trash_path.to_string(),
+    )?;
+
+    announce(ctx, "node:created", "");
+
+    Ok(serde_json::json!({
+        "success": true,
+        "restored_to": restored,
+        // Restoring drops `node_id` on purpose — see `restore_from_trash`. The
+        // file comes back as a new document, so its history does not.
+        "_note": "The node is back in the vault. Its edit history before deletion is not.",
+    })
+    .to_string())
+}
+
+/// A node as it used to be, and the way back to it.
+///
+/// Not a new store: every save already goes through the CRDT, so the history
+/// was on disk the whole time with nothing able to ask for it. Handing it to
+/// the assistant is what makes an edit undoable — including one the assistant
+/// made a moment ago and got wrong, which is otherwise a thing only the user
+/// can fix and only if they noticed.
+fn tool_list_versions<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    // A long-lived note has hundreds of sittings. The recent ones are the ones
+    // anybody means by "before".
+    const MOST: usize = 25;
+
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
+
+    let mut versions = crate::commands::versions::list_node_versions(
+        ctx.app.clone(),
+        ctx.app.state::<crate::db::DbState>(),
+        ctx.vault_path.to_string(),
+        node_id.to_string(),
+    )?;
+    let total = versions.len();
+    versions.truncate(MOST);
+
+    let rows: Vec<Value> = versions
+        .into_iter()
+        .map(|v| {
+            serde_json::json!({
+                "version_id": v.id,
+                "timestamp": v.timestamp,
+                "size": v.size,
+                "change": v.delta,
+                "is_current": v.is_current,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "node_id": node_id,
+        "versions": rows,
+        "total_versions": total,
+        "_note": "`timestamp` is milliseconds since the epoch, or null for a version recorded before the app kept time. `change` is characters added, or removed if negative.",
+    })
+    .to_string())
+}
+
+fn tool_restore_version<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
+    args: &Value,
+) -> AppResult<String> {
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
+    let version_id = args
+        .get("version_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: version_id".into()))?;
+
+    crate::commands::versions::restore_node_version(
+        ctx.app.clone(),
+        ctx.app.state::<crate::db::DbState>(),
+        ctx.vault_path.to_string(),
+        node_id.to_string(),
+        version_id.to_string(),
+    )?;
+
+    announce(ctx, "node:updated", "");
+
+    Ok(serde_json::json!({
+        "success": true,
+        "node_id": node_id,
+        "restored_to_version": version_id,
+        "_note": "Written forward as a new edit; the versions after it are still in the history and can be restored the same way.",
+    })
+    .to_string())
+}
+
+/// A required string argument, or an error naming it.
+///
+/// The same six lines were written out at the top of every tool. Worth
+/// collapsing once there were a dozen of them, and worth the error saying
+/// which argument: a model handed "missing parameter" with no name retries
+/// with the same call.
+fn str_arg(args: &Value, name: &str) -> AppResult<String> {
+    args.get(name)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::General(format!("Missing required parameter: {name}")))
+}
+
+/// What a document says, as opposed to what the vault records about it.
+///
+/// A file node's body is metadata — name, size, tags. The text the scanner
+/// pulled out of the PDF lives in `file_text`, and nothing could ask for it,
+/// so the assistant could find a document by a phrase inside it and then not
+/// read the page that phrase was on.
+fn tool_read_file_text(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let node_id = str_arg(args, "node_id")?;
+
+    let text = db.file_text_joined(&node_id)?;
+    if text.trim().is_empty() {
+        return Ok(serde_json::json!({
+            "node_id": node_id,
+            "text": "",
+            "_note": "No text has been extracted from this file. It may be an image, a scan, or a format the app does not read — or the scan may not have reached it yet.",
+        })
+        .to_string());
+    }
+
+    // The outer truncation would cut this too, but silently and mid-word. Said
+    // here so the model knows it is holding part of a document.
+    let (excerpt, cut) = if text.chars().count() > MAX_CONTENT_CHARS {
+        (
+            text.chars().take(MAX_CONTENT_CHARS).collect::<String>(),
+            true,
+        )
+    } else {
+        (text, false)
+    };
+
+    Ok(serde_json::json!({
+        "node_id": node_id,
+        "text": excerpt,
+        "truncated": cut,
+    })
+    .to_string())
+}
+
+/// The Feeds app, which the assistant could read and not touch.
+///
+/// Flags rather than the three toggles underneath: a toggle asks the caller to
+/// know the current state, and a model that guesses wrong marks a read article
+/// unread while reporting the opposite. Reading the article first and acting
+/// only on a real difference makes "mark it read" mean that whatever it was.
+fn tool_update_feed_article<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
+    args: &Value,
+) -> AppResult<String> {
+    let article_id = str_arg(args, "article_id")?;
+    let state = ctx.app.state::<crate::db::DbState>();
+
+    let article = crate::commands::feeds::feed_get_article(state.clone(), article_id.clone())
+        .map_err(AppError::General)?;
+
+    let mut changed: Vec<&str> = Vec::new();
+
+    if let Some(want) = args.get("read").and_then(|v| v.as_bool()) {
+        if want != article.is_read {
+            crate::commands::feeds::feed_mark_read(state.clone(), article_id.clone(), want)
+                .map_err(AppError::General)?;
+            changed.push("read");
+        }
+    }
+    if let Some(want) = args.get("starred").and_then(|v| v.as_bool()) {
+        if want != article.is_starred {
+            crate::commands::feeds::feed_toggle_star(state.clone(), article_id.clone())
+                .map_err(AppError::General)?;
+            changed.push("starred");
+        }
+    }
+    if let Some(want) = args.get("read_later").and_then(|v| v.as_bool()) {
+        if want != article.is_read_later {
+            crate::commands::feeds::feed_toggle_read_later(state.clone(), article_id.clone())
+                .map_err(AppError::General)?;
+            changed.push("read_later");
+        }
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "article": article.title,
+        "changed": changed,
+        "_note": if changed.is_empty() { "It was already in that state; nothing needed changing." } else { "" },
+    })
+    .to_string())
+}
+
+/// Tell the open app that something changed under it.
+///
+/// The apps reload on these three names — that is how a task made in Notes
+/// appears in Tasks. Every listener filters on the node type, so a bulk edit
+/// announces its type once rather than announcing 127 nodes: the filter is
+/// satisfied either way and the second is a stampede.
+fn announce<R: tauri::Runtime>(ctx: &ToolContext<R>, event: &str, node_type: &str) {
+    let _ = ctx
+        .app
+        .emit(event, serde_json::json!({ "node_type": node_type }));
+}
+
+/// The count a bulk tool was told to expect, if it was told one.
+fn confirmed(args: &Value) -> Option<u64> {
+    args.get("confirm_nodes").and_then(|v| v.as_u64())
+}
+
+/// Refuse, and say what the real number is.
+///
+/// The mismatch is the interesting case rather than the error case: a model
+/// that previewed `due` on tasks and then typed `delete_field` for `due_date`
+/// arrives here, and being told "you said 127, it is 0" is the only signal
+/// that it has the wrong field. Silence and a no-op would read as success.
+fn count_mismatch(said: u64, real: usize, what: &str) -> String {
+    serde_json::json!({
+        "error": "confirm_nodes does not match",
+        "you_said": said,
+        "actually": real,
+        "_note": format!("Nothing was changed. {what} Check you have the right type and field, then call again with the real number if this is what you meant."),
+    })
+    .to_string()
+}
+
+fn tool_rename_field<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let (node_type, from, to) = (
+        str_arg(args, "node_type")?,
+        str_arg(args, "from")?,
+        str_arg(args, "to")?,
+    );
+
+    let node_type_for_event = node_type.clone();
+    let state = ctx.app.state::<crate::db::DbState>();
+    let plan = crate::commands::rename_property::preview_rename_property(
+        state.clone(),
+        node_type.clone(),
+        from.clone(),
+        to.clone(),
+    )?;
+
+    let Some(said) = confirmed(args) else {
+        return Ok(serde_json::json!({
+            "preview": true,
+            "would_rename": plan.renaming,
+            "would_skip": plan.skipped,
+            "_note": "Nothing changed. Nodes are skipped when they already carry the target field. Call again with confirm_nodes set to would_rename to do it.",
+        })
+        .to_string());
+    };
+    if said != plan.renaming as u64 {
+        return Ok(count_mismatch(said, plan.renaming, "No field was renamed."));
+    }
+
+    let done = crate::commands::rename_property::rename_property(
+        ctx.app.clone(),
+        state,
+        ctx.vault_path.to_string(),
+        node_type,
+        from.clone(),
+        to.clone(),
+    )?;
+
+    announce(ctx, "node:updated", &node_type_for_event);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "renamed": done.renaming,
+        "skipped": done.skipped,
+        "from": from,
+        "to": to,
+    })
+    .to_string())
+}
+
+fn tool_delete_field<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let (node_type, key) = (str_arg(args, "node_type")?, str_arg(args, "key")?);
+
+    let node_type_for_event = node_type.clone();
+    let state = ctx.app.state::<crate::db::DbState>();
+    let plan = crate::commands::rename_property::preview_delete_property(
+        state.clone(),
+        node_type.clone(),
+        key.clone(),
+    )?;
+
+    let Some(said) = confirmed(args) else {
+        return Ok(serde_json::json!({
+            "preview": true,
+            "would_delete_from": plan.deleting,
+            "_note": "Nothing changed. Call again with confirm_nodes set to would_delete_from to do it.",
+        })
+        .to_string());
+    };
+    if said != plan.deleting as u64 {
+        return Ok(count_mismatch(said, plan.deleting, "No field was deleted."));
+    }
+
+    let done = crate::commands::rename_property::delete_property(
+        ctx.app.clone(),
+        state,
+        ctx.vault_path.to_string(),
+        node_type,
+        key.clone(),
+    )?;
+
+    announce(ctx, "node:updated", &node_type_for_event);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "deleted_from": done.deleting,
+        "field": key,
+        "_note": "The old values are still in each node's history; list_versions can recover them one node at a time.",
+    })
+    .to_string())
+}
+
+fn tool_rename_kind<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let (from, to) = (str_arg(args, "from")?, str_arg(args, "to")?.to_lowercase());
+
+    let state = ctx.app.state::<crate::db::DbState>();
+    let plan = crate::commands::rename_property::preview_delete_kind(state.clone(), from.clone())?;
+
+    // A destination that already exists makes this a merge, and a merge does
+    // not come apart again. The preview is the only place that can say so,
+    // because nothing in the call itself distinguishes the two.
+    let merging = !lock(ctx)?.get_nodes_by_type(&to)?.is_empty();
+
+    let Some(said) = confirmed(args) else {
+        return Ok(serde_json::json!({
+            "preview": true,
+            "would_change": plan.nodes,
+            "is_a_merge": merging,
+            "_note": if merging {
+                "Nothing changed. A type by that name already exists, so this would put both sets together permanently — tell the user before doing it. Call again with confirm_nodes set to would_change."
+            } else {
+                "Nothing changed. Call again with confirm_nodes set to would_change to do it."
+            },
+        })
+        .to_string());
+    };
+    if said != plan.nodes as u64 {
+        return Ok(count_mismatch(said, plan.nodes, "No node changed type."));
+    }
+
+    crate::commands::rename_property::retype_kind(
+        ctx.app.clone(),
+        state,
+        ctx.vault_path.to_string(),
+        from.clone(),
+        to.clone(),
+    )?;
+
+    // Both ends: the nodes left one type and joined another, and the two
+    // screens listening are filtering on different names.
+    announce(ctx, "node:deleted", &from);
+    announce(ctx, "node:created", &to);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "changed": plan.nodes,
+        "from": from,
+        "to": to,
+        "merged": merging,
+    })
+    .to_string())
+}
+
+fn tool_delete_kind<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let node_type = str_arg(args, "node_type")?;
+
+    let state = ctx.app.state::<crate::db::DbState>();
+    let plan =
+        crate::commands::rename_property::preview_delete_kind(state.clone(), node_type.clone())?;
+
+    let Some(said) = confirmed(args) else {
+        return Ok(serde_json::json!({
+            "preview": true,
+            "would_trash": plan.nodes,
+            "_note": "Nothing changed. These nodes would go to the trash, recoverable one at a time. If the type was made by mistake and real writing is underneath it, rename_kind keeps everything — say so before doing this. Call again with confirm_nodes set to would_trash.",
+        })
+        .to_string());
+    };
+    if said != plan.nodes as u64 {
+        return Ok(count_mismatch(said, plan.nodes, "Nothing was trashed."));
+    }
+
+    let done = crate::commands::rename_property::delete_kind(
+        state,
+        ctx.vault_path.to_string(),
+        node_type.clone(),
+    )?;
+
+    announce(ctx, "node:deleted", &node_type);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "trashed": done.nodes,
+        "type": node_type,
+        "_note": "Moved to the trash. list_trash shows them and restore_node puts one back.",
+    })
+    .to_string())
+}
+
 /// What this vault contains, in the vault's own vocabulary.
 ///
 /// The convergence point of the whole malleability argument, in its cheapest
@@ -720,21 +1435,76 @@ fn tool_list_schemas(db: &DbBridge) -> AppResult<String> {
     // generated blob cannot crowd out the other types.
     const KEYS_PER_TYPE: usize = 25;
 
-    let schemas: Vec<Value> = db
-        .observed_schemas(KEYS_PER_TYPE)?
+    // What the user declared a kind should look like, which the files cannot
+    // say. A kind designed in Things and not yet used has no nodes at all, so
+    // observation reports nothing about it and reported nothing at all — and
+    // then an assistant asked to create the first `book` invented its fields
+    // beside the three the user had just sat down and chosen.
+    let declared: std::collections::HashMap<String, Vec<String>> = db
+        .get_nodes_by_type("schema")
+        .unwrap_or_default()
         .into_iter()
-        .map(|(node_type, count, fields)| {
-            serde_json::json!({
-                "type": node_type,
-                "count": count,
-                "fields": fields,
-            })
+        .filter_map(|n| {
+            let keys: Vec<String> = n
+                .properties
+                .get("fields")?
+                .as_array()?
+                .iter()
+                .filter_map(|f| f.get("key")?.as_str().map(str::to_string))
+                .collect();
+            Some((n.title, keys))
         })
         .collect();
 
+    let observed = db.observed_schemas(KEYS_PER_TYPE)?;
+
+    let mut kinds: Vec<Value> = Vec::new();
+    let mut storage: Vec<Value> = Vec::new();
+
+    for (node_type, count, fields) in observed {
+        // Named and counted, never described: a `json` payload's keys say
+        // nothing anybody would ask about, and listing them only invites the
+        // model to write one.
+        if is_internal_type(&node_type) {
+            storage.push(serde_json::json!({ "type": node_type, "count": count }));
+            continue;
+        }
+        let mut entry = serde_json::json!({
+            "type": node_type,
+            "count": count,
+            "fields": fields,
+        });
+        if let Some(keys) = declared.get(&node_type) {
+            entry["declared_fields"] = serde_json::json!(keys);
+        }
+        kinds.push(entry);
+    }
+
+    // Declared and never used. Zero nodes is why it is not above, and is also
+    // the whole reason to say so: this is a kind waiting for its first one.
+    let seen: std::collections::HashSet<&str> = kinds
+        .iter()
+        .filter_map(|k| k["type"].as_str())
+        .collect();
+    let mut unused: Vec<Value> = declared
+        .iter()
+        .filter(|(name, _)| !seen.contains(name.as_str()) && !is_internal_type(name))
+        .map(|(name, keys)| {
+            serde_json::json!({
+                "type": name,
+                "count": 0,
+                "fields": [],
+                "declared_fields": keys,
+            })
+        })
+        .collect();
+    unused.sort_by(|a, b| a["type"].as_str().cmp(&b["type"].as_str()));
+    kinds.extend(unused);
+
     Ok(serde_json::json!({
-        "types": schemas,
-        "_note": "Fields are what nodes of this type actually carry, not a list of what is allowed. A node may be missing any of them, and may carry others.",
+        "types": kinds,
+        "app_storage": storage,
+        "_note": "`fields` is what nodes of this type actually carry, not a list of what is allowed — a node may be missing any of them and may carry others. `declared_fields` is the structure the user chose for this kind; prefer those keys when creating one. `app_storage` is Synabit's own bookkeeping, not things the user keeps: never create or edit those, and do not count them when describing the vault.",
     })
     .to_string())
 }
@@ -1621,49 +2391,242 @@ mod tests {
     /// The set the model is offered, named one by one.
     ///
     /// Spelled out rather than counted, because the point of this list is not
-    /// how many there are but *which*: the first five reach every type in the
-    /// vault, and every other entry has to justify itself by reaching a store
-    /// they cannot. A tool added here without that justification is the old
-    /// per-model shape growing back.
+    /// how many there are but *which*. Every tool has to be one of two things,
+    /// and this makes a new one declare which: either it works on any type in
+    /// the vault — so it serves Notes, Tasks, People, Things and a kind
+    /// invented yesterday, all at once — or it names a store the generic ones
+    /// genuinely cannot reach. A tool that is neither is the per-app shape
+    /// growing back, twelve tools that each see one thing.
     #[test]
     fn the_generic_tools_reach_every_type_and_the_rest_earn_their_place() {
         let defs = get_tool_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
 
-        // Generic: these work on notes, tasks, people, and on `book` — a type
-        // nobody wrote a line of code for.
-        for generic in [
-            "query_nodes",
-            "get_node",
-            "list_schemas",
-            "create_node",
-            "update_node",
-            "get_linked_nodes",
-        ] {
-            assert!(names.contains(&generic), "the generic tool {generic} is missing");
+        // Works on notes, tasks, people, and on `book` — a type nobody wrote
+        // a line of code for. Grouped by the verb, because the gap that let
+        // the assistant read and create and not remove was invisible while
+        // these were one undifferentiated list.
+        let read = ["query_nodes", "get_node", "list_schemas", "get_linked_nodes"];
+        let write = ["create_node", "update_node"];
+        // Removing had no entry at all until every app could be edited by an
+        // assistant that could not delete a single thing.
+        let remove = ["trash_node"];
+        // The counterweight to the line above. Nothing in this loop asks
+        // permission, so every destructive verb needs its way back, and the
+        // way back has to be reachable by the same model in the same turn.
+        let undo = ["list_trash", "restore_node", "list_versions", "restore_version"];
+        // The shape of a kind rather than one node of it: one call here moves
+        // a hundred files, which is why these are gated on a count.
+        let structure = ["rename_field", "delete_field", "rename_kind", "delete_kind"];
+
+        for generic in read
+            .iter()
+            .chain(&write)
+            .chain(&remove)
+            .chain(&undo)
+            .chain(&structure)
+        {
+            assert!(names.contains(generic), "the generic tool {generic} is missing");
         }
 
-        // Specialised, and each for a reason: feed articles have their own
-        // table, file search runs over extracted document text, and finance
-        // keeps transactions inside a month node as an array.
-        for specialised in [
+        // Specialised, and each for a reason that is about storage, not about
+        // which app is on screen: feed articles have their own table, a
+        // document's extracted text lives in `file_text` and not in the node,
+        // and finance keeps transactions inside a month node as an array that
+        // no node query can add up.
+        let specialised = [
             "search_feed_articles",
+            "update_feed_article",
             "search_files",
+            "read_file_text",
             "get_finance_summary",
             "search_finance",
             "get_transactions",
             "create_transaction",
-        ] {
-            assert!(names.contains(&specialised), "{specialised} is missing");
+        ];
+        for tool in specialised {
+            assert!(names.contains(&tool), "{tool} is missing");
         }
 
-        assert_eq!(
-            names.len(),
-            12,
-            "the tool list changed; every entry costs tokens on every turn of \
-             every conversation, so a new one needs a store the generic tools \
-             cannot reach: {names:?}"
+        // Nothing outside those two groups. This is the assertion that used to
+        // be a count: a number told you the list had changed and nothing about
+        // whether the change was the kind that ruins it.
+        let accounted: Vec<&str> = read
+            .into_iter()
+            .chain(write)
+            .chain(remove)
+            .chain(undo)
+            .chain(structure)
+            .chain(specialised)
+            .collect();
+        for name in &names {
+            assert!(
+                accounted.contains(name),
+                "`{name}` is neither generic nor a store the generic tools cannot reach. \
+                 Every entry costs tokens on every turn of every conversation, so it has \
+                 to be one or the other — add it above and say which."
+            );
+        }
+        assert_eq!(names.len(), accounted.len(), "a tool is listed twice above");
+    }
+
+    /// The two lists of internal types agree.
+    ///
+    /// `observed_schemas` counts rows and rows do not know what they are for,
+    /// so without this the vault describes itself to the assistant with `json`
+    /// at the top — 400 of them against 151 notes. The front end learned the
+    /// same lesson on its own screens and keeps its own list, and two lists of
+    /// one fact drift. Read theirs rather than trusting a memory of it.
+    #[test]
+    fn the_frontend_and_the_assistant_agree_on_what_is_app_storage() {
+        let source = include_str!(
+            "../../../src/mini-apps/things/composables/useObservedTypes.ts"
         );
+        let block = source
+            .split("const INTERNAL = new Set([")
+            .nth(1)
+            .expect("the internal set is declared")
+            .split("]);")
+            .next()
+            .expect("the declaration closes");
+
+        let mut checked = 0;
+        for entry in block.split(',') {
+            let node_type = entry.trim().trim_matches('\'').trim();
+            if node_type.is_empty() {
+                continue;
+            }
+            assert!(
+                is_internal_type(node_type),
+                "the front end calls `{node_type}` app storage and the assistant does not"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 7, "only read {checked} entries out of useObservedTypes.ts");
+
+        // The prefix rule, which is the half neither side keeps in a list and
+        // so the half that would drift silently.
+        assert!(is_internal_type("finance_month"));
+        assert!(is_internal_type("finance_config"));
+
+        // And the things a person actually keeps, which must never be hidden
+        // from the assistant by a rule aimed at bookkeeping.
+        for kept in ["note", "task", "person", "animal", "book", "whiteboard", "file"] {
+            assert!(!is_internal_type(kept), "`{kept}` is not app storage");
+        }
+    }
+
+    /// A bulk tool does nothing until it has been told what it will do.
+    ///
+    /// The whole safety case for handing these to a model rests on this, and
+    /// it is the one piece of logic here that is new rather than wrapped, so
+    /// it is worth a real vault and a real database rather than an assertion
+    /// about a helper. Three tasks carry `due`; the tool is asked to remove it
+    /// three ways, and only the third may touch a file.
+    ///
+    /// The mismatch case is the one that matters most. A model that previewed
+    /// one field and then named another arrives there, and a no-op that
+    /// reported success would read to the user as the work being done.
+    #[test]
+    fn a_bulk_edit_waits_until_it_is_told_how_many_files_it_will_change() {
+        use crate::models::node::NodeMetadata;
+        use tauri::Manager;
+
+        let holder = tempfile::tempdir().expect("tempdir");
+        let vault = holder.path().join("vault");
+        std::fs::create_dir_all(vault.join("Tasks")).expect("vault dir");
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+
+        for n in 1..=3 {
+            let rel = format!("Tasks/task-{n}.md");
+            std::fs::write(
+                vault.join(&rel),
+                format!("---\ntitle: Task {n}\ntype: task\ndue: 2026-09-0{n}\n---\nbody\n"),
+            )
+            .expect("write task");
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().unwrap_or_else(|e| e.into_inner());
+            db.upsert_node(&NodeMetadata {
+                id: rel,
+                node_type: "task".into(),
+                title: format!("Task {n}"),
+                content: "body".into(),
+                properties: serde_json::json!({
+                    "title": format!("Task {n}"),
+                    "type": "task",
+                    "due": format!("2026-09-0{n}"),
+                }),
+                created_at: "2026-01-01 00:00:00".into(),
+                updated_at: "2026-01-01 00:00:00".into(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .expect("index task");
+        }
+
+        let ctx = ToolContext {
+            db: &*handle.state::<crate::db::DbState>(),
+            vault_path: &vault_path,
+            app: &handle,
+        };
+        let still_there = || {
+            (1..=3).all(|n| {
+                std::fs::read_to_string(vault.join(format!("Tasks/task-{n}.md")))
+                    .expect("read back")
+                    .contains("due:")
+            })
+        };
+
+        // No count: reports the plan, touches nothing.
+        let preview: Value = serde_json::from_str(
+            &execute_tool(
+                &ctx,
+                "delete_field",
+                &serde_json::json!({ "node_type": "task", "key": "due" }),
+            )
+            .expect("preview runs"),
+        )
+        .expect("preview is json");
+        assert_eq!(preview["would_delete_from"], 3);
+        assert!(still_there(), "the preview deleted something");
+
+        // A count that does not match: refuses, and says the real number so
+        // the model can tell it named the wrong field rather than that there
+        // was nothing to do.
+        let wrong: Value = serde_json::from_str(
+            &execute_tool(
+                &ctx,
+                "delete_field",
+                &serde_json::json!({ "node_type": "task", "key": "due", "confirm_nodes": 99 }),
+            )
+            .expect("mismatch runs"),
+        )
+        .expect("mismatch is json");
+        assert!(wrong.get("success").is_none(), "a mismatch reported success");
+        assert_eq!(wrong["actually"], 3);
+        assert!(still_there(), "a mismatched count deleted something");
+
+        // The right count: it happens.
+        let done: Value = serde_json::from_str(
+            &execute_tool(
+                &ctx,
+                "delete_field",
+                &serde_json::json!({ "node_type": "task", "key": "due", "confirm_nodes": 3 }),
+            )
+            .expect("delete runs"),
+        )
+        .expect("delete is json");
+        assert_eq!(done["success"], true);
+        assert_eq!(done["deleted_from"], 3);
+        assert!(!still_there(), "the field is still on the files");
     }
 
     /// The per-model tools are gone and must not come back.
@@ -1728,8 +2691,46 @@ mod tests {
             );
         }
 
-        // And the ones it does name are real.
-        for named in ["query_nodes", "list_schemas", "create_node", "update_node"] {
+        // And every tool the prompt names is real.
+        //
+        // The named list this used to hold covered four of them, so a tool
+        // renamed anywhere else went unnoticed until a conversation failed.
+        // The prompt writes tool names in backticks and nothing else, so it
+        // can be read rather than remembered — the same trick the front-end
+        // agreement tests use.
+        let mut found = 0;
+        for quoted in prompt.split('`').skip(1).step_by(2) {
+            // Backticks also wrap query syntax and examples; a tool name is
+            // one bare identifier.
+            if quoted.is_empty()
+                || !quoted
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+            {
+                continue;
+            }
+            // Words like `type` and `limit` are syntax, not tools. Only judge
+            // a token that looks like one of ours: a verb and a noun.
+            if !quoted.contains('_') {
+                continue;
+            }
+            // Named explicitly rather than by another shape rule: these are a
+            // field in a result and two argument names, and they read exactly
+            // like tools. Listing them is the point — anything else that reads
+            // like a tool and is not one still fails below.
+            if matches!(quoted, "total_matches" | "confirm_nodes" | "app_storage") {
+                continue;
+            }
+            assert!(
+                names.iter().any(|n| n == quoted),
+                "the prompt tells the model to call `{quoted}`, which is not a tool"
+            );
+            found += 1;
+        }
+        assert!(found >= 12, "only recognised {found} tool names in the prompt");
+
+        // And the ones that carry the whole shape of the vault are named.
+        for named in ["query_nodes", "list_schemas", "create_node", "update_node", "trash_node"] {
             assert!(prompt.contains(named), "the prompt never mentions `{named}`");
             assert!(names.iter().any(|n| n == named));
         }

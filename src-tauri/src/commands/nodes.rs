@@ -2231,14 +2231,37 @@ pub(crate) fn write_node_inner<R: tauri::Runtime>(
             }
             map.insert("updated_at".to_string(), serde_json::Value::String(now));
         }
-        // Output as pure JSON
-        let json_obj = serde_json::json!({
-            "title": title.clone(),
-            "type": node_type.clone(),
-            "metadata": mut_props,
-            "content": content.clone()
-        });
-        serde_json::to_string_pretty(&json_obj).unwrap_or_default()
+        // Fold into whatever the file already is, rather than replacing it.
+        //
+        // This wrote a fresh four-key object — title, type, metadata, content —
+        // which is the whole of a typed JSON node and a fraction of a
+        // whiteboard. A board carries `nodes`, `edges`, `viewport` and `tags`
+        // besides, so saving one through this path put back a file with the
+        // right name, the right title, and none of the drawing: forty-seven
+        // nodes replaced by an empty string under `content`.
+        //
+        // The properties above are already merged the same way, for the same
+        // reason. A writer that only knows some of a file must not be the one
+        // that decides what the rest of it was.
+        let mut root = match std::fs::read_to_string(&abs_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+
+        root.insert("title".to_string(), serde_json::Value::String(title.clone()));
+        root.insert("type".to_string(), serde_json::Value::String(node_type.clone()));
+        root.insert("metadata".to_string(), mut_props);
+        // Only when there is one, or when the file already had the key: a
+        // whiteboard has no body, and inventing an empty one for it is how a
+        // key nobody wrote ends up in every board in the vault.
+        if !content.is_empty() || root.contains_key("content") {
+            root.insert("content".to_string(), serde_json::Value::String(content.clone()));
+        }
+
+        serde_json::to_string_pretty(&serde_json::Value::Object(root)).unwrap_or_default()
     } else {
         markdown_with_frontmatter(&title, &node_type, &properties, &content)
     };
@@ -3146,6 +3169,91 @@ pub(crate) fn crdt_apply_safe(
             "CRDT panic caught for {}",
             node_id
         ))),
+    }
+}
+
+#[cfg(test)]
+mod writing_a_json_node {
+    use super::*;
+    use crate::db::DbBridge;
+    use tauri::Manager;
+
+    fn app_with_db(db: DbBridge) -> tauri::AppHandle<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(db));
+        handle
+    }
+
+    /// Saving a whiteboard from a screen that knows nothing about whiteboards.
+    ///
+    /// Things shows every kind in the vault, boards included, and every field
+    /// there saves on blur. This path wrote a fresh object of title, type,
+    /// metadata and content — the whole of a typed JSON node and a fraction of
+    /// a board — so one blur on a board of forty-seven nodes put back a file
+    /// with the right name and no drawing in it.
+    ///
+    /// Nothing in the app read the result to notice: the scan indexes it fine,
+    /// the title is right, and the loss only shows on opening the board.
+    #[test]
+    fn a_board_keeps_its_drawing_when_something_else_saves_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(dir.path().join("Whiteboards")).unwrap();
+
+        let board = serde_json::json!({
+            "title": "Untitled Board",
+            "type": "whiteboard",
+            "created_at": "2026-05-23T15:55:27.805Z",
+            "nodes": [{ "id": "n1" }, { "id": "n2" }],
+            "edges": [{ "id": "e1" }],
+            "viewport": { "x": 12, "y": 34, "zoom": 1.5 },
+            "tags": ["mdp"],
+            "metadata": { "node_id": "kept-identity" },
+        });
+        let rel = "Whiteboards/board.whiteboard.json";
+        std::fs::write(
+            dir.path().join(rel),
+            serde_json::to_string_pretty(&board).unwrap(),
+        )
+        .unwrap();
+
+        let handle = app_with_db(DbBridge::new_in_memory_full().unwrap());
+        let state = handle.state::<crate::db::DbState>();
+
+        write_node_inner(
+            &handle,
+            &state,
+            vault.clone(),
+            rel.to_string(),
+            "Bảng của tôi".to_string(),
+            "whiteboard".to_string(),
+            serde_json::json!({ "node_count": 2 }),
+            None,
+        )
+        .expect("write");
+
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.path().join(rel)).unwrap()).unwrap();
+
+        assert_eq!(after["nodes"].as_array().unwrap().len(), 2, "the drawing survives");
+        assert_eq!(after["edges"].as_array().unwrap().len(), 1);
+        assert_eq!(after["viewport"]["zoom"], 1.5, "and where you were looking");
+        assert_eq!(after["tags"][0], "mdp");
+        assert_eq!(after["created_at"], "2026-05-23T15:55:27.805Z");
+
+        // What the caller did ask for.
+        assert_eq!(after["title"], "Bảng của tôi");
+        assert_eq!(after["metadata"]["node_count"], 2);
+        assert_eq!(
+            after["metadata"]["node_id"], "kept-identity",
+            "and the identity the sync engine knows it by",
+        );
+
+        // A board has no body; one must not be invented for it.
+        assert!(after.get("content").is_none());
     }
 }
 

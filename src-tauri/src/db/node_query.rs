@@ -181,11 +181,40 @@ impl DbBridge {
                 log::warn!("query: ignoring a filter on unusable key '{}'", key);
                 continue;
             };
-            sql.push_str(&format!(
-                " AND lower(CAST(json_extract(properties, '{path}') AS TEXT)) = ?{next}"
-            ));
-            params.push(text(&value.to_lowercase()));
-            next += 1;
+            // A boolean has three spellings by the time it reaches here, and a
+            // person writing `pinned:true` means all of them.
+            //
+            // `json_extract` hands a JSON boolean back as the integer 1 or 0,
+            // so casting it to text gives `'1'` — which matched nothing, and
+            // said nothing about it. On top of that, a writer that stringified
+            // its booleans leaves `'true'` in the file; three task files in
+            // this vault carry exactly that. So the comparison is made against
+            // the word and its number, and only for the two words that have
+            // one.
+            let spellings = match value.to_lowercase().as_str() {
+                "true" => Some(("true", "1")),
+                "false" => Some(("false", "0")),
+                _ => None,
+            };
+
+            match spellings {
+                Some((word, digit)) => {
+                    sql.push_str(&format!(
+                        " AND lower(CAST(json_extract(properties, '{path}') AS TEXT)) IN (?{next}, ?{})",
+                        next + 1
+                    ));
+                    params.push(text(word));
+                    params.push(text(digit));
+                    next += 2;
+                }
+                None => {
+                    sql.push_str(&format!(
+                        " AND lower(CAST(json_extract(properties, '{path}') AS TEXT)) = ?{next}"
+                    ));
+                    params.push(text(&value.to_lowercase()));
+                    next += 1;
+                }
+            }
         }
 
         for range in &parsed.property_ranges {
@@ -257,6 +286,11 @@ impl DbBridge {
 
         let limit = parsed.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
         sql.push_str(&format!(" LIMIT {limit}"));
+        // Only when asked. `OFFSET 0` is the same query and a different plan in
+        // some engines, and every existing caller passes nothing.
+        if parsed.offset > 0 {
+            sql.push_str(&format!(" OFFSET {}", parsed.offset));
+        }
 
         let columns = requested_columns(parsed);
         let sql = format!(
@@ -315,12 +349,27 @@ impl DbBridge {
 }
 
 /// The columns to show, falling back when the query names none.
+/// The columns a table will draw, with the title guaranteed to lead them.
+///
+/// A caller choosing its own columns used to replace the lot, title included,
+/// and a table of `tags · pinned · full_width` is a hundred rows of `daily`
+/// and `false` with no way to tell one node from another. The name is not a
+/// column somebody opts into; it is what a row *is*, and every view draws its
+/// first cell as the name.
+///
+/// Enforced here rather than in a view because the columns are decided here,
+/// and there is more than one caller: the table, saved views, and the
+/// assistant's own queries.
 fn requested_columns(parsed: &ParsedQuery) -> Vec<String> {
     if parsed.columns.is_empty() {
-        DEFAULT_COLUMNS.iter().map(|c| c.to_string()).collect()
-    } else {
-        parsed.columns.clone()
+        return DEFAULT_COLUMNS.iter().map(|c| c.to_string()).collect();
     }
+
+    let mut columns = parsed.columns.clone();
+    if !columns.iter().any(|c| c == "title") {
+        columns.insert(0, "title".to_string());
+    }
+    columns
 }
 
 #[cfg(test)]
@@ -475,7 +524,10 @@ mod tests {
         let d = tasks();
         let got = run(&d, "is:task priority:1 columns:tags");
 
-        assert_eq!(got.rows[0].cells, vec!["work, urgent"]);
+        // By position rather than by index nought: the title leads every set of
+        // columns, so this asks for the tags cell rather than the first one.
+        let at = got.columns.iter().position(|c| c == "tags").expect("tags column");
+        assert_eq!(got.rows[0].cells[at], "work, urgent");
     }
 
     #[test]
@@ -574,6 +626,119 @@ mod tests {
         assert!(
             titles.iter().any(|t| t == "No status at all"),
             "a task with no status is not done: {titles:?}"
+        );
+    }
+
+    /// A row without its name is a row you cannot tell from any other.
+    #[test]
+    fn a_chosen_set_of_columns_still_leads_with_the_title() {
+        let d = db();
+        seed(&d, "Notes/a.md", "note", "Lỗi kênh truyền", serde_json::json!({ "tags": ["mdp"] }));
+
+        let got = run(&d, "type:note columns:tags,pinned");
+
+        assert_eq!(got.columns, vec!["title", "tags", "pinned"]);
+        assert_eq!(
+            got.rows[0].cells[0], "Lỗi kênh truyền",
+            "the first cell is the name, which is what every view draws it as",
+        );
+    }
+
+    /// Asking for it explicitly must not produce it twice.
+    #[test]
+    fn a_title_asked_for_by_name_is_not_added_again() {
+        let d = db();
+        seed(&d, "Notes/a.md", "note", "x", serde_json::json!({}));
+
+        let got = run(&d, "type:note columns:tags,title");
+
+        assert_eq!(got.columns, vec!["tags", "title"]);
+    }
+
+    /// Reaching past the cap, which is the only way to see a big kind whole.
+    ///
+    /// The count stays the count: paging changes which rows come back and
+    /// nothing about how many matched, so a footer can say "50 of 1000" and
+    /// mean it on every page.
+    #[test]
+    fn an_offset_walks_past_the_cap_without_moving_the_count() {
+        let d = db();
+        let cap = crate::search::MAX_QUERY_LIMIT as usize;
+        let over = cap + 120;
+        for i in 0..over {
+            seed(&d, &format!("Notes/{i:04}.md"), "note", "n", serde_json::json!({}));
+        }
+
+        let first = run(&d, "type:note");
+        let mut parsed = crate::search::parse_query("type:note");
+        parsed.offset = cap as u32;
+        let second = d.run_node_query(&parsed).expect("second page");
+
+        assert_eq!(second.total, first.total, "the count is of matches, not of a page");
+        assert_eq!(second.rows.len(), over - cap, "the remainder, and no more");
+
+        // No row appears on both pages: the two together are the whole kind.
+        let seen: std::collections::HashSet<_> =
+            first.rows.iter().map(|r| r.id.clone()).collect();
+        assert!(
+            second.rows.iter().all(|r| !seen.contains(&r.id)),
+            "a paged row came back twice",
+        );
+    }
+
+    /// `pinned:true` against a real YAML boolean.
+    ///
+    /// SQLite's `json_extract` hands back a JSON boolean as the integer 1 or
+    /// 0, so casting it to text gives `'1'` — and comparing that to `'true'`
+    /// matches nothing. Every pin in the vault was invisible to the one query
+    /// that goes looking for pins, with no error to say so.
+    #[test]
+    fn a_boolean_property_is_matched_by_the_word_for_it() {
+        let d = db();
+        seed(&d, "Notes/a.md", "note", "ghim", serde_json::json!({ "pinned": true }));
+        seed(&d, "Notes/b.md", "note", "không", serde_json::json!({ "pinned": false }));
+        seed(&d, "Notes/c.md", "note", "chưa có", serde_json::json!({}));
+
+        assert_eq!(run(&d, "type:note pinned:true").total, 1, "the pinned one");
+        assert_eq!(run(&d, "type:note pinned:false").total, 1, "and the unpinned one");
+    }
+
+    /// The words a person writes, and the shapes a file can hold.
+    ///
+    /// A boolean reaches the vault as `true`, as `'true'` from a writer that
+    /// stringified it — three task files here carry exactly that — and as `1`
+    /// from anything that went through JSON. All three are the same answer to
+    /// the same question.
+    #[test]
+    fn a_boolean_matches_however_it_was_written_down() {
+        let d = db();
+        seed(&d, "Notes/a.md", "note", "bool", serde_json::json!({ "pinned": true }));
+        seed(&d, "Notes/b.md", "note", "chuỗi", serde_json::json!({ "pinned": "true" }));
+
+        assert_eq!(run(&d, "type:note pinned:true").total, 2);
+    }
+
+    /// Every query is capped, asked for or not.
+    ///
+    /// A vault with more of one kind than the cap gets a page and a true
+    /// count, and the screen showing them has to say so: "1000 results" over a
+    /// list that stops at five hundred is a number that is right about the
+    /// vault and wrong about what you are looking at.
+    #[test]
+    fn a_query_with_no_limit_is_still_capped() {
+        let d = db();
+        let over = crate::search::MAX_QUERY_LIMIT as usize + 100;
+        for i in 0..over {
+            seed(&d, &format!("Notes/{i}.md"), "note", "n", serde_json::json!({}));
+        }
+
+        let got = run(&d, "type:note");
+
+        assert_eq!(got.total as usize, over, "the count is every match");
+        assert_eq!(
+            got.rows.len(),
+            crate::search::MAX_QUERY_LIMIT as usize,
+            "the rows stop at the cap",
         );
     }
 

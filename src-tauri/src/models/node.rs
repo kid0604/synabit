@@ -41,6 +41,7 @@ pub enum NodeType {
     /// sharing the type would have put a view about books in the Tasks filter
     /// menu, and the point of that app was to leave the other eleven alone.
     View,
+    Schema,
     /// A JSON or canvas file that declared no type of its own.
     Json,
     Canvas,
@@ -92,6 +93,7 @@ impl NodeType {
             NodeType::PdfDrawing => "pdf_drawing",
             NodeType::Filter => "filter",
             NodeType::View => "view",
+            NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
             NodeType::Other(raw) => raw,
@@ -124,6 +126,7 @@ impl From<&str> for NodeType {
             "pdf_drawing" => NodeType::PdfDrawing,
             "filter" => NodeType::Filter,
             "view" => NodeType::View,
+            "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,
             other => NodeType::Other(other.to_string()),
@@ -178,7 +181,25 @@ pub struct ObservedType {
     /// The union across nodes, not the intersection: a node missing one is
     /// normal, and a node carrying an extra one is somebody inventing a field.
     /// It is emphatically not a list of permitted keys.
-    pub fields: Vec<String>,
+    pub fields: Vec<ObservedField>,
+}
+
+/// One frontmatter key, and how many nodes of the type carry it.
+///
+/// The count is what separates a field the type is built on from one somebody
+/// used once. Without it, `colour` on two animals and `màu` on one are two
+/// equal entries in a list; with it they are a habit and a stray.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObservedField {
+    pub key: String,
+    /// Nodes of this type that carry the key. Never more than the type's count.
+    pub count: i64,
+    /// A small stand-in for what the key holds, for working out its kind.
+    ///
+    /// Read by `kindOf` in the front end and nowhere else. That function is the
+    /// one place a kind is derived from a value, and a second derivation here
+    /// would be a second opinion — the sort that agrees until it does not.
+    pub sample: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

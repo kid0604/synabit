@@ -1017,9 +1017,30 @@ pub fn build_system_prompt(context: &str, personality: &str) -> String {
          Find the node with `query_nodes` first to get its id.\n\
          - `get_linked_nodes` follows links out of and into a node. Use it for \
          'what else is related to this', which no query can express.\n\
+         - To remove anything: `trash_node`. It goes to the vault's trash, not \
+         gone — `list_trash` shows what is there and `restore_node` puts one back. \
+         Removing several things is one call each. Never say you cannot delete.\n\
+         - Every save is kept. `list_versions` shows how a node looked before, and \
+         `restore_version` puts it back. Reach for these when the user says an edit \
+         was wrong, including one you just made.\n\
+         - To change the SHAPE of a type rather than one node — rename a field on \
+         every task, remove a field everywhere, rename or remove a whole type: \
+         `rename_field`, `delete_field`, `rename_kind`, `delete_kind`. These touch \
+         many files at once, so each one works in two steps: call it WITHOUT \
+         `confirm_nodes` to get the count, tell the user what it will affect, then \
+         call again passing that exact number. A user who wants a type gone but \
+         made it by accident usually wants `rename_kind`, which keeps everything \
+         they wrote — offer that before `delete_kind`.\n\
          - For files, images, documents or PDFs: `search_files`. It searches inside \
-         documents as well as filenames. Example: \"tìm ảnh\", \"find PDFs\".\n\
-         - For articles from RSS feeds: `search_feed_articles`. These are not nodes.\n\
+         documents as well as filenames. Example: \"tìm ảnh\", \"find PDFs\". To read \
+         what a document actually says, `read_file_text` — `get_node` gives you only \
+         the vault's record of the file, not its contents.\n\
+         - For articles from RSS feeds: `search_feed_articles`, and \
+         `update_feed_article` to mark one read, starred or read-later. These are \
+         not nodes.\n\
+         - `list_schemas` also reports `app_storage`. That is Synabit's own \
+         bookkeeping — never create or edit those, and never count them when \
+         telling the user what the vault holds.\n\
          - FINANCE is the exception to all of the above: transactions live inside a \
          month node as a list, not as nodes of their own, so the generic tools \
          cannot reach them.\n\

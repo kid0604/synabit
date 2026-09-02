@@ -431,7 +431,14 @@ pub fn list_observed_types(
             |(node_type, count, fields)| crate::models::node::ObservedType {
                 node_type,
                 count,
-                fields,
+                fields: fields
+                    .into_iter()
+                    .map(|(key, count, sample)| crate::models::node::ObservedField {
+                        key,
+                        count,
+                        sample,
+                    })
+                    .collect(),
             },
         )
         .collect())
@@ -441,8 +448,11 @@ pub fn list_observed_types(
 pub fn run_node_query(
     state: tauri::State<'_, DbState>,
     query: String,
+    // Rows to skip. Absent means the first page, which is every existing call.
+    offset: Option<u32>,
 ) -> AppResult<crate::db::QueryResult> {
-    let parsed = crate::search::parse_query(&query);
+    let mut parsed = crate::search::parse_query(&query);
+    parsed.offset = offset.unwrap_or(0);
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.run_node_query(&parsed)
 }
@@ -598,7 +608,11 @@ mod things_gate {
         // The menus are built from this, so it has to see the field first.
         let observed = db.observed_schemas(25).expect("schemas");
         let tasks = observed.iter().find(|(t, ..)| t == "task").expect("task");
-        assert!(tasks.2.contains(&"energy".to_string()), "{:?}", tasks.2);
+        assert!(
+            tasks.2.iter().any(|(k, ..)| k == "energy"),
+            "{:?}",
+            tasks.2
+        );
 
         // Filter.
         assert_eq!(ask("type:task energy:low").total, 2);
@@ -680,7 +694,7 @@ mod things_gate {
         //    like everything else — the scan does not strip them out, and a
         //    query can sort on either. Whoever builds a menu decides whether to
         //    offer them; this reports what the file holds.
-        let mut fields = animals.2.clone();
+        let mut fields: Vec<String> = animals.2.iter().map(|(k, ..)| k.clone()).collect();
         fields.sort();
         assert_eq!(
             fields,

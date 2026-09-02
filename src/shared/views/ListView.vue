@@ -14,7 +14,7 @@
  */
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Loader2 } from 'lucide-vue-next';
+import { Loader2, MoreHorizontal } from 'lucide-vue-next';
 import { iconForNodeType } from './nodeTypeIcon';
 import type { QueryResult, QueryRow } from './types';
 
@@ -22,6 +22,10 @@ const props = defineProps<{
   result: QueryResult | null;
   loading?: boolean;
   selectedId?: string | null;
+  /** Shown when a node has no title of its own. */
+  untitledLabel?: string;
+  /** The row whose menu is open, so the button stays visible under it. */
+  menuFor?: string | null;
   /**
    * A column to break the list into sections by.
    *
@@ -32,7 +36,17 @@ const props = defineProps<{
   groupBy?: string;
 }>();
 
-const emit = defineEmits<{ open: [row: QueryRow] }>();
+const emit = defineEmits<{
+  open: [row: QueryRow];
+  /**
+   * The row whose menu was asked for, or `null` to close.
+   *
+   * The menu itself is the caller's — it needs the vault, the node service and
+   * the undo toast, none of which a view primitive should acquire. The list's
+   * job is knowing which row was clicked.
+   */
+  menu: [row: QueryRow | null, at: { x: number; y: number } | null];
+}>();
 
 const { t } = useI18n();
 
@@ -65,6 +79,25 @@ const cellsFor = (row: QueryRow) =>
   detailColumns.value
     .map(c => row.cells[c.index])
     .filter(v => v !== undefined && v !== '');
+
+/**
+ * Where the menu should appear, in screen coordinates.
+ *
+ * The button's own position, read at the moment it is clicked, because the
+ * menu cannot be drawn inside the row. Two things clip it there: the list
+ * scrolls, and the row carries `content-visibility: auto`, which brings paint
+ * containment with it and cuts off anything crossing the row's edge. The
+ * caller renders it in a layer over the page instead.
+ */
+const openMenu = (event: MouseEvent, row: QueryRow) => {
+  if (props.menuFor === row.id) {
+    emit('menu', null, null);
+    return;
+  }
+  const button = event.currentTarget as HTMLElement;
+  const box = button.getBoundingClientRect();
+  emit('menu', row, { x: box.right, y: box.bottom });
+};
 
 /**
  * The rows, in sections, when a group column was asked for.
@@ -118,32 +151,54 @@ const sections = computed(() => {
           <span class="ml-1.5 font-normal tabular-nums">{{ section.items.length }}</span>
         </div>
 
-      <button
+      <div
         v-for="row in section.items"
         :key="row.id"
-        type="button"
-        @click="emit('open', row)"
-        class="w-full text-left px-4 py-2.5 flex items-start gap-3 border-b border-gray-100 dark:border-[#232326]
-               hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer"
+        class="group relative flex items-start border-b border-gray-100 dark:border-[#232326]
+               hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
         :class="row.id === selectedId ? 'bg-gray-100 dark:bg-white/10' : ''"
         style="content-visibility: auto; contain-intrinsic-size: auto 56px;"
       >
-        <component
-          :is="iconForNodeType(row.node_type)"
-          class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400 dark:text-gray-500"
-        />
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm text-[#1c1c1e] dark:text-[#f4f4f5]">
-            {{ row.title || row.id }}
+        <button
+          type="button"
+          @click="emit('open', row)"
+          class="min-w-0 flex-1 text-left pl-4 pr-1 py-2.5 flex items-start gap-3 cursor-pointer"
+        >
+          <component
+            :is="iconForNodeType(row.node_type)"
+            class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400 dark:text-gray-500"
+          />
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-sm text-[#1c1c1e] dark:text-[#f4f4f5]">
+              {{ row.title || untitledLabel || row.id }}
+            </span>
+            <span
+              v-if="cellsFor(row).length"
+              class="block truncate text-xs text-gray-400 dark:text-gray-500 mt-0.5"
+            >
+              {{ cellsFor(row).join(' · ') }}
+            </span>
           </span>
-          <span
-            v-if="cellsFor(row).length"
-            class="block truncate text-xs text-gray-400 dark:text-gray-500 mt-0.5"
-          >
-            {{ cellsFor(row).join(' · ') }}
-          </span>
-        </span>
-      </button>
+        </button>
+
+        <!--
+          Kept out of the way until the row is under the cursor, and kept
+          visible while its own menu is open — otherwise moving the mouse
+          towards the menu makes the button that opened it disappear.
+        -->
+        <button
+          type="button"
+          @click.stop="openMenu($event, row)"
+          class="flex-none mt-2 mr-2 p-1 rounded text-gray-400 transition-opacity cursor-pointer
+                 hover:bg-gray-200/70 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300
+                 focus:opacity-100"
+          :class="menuFor === row.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+          :aria-label="t('things.row_actions')"
+        >
+          <MoreHorizontal class="w-4 h-4" />
+        </button>
+
+      </div>
       </template>
 
       <!--

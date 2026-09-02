@@ -43,6 +43,13 @@ pub struct ParsedQuery {
     pub columns: Vec<String>,
     /// `limit:20`, capped so one query cannot ask for the whole vault.
     pub limit: Option<u32>,
+    /// How many matching rows to skip, for reaching past the cap.
+    ///
+    /// Not query syntax and deliberately not: it is a property of the page
+    /// being looked at, not of the question being asked, and a saved view
+    /// carrying `offset:500` in its text would reopen on page two forever.
+    /// The caller sets it after parsing.
+    pub offset: u32,
     /// Whether the query is empty (no meaningful search terms)
     pub is_empty: bool,
     /// Whether to enforce case-sensitive matching (post-filter)

@@ -26,6 +26,7 @@ pub mod signing;
 use commands::{
     calendar_subs, capture, chat, feeds, files, finance, license_cmds, migration, nexus, nodes, people as people_commands,
     syn as syn_commands,
+    rename_property,
     sync as sync_cmds, thumbnails, trash, vault_health, versions, whiteboards,
 };
 use db::DbBridge;
@@ -685,6 +686,13 @@ pub fn run() {
             nexus::search_nexus,
             nexus::search_nexus_ids,
             nexus::list_observed_types,
+            rename_property::preview_rename_property,
+            rename_property::rename_property,
+            rename_property::preview_delete_property,
+            rename_property::delete_property,
+            rename_property::preview_delete_kind,
+            rename_property::delete_kind,
+            rename_property::retype_kind,
             nexus::run_node_query,
             nexus::search_notes,
             nexus::search_tasks,

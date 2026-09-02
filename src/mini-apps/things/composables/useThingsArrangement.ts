@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import { isAppOwned } from '../../../shared/fieldRegistry';
 
 /**
  * Keys the app writes, which are never offered as something to arrange by.
@@ -9,6 +10,17 @@ import { ref, computed } from 'vue';
  * single heap.
  */
 const NOT_ARRANGEABLE = new Set(['node_id', 'timestamp', 'type']);
+
+/**
+ * Fields that are true of every node and characteristic of none.
+ *
+ * Kept out of the *suggestions* only — they are still offered in the menus,
+ * and `updated_at` is the default sort. What they must not be is what a type
+ * leads with: a type nobody has put a field on yet has only these, so
+ * suggesting them fills the list with raw ISO timestamps and says nothing
+ * about what the thing is.
+ */
+const NOT_CHARACTERISTIC = new Set(['title', 'created_at', 'updated_at']);
 
 /**
  * Columns the engine can sort on without reading frontmatter.
@@ -92,9 +104,18 @@ export function useThingsArrangement() {
    * nodes carry each, so the most characteristic fields come first. This is the
    * moment the app looks like it already knows about books.
    */
-  const suggestColumns = (observedFields: string[]) => {
+  /**
+   * Columns worth looking at, for a kind nobody has arranged by hand.
+   *
+   * The kind matters, because what counts as noise is scoped to it: `pinned`
+   * and `full_width` are on every note and belong to the note editor, and a
+   * table of them is a hundred rows reading `false · false`. `fieldRegistry`
+   * already knows which keys are the app's on which kind, and it was simply
+   * not being asked.
+   */
+  const suggestColumns = (observedFields: string[], nodeType = '') => {
     columns.value = arrangeableFrom(observedFields)
-      .filter(f => f !== 'title')
+      .filter(f => !NOT_CHARACTERISTIC.has(f) && !isAppOwned(nodeType, f))
       .slice(0, 3);
   };
 

@@ -348,8 +348,8 @@ fn restore_target(vault: &Path, trash_path: &str) -> AppResult<String> {
 /// creation that every device accepts. The cost is the old version history,
 /// which is a smaller thing to lose than the file.
 #[tauri::command]
-pub fn restore_from_trash(
-    app_handle: tauri::AppHandle,
+pub fn restore_from_trash<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     state: tauri::State<'_, DbState>,
     vault_path: String,
     trash_path: String,
@@ -383,9 +383,12 @@ pub fn restore_from_trash(
     // and the CRDT document are all set up the way any other file's are.
     // `node_id: null` removes the old identity; a fresh one is assigned on the
     // way through. The body is left alone — `None` means "keep what is there".
-    crate::commands::nodes::write_node_file(
-        app_handle,
-        state,
+    // `write_node_inner` rather than the command it wraps: the command is
+    // fixed to one runtime, and this has to be callable from the assistant's
+    // tools, which are generic so they can be tested at all.
+    crate::commands::nodes::write_node_inner(
+        &app_handle,
+        &state,
         vault_path,
         target_rel.clone(),
         title,

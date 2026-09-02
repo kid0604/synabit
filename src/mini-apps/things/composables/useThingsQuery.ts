@@ -25,6 +25,40 @@ export function useThingsQuery() {
    */
   let token = 0;
 
+  /** Whether another page is being fetched, so a button can say so. */
+  const loadingMore = ref(false);
+
+  /**
+   * Fetch the next page and append it.
+   *
+   * A separate call rather than a bigger `limit`, because the engine caps
+   * every query at 500 whatever it is asked for — reaching row 501 is a
+   * question of skipping, not of asking for more. The rows accumulate here so
+   * sorting and grouping keep seeing one list.
+   */
+  const more = async () => {
+    const found = result.value;
+    if (!found || loadingMore.value) return;
+    if (found.rows.length >= found.total) return;
+
+    const mine = token;
+    loadingMore.value = true;
+    try {
+      const next = await invoke<QueryResult>('run_node_query', {
+        query: query.value.trim(),
+        offset: found.rows.length,
+      });
+      // A new query started while this page was in flight; its answer is the
+      // one on screen and this page belongs to a list nobody is looking at.
+      if (mine !== token || !result.value) return;
+      result.value = { ...next, rows: [...result.value.rows, ...next.rows] };
+    } catch (e) {
+      logger.error('[Things] Could not fetch the next page', e);
+    } finally {
+      loadingMore.value = false;
+    }
+  };
+
   const run = async (text?: string) => {
     if (text !== undefined) query.value = text;
     const q = query.value.trim();
@@ -41,7 +75,7 @@ export function useThingsQuery() {
     error.value = null;
 
     try {
-      const answer = await invoke<QueryResult>('run_node_query', { query: q });
+      const answer = await invoke<QueryResult>('run_node_query', { query: q, offset: 0 });
       if (mine !== token) return;
       result.value = answer;
     } catch (e) {
@@ -60,5 +94,5 @@ export function useThingsQuery() {
   /** Browse one type. The plain case, and what the left rail does. */
   const showType = (nodeType: string) => run(`type:${nodeType} sort:-updated_at`);
 
-  return { query, result, loading, error, run, showType };
+  return { query, result, loading, error, run, showType, more, loadingMore };
 }

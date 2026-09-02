@@ -106,15 +106,37 @@ for (const name of ['mermaid', 'markmap', 'query']) {
 const props = defineProps<{
   modelValue: string;
   vaultPath: string;
-  notes?: any[];
   zenMode?: boolean;
   currentNoteId?: string;
   minHeightClass?: string;
+  /**
+   * What an empty editor says.
+   *
+   * Things passed one of these from the day it adopted this editor, and there
+   * was no prop to receive it: the attribute fell through onto the wrapper div
+   * and every node in the vault offered `Type / for commands...` in English,
+   * under a translated heading. The default keeps Notes reading exactly as it
+   * did.
+   */
+  placeholder?: string;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
   (e: 'open-internal-note', payload: { id: string; type: string }): void;
+  /**
+   * The caret left the editor.
+   *
+   * Declared because a parent writing `@blur` on this component was getting
+   * nothing: with no such emit the listener falls through onto the wrapper
+   * `<div>`, and `blur` does not bubble, so it never fired. Things had exactly
+   * that listener as its only way to persist a body — type a paragraph, click
+   * another node, and the paragraph was gone.
+   *
+   * Notes does not listen for it and is unchanged; it commits through the
+   * `onBlur` below, which is also what raises this.
+   */
+  (e: 'blur'): void;
 }>();
 
 // --- Settings ---
@@ -439,7 +461,7 @@ const editor = useEditor({
     TextStyle,
     Color,
     Placeholder.configure({
-      placeholder: 'Type / for commands...',
+      placeholder: props.placeholder ?? 'Type / for commands...',
     }),
     SlashCommands.configure({
       suggestion: {
@@ -660,6 +682,11 @@ const editor = useEditor({
     // one line closes the window on all of them at once. They flush explicitly
     // as well: this is the net, not the guarantee.
     flushSerialize();
+    // Strictly after the flush. A listener on this saves the node, and the
+    // value it reads is whatever the last `update:modelValue` left behind —
+    // so raising it first would write the document as it stood a keystroke
+    // ago, every time, while looking like it worked.
+    emit('blur');
     setTimeout(() => { showBubble.value = false; }, 200);
   },
   editorProps: {
