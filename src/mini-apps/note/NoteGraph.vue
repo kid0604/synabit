@@ -2,13 +2,29 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 
+import { iconBodyForNodeType } from '../../shared/views/nodeTypeIcon';
+
 const props = defineProps<{
   currentNoteId: string;
   currentNoteTitle: string;
   tags: string[];
   outgoingLinks: string[]; // IDs
-  backlinks: Array<{ id: string, title: string }>;
-  allNotes: Array<{ id: string, title: string, tags?: string[] }>;
+  backlinks: Array<{ id: string, title: string, nodeType?: string }>;
+  allNotes: Array<{ id: string, title: string, tags?: string[], nodeType?: string }>;
+  /** The open node's own kind, for the mark in the middle. */
+  currentNodeType?: string;
+  /**
+   * Discs, or the kind's icon on the disc.
+   *
+   * Discs by default: Notes draws one kind of thing, so a glyph would say the
+   * same word on every mark. Things draws whatever the vault holds — a graph
+   * around a `book` reaches people, tasks and notes — and there the shape is
+   * the fastest way to read what a neighbour is.
+   *
+   * The disc stays underneath either way. It carries the colour the legend
+   * explains, and dropping it would trade one fact for another.
+   */
+  marks?: 'dots' | 'icons';
 }>();
 
 const emit = defineEmits<{
@@ -36,7 +52,7 @@ const renderGraph = () => {
     const cy = height / 2;
 
     // Central node
-    const centerNode = { id: props.currentNoteId, title: props.currentNoteTitle, group: 'center', radius: 10, x: cx, y: cy };
+    const centerNode = { id: props.currentNoteId, title: props.currentNoteTitle, group: 'center', radius: 10, x: cx, y: cy, nodeType: props.currentNodeType };
     nodes.push(centerNode);
 
     // Track added nodes to avoid duplicates if a note is both outgoing and incoming
@@ -44,9 +60,12 @@ const renderGraph = () => {
     addedNodes.add(props.currentNoteId);
 
     // Helper to add nodes
-    const addNoteNode = (id: string, title: string, group: string) => {
+    const addNoteNode = (id: string, title: string, group: string, nodeType?: string) => {
         if (!addedNodes.has(id)) {
-            nodes.push({ id, title, group, radius: 8, x: cx, y: cy });
+            // Falls back to whatever the caller knows about the node elsewhere,
+            // so a backlink and a neighbour draw the same mark for one node.
+            const known = nodeType ?? props.allNotes.find(n => n.id === id)?.nodeType;
+            nodes.push({ id, title, group, radius: 8, x: cx, y: cy, nodeType: known });
             addedNodes.add(id);
         }
     };
@@ -61,7 +80,7 @@ const renderGraph = () => {
 
     // Incoming (backlinks)
     props.backlinks.forEach(bl => {
-        addNoteNode(bl.id, bl.title, 'incoming');
+        addNoteNode(bl.id, bl.title, 'incoming', bl.nodeType);
         links.push({ source: bl.id, target: props.currentNoteId, type: 'incoming' });
     });
 
@@ -160,24 +179,57 @@ const renderGraph = () => {
         });
 
     // Draw nodes
+    //
+    // A `<g>` per node rather than a bare circle, so the mark can be a disc or
+    // a disc with a glyph on it and the tick below still has one thing to
+    // move. The circle sits at the group's origin, which is what the translate
+    // then places — identical to the old `cx`/`cy` for anybody drawing discs.
+    const colourFor = (d: any) => {
+        if (d.group === 'center') return '#a855f7'; // Purple 500
+        if (d.group === 'tag') return '#3b82f6'; // Blue 500
+        if (d.group === 'related') return '#f59e0b'; // Amber 500 (related notes)
+        return '#10b981'; // Emerald 500 (level 1 notes)
+    };
+
+    const showIcons = props.marks === 'icons';
+
     const node = rootGroup.append("g")
-        .selectAll("circle")
+        .selectAll("g")
         .data(nodes)
-        .join("circle")
-        .attr("r", (d: any) => d.radius)
-        .attr("fill", (d: any) => {
-            if (d.group === 'center') return '#a855f7'; // Purple 500
-            if (d.group === 'tag') return '#3b82f6'; // Blue 500
-            if (d.group === 'related') return '#f59e0b'; // Amber 500 (related notes)
-            return '#10b981'; // Emerald 500 (level 1 notes)
-        })
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 1.5)
+        .join("g")
         .style("cursor", "pointer")
         .call(d3.drag()
             .on("start", dragstarted)
             .on("drag", dragged)
             .on("end", dragended) as any);
+
+    node.append("circle")
+        // Room for the glyph, which is drawn inside it.
+        .attr("r", (d: any) => (showIcons && d.group !== 'tag' ? d.radius + 2 : d.radius))
+        .attr("fill", colourFor)
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1.5);
+
+    if (showIcons) {
+        // Tags keep a plain disc. A tag is not a node and has no kind, so
+        // there is no icon that would be true — and the difference reads as
+        // the distinction it is rather than as something missing.
+        node.filter((d: any) => d.group !== 'tag')
+            .append("g")
+            .attr("fill", "none")
+            .attr("stroke", "#fff")
+            .attr("stroke-width", 2.4)
+            .attr("stroke-linecap", "round")
+            .attr("stroke-linejoin", "round")
+            .attr("pointer-events", "none")
+            .attr("transform", (d: any) => {
+                // Lucide draws on a 24-grid; fit it inside the disc and put
+                // its middle on the group's origin.
+                const size = (d.radius + 2) * 1.5;
+                return `translate(${-size / 2},${-size / 2}) scale(${size / 24})`;
+            })
+            .html((d: any) => iconBodyForNodeType(d.nodeType ?? ''));
+    }
 
     // Add titles
     node.append("title")
@@ -219,8 +271,7 @@ const renderGraph = () => {
             .attr("y2", (d: any) => d.target.y);
 
         node
-            .attr("cx", (d: any) => d.x)
-            .attr("cy", (d: any) => d.y);
+            .attr("transform", (d: any) => `translate(${d.x},${d.y})`);
             
         labels
             .attr("x", (d: any) => d.x)
@@ -260,13 +311,17 @@ const computeGraphFingerprint = () => {
         props.tags.slice().sort(),
         props.outgoingLinks.slice().sort(),
         props.backlinks.map(b => b.id).sort(),
-        isShowMore.value
+        isShowMore.value,
+        // How the marks are drawn is part of the picture. Left out, flipping
+        // the switch would change nothing until something else moved — which
+        // reads as the switch being broken.
+        props.marks ?? 'dots',
     ]);
 };
 
 let graphDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-watch(() => [props.currentNoteId, props.currentNoteTitle, props.tags, props.outgoingLinks, props.backlinks, isShowMore.value], () => {
+watch(() => [props.currentNoteId, props.currentNoteTitle, props.tags, props.outgoingLinks, props.backlinks, isShowMore.value, props.marks], () => {
     const fingerprint = computeGraphFingerprint();
     if (fingerprint === lastGraphFingerprint) return;
     lastGraphFingerprint = fingerprint;

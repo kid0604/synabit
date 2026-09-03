@@ -11,6 +11,9 @@ vi.mock('../../../composables/useNodeService', () => ({
 }));
 
 import { useThingsSchema } from '../composables/useThingsSchema';
+import {
+  chosenIconName, iconForNodeType, iconNamed,
+} from '../../../shared/views/nodeTypeIcon';
 
 /**
  * A kind's declared shape, which is a file like everything else.
@@ -216,6 +219,94 @@ describe('the shape somebody set for a kind', () => {
       await schema.remove('spaceship');
 
       expect(trashNode).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The icon a kind was given, which lives beside its fields for the same
+   * reason they do: it is an opinion about the kind, and the schema file is
+   * where opinions about a kind go.
+   */
+  describe('the icon a kind was given', () => {
+    // Index arithmetic rather than `.at(-1)`: this project's `lib` target
+    // predates it, and a test is not a reason to move the whole build's floor.
+    const lastWrite = () => writeNode.mock.calls[writeNode.mock.calls.length - 1][0];
+
+    const withIcon = (icon: unknown) => [{
+      id: 'Schema/animal.md',
+      title: 'animal',
+      properties: { fields: [{ key: 'species', kind: 'text' }], icon },
+    }];
+
+    it('is read back and published to the screens that draw it', async () => {
+      getNodeSummaries.mockResolvedValue(withIcon('dog'));
+      const schema = useThingsSchema();
+      await schema.load();
+
+      expect(schema.schemaFor('animal')?.icon).toBe('dog');
+      expect(chosenIconName('animal'), 'the lists never heard about it').toBe('dog');
+      expect(iconForNodeType('animal')).toBe(iconNamed('dog'));
+    });
+
+    /** Hand-edited, merged, or written by a version that had more icons. */
+    it('reads a name this build does not know as no choice', async () => {
+      getNodeSummaries.mockResolvedValue(withIcon('holographic-badger'));
+      const schema = useThingsSchema();
+      await schema.load();
+
+      expect(schema.schemaFor('animal')?.icon).toBeNull();
+      expect(chosenIconName('animal')).toBeNull();
+    });
+
+    it('is absent until somebody picks one', async () => {
+      getNodeSummaries.mockResolvedValue([{
+        id: 'Schema/animal.md', title: 'animal', properties: { fields: [] },
+      }]);
+      const schema = useThingsSchema();
+      await schema.load();
+
+      expect(schema.schemaFor('animal')?.icon).toBeNull();
+    });
+
+    /**
+     * A patch of one key. Naming `fields` here would rewrite a list this call
+     * has no opinion about, and their order is the thing somebody spent time
+     * arranging.
+     */
+    it('is written without touching the fields', async () => {
+      getNodeSummaries.mockResolvedValue(withIcon(null));
+      const schema = useThingsSchema();
+      await schema.load();
+
+      await schema.saveIcon('animal', 'dog');
+
+      const sent = lastWrite();
+      expect(sent.relPath).toBe('Schema/animal.md');
+      expect(sent.properties).toEqual({ icon: 'dog' });
+      expect('fields' in sent.properties, 'the field order was rewritten').toBe(false);
+    });
+
+    /** `null` deletes the key, which is what "use the default again" means. */
+    it('clears the choice rather than storing a blank one', async () => {
+      getNodeSummaries.mockResolvedValue(withIcon('dog'));
+      const schema = useThingsSchema();
+      await schema.load();
+
+      await schema.saveIcon('animal', null);
+      expect(lastWrite().properties).toEqual({ icon: null });
+    });
+
+    /** A kind nobody has had an opinion about yet has no file to patch. */
+    it('creates the schema file when this is the first opinion', async () => {
+      getNodeSummaries.mockResolvedValue([]);
+      const schema = useThingsSchema();
+      await schema.load();
+
+      await schema.saveIcon('book', 'reading');
+
+      const sent = lastWrite();
+      expect(sent.relPath).toBe('Schema/book.md');
+      expect(sent.eventType).toBe('created');
     });
   });
 });

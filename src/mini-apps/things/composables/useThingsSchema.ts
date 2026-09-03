@@ -3,6 +3,7 @@ import { useNodeService } from '../../../composables/useNodeService';
 import { folderForType } from '../../../shared/nodeRoutes';
 import { logger } from '../../../utils/logger';
 import { asFieldKind, type FieldKind } from '../../../shared/fieldValue';
+import { iconNamed, setChosenIcons } from '../../../shared/views/nodeTypeIcon';
 
 /**
  * A kind's shape, once somebody has an opinion about it.
@@ -36,6 +37,25 @@ export interface TypeSchema {
   id: string;
   nodeType: string;
   fields: SchemaField[];
+  /**
+   * The icon somebody picked for this kind, by name.
+   *
+   * `null` until they do, which leaves whatever the code table has for the
+   * kinds this app ships and `Box` for the rest — the state every kind was in
+   * before, and the one `animal` in this vault was stuck in.
+   */
+  icon: string | null;
+}
+
+/**
+ * The icon name, if it is one this build knows.
+ *
+ * A schema file outlives the version that wrote it and is a plain markdown
+ * file anybody can edit, so the name in it is input from outside. An unknown
+ * one reads as no choice rather than as a blank mark.
+ */
+function readIcon(raw: unknown): string | null {
+  return typeof raw === 'string' && iconNamed(raw) ? raw : null;
 }
 
 /** A schema file can be hand-edited or merged; nothing in it is trusted. */
@@ -79,9 +99,19 @@ export function useThingsSchema() {
             // `Schema/animal.md` in any editor knows what they are looking at.
             nodeType: String(row.title ?? '').trim(),
             fields: readFields(props.fields),
+            icon: readIcon(props.icon),
           };
         })
         .filter(s => s.nodeType);
+
+      // Handed to the one place every screen asks. `iconForNodeType` is read
+      // while drawing a row and cannot wait on a file read, so the choices are
+      // pushed to it once here instead of pulled nine times.
+      setChosenIcons(
+        schemas.value
+          .filter((s): s is TypeSchema & { icon: string } => !!s.icon)
+          .map(s => [s.nodeType, s.icon] as [string, string]),
+      );
     } catch (e) {
       logger.error('[Things] Could not read schemas', e);
       schemas.value = [];
@@ -144,6 +174,32 @@ export function useThingsSchema() {
    *
    * Trashed rather than unlinked, like every other file this app removes.
    */
+  /**
+   * Give a kind an icon, or take the choice back.
+   *
+   * A patch of one key, so the fields keep their order — `write_node_file`
+   * leaves unnamed keys alone, and naming `fields` here would mean rewriting a
+   * list this call has no opinion about. `null` deletes the key, which is what
+   * "use the default again" has to mean.
+   */
+  const saveIcon = async (nodeType: string, icon: string | null) => {
+    const existing = schemaFor(nodeType);
+    const relPath = existing?.id ?? `${folderForType('schema')}/${nodeType}.md`;
+    try {
+      await ns.writeNode({
+        relPath,
+        nodeType: 'schema',
+        title: nodeType,
+        properties: { icon },
+        content: '',
+        ...(existing ? {} : { eventType: 'created' as const }),
+      });
+      await load();
+    } catch (e) {
+      logger.error('[Things] Could not save the icon', e);
+    }
+  };
+
   const remove = async (nodeType: string) => {
     const existing = schemaFor(nodeType);
     if (!existing) return;
@@ -155,5 +211,5 @@ export function useThingsSchema() {
     }
   };
 
-  return { schemas, load, schemaFor, shapeFor, kindFor, save, remove };
+  return { schemas, load, schemaFor, shapeFor, kindFor, save, saveIcon, remove };
 }

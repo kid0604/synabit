@@ -19,12 +19,15 @@ import { ref, computed, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ArrowRight, ArrowLeft, Plus, MoreHorizontal } from 'lucide-vue-next';
 import { iconForNodeType } from './nodeTypeIcon';
+import IconPicker from './IconPicker.vue';
 import { humanizeKey, isAppOwned, GOVERNED } from '../fieldRegistry';
 import type { FieldKind } from '../fieldValue';
 import FieldKindPicker from './FieldKindPicker.vue';
 import ShapeRowMenu from './ShapeRowMenu.vue';
 
 const props = defineProps<{
+  /** The icon name somebody chose for this kind, if they have. */
+  chosenIcon?: string | null;
   nodeType: string;
   /** How many nodes of this kind the vault holds. */
   count: number;
@@ -53,6 +56,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  /** `null` puts the kind back to whatever the app draws by default. */
+  pickIcon: [icon: string | null];
   /** Up to the list of every kind, which is this page's index. */
   back: [];
   /** Show the things themselves, rather than the structure of them. */
@@ -84,6 +89,12 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const iconPickerAt = ref<{ x: number; y: number } | null>(null);
+const openIconPicker = (event: MouseEvent) => {
+  const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  iconPickerAt.value = { x: box.left, y: box.bottom };
+};
 
 const share = (n: number) => (props.count ? Math.round((n / props.count) * 100) : 0);
 
@@ -214,7 +225,21 @@ const submitField = () => {
       >
         <ArrowLeft class="w-4.5 h-4.5" />
       </button>
-      <component :is="iconForNodeType(nodeType)" class="w-4 h-4 text-gray-400 flex-none" />
+      <!--
+        The icon is the button that changes it. No new control and no extra
+        click: the thing on screen is the thing being edited, which is how the
+        count above opens the table.
+      -->
+      <button
+        type="button"
+        @click="openIconPicker"
+        :title="t('things.icon_change')"
+        class="p-1 -m-1 rounded-md flex-none cursor-pointer transition-colors
+               text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+               hover:bg-gray-100 dark:hover:bg-white/10"
+      >
+        <component :is="iconForNodeType(nodeType)" class="w-4 h-4" />
+      </button>
       <h1 class="text-base font-semibold text-text dark:text-text-dark">
         {{ nodeType }}
       </h1>
@@ -541,4 +566,13 @@ const submitField = () => {
       </section>
     </div>
   </div>
+
+    <IconPicker
+      v-if="iconPickerAt"
+      :node-type="nodeType"
+      :chosen="chosenIcon ?? null"
+      :at="iconPickerAt"
+      @pick="icon => { emit('pickIcon', icon); iconPickerAt = null; }"
+      @close="iconPickerAt = null"
+    />
 </template>

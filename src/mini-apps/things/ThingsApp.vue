@@ -14,9 +14,11 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import type { Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes } from 'lucide-vue-next';
+import { Circle, Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes } from 'lucide-vue-next';
 import { useObservedTypes, isInternalType } from './composables/useObservedTypes';
 import { useSidebarResize } from '../../composables/useSidebarResize';
+import { useEventBus } from '../../composables/useEventBus';
+import { useRemembered } from '../../composables/useRemembered';
 import { useThingsQuery } from './composables/useThingsQuery';
 import { useThingsNode } from './composables/useThingsNode';
 import { useThingsLinks } from './composables/useThingsLinks';
@@ -219,6 +221,18 @@ const sidebar = useSidebarResize({
   right: { initial: 300, min: 220, max: 600 },
 });
 
+/**
+ * Discs, or the kind's icon on the disc.
+ *
+ * Worth a switch rather than a decision made once for everybody: Notes draws
+ * one kind of thing, so a glyph there says the same word on every mark — but a
+ * graph around a `book` in this app reaches people, tasks and notes, and the
+ * shape is the fastest way to read which is which. Somebody who finds that
+ * noisy can have the plain discs back.
+ */
+const GRAPH_MARKS = ['dots', 'icons'] as const;
+const graphMarks = useRemembered('things:graph-marks', GRAPH_MARKS, 'dots');
+
 const showRail = ref(true);
 
 /**
@@ -321,6 +335,39 @@ const groupable = computed(() => arrange.arrangeableFrom(fields.value).filter(f 
 
 /** The typed filter and the arrangement, as one string for the engine. */
 const rerun = () => run(arrange.compose(typed.value));
+
+/**
+ * Keep the rail honest about what is on disk.
+ *
+ * The list is a snapshot of the index, and the pane beside it is memory. Save
+ * a title on an existing node and only memory moved: `saveOrCreate` re-ran the
+ * query when it *created* a node and not when it changed one, so the row went
+ * on saying `not from things` under a heading that said `note from things`.
+ *
+ * Through the bus rather than a call at the save, because Things is not the
+ * only writer any more. Every other app already listens for these three, and
+ * now the assistant raises them too — a node Syn renames while this screen is
+ * open is the same problem with nobody to fix it locally.
+ *
+ * `run()` replaces the result and touches neither the selection nor the open
+ * node, so a refresh mid-edit is invisible to whoever is typing.
+ */
+const bus = useEventBus();
+
+// Coalesced: one save raises `node:updated`, and a rename across a kind raises
+// it once per type — a query per event would be a query per keystroke-ish
+// burst for a list nobody is reading that fast.
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+const refreshSoon = () => {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    void Promise.all([rerun(), loadPinned()]);
+  }, 200);
+};
+
+for (const event of ['node:created', 'node:updated', 'node:deleted'] as const) {
+  bus.on(event, refreshSoon);
+}
 
 /**
  * What the user typed, kept apart from what is sent.
@@ -508,7 +555,7 @@ const railCapped = computed(() => total.value > (railResult.value?.rows.length ?
  * cheaper than fetching everything to render a panel.
  */
 const graphNeighbours = computed(() =>
-  (result.value?.rows ?? []).map(r => ({ id: r.id, title: r.title })),
+  (result.value?.rows ?? []).map(r => ({ id: r.id, title: r.title, nodeType: r.node_type })),
 );
 
 const openTags = computed<string[]>(() => {
@@ -530,7 +577,7 @@ const openTags = computed<string[]>(() => {
  * avoidable by handing it the same array twice.
  */
 const graphBacklinks = computed(() =>
-  links.backlinks.value.map(b => ({ id: b.id, title: b.title })),
+  links.backlinks.value.map(b => ({ id: b.id, title: b.title, nodeType: b.node_type })),
 );
 
 /**
@@ -1648,6 +1695,8 @@ onBeforeUnmount(() => {
         @back="viewMode = 'manager'"
         @remove-kind="removingKind = activeType"
         @rename-kind="renamingKind = activeType"
+        :chosen-icon="schema.schemaFor(activeType)?.icon ?? null"
+        @pick-icon="icon => activeType && schema.saveIcon(activeType, icon)"
         @browse="layout = 'table'"
         @add-field="declareField"
       />
@@ -1847,6 +1896,24 @@ onBeforeUnmount(() => {
         <span class="font-semibold text-[11px] tracking-wider text-gray-400 dark:text-gray-500 uppercase">
           {{ t('things.graph') }}
         </span>
+
+        <!--
+          On the panel it changes, not in a settings screen two rooms away.
+          One control, and its icon is the thing it switches to — the state it
+          would put you in, which is how every other toggle in this app reads.
+        -->
+        <button
+          type="button"
+          @click="graphMarks = graphMarks === 'dots' ? 'icons' : 'dots'"
+          :title="graphMarks === 'dots' ? t('things.graph_show_icons') : t('things.graph_show_dots')"
+          :aria-pressed="graphMarks === 'icons'"
+          class="ml-auto p-1 rounded-md cursor-pointer transition-colors
+                 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                 hover:bg-gray-100 dark:hover:bg-white/10"
+        >
+          <Boxes v-if="graphMarks === 'dots'" class="w-4 h-4" />
+          <Circle v-else class="w-4 h-4" />
+        </button>
       </div>
 
       <!--
@@ -1861,6 +1928,8 @@ onBeforeUnmount(() => {
           :outgoing-links="NO_OUTGOING"
           :backlinks="graphBacklinks"
           :all-notes="graphNeighbours"
+          :current-node-type="detail.node.value.node_type"
+          :marks="graphMarks"
           @open-note="(id: string) => openLinked(id, '')"
         />
       </div>
