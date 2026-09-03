@@ -3,7 +3,11 @@ use crate::models::syn::{
     ModelInfo, ProviderStatus, RagConfig, SynChatRequest, SynConversation, SynConversationFull,
     SynMessage, SynProvider, SynSettings,
 };
+use crate::syn::engine::DriveRequest;
+use crate::syn::prompt::{PromptPlan, PromptPreview, DEFAULT_BUDGET_CHARS};
 use crate::syn::provider::{ollama::OllamaProvider, openai::OpenAiCompatProvider, ChatProvider};
+use crate::syn::registry::Registry;
+use crate::syn::run::{Budget, Run, RunSummary};
 use crate::syn::{conversation, engine::SynEngine, rag};
 
 /// Build the provider the vault's settings ask for.
@@ -217,44 +221,40 @@ pub async fn syn_send_message(
         }
     };
 
-    let (retrieval, system_prompt) = if settings.rag_enabled {
-        // RAG enabled — retrieve context from vault (DB lock is scoped)
-        let (retrieval_result, sys_prompt) = {
-            let db = state
-                .lock()
-                .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
-
-            let retrieval_result =
-                rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
-
-            let context_str = rag::format_context(&retrieval_result);
-            let sys_prompt = rag::build_system_prompt(&context_str, &config.personality);
-
-            (retrieval_result, sys_prompt)
-        }; // DB lock is dropped here — safe to call async engine below
-
-        (retrieval_result, sys_prompt)
+    let (retrieval, context_str) = if settings.rag_enabled {
+        // The DB lock is scoped: retrieval reads, and the lock is gone before
+        // anything async happens below.
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        let retrieval_result =
+            rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
+        let context_str = rag::format_context(&retrieval_result);
+        (retrieval_result, context_str)
     } else {
-        // RAG disabled — build a basic system prompt with personality but no vault context
-        let sys_prompt = rag::build_system_prompt("", &settings.personality);
-        let empty_retrieval = crate::models::syn::RetrievalResult {
-            context_chunks: Vec::new(),
-            total_tokens_estimate: 0,
-            sources: Vec::new(),
-        };
-        (empty_retrieval, sys_prompt)
+        (
+            crate::models::syn::RetrievalResult {
+                context_chunks: Vec::new(),
+                total_tokens_estimate: 0,
+                sources: Vec::new(),
+            },
+            String::new(),
+        )
     };
 
-    // 5. Handle custom system prompt — prepend if set
-    let final_system_prompt = if let Some(ref custom) = settings.custom_system_prompt {
-        if custom.is_empty() {
-            system_prompt
-        } else {
-            format!("{}\n\n{}", custom, system_prompt)
-        }
-    } else {
-        system_prompt
-    };
+    // 5. Assemble the system prompt from its parts.
+    //
+    // The custom instructions used to be prepended here by hand, after the
+    // prompt had already been built. They are a section of the plan now, so
+    // there is one place that knows what the prompt is made of — and one place
+    // that can report on it, which is what `syn_preview_prompt` reads.
+    let final_system_prompt = PromptPlan::for_chat(
+        &context_str,
+        &settings.personality,
+        settings.custom_system_prompt.as_deref(),
+        DEFAULT_BUDGET_CHARS,
+    )
+    .render();
 
     // 6. Build messages for LLM: system prompt + conversation history
     // The system prompt is NOT saved to the conversation file — it's rebuilt each time
@@ -272,30 +272,44 @@ pub async fn syn_send_message(
     }];
     messages_for_llm.extend(conv.messages.iter().cloned());
 
-    // 7. Get tool definitions for function calling
-    let tool_defs = crate::syn::tools::get_tool_definitions();
+    // 7. Everything this run is allowed to reach.
+    let registry = Registry::for_chat();
 
     // Use settings temperature as default, allow per-request override
     let temperature = request.temperature.or(Some(settings.temperature));
 
-    // 8. Run the tool-calling loop against whichever provider is configured
+    // 8. Drive one run to an answer.
+    //
+    // The run is the record: the goal in the user's own words, the ceilings
+    // this request may not exceed, and a transcript written as it happens. It
+    // survives the app being closed, which the local variables it replaced did
+    // not — so a request that fails now leaves something to read rather than
+    // nothing at all.
+    let mut run = Run::new(
+        request.message.clone(),
+        Some(request.conversation_id.clone()),
+        Budget::from_settings(&settings),
+    );
+    crate::syn::run::prune_runs(&vault_path);
+
     let engine = SynEngine::new(provider_for(&app, &settings));
     let assistant_message_id = uuid::Uuid::new_v4().to_string();
 
     let mut assistant_message = engine
-        .send_message_with_tools(
-            &app,
-            &request.conversation_id,
-            &assistant_message_id,
-            &messages_for_llm,
-            &model,
-            temperature,
-            &tool_defs,
-            state.inner(),
-            &vault_path,
-            settings.max_tool_iterations,
-            settings.num_ctx,
-            settings.max_history_messages,
+        .drive(
+            &mut run,
+            DriveRequest {
+                app: &app,
+                message_id: &assistant_message_id,
+                history: &messages_for_llm,
+                model: &model,
+                temperature,
+                registry: &registry,
+                db: state.inner(),
+                vault_path: &vault_path,
+                num_ctx: settings.num_ctx,
+                max_history: settings.max_history_messages,
+            },
         )
         .await?;
 
@@ -342,6 +356,85 @@ pub async fn syn_send_message(
 pub async fn syn_stop_generation(conversation_id: Option<String>) -> Result<(), AppError> {
     SynEngine::stop_generation(conversation_id.as_deref());
     Ok(())
+}
+
+/// Stop one run by its own id.
+///
+/// The chat presses stop on a conversation and knows nothing about runs; the
+/// runs panel presses stop on the run in front of it.
+#[tauri::command]
+pub async fn syn_cancel_run(run_id: String) -> Result<(), AppError> {
+    crate::syn::engine::stop_run(&run_id);
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RUNS
+// ═══════════════════════════════════════════════════════════════
+
+/// Every run in the vault, newest first.
+///
+/// `is_live` is handed in so a run left `Working` by a process that has since
+/// ended is reported as interrupted rather than as still going.
+#[tauri::command]
+pub async fn syn_list_runs(vault_path: String) -> Result<Vec<RunSummary>, AppError> {
+    crate::syn::run::list_runs(&vault_path, crate::syn::engine::is_live)
+}
+
+/// One run in full, including every step.
+#[tauri::command]
+pub async fn syn_get_run(vault_path: String, run_id: String) -> Result<Run, AppError> {
+    crate::syn::run::get_run(&vault_path, &run_id)
+}
+
+#[tauri::command]
+pub async fn syn_delete_run(vault_path: String, run_id: String) -> Result<(), AppError> {
+    crate::syn::run::delete_run(&vault_path, &run_id)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WHAT SYN IS ACTUALLY TOLD
+// ═══════════════════════════════════════════════════════════════
+
+/// The system prompt this vault would send, and where its room goes.
+///
+/// `message` is optional: with one, retrieval runs and the preview includes the
+/// context that question would pull in, which is the only way to see how much
+/// of the window retrieval is taking. Without one, it is the fixed part.
+#[tauri::command]
+pub async fn syn_preview_prompt(
+    vault_path: String,
+    message: Option<String>,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<PromptPreview, AppError> {
+    let settings = settings_for(&vault_path);
+
+    let context = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        Some(message) if settings.rag_enabled => {
+            let config = RagConfig {
+                enabled: true,
+                max_context_chars: settings.max_context_chars,
+                include_finance: settings.include_finance,
+                include_feeds: settings.include_feeds,
+                graph_expansion_depth: settings.graph_expansion_depth,
+                personality: settings.personality.clone(),
+            };
+            let db = state
+                .lock()
+                .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            let retrieved = rag::retrieve_context(&db, message, &[], &config)?;
+            rag::format_context(&retrieved)
+        }
+        _ => String::new(),
+    };
+
+    Ok(PromptPlan::for_chat(
+        &context,
+        &settings.personality,
+        settings.custom_system_prompt.as_deref(),
+        DEFAULT_BUDGET_CHARS,
+    )
+    .into())
 }
 
 /// Cancel an ongoing model pull.

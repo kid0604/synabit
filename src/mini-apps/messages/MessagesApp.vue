@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
-import { Loader2, Settings, Download, ChevronLeft, Zap } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -11,6 +11,7 @@ import ChatSidebar, { type ChatContact } from './components/ChatSidebar.vue';
 import ChatPanel from './components/ChatPanel.vue';
 import ModelSelector from './components/ModelSelector.vue';
 import SynSettings from './components/SynSettings.vue';
+import RunInspector from './components/RunInspector.vue';
 
 import { useSynChat } from './composables/useSynChat';
 import { useSynModels } from './composables/useSynModels';
@@ -82,6 +83,13 @@ const activeChatId = ref<string | null>(null);
 const activeMessages = ref<SynMessage[]>([]);
 const notifications = ref<any[]>([]);
 const showSettings = ref(false);
+/**
+ * The panel that shows what Syn actually did, and what it was actually told.
+ *
+ * Beside Settings rather than inside it: settings are what you change, and this
+ * is what you read when a change did not do what you expected.
+ */
+const showInspector = ref(false);
 const loading = ref(true);
 
 const isMobile = ref(window.innerWidth < 768);
@@ -413,6 +421,14 @@ defineExpose({ refresh, fetchNotifications });
                 </button>
 
                 <button
+                  @click="showInspector = !showInspector"
+                  class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
+                  :title="$t('syn.inspector')"
+                >
+                  <ScrollText class="w-4 h-4" />
+                </button>
+
+                <button
                   @click="showSettings = !showSettings"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
                   title="Syn AI Settings"
@@ -455,6 +471,13 @@ defineExpose({ refresh, fetchNotifications });
             </template>
         </div>
     </div>
+
+    <!-- What Syn did, and what it was told -->
+    <RunInspector
+      v-if="showInspector"
+      :vault-path="props.vaultPath"
+      @close="showInspector = false"
+    />
 
     <!-- Settings Panel -->
     <SynSettings

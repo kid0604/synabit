@@ -905,7 +905,41 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
         .ok_or_else(|| AppError::General("Missing required parameter: query".into()))?;
 
     let parsed = crate::search::parse_query(query);
-    let result = db.run_node_query(&parsed)?;
+    let mut result = db.run_node_query(&parsed)?;
+
+    // Widen to "any of these words" when requiring all of them found nothing.
+    //
+    // `parse_query` matches every word, which is right for the search box —
+    // somebody typing "meeting notes" wants notes about meetings, and OR would
+    // hand them the whole vault. It is wrong here, because what arrives at this
+    // tool is not a search phrase. It is the words of a *question*, and
+    // requiring all of them requires the asker to have guessed the note's own
+    // vocabulary.
+    //
+    // Retrieval learned this and fixed it on its own side — `retrieve_context`
+    // sets `match_any`, and the comment on that line names the very question
+    // that proved it. The fix never reached the tool the assistant uses, so the
+    // two halves of the same app searched with opposite semantics: asked what
+    // was decided about pricing and who disagreed, the assistant queried
+    // `decide pricing disagreed`, got nothing, and reported that the vault held
+    // no notes about pricing. It holds two, and both are entirely about it.
+    //
+    // Falling back rather than switching, because the two failures are not
+    // symmetric. Too many results is visible and recoverable: the model reads
+    // `total_matches` and narrows. Zero results is neither — it reads as an
+    // empty vault, and there is nothing to narrow. So a query that works keeps
+    // working exactly as it does today, and only one that found nothing is
+    // asked a second, looser way.
+    let mut widened = false;
+    if result.total == 0 && parsed.fts_terms.len() > 1 {
+        let mut loose = crate::search::parse_query(query);
+        loose.match_any = true;
+        let retry = db.run_node_query(&loose)?;
+        if retry.total > 0 {
+            result = retry;
+            widened = true;
+        }
+    }
 
     let rows: Vec<Value> = result
         .rows
@@ -928,6 +962,16 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
         // overdue tasks" when the true number is several hundred.
         "total_matches": result.total,
         "_returned": rows.len(),
+        // Said out loud, because it changes what the results mean. The model
+        // asked for every word and is being handed rows that matched any of
+        // them, so some will be off-topic — and it should say what it searched
+        // for rather than presenting a loose match as an exact one.
+        "matched_any_word": widened,
+        "_note": if widened {
+            Some("No node matched all of those words, so this is a match on ANY of them. Some results may be unrelated; narrow the query if so.")
+        } else {
+            None
+        },
     })
     .to_string())
 }
@@ -2667,7 +2711,8 @@ mod tests {
     /// assistant refusing to do its job.
     #[test]
     fn the_system_prompt_only_names_tools_that_exist() {
-        let prompt = crate::syn::rag::build_system_prompt("", "auto");
+        let prompt = crate::syn::prompt::PromptPlan::for_chat("", "auto", None, crate::syn::prompt::DEFAULT_BUDGET_CHARS)
+            .render();
         let names: Vec<String> = get_tool_definitions()
             .iter()
             .map(|d| d.function.name.clone())

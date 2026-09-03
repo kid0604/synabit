@@ -1,6 +1,9 @@
 pub mod conversation;
 pub mod engine;
+pub mod prompt;
 pub mod provider;
 pub mod rag;
+pub mod registry;
+pub mod run;
 pub mod settings;
 pub mod tools;

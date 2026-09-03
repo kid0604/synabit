@@ -816,6 +816,11 @@ pub fn run() {
             syn_commands::syn_has_api_key,
             syn_commands::syn_pin_conversation,
             syn_commands::syn_export_conversation,
+            syn_commands::syn_list_runs,
+            syn_commands::syn_get_run,
+            syn_commands::syn_cancel_run,
+            syn_commands::syn_delete_run,
+            syn_commands::syn_preview_prompt,
             // P2P Sync
             sync_cmds::sync_connect,
             sync_cmds::sync_full,

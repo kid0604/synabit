@@ -940,158 +940,6 @@ fn parse_metadata(metadata: &Option<String>) -> HashMap<String, String> {
 //  D. BUILD SYSTEM PROMPT
 // ═══════════════════════════════════════════════════════════════
 
-/// Build the full system prompt including personality, rules, and vault context.
-///
-/// The `personality` parameter controls the language style:
-/// - `"casual"` — Vietnamese casual (tao/mày)
-/// - `"professional"` — Vietnamese formal (tôi/bạn)
-/// - `"auto"` — Let the model adapt based on user's language
-pub fn build_system_prompt(context: &str, personality: &str) -> String {
-    let now = chrono::Local::now();
-    let current_date = now.format("%Y-%m-%d").to_string();
-    let day_of_week = now.format("%A").to_string();
-
-    let personality_instructions = match personality {
-        "casual" => {
-            "Respond in Vietnamese with a casual, friendly tone. \
-             Use informal pronouns (tao/mày) when the user does. \
-             Be witty and conversational, like a close friend."
-        }
-        "professional" => {
-            "Respond in Vietnamese with a professional, polite tone. \
-             Use formal pronouns (tôi/bạn). \
-             Be clear, structured, and respectful."
-        }
-        _ => {
-            // "auto" — adapt to the user's language and style
-            "Match the user's language and communication style. \
-             If they write in Vietnamese, respond in Vietnamese. \
-             If they write in English, respond in English. \
-             If they use casual language (tao/mày), be casual back. \
-             If they are formal, be formal."
-        }
-    };
-
-    let context_section = if context.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n\n=== VAULT CONTEXT ===\n\
-             A few things from the user's vault that looked relevant to this \
-             question. They are a starting point, not the answer, and this is \
-             a sample rather than everything that matches.\n\
-             - If what you need is here, use it and do not search again.\n\
-             - If the question asks how many, how much, or anything else that \
-             has to be counted or added up, this cannot answer it. Use \
-             `query_nodes` and read `total_matches`.\n\
-             - If nothing here answers the question, search rather than \
-             saying you could not find anything.\n\n\
-             {}\
-             === END CONTEXT ===",
-            context
-        )
-    };
-
-    // Named after the tools that exist. This block used to teach a tool per
-    // data model — create_note, create_task, create_event, search_vault,
-    // get_nodes_by_type — and every one of them had to be listed here as well
-    // as defined, so the prompt grew with the tool list and went stale with
-    // it. It now teaches the shape of the vault instead: everything is a node,
-    // one tool reads them and one writes them.
-    let tool_guidelines = "Tool usage guidelines:\n\
-         - You have tools. USE THEM rather than guessing or answering from memory \
-         when the request involves finding, listing, creating or changing the user's data.\n\
-         - Almost everything in this vault is a node: notes, tasks, events, people, \
-         projects, and any type this user invented. `query_nodes` finds them and \
-         `get_node` reads one in full.\n\
-         - If you do not know what the user keeps, or are unsure a type or field \
-         exists, call `list_schemas` first. It tells you every type in this vault \
-         and the fields each one actually uses. Do this before inventing a field name.\n\
-         - Query syntax: `type:task status:todo sort:due_date`, `type:book rating:>3`, \
-         `#work due_date:<2026-09-01`, plus free words for full-text search. \
-         `limit:` caps results; check `total_matches` before saying how many there are.\n\
-         - To create anything: `create_node` with the type, title and fields. \
-         Match the field names `list_schemas` reports for that type.\n\
-         - To change anything — mark a task done, set a due date, add a tag: \
-         `update_node`. Send only the fields that change; everything else is kept. \
-         Find the node with `query_nodes` first to get its id.\n\
-         - `get_linked_nodes` follows links out of and into a node. Use it for \
-         'what else is related to this', which no query can express.\n\
-         - To remove anything: `trash_node`. It goes to the vault's trash, not \
-         gone — `list_trash` shows what is there and `restore_node` puts one back. \
-         Removing several things is one call each. Never say you cannot delete.\n\
-         - Every save is kept. `list_versions` shows how a node looked before, and \
-         `restore_version` puts it back. Reach for these when the user says an edit \
-         was wrong, including one you just made.\n\
-         - To change the SHAPE of a type rather than one node — rename a field on \
-         every task, remove a field everywhere, rename or remove a whole type: \
-         `rename_field`, `delete_field`, `rename_kind`, `delete_kind`. These touch \
-         many files at once, so each one works in two steps: call it WITHOUT \
-         `confirm_nodes` to get the count, tell the user what it will affect, then \
-         call again passing that exact number. A user who wants a type gone but \
-         made it by accident usually wants `rename_kind`, which keeps everything \
-         they wrote — offer that before `delete_kind`.\n\
-         - For files, images, documents or PDFs: `search_files`. It searches inside \
-         documents as well as filenames. Example: \"tìm ảnh\", \"find PDFs\". To read \
-         what a document actually says, `read_file_text` — `get_node` gives you only \
-         the vault's record of the file, not its contents.\n\
-         - For articles from RSS feeds: `search_feed_articles`, and \
-         `update_feed_article` to mark one read, starred or read-later. These are \
-         not nodes.\n\
-         - `list_schemas` also reports `app_storage`. That is Synabit's own \
-         bookkeeping — never create or edit those, and never count them when \
-         telling the user what the vault holds.\n\
-         - FINANCE is the exception to all of the above: transactions live inside a \
-         month node as a list, not as nodes of their own, so the generic tools \
-         cannot reach them.\n\
-           1. Call `get_finance_summary` FIRST to learn the real accounts and categories.\n\
-           2. Then `create_transaction` with the amount, category and account.\n\
-           3. Example: \"nay đi chợ hết 150k\" → create_transaction(amount=150000, category=\"Food & Dining\", note=\"Đi chợ\").\n\
-           4. To review history, `get_transactions` with the month parameter.\n\
-         - ALWAYS confirm what you created or changed, with the details from the result.\n\
-         - Do NOT reply with text alone when a tool can give a concrete answer.\n\
-         - Call tools FIRST, then summarize the results for the user.";
-
-    format!(
-        "You are Syn, a personal AI assistant embedded in the Synabit productivity app. \
-         Synabit is a second-brain/productivity tool that stores notes, tasks, events, \
-         contacts, files, RSS feeds, and financial records.\n\n\
-         {}\n\n\
-         Key rules:\n\
-         - When referencing vault data, ALWAYS use [[Title]] notation with the HUMAN-READABLE TITLE (not the file path or ID). \
-         Example: 'I found [[Ghi chú họp team]] which mentions...' \
-         WRONG: [[Notes/22440d7a-84c5-433b-982c-04b906591253.md]] — NEVER use file paths in links. \
-         RIGHT: [[Ghi chú họp team]] — always use the note/task/event title.\n\
-         - If information is not in the provided context, say so honestly — do not fabricate.\n\
-         - Keep responses concise and actionable.\n\
-         - You can see the user's notes, tasks, events, contacts, feeds, and finances.\n\
-         - For tasks and events, pay attention to dates, priorities, and statuses.\n\
-         - CHARTS: You can render charts using Mermaid syntax in code blocks. \
-         When the user asks for charts, graphs, or data visualization, output a fenced code block \
-         with language 'mermaid'. Supported types: pie, xychart-beta (bar charts), flowchart, \
-         sequence, gantt, timeline. Example for spending breakdown:\n\
-         ```mermaid\n\
-         pie title Monthly Spending\n\
-             \"Food\" : 45\n\
-             \"Transport\" : 20\n\
-             \"Bills\" : 35\n\
-         ```\n\
-         For bar charts use xychart-beta:\n\
-         ```mermaid\n\
-         xychart-beta\n\
-             title \"Income vs Expense\"\n\
-             x-axis [\"Jan\", \"Feb\", \"Mar\"]\n\
-             y-axis \"Amount\" 0 --> 5000000\n\
-             bar [1000000, 2000000, 1500000]\n\
-             bar [800000, 1500000, 1200000]\n\
-         ```\n\
-         - Today's date: {} ({})\n\n\
-         {}\n\
-         {}",
-        personality_instructions, current_date, day_of_week, tool_guidelines, context_section
-    )
-}
-
 // ═══════════════════════════════════════════════════════════════
 //  TESTS
 // ═══════════════════════════════════════════════════════════════
@@ -1216,22 +1064,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_system_prompt_casual() {
-        let prompt = build_system_prompt("some context", "casual");
-        assert!(prompt.contains("Syn"));
-        assert!(prompt.contains("tao/mày"));
-        assert!(prompt.contains("VAULT CONTEXT"));
-        assert!(prompt.contains("some context"));
-    }
-
-    #[test]
-    fn test_build_system_prompt_auto_no_context() {
-        let prompt = build_system_prompt("", "auto");
-        assert!(prompt.contains("Syn"));
-        assert!(!prompt.contains("VAULT CONTEXT"));
-    }
-
-    #[test]
     fn test_parse_metadata() {
         let meta = Some("status:todo|priority:P1|due_date:2026-06-12".to_string());
         let map = parse_metadata(&meta);
@@ -1285,6 +1117,33 @@ mod rag_vs_agentic {
     use crate::syn::engine::SynEngine;
     use crate::syn::provider::ChatProvider;
 
+    /// Model output, with the punctuation a model emits folded to the
+    /// punctuation a test was written with.
+    ///
+    /// Three times now the scorer has been the broken thing rather than the
+    /// thing it scores, and each time the number it produced looked fine. This
+    /// was the third: the marker list held `n't`, the model wrote `couldn’t`
+    /// with U+2019, and three perfectly correct answers —
+    ///
+    /// > I couldn’t find any notes specifically about the Ha Long trip. The
+    /// > only result was [[Hanoi office]], which doesn’t appear related.
+    ///
+    /// — were recorded as the model failing. Substring matching is cheap and
+    /// checkable, which is why it is used, but it is only as good as the
+    /// assumption that both sides spell things the same way, and a language
+    /// model does not.
+    fn normalise(reply: &str) -> String {
+        reply
+            .to_lowercase()
+            // Typographic apostrophes, including the modifier letter form some
+            // models emit.
+            .replace(['\u{2018}', '\u{2019}', '\u{02bc}'], "'")
+            .replace(['\u{201c}', '\u{201d}'], "\"")
+            // Non-breaking and other exotic spaces, so a space-padded marker
+            // like "not " still matches.
+            .replace(['\u{00a0}', '\u{2009}', '\u{202f}'], " ")
+    }
+
     /// One question, and what a correct answer has to contain.
     ///
     /// Substrings rather than a judge model: they are checkable, they are
@@ -1294,10 +1153,40 @@ mod rag_vs_agentic {
         ask: &'static str,
         /// Every one of these must appear in the reply.
         wants: &'static [&'static str],
+        /// At least one of these must appear, when there is more than one way
+        /// to say the right thing.
+        ///
+        /// `wants` requires all of its entries, which is right for a fact — an
+        /// answer about the pricing decision has to contain both "per-seat"
+        /// and "Mai". It is wrong for an answer whose *shape* is what matters,
+        /// and it was wrong in a way that mattered: the honest-no question
+        /// asked for the substrings "no" and "not", so
+        ///
+        /// > Tôi không tìm thấy ghi chú nào cụ thể về chuyến đi Hạ Long của bạn.
+        ///
+        /// was scored a failure. That answer is entirely correct. This is a
+        /// Vietnamese-first app whose default personality adapts to the user's
+        /// language, and a measure that only recognises English answers
+        /// mismeasures it in exactly the case it exists to test.
+        any_of: &'static [&'static str],
         /// None of these may appear. Catches confident invention.
         refuses: &'static [&'static str],
         /// What this question is really testing.
         about: &'static str,
+        /// Node ids that carry the answer, for judging retrieval on its own.
+        ///
+        /// Empty means no node can answer it — either because the answer is a
+        /// count that has to be computed, or because the honest answer is that
+        /// the vault has nothing. Both are real cases and both are ones where
+        /// anything retrieved is at best cost.
+        relevant: &'static [&'static str],
+        /// Node ids that, if retrieved, actively point the wrong way.
+        ///
+        /// Not merely irrelevant — irrelevant context is noise, and a model
+        /// can ignore noise. These are the ones that *read* like an answer: a
+        /// task called "Book the venue" handed to a question about books, or
+        /// a note about one place handed to a question about another.
+        misleading: &'static [&'static str],
     }
 
     const QUESTIONS: &[Question] = &[
@@ -1306,30 +1195,56 @@ mod rag_vs_agentic {
             wants: &["ha-noi-2026"],
             refuses: &[],
             about: "one fact in one note — retrieval's best case",
+            any_of: &[],
+            relevant: &["Notes/Office.md"],
+            misleading: &[],
         },
         Question {
             ask: "How many tasks do I have that are not done? Give me the number.",
             wants: &["4"],
             refuses: &["7"],
             about: "a count — stuffed context cannot count, only sample",
+            any_of: &[],
+            // Nothing can answer this by being read; it has to be counted.
+            relevant: &[],
+            misleading: &[],
         },
         Question {
             ask: "Which book did I rate highest, and what did I rate it?",
             wants: &["Sapiens", "5"],
             refuses: &[],
             about: "an invented type nothing was written for",
+            any_of: &[],
+            relevant: &["Books/sapiens.md"],
+            // A task, retrieved because its title starts with the word "Book".
+            misleading: &["Tasks/d.md"],
         },
         Question {
             ask: "What did I decide about pricing, and who disagreed?",
             wants: &["per-seat", "Mai"],
             refuses: &[],
             about: "two facts in two different notes",
+            any_of: &[],
+            relevant: &["Notes/Pricing decision.md", "Notes/Pricing pushback.md"],
+            misleading: &[],
         },
         Question {
             ask: "Do I have any notes about the Ha Long trip?",
-            wants: &["no", "not"],
+            wants: &[],
             refuses: &["Ha Long Bay hotel"],
             about: "the honest no — invention is the failure mode here",
+            // Both languages, because the assistant answers in the one the
+            // user wrote in and the seeded question is English while the
+            // model may well reply in Vietnamese.
+            any_of: &[
+                "no ", "not ", "n't", "none", "nothing",
+                "không", "chưa", "chẳng",
+            ],
+            // There is no Ha Long note. The right retrieval is none at all.
+            relevant: &[],
+            // The Hanoi note, reached because FTS splits `ha-noi-2026` and the
+            // question says "Ha". It reads like a hit and is not one.
+            misleading: &["Notes/Office.md"],
         },
     ];
 
@@ -1437,6 +1352,17 @@ mod rag_vs_agentic {
         prompt_chars: usize,
         elapsed_ms: u128,
         reply: String,
+        /// How the run ended, and how many rounds it took to get there.
+        ///
+        /// Without this a failure is unattributable: a model that answered
+        /// wrongly and a model that ran out of rounds before it could answer
+        /// look identical in the table, and they call for opposite responses.
+        /// It matters most for the agentic arm, which has to go and look and
+        /// therefore spends rounds the stuffed arm does not — so a ceiling set
+        /// for the stuffed arm penalises the other one and reads as the other
+        /// one being worse.
+        state: crate::syn::run::RunState,
+        rounds: u8,
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1466,9 +1392,21 @@ mod rag_vs_agentic {
             };
             let retrieval =
                 retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
-            build_system_prompt(&format_context(&retrieval), &settings.personality)
+            crate::syn::prompt::PromptPlan::for_chat(
+                &format_context(&retrieval),
+                &settings.personality,
+                None,
+                crate::syn::prompt::DEFAULT_BUDGET_CHARS,
+            )
+            .render()
         } else {
-            build_system_prompt("", &settings.personality)
+            crate::syn::prompt::PromptPlan::for_chat(
+                "",
+                &settings.personality,
+                None,
+                crate::syn::prompt::DEFAULT_BUDGET_CHARS,
+            )
+            .render()
         };
 
         let msg = |role: &str, content: String| SynMessage {
@@ -1493,20 +1431,28 @@ mod rag_vs_agentic {
         let db_state = std::sync::Mutex::new(db);
         let started = std::time::Instant::now();
 
+        let registry = crate::syn::registry::Registry::for_chat();
+        let mut run = crate::syn::run::Run::new(
+            question.ask,
+            None,
+            crate::syn::run::Budget::from_settings(settings),
+        );
+
         let reply = engine
-            .send_message_with_tools(
-                &app,
-                "rag-eval",
-                "rag-eval-msg",
-                &history,
-                model,
-                Some(settings.temperature),
-                &crate::syn::tools::get_tool_definitions(),
-                &db_state,
-                vault.to_str().expect("utf8"),
-                settings.max_tool_iterations,
-                settings.num_ctx,
-                settings.max_history_messages,
+            .drive(
+                &mut run,
+                crate::syn::engine::DriveRequest {
+                    app: &app,
+                    message_id: "rag-eval-msg",
+                    history: &history,
+                    model,
+                    temperature: Some(settings.temperature),
+                    registry: &registry,
+                    db: &db_state,
+                    vault_path: vault.to_str().expect("utf8"),
+                    num_ctx: settings.num_ctx,
+                    max_history: settings.max_history_messages,
+                },
             )
             .await;
 
@@ -1517,13 +1463,18 @@ mod rag_vs_agentic {
             Err(e) => (format!("<error: {e}>"), 0),
         };
 
-        let lowered = content.to_lowercase();
+        let lowered = normalise(&content);
         let missing: Vec<&str> = question
             .wants
             .iter()
             .copied()
             .filter(|w| !lowered.contains(&w.to_lowercase()))
             .collect();
+        let missed_shape = !question.any_of.is_empty()
+            && !question
+                .any_of
+                .iter()
+                .any(|w| lowered.contains(&w.to_lowercase()));
         let invented: Vec<&str> = question
             .refuses
             .iter()
@@ -1533,6 +1484,8 @@ mod rag_vs_agentic {
 
         let detail = if !missing.is_empty() {
             format!("missing {missing:?}")
+        } else if missed_shape {
+            format!("said none of {:?}", question.any_of)
         } else if !invented.is_empty() {
             format!("invented {invented:?}")
         } else {
@@ -1540,7 +1493,9 @@ mod rag_vs_agentic {
         };
 
         Outcome {
-            passed: missing.is_empty() && invented.is_empty(),
+            state: run.state,
+            rounds: run.spent.iterations,
+            passed: missing.is_empty() && !missed_shape && invented.is_empty(),
             detail,
             tool_calls,
             prompt_chars: system_prompt.chars().count(),
@@ -1556,38 +1511,473 @@ mod rag_vs_agentic {
     /// them together means a bad retrieval and an unlucky sampling temperature
     /// look identical in the table.
     ///
+    /// # What this used to measure, and why that was not enough
+    ///
+    /// It printed the titles retrieved and counted how many questions came
+    /// back with nothing. On that measure the pipeline reads as fixed: nothing
+    /// comes back empty any more. But "not empty" and "right" are different
+    /// claims, and the gap between them is where the interesting failure now
+    /// lives — a question about books that retrieves a task called "Book the
+    /// venue", and a question about a place the vault has never heard of that
+    /// retrieves a note about a different place. Both are non-empty. Both are
+    /// worse than empty, because a model handed a plausible wrong note has no
+    /// way to know it is wrong, while a model handed nothing is told to search.
+    ///
+    /// So it counts three things now: facts found, facts missed, and questions
+    /// handed something that points the wrong way.
+    ///
     /// Runs offline, so it is a normal test rather than an ignored one.
     #[test]
     fn what_retrieval_finds_for_each_question() {
-        let vault_dir = tempfile::tempdir().expect("temp vault");
-        let db = seed(vault_dir.path());
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(dir.path());
+        let config = RagConfig::default();
 
-        let config = RagConfig {
-            enabled: true,
-            max_context_chars: 12000,
-            include_finance: true,
-            include_feeds: true,
-            graph_expansion_depth: 1,
-            personality: "auto".into(),
-        };
+        eprintln!("\n── what retrieval finds, before any model sees it ──────────────────");
+        eprintln!(
+            "{:<52} {:>4} {:>5} {:>7} {:>6} {:>6}",
+            "question", "hit", "miss", "misled", "chars", "best"
+        );
 
-        eprintln!("\n── what RAG retrieves, before any model sees it ──");
-        let mut found_nothing = 0;
+        let (mut found, mut wanted, mut misled_questions) = (0usize, 0usize, 0usize);
+
         for q in QUESTIONS {
-            let got = retrieve_context(&db, q.ask, &[], &config).expect("retrieval runs");
-            let titles: Vec<&str> = got.context_chunks.iter().map(|c| c.title.as_str()).collect();
+            let result = retrieve_context(&db, q.ask, &[], &config).expect("retrieval runs");
+            let ids: Vec<&str> = result
+                .context_chunks
+                .iter()
+                .map(|c| c.source_id.as_str())
+                .collect();
+
+            let hit = q.relevant.iter().filter(|r| ids.contains(r)).count();
+            let miss = q.relevant.len() - hit;
+            let misled = q.misleading.iter().filter(|m| ids.contains(m)).count();
+
+            found += hit;
+            wanted += q.relevant.len();
+            if misled > 0 {
+                misled_questions += 1;
+            }
+
+            let chars: usize = result.context_chunks.iter().map(|c| c.content.len()).sum();
+            let best = result
+                .context_chunks
+                .iter()
+                .map(|c| c.relevance_score)
+                .fold(0.0_f64, f64::max);
+
+            let unanswerable = q.relevant.is_empty();
             eprintln!(
-                "{:>2} chunk(s)  {:>5} ch  {:<60} {:?}",
-                got.context_chunks.len(),
-                format_context(&got).chars().count(),
-                q.ask.chars().take(58).collect::<String>(),
-                titles
+                "{:<52} {:>4} {:>5} {:>7} {:>6} {:>6.2}",
+                q.ask.chars().take(52).collect::<String>(),
+                if unanswerable { "–".to_string() } else { hit.to_string() },
+                if unanswerable { "–".to_string() } else { miss.to_string() },
+                misled,
+                chars,
+                best,
             );
-            if got.context_chunks.is_empty() {
-                found_nothing += 1;
+
+            // The titles, because a number does not show you what went wrong.
+            for chunk in &result.context_chunks {
+                let mark = if q.misleading.contains(&chunk.source_id.as_str()) {
+                    "✗"
+                } else if q.relevant.contains(&chunk.source_id.as_str()) {
+                    "✓"
+                } else {
+                    "·"
+                };
+                eprintln!(
+                    "      {mark} {:<40} {:>6.2}  {}",
+                    chunk.title.chars().take(40).collect::<String>(),
+                    chunk.relevance_score,
+                    chunk.source_id,
+                );
             }
         }
-        eprintln!("── {found_nothing}/{} questions retrieved nothing ──\n", QUESTIONS.len());
+
+        eprintln!(
+            "── {found}/{wanted} facts found · {misled_questions}/{} questions given \
+             misleading context ──\n",
+            QUESTIONS.len()
+        );
+
+        // Deliberately not an assertion on the numbers. This prints a table for
+        // a person to read and decide from, and pinning today's figures would
+        // turn every retrieval change into a failing test that has to be
+        // re-blessed rather than read.
+    }
+
+    /// The one thing retrieval must never do: answer a question about something
+    /// the vault does not contain.
+    ///
+    /// Separated from the table above because it *is* a rule rather than a
+    /// measurement. Everything else about retrieval is a trade — more recall
+    /// against more noise — and a model told the context is a sample can work
+    /// around noise. This one is not a trade. Asked about a trip that was never
+    /// taken, a pipeline that hands back a confident-looking note about
+    /// somewhere else has manufactured evidence, and nothing downstream can
+    /// tell that it did.
+    ///
+    /// **This does not pass today.** "Reykjavik supplier" retrieves nothing, as
+    /// it should; "Ha Long trip" retrieves the Hanoi office note, because FTS5
+    /// tokenises `ha-noi-2026` into `ha`/`noi`/`2026` and the question contains
+    /// the word "Ha". Under `match_any` one matched term is enough to surface a
+    /// document.
+    ///
+    /// It is `#[ignore]`d rather than deleted or weakened because it states the
+    /// rule correctly and the rule is not held. Both obvious fixes were tried
+    /// and measured, and both cost more than they buy — see
+    /// `how_much_of_the_question_each_hit_matched` for the numbers and
+    /// `docs/adr-rag-vs-agentic-2026-09-03.md` for why nothing was tuned on
+    /// five questions from one seeded vault.
+    ///
+    /// ```bash
+    /// cargo test --lib a_question_about_something_absent -- --ignored
+    /// ```
+    #[test]
+    #[ignore = "a known defect, stated as the rule it breaks; see the RAG ADR"]
+    fn a_question_about_something_absent_retrieves_nothing() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(dir.path());
+        let config = RagConfig::default();
+
+        for absent in [
+            "Do I have any notes about the Ha Long trip?",
+            "What did we agree with the Reykjavik supplier?",
+        ] {
+            let result = retrieve_context(&db, absent, &[], &config).expect("retrieval runs");
+            let titles: Vec<&str> = result
+                .context_chunks
+                .iter()
+                .map(|c| c.title.as_str())
+                .collect();
+            assert!(
+                result.context_chunks.is_empty(),
+                "`{absent}` has no answer in this vault, and retrieval offered {titles:?}"
+            );
+        }
+    }
+
+    /// How many of the query's terms a result actually matched.
+    ///
+    /// FTS5's `snippet()` wraps each matched term in `<mark>`, so this is a count
+    /// FTS has already done and thrown away. Title as well as snippet, because the
+    /// snippet only covers the body column and a match on the title would
+    /// otherwise read as no match at all.
+    ///
+    /// Distinct terms rather than occurrences: a note that says "pricing" nine
+    /// times has answered one word of the question, not nine.
+    fn marked_terms(snippet: &str, title: &str, terms: &[String]) -> usize {
+        let marked: String = snippet.to_lowercase();
+        let title = title.to_lowercase();
+        terms
+            .iter()
+            .filter(|term| {
+                let needle = term.to_lowercase();
+                marked.contains(&format!("<mark>{needle}</mark>")) || title.contains(&needle)
+            })
+            .count()
+    }
+
+    /// The scorer, on answers in both languages.
+    ///
+    /// It got this wrong once, and the failure was invisible: a correct
+    /// Vietnamese answer to the honest-no question was recorded as a failure of
+    /// the *model*, and went into a table that a decision was going to be read
+    /// off. A measure that is wrong in one language is worse than no measure,
+    /// because it is wrong with a number attached.
+    #[test]
+    fn the_honest_no_is_recognised_in_either_language() {
+        let question = QUESTIONS
+            .iter()
+            .find(|q| q.ask.contains("Ha Long"))
+            .expect("the honest-no question is still there");
+
+        let scores = |reply: &str| -> bool {
+            let lowered = normalise(reply);
+            let missing = question
+                .wants
+                .iter()
+                .any(|w| !lowered.contains(&w.to_lowercase()));
+            let missed_shape = !question.any_of.is_empty()
+                && !question
+                    .any_of
+                    .iter()
+                    .any(|w| lowered.contains(&w.to_lowercase()));
+            let invented = question
+                .refuses
+                .iter()
+                .any(|w| lowered.contains(&w.to_lowercase()));
+            !missing && !missed_shape && !invented
+        };
+
+        // The answer that was scored a failure, verbatim from the gemma4:e4b run.
+        assert!(
+            scores(
+                "Tôi không tìm thấy ghi chú nào cụ thể về chuyến đi Hạ Long của bạn. \
+                 Kết quả tìm kiếm chỉ trả về một ghi chú khác là [[Hanoi office]]."
+            ),
+            "a correct Vietnamese answer must score as correct"
+        );
+        assert!(scores("I could not find any notes about a Ha Long trip."));
+
+        // Verbatim from the gpt-5.6-luna run, typographic apostrophe included.
+        // All three of these were scored as the model failing.
+        assert!(
+            scores(
+                "I couldn\u{2019}t find any notes specifically about the Ha Long trip. \
+                 The only result was [[Hanoi office]], which doesn\u{2019}t appear related."
+            ),
+            "a curly apostrophe is still an apostrophe"
+        );
+        assert!(scores(
+            "I couldn\u{2019}t find a note specifically about a Ha Long trip."
+        ));
+        assert!(scores("Bạn chưa có ghi chú nào về Hạ Long."));
+        assert!(scores("There's nothing in your vault about that trip."));
+
+        // And it still catches the failure it exists for: inventing the note.
+        assert!(
+            !scores("Yes — you have a note called Ha Long Bay hotel with the booking."),
+            "invention must still fail"
+        );
+
+        // The trap the previous check fell into, kept here so it cannot come
+        // back. It asked for the substrings "no" and "not", and the word
+        // "notes" contains both — in a question whose own text is "Do I have
+        // any *notes* about the Ha Long trip?". So any reply that used the word
+        // "notes" at all was scored correct, whatever it went on to claim. The
+        // check was very nearly vacuous, and it was vacuous in the direction
+        // that flatters the thing being measured.
+        assert!(
+            !scores("Yes, you have notes covering that trip in your vault."),
+            "a reply that merely says `notes` must not count as an honest no — this is the \
+             substring trap the earlier version of this check fell into"
+        );
+    }
+
+    /// What the assistant's own search tool finds, for the queries a model
+    /// actually writes.
+    ///
+    /// Retrieval sets `match_any` so that a *question* does not have to use a
+    /// note's own vocabulary — the doc comment on that line names this exact
+    /// question as the reason. `tool_query_nodes` called `parse_query` and did
+    /// not, so the assistant searched with `AND` while the pipeline beside it
+    /// searched with `OR`.
+    ///
+    /// That asymmetry is invisible from either side and shows up as the model
+    /// being bad at searching. It cost a real failure in the A/B: asked what
+    /// was decided about pricing and who disagreed, the agentic arm searched
+    /// twice and answered "I couldn't find any vault notes mentioning
+    /// pricing", from a vault holding two notes that are entirely about it.
+    ///
+    /// Goes through `execute_tool` rather than the query engine underneath it,
+    /// because the fallback lives in the tool and a test that reaches past it
+    /// would pass while the assistant still failed. That is not hypothetical —
+    /// the first version of this test did exactly that.
+    #[test]
+    fn the_assistants_own_search_finds_what_retrieval_finds() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db: crate::db::DbState = std::sync::Mutex::new(seed(dir.path()));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app")
+            .handle()
+            .clone();
+        let ctx = crate::syn::tools::ToolContext {
+            db: &db,
+            vault_path: dir.path().to_str().expect("utf8"),
+            app: &app,
+        };
+
+        let ask = |query: &str| -> (u64, bool) {
+            let out = crate::syn::tools::execute_tool(
+                &ctx,
+                "query_nodes",
+                &serde_json::json!({ "query": query }),
+            )
+            .expect("the tool runs");
+            let parsed: serde_json::Value =
+                serde_json::from_str(&out).expect("the tool returns JSON");
+            (
+                parsed["total_matches"].as_u64().unwrap_or(0),
+                parsed["matched_any_word"].as_bool().unwrap_or(false),
+            )
+        };
+
+        // Queries a model plausibly writes for "What did I decide about
+        // pricing, and who disagreed?" — the words of the question, in the
+        // orders a model tends to put them.
+        let attempts = [
+            "pricing",
+            "pricing decision",
+            "pricing disagreed",
+            "decide pricing disagreed",
+            "pricing decision disagreed",
+        ];
+
+        eprintln!("\n── what `query_nodes` hands the assistant ──");
+        eprintln!("{:<34} {:>8}  {}", "query", "matches", "widened");
+
+        let mut empty = Vec::new();
+        for attempt in attempts {
+            let (total, widened) = ask(attempt);
+            eprintln!("{attempt:<34} {total:>8}  {}", if widened { "yes" } else { "" });
+            if total == 0 {
+                empty.push(attempt);
+            }
+        }
+        eprintln!();
+
+        assert!(
+            empty.is_empty(),
+            "the assistant's search returns nothing for {empty:?}, in a vault holding two \
+             notes about pricing"
+        );
+
+        // The precision that already worked must not have been traded away.
+        // A query every word of which matches is answered strictly, and is not
+        // widened — otherwise this fix would quietly turn every search into OR.
+        let (exact, widened) = ask("pricing decision");
+        assert_eq!(exact, 1, "an exact match should still be exact");
+        assert!(!widened, "a query that found something must not be widened");
+    }
+
+    /// What the widening fallback costs when the vault genuinely has nothing.
+    ///
+    /// The fallback exists because zero results read to a model as an empty
+    /// vault. But the same reasoning cuts the other way: a question about
+    /// something absent *should* return zero, and widening it turns an honest
+    /// nothing into a plausible something. That is the failure retrieval
+    /// already has — see `a_question_about_something_absent_retrieves_nothing`
+    /// — and the fix must not import it into the tool the assistant uses.
+    ///
+    /// This measures the cost rather than assuming it either way.
+    #[test]
+    fn what_the_widening_costs_on_a_question_with_no_answer() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db: crate::db::DbState = std::sync::Mutex::new(seed(dir.path()));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app")
+            .handle()
+            .clone();
+        let ctx = crate::syn::tools::ToolContext {
+            db: &db,
+            vault_path: dir.path().to_str().expect("utf8"),
+            app: &app,
+        };
+
+        eprintln!("\n── widening, on questions the vault cannot answer ──");
+        for query in [
+            "ha long trip",
+            "notes ha long trip",
+            "reykjavik supplier agreement",
+            "dentist appointment",
+            // The word for the thing, rather than a word in the thing. A model
+            // writing "notes about X" puts this in every query it makes.
+            "notes",
+            "note",
+            "tasks",
+        ] {
+            let out = crate::syn::tools::execute_tool(
+                &ctx,
+                "query_nodes",
+                &serde_json::json!({ "query": query }),
+            )
+            .expect("the tool runs");
+            let parsed: serde_json::Value = serde_json::from_str(&out).expect("JSON");
+            let titles: Vec<String> = parsed["results"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|r| r["title"].as_str().unwrap_or("").to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            eprintln!(
+                "  {query:<32} {:>3} match(es)  widened={:<5} {titles:?}",
+                parsed["total_matches"].as_u64().unwrap_or(0),
+                parsed["matched_any_word"].as_bool().unwrap_or(false),
+            );
+        }
+        eprintln!();
+    }
+
+    /// How much of each question a hit actually matched.
+    ///
+    /// The table above shows that a single number cannot separate the good
+    /// hits from the bad ones: the correct answers score 11.65, 4.14, 2.87 and
+    /// — for a one-word question — 1.34, while the two misleading ones score
+    /// 1.71 and 1.63. Any absolute floor that keeps 1.34 also keeps 1.71. That
+    /// is not a badly chosen number; it is the wrong instrument, and both the
+    /// fixed floor of 1.5 and the relative floor that replaced it are the same
+    /// instrument pointed in opposite directions.
+    ///
+    /// This measures a different quantity. FTS5's `snippet()` wraps every term
+    /// it matched in `<mark>`, so the number of distinct marked terms is how
+    /// much of the question a result actually answered — free, exact, and
+    /// already being returned. The hypothesis is that the good hits match
+    /// several of the question's words and the misleading ones match one.
+    ///
+    /// # The hypothesis is wrong, and this is the table that says so
+    ///
+    /// | hit | terms | score | matched | verdict |
+    /// | --- | --- | --- | --- | --- |
+    /// | Hanoi office (wifi) | 4 | 11.65 | 4 | right |
+    /// | Pricing pushback | 3 | 4.14 | 2 | right |
+    /// | **Pricing decision** | 3 | 2.87 | **1** | **right** |
+    /// | Book the venue | 3 | 1.71 | 1 | wrong |
+    /// | Hanoi office (Ha Long) | 4 | 1.63 | 1 | wrong |
+    ///
+    /// "Pricing decision" answers half of its question — it is the note that
+    /// contains "per-seat" — and it matched exactly one of the three terms, the
+    /// same as both wrong answers. So a coverage floor of two terms would drop
+    /// a correct hit to remove two incorrect ones, on a question the pipeline
+    /// currently gets entirely right. Measured, not argued.
+    ///
+    /// Which leaves both instruments rejected for the same reason: on this
+    /// evidence, a scalar cannot tell a weak-but-right hit from a weak-and-wrong
+    /// one, whether the scalar is a score or a count. The two failures do not
+    /// even share a cause — "Book the venue" is a real lexical match on a real
+    /// word, while "ha" is a fragment of a hyphenated token — so one filter was
+    /// never going to catch both.
+    #[test]
+    fn how_much_of_the_question_each_hit_matched() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(dir.path());
+
+        eprintln!("\n── coverage: how many of the question's words each hit matched ──");
+        eprintln!("{:<44} {:>5} {:>6} {:>8}", "hit", "terms", "score", "matched");
+
+        for q in QUESTIONS {
+            let terms = extract_search_terms(q.ask, &[]);
+            let mut parsed = search::parse_query(&terms.join(" "));
+            parsed.match_any = true;
+
+            eprintln!("\n  {}", q.ask);
+            let Ok(response) = db.search_fts(&parsed, 1, 10) else {
+                continue;
+            };
+            for r in &response.results {
+                let matched = marked_terms(&r.snippet, &r.title, &terms);
+                let verdict = if q.misleading.contains(&r.id.as_str()) {
+                    "✗"
+                } else if q.relevant.contains(&r.id.as_str()) {
+                    "✓"
+                } else {
+                    "·"
+                };
+                eprintln!(
+                    "  {verdict} {:<42} {:>5} {:>6.2} {:>8}",
+                    r.title.chars().take(42).collect::<String>(),
+                    terms.len(),
+                    r.score,
+                    matched,
+                );
+            }
+        }
+        eprintln!();
     }
 
     /// Why retrieval comes back empty, measured rather than guessed.
@@ -1710,7 +2100,8 @@ mod rag_vs_agentic {
         eprintln!("both arms keep the tools; only the system prompt differs");
         eprintln!("{trials} trial(s) per question — set SYN_EVAL_TRIALS to raise it\n");
 
-        let mut totals = [(0usize, 0usize, 0u128, 0usize); 2]; // passed, calls, ms, prompt
+        // passed, calls, ms, prompt chars, runs cut short by the ceiling
+        let mut totals = [(0usize, 0usize, 0u128, 0usize, 0usize); 2];
 
         for q in QUESTIONS {
             eprintln!("── {}", q.ask);
@@ -1731,8 +2122,16 @@ mod rag_vs_agentic {
                     .await;
 
                     passes += usize::from(out.passed);
+                    // A run that ran out of rounds is marked, because a
+                    // failure caused by the ceiling is not a failure of the
+                    // arm being measured.
+                    let ceiling = if out.state == crate::syn::run::RunState::BudgetExhausted {
+                        " ⚠ hit the ceiling"
+                    } else {
+                        ""
+                    };
                     eprintln!(
-                        "   {:<8} {}  {:>2} call(s)  {:>5}ms  prompt {:>6} ch  {}",
+                        "   {:<8} {}  {:>2} call(s)  {} round(s)  {:>5}ms  prompt {:>6} ch  {}{}",
                         if trial == 0 {
                             if stuffed { "stuffed" } else { "agentic" }
                         } else {
@@ -1740,9 +2139,11 @@ mod rag_vs_agentic {
                         },
                         if out.passed { "PASS" } else { "FAIL" },
                         out.tool_calls,
+                        out.rounds,
                         out.elapsed_ms,
                         out.prompt_chars,
-                        out.detail
+                        out.detail,
+                        ceiling,
                     );
                     if !out.passed {
                         eprintln!(
@@ -1755,6 +2156,8 @@ mod rag_vs_agentic {
                     totals[i].1 += out.tool_calls;
                     totals[i].2 += out.elapsed_ms;
                     totals[i].3 += out.prompt_chars;
+                    totals[i].4 +=
+                        usize::from(out.state == crate::syn::run::RunState::BudgetExhausted);
                 }
                 if trials > 1 {
                     eprintln!("            └ {passes}/{trials}");
@@ -1766,10 +2169,10 @@ mod rag_vs_agentic {
         let n = QUESTIONS.len() * trials;
         eprintln!("═══ totals over {n} questions ════════════════════");
         for (i, name) in ["stuffed", "agentic"].into_iter().enumerate() {
-            let (passed, calls, ms, prompt) = totals[i];
+            let (passed, calls, ms, prompt, cut_short) = totals[i];
             eprintln!(
-                "{name:<8} {passed}/{n} correct   {calls} tool call(s)   {ms}ms total   {} chars of system prompt",
-                prompt
+                "{name:<8} {passed}/{n} correct   {calls} tool call(s)   {ms}ms total   \
+                 {prompt} chars of system prompt   {cut_short} run(s) cut short"
             );
         }
         eprintln!();
