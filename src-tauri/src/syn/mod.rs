@@ -3,6 +3,7 @@ pub mod engine;
 pub mod memory;
 pub mod prompt;
 pub mod proposal;
+pub mod recipe;
 pub mod reflect;
 pub mod skill;
 pub mod provider;

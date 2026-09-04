@@ -527,6 +527,21 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: crate::syn::recipe::RUN_TOOL.to_string(),
+                description: "Run a skill whose tier is `recipe`. Its steps are fixed and run in order without you; your part is the parameters. Read it with load_skill first if you need to know what they mean. Prefer this over doing the same steps yourself: it is the same result for one call instead of several.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": { "type": "string", "description": "The skill's name, exactly as the list gives it." },
+                        "params": { "type": "object", "description": "The values the recipe asks for, by name." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "search_feed_articles".to_string(),
                 description: "Search articles pulled in from the user's RSS feeds. These are not vault nodes and query_nodes cannot reach them.".to_string(),
                 parameters: serde_json::json!({
@@ -677,6 +692,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         // for, and the description above says which one to reach for.
         "remember" => tool_remember(ctx, args),
         name if name == crate::syn::skill::LOAD_TOOL => tool_load_skill(&*lock(ctx)?, args),
+        name if name == crate::syn::recipe::RUN_TOOL => tool_run_recipe(ctx, args),
         "recall" => tool_recall(&*lock(ctx)?, args),
 
         // Reversible by construction: the first moves a file to `.trash/`, the
@@ -1072,6 +1088,99 @@ fn tool_load_skill(db: &DbBridge, args: &Value) -> AppResult<String> {
         "author": found.author,
         "expects_tools": found.tools,
         "steps": found.body,
+    })
+    .to_string())
+}
+
+/// Run a recipe skill.
+///
+/// The steps are not the model's to choose — they were chosen when somebody
+/// wrote them down — so this validates before it runs anything. A recipe with a
+/// problem is reported whole rather than half-executed: the alternative is a
+/// vault holding the first two steps of a five-step job and no record of why.
+fn tool_run_recipe<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use crate::syn::{recipe, skill};
+
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| AppError::General("Missing required parameter: name".to_string()))?;
+
+    // Read and release. Each step below takes the lock for itself, and holding
+    // it across the whole recipe would block every other reader for the length
+    // of the job.
+    let found = {
+        let db = lock(ctx)?;
+        skill::find(&skill::all(&db)?, name).cloned()
+    };
+    let Some(found) = found else {
+        return Ok(serde_json::json!({ "error": format!("No skill called `{name}`.") }).to_string());
+    };
+    if !found.enabled {
+        return Ok(
+            serde_json::json!({ "error": format!("`{}` is turned off.", found.name) }).to_string(),
+        );
+    }
+    if found.tier != skill::Tier::Recipe {
+        return Ok(serde_json::json!({
+            "error": format!(
+                "`{}` is a {} skill, not a recipe. Read it with load_skill and follow it yourself.",
+                found.name,
+                found.tier.as_str()
+            ),
+        })
+        .to_string());
+    }
+
+    let parsed = match recipe::parse(&found.body) {
+        Ok(Some(parsed)) => parsed,
+        Ok(None) => {
+            return Ok(serde_json::json!({
+                "error": format!("`{}` says it is a recipe but has no ```recipe block.", found.name),
+            })
+            .to_string())
+        }
+        Err(e) => return Ok(serde_json::json!({ "error": e }).to_string()),
+    };
+
+    let known: Vec<String> = get_tool_definitions()
+        .into_iter()
+        .map(|t| t.function.name)
+        .collect();
+    let problems = recipe::problems(&parsed, &known);
+    if !problems.is_empty() {
+        return Ok(serde_json::json!({
+            "error": format!("`{}` cannot run as written.", found.name),
+            "problems": problems,
+        })
+        .to_string());
+    }
+
+    let params = args
+        .get("params")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let outcome = recipe::run(&parsed, &params, |tool, step_args| {
+        let out = execute_tool(ctx, tool, step_args).map_err(|e| e.to_string())?;
+        // A tool that answered with an error object failed, whatever it
+        // returned. Reading that as success would carry a broken step's empty
+        // result into the next step's arguments.
+        let value: Value = serde_json::from_str(&out).unwrap_or(Value::String(out));
+        match value.get("error").and_then(|e| e.as_str()) {
+            Some(message) => Err(message.to_string()),
+            None => Ok(value),
+        }
+    });
+
+    Ok(serde_json::json!({
+        "skill": found.name,
+        "steps": outcome.steps,
+        "stopped": outcome.stopped,
+        "results": outcome.bindings,
     })
     .to_string())
 }
@@ -3054,7 +3163,15 @@ mod tests {
         // this exact shape failing. The difference is that memory had an
         // alternative and skills do not; the response is to measure whether
         // this one is called, not to assume it will be.
-        let memory = ["remember", "recall", crate::syn::skill::LOAD_TOOL];
+        // `run_recipe` is the third of these, and the one that pays for itself
+        // most plainly: a recipe of five steps costs one call and one round of
+        // inference instead of five, and does the same thing every time.
+        let memory = [
+            "remember",
+            "recall",
+            crate::syn::skill::LOAD_TOOL,
+            crate::syn::recipe::RUN_TOOL,
+        ];
         for tool in memory {
             assert!(names.contains(&tool), "{tool} is missing");
         }

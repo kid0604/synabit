@@ -188,8 +188,15 @@ impl VaultTools {
                 VaultRead
             }
 
+            // `run_recipe` is the union of whatever its steps do, which cannot
+            // be declared statically — so the format refuses the structural
+            // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
+            // out here. Under-declaring would be the dangerous direction; this
+            // errs the other way and stays true.
             "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version"
-            | "update_feed_article" | "create_transaction" | "remember" => VaultWrite,
+            | "update_feed_article" | "create_transaction" | "remember" | "run_recipe" => {
+                VaultWrite
+            }
 
             "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => VaultStructural,
 
@@ -307,7 +314,7 @@ mod tests {
             "get_finance_summary", "search_finance", "get_transactions", "create_node",
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
-            "rename_kind", "delete_kind", "remember", "recall", "load_skill",
+            "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
         ];
 
         for name in declared {

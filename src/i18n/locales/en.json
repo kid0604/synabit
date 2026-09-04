@@ -1846,7 +1846,8 @@
     "skill_revision_now": "Now",
     "skill_revision_proposed": "Proposed",
     "skill_revision_accept": "Use the new steps",
-    "skill_revision_keep": "Keep what I have"
+    "skill_revision_keep": "Keep what I have",
+    "recipe_wont_run": "This recipe will not run as written:"
   },
   "update": {
     "available": "Synabit {version} is available!",

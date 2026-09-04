@@ -1846,7 +1846,8 @@
     "skill_revision_now": "Hiện tại",
     "skill_revision_proposed": "Đề xuất",
     "skill_revision_accept": "Dùng bản mới",
-    "skill_revision_keep": "Giữ bản cũ"
+    "skill_revision_keep": "Giữ bản cũ",
+    "recipe_wont_run": "Recipe này viết như vậy sẽ không chạy được:"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

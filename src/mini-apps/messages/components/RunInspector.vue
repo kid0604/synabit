@@ -41,7 +41,7 @@ const {
 } = useSynMemory(() => props.vaultPath);
 
 const {
-  ordered: orderedSkills, error: skillError, trials, trialling,
+  ordered: orderedSkills, error: skillError, trials, trialling, recipeProblems,
   load: loadSkills, setEnabled, usageOf, trial, create: createSkill, decideRevision,
 } = useSynSkills(() => props.vaultPath);
 
@@ -369,6 +369,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             <p v-if="skill.when_to_use" class="mt-1 text-[11px] text-gray-500 italic">
               {{ t('syn.skill_when') }}: {{ skill.when_to_use }}
             </p>
+            <!-- Said here, before it is ever switched on. A recipe that only
+                 reports its problems when the model reaches for it fails half
+                 way through a job, where the explanation is a tool result. -->
+            <div
+              v-if="recipeProblems[skill.id]"
+              class="mt-2 rounded-lg bg-red-50 dark:bg-red-950/30 px-3 py-2"
+            >
+              <p class="text-[11px] font-medium text-red-700 dark:text-red-300">
+                {{ t('syn.recipe_wont_run') }}
+              </p>
+              <ul class="mt-1 space-y-0.5">
+                <li
+                  v-for="(problem, i) in recipeProblems[skill.id]"
+                  :key="i"
+                  class="text-[11px] text-red-700 dark:text-red-300"
+                >
+                  {{ problem }}
+                </li>
+              </ul>
+            </div>
+
             <p v-if="skill.tools.length" class="mt-1 text-[11px] text-gray-400">
               {{ t('syn.skill_tools') }}: {{ skill.tools.join(', ') }}
             </p>

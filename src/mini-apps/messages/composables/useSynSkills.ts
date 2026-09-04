@@ -47,6 +47,8 @@ export function useSynSkills(vaultPath: () => string) {
   const trials = ref<Record<string, SkillTrial>>({});
   const trialling = ref<string | null>(null);
   const usage = ref<SkillUsage[]>([]);
+  /** What is wrong with each recipe, by skill id. Empty when all is well. */
+  const recipeProblems = ref<Record<string, string[]>>({});
   const isLoading = ref(false);
   const error = ref<string | null>(null);
 
@@ -57,17 +59,20 @@ export function useSynSkills(vaultPath: () => string) {
     isLoading.value = true;
     error.value = null;
     try {
-      const [rows, used] = await Promise.all([
+      const [rows, used, problems] = await Promise.all([
         invoke<Skill[]>('syn_list_skills'),
         invoke<SkillUsage[]>('syn_skill_usage', { vaultPath: vaultPath() }),
+        invoke<Record<string, string[]>>('syn_recipe_problems'),
       ]);
       skills.value = rows;
       usage.value = used;
+      recipeProblems.value = problems;
     } catch (e) {
       logger.error('[Syn] Failed to read skills', e);
       error.value = asMessage(e);
       skills.value = [];
       usage.value = [];
+      recipeProblems.value = {};
     } finally {
       isLoading.value = false;
     }
@@ -175,7 +180,7 @@ export function useSynSkills(vaultPath: () => string) {
   };
 
   return {
-    skills, usage, ordered, isLoading, error, trials, trialling,
+    skills, usage, ordered, isLoading, error, trials, trialling, recipeProblems,
     load, setEnabled, usageOf, trial, create, decideRevision,
   };
 }

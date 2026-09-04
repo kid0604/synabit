@@ -724,6 +724,47 @@ fn stage_revision(
     Ok(())
 }
 
+/// What is wrong with each recipe, by skill id.
+///
+/// Checked on the screen rather than at run time. A recipe that only reports
+/// its problems when the model reaches for it fails in front of the user, half
+/// way through a job, in a place where the explanation is a tool result nobody
+/// reads. Here it is a line under the skill, before it is ever switched on.
+#[tauri::command]
+pub async fn syn_recipe_problems(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<std::collections::HashMap<String, Vec<String>>, AppError> {
+    let skills = {
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        crate::syn::skill::all(&db)?
+    };
+
+    let known: Vec<String> = crate::syn::tools::get_tool_definitions()
+        .into_iter()
+        .map(|t| t.function.name)
+        .collect();
+
+    let mut found = std::collections::HashMap::new();
+    for skill in skills {
+        if skill.tier != crate::syn::skill::Tier::Recipe {
+            continue;
+        }
+        let problems = match crate::syn::recipe::parse(&skill.body) {
+            Ok(Some(recipe)) => crate::syn::recipe::problems(&recipe, &known),
+            Ok(None) => vec![
+                "this says it is a recipe but has no ```recipe block".to_string()
+            ],
+            Err(e) => vec![e],
+        };
+        if !problems.is_empty() {
+            found.insert(skill.id, problems);
+        }
+    }
+    Ok(found)
+}
+
 /// Start a skill the user will write.
 ///
 /// The app's job here is a well-formed starting point, not a form. A skill is a
