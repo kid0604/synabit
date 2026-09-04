@@ -401,6 +401,116 @@ fn draft_from(reply: &str, taken: &[String]) -> Option<SkillDraft> {
     })
 }
 
+/// A revised procedure, waiting on a person.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RevisionDraft {
+    /// The whole body as it should now read, not a patch. A model asked for a
+    /// diff produces a diff that does not apply; a model asked for the finished
+    /// thing produces something a person can read against the old one.
+    pub steps: String,
+    /// Why, in one line, for the screen that asks the user to accept it.
+    pub because: String,
+}
+
+/// Ask the model to revise a skill that was followed and still went wrong.
+///
+/// Only called where a run loaded a skill and something failed, which is a fact
+/// on the transcript rather than a judgement — so the expensive half never runs
+/// on a skill that worked.
+///
+/// It may answer `null`, and that is believed. A skill can be followed
+/// perfectly and the run still break on something the skill has no business
+/// knowing about — a network error, a node somebody deleted — and rewriting a
+/// good procedure to account for weather is how a clear list of steps turns
+/// into a page of defensive clauses.
+pub async fn suggest_revision(
+    provider: &dyn ChatProvider,
+    model: &str,
+    num_ctx: u32,
+    skill_name: &str,
+    current: &str,
+    went_wrong: &str,
+    goal: &str,
+) -> Option<RevisionDraft> {
+    let prompt = format!(
+        "An assistant followed a written procedure and the work still went \
+         wrong.\n\n\
+         What it was asked to do: {goal}\n\n\
+         The procedure, called `{skill_name}`:\n{current}\n\n\
+         What went wrong:\n{went_wrong}\n\n\
+         If the procedure is at fault — a step in the wrong order, a missing \
+         step, a tool named that cannot do what the step needs — rewrite it so \
+         the same thing does not happen again. Keep everything that was right. \
+         Return the whole procedure, not a description of the change.\n\n\
+         Reply with ONLY a JSON object:\n\
+         {{\"steps\": \"the whole revised procedure as Markdown\", \
+         \"because\": \"one line saying what you changed and why\"}}\n\n\
+         If the procedure was not at fault — the failure was a network error, a \
+         missing node, something outside what these steps could know — reply \
+         with exactly: null. A procedure rewritten to guard against weather \
+         stops being a clear list of steps.",
+    );
+
+    let messages = vec![ChatMessage::new("user", prompt)];
+    let reply = match provider
+        .chat(ChatRequest {
+            model,
+            messages: &messages,
+            temperature: Some(0.2),
+            num_ctx,
+            tools: None,
+        })
+        .await
+    {
+        Ok(reply) => reply,
+        Err(e) => {
+            log::warn!("[Syn] Could not draft a revision: {e}");
+            return None;
+        }
+    };
+
+    revision_from(&reply.content, current)
+}
+
+/// Read a revision out of whatever the model sent, and refuse the useless ones.
+fn revision_from(reply: &str, current: &str) -> Option<RevisionDraft> {
+    let trimmed = reply.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return None;
+    }
+    let unfenced = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+    let body = match (unfenced.find('{'), unfenced.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &unfenced[start..=end],
+        _ => return None,
+    };
+
+    let draft: RevisionDraft = serde_json::from_str(body)
+        .map_err(|e| log::warn!("[Syn] Revision was not usable JSON: {e}"))
+        .ok()?;
+
+    let steps = draft.steps.trim().to_string();
+    if steps.is_empty() {
+        return None;
+    }
+    // A revision identical to what is already there is not a revision, and
+    // asking somebody to review one is asking them to read the same page twice.
+    if steps == current.trim() {
+        return None;
+    }
+    Some(RevisionDraft {
+        steps,
+        because: draft.because.trim().to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +542,38 @@ mod tests {
             because: None,
             supersedes: supersedes.map(str::to_string),
             from_correction: None,
+        }
+    }
+
+    /// A revision that changes nothing is not a revision.
+    ///
+    /// Asking somebody to review an identical page is asking them to spend
+    /// attention for nothing, and the second time it happens they stop reading
+    /// the ones that matter.
+    #[test]
+    fn a_revision_identical_to_the_original_is_dropped() {
+        let current = "1. query_nodes\n2. create_node";
+        let same = format!(
+            "{{\"steps\": \"{}\", \"because\": \"tidied it\"}}",
+            current.replace('\n', "\\n")
+        );
+        assert!(revision_from(&same, current).is_none());
+
+        let changed = "{\"steps\": \"1. query_nodes\\n2. get_node\\n3. create_node\", \"because\": \"read it first\"}";
+        let draft = revision_from(changed, current).expect("a real change");
+        assert!(draft.steps.contains("get_node"));
+        assert_eq!(draft.because, "read it first");
+    }
+
+    /// "The procedure was not at fault" has to be sayable.
+    ///
+    /// A run can follow a good skill and still break on a network error or a
+    /// node somebody deleted. Rewriting a clear list of steps to guard against
+    /// weather is how it turns into a page of defensive clauses.
+    #[test]
+    fn a_model_that_declines_to_revise_is_taken_at_its_word() {
+        for refusal in ["null", "NULL", "  ", ""] {
+            assert!(revision_from(refusal, "1. x").is_none(), "`{refusal}` revises nothing");
         }
     }
 

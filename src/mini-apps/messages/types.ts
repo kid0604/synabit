@@ -268,6 +268,15 @@ export interface Skill {
    * not seen a procedure run is being asked to trust it on its own summary.
    */
   trial_at?: string | null;
+  /**
+   * A revision Syn is proposing, waiting on you. Not applied.
+   *
+   * The skill is enabled — that is why it ran and why it went wrong — so
+   * rewriting the body would change behaviour the moment it was written.
+   */
+  pending_revision?: string | null;
+  /** What went wrong that prompted it, in Syn's words. */
+  revision_because?: string | null;
   /** The steps, in Markdown. */
   body: string;
 }

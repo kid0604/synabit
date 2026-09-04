@@ -42,8 +42,16 @@ const {
 
 const {
   ordered: orderedSkills, error: skillError, trials, trialling,
-  load: loadSkills, setEnabled, usageOf, trial,
+  load: loadSkills, setEnabled, usageOf, trial, create: createSkill, decideRevision,
 } = useSynSkills(() => props.vaultPath);
+
+/** The name of a skill being started. Empty when the row is closed. */
+const newSkillName = ref('');
+const startSkill = async () => {
+  const name = newSkillName.value.trim();
+  if (!name) return;
+  if (await createSkill(name)) newSkillName.value = '';
+};
 
 /** How full the pinned budget is, for the bar on the memory tab. */
 const memoryUsed = computed(() => {
@@ -308,6 +316,26 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
       <div v-else-if="tab === 'skills'" class="flex-1 overflow-y-auto p-6">
         <p class="text-sm text-gray-500">{{ t('syn.skills_explainer') }}</p>
 
+        <div class="mt-4 flex gap-2">
+          <input
+            v-model="newSkillName"
+            type="text"
+            class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                   bg-white dark:bg-gray-900 text-text dark:text-text-dark"
+            :placeholder="t('syn.skill_new_placeholder')"
+            @keyup.enter="startSkill"
+          >
+          <button
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg
+                   bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700
+                   disabled:opacity-50"
+            :disabled="!newSkillName.trim()"
+            @click="startSkill"
+          >
+            {{ t('syn.skill_new') }}
+          </button>
+        </div>
+
         <p v-if="!orderedSkills.length" class="mt-6 text-sm text-gray-500">
           {{ t('syn.skills_empty') }}
         </p>
@@ -344,6 +372,47 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             <p v-if="skill.tools.length" class="mt-1 text-[11px] text-gray-400">
               {{ t('syn.skill_tools') }}: {{ skill.tools.join(', ') }}
             </p>
+
+            <!-- Proposed, not applied: the skill is on, so writing the new
+                 steps in would change behaviour before anybody read them. -->
+            <div
+              v-if="skill.pending_revision"
+              class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/60
+                     bg-amber-50/50 dark:bg-amber-950/20 p-3"
+            >
+              <p class="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                {{ t('syn.skill_revision_title') }}
+              </p>
+              <p v-if="skill.revision_because" class="mt-1 text-[11px] text-gray-600 dark:text-gray-400 italic">
+                {{ skill.revision_because }}
+              </p>
+              <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p class="text-[11px] font-medium text-gray-500">{{ t('syn.skill_revision_now') }}</p>
+                  <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ skill.body }}</p>
+                </div>
+                <div>
+                  <p class="text-[11px] font-medium text-amber-700 dark:text-amber-400">{{ t('syn.skill_revision_proposed') }}</p>
+                  <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ skill.pending_revision }}</p>
+                </div>
+              </div>
+              <div class="mt-3 flex gap-2">
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-violet-600 text-white hover:bg-violet-700"
+                  @click="decideRevision(skill, true)"
+                >
+                  <Check class="w-3 h-3" /> {{ t('syn.skill_revision_accept') }}
+                </button>
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  @click="decideRevision(skill, false)"
+                >
+                  <XIcon class="w-3 h-3" /> {{ t('syn.skill_revision_keep') }}
+                </button>
+              </div>
+            </div>
 
             <p v-if="!mayBeEnabled(skill)" class="mt-2 text-[11px] text-amber-600">
               {{ t('syn.skill_needs_trial') }}

@@ -504,6 +504,58 @@ pub async fn syn_send_message(
                 Err(e) => log::warn!("[Syn] Could not queue proposals: {e}"),
             }
         });
+        // A run that followed a skill and still went wrong may have something to
+        // teach that skill. Whether it did is a fact on the transcript — a
+        // failed call, or a ceiling — so nothing is asked of the model unless
+        // there is.
+        if let Some(name) = crate::syn::skill::skill_that_struggled(&run) {
+            let struggling = state
+                .lock()
+                .ok()
+                .and_then(|db| crate::syn::skill::all(&db).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .find(|s| s.name.trim().to_lowercase() == name.trim().to_lowercase())
+                // One pending revision at a time. A second proposal on top of an
+                // unread one is a queue nobody asked for, and the user would be
+                // reviewing a change to a change.
+                .filter(|s| s.pending_revision.is_none());
+
+            if let Some(skill) = struggling {
+                let provider = provider_for(&app, &settings).await;
+                let vault = vault_path.clone();
+                let model_name = model.clone();
+                let num_ctx = settings.num_ctx;
+                let goal = run.goal.clone();
+                let went_wrong = crate::syn::skill::what_went_wrong(&run);
+                let app_handle = app.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    let Some(draft) = crate::syn::reflect::suggest_revision(
+                        provider.as_ref(),
+                        &model_name,
+                        num_ctx,
+                        &skill.name,
+                        &skill.body,
+                        &went_wrong,
+                        &goal,
+                    )
+                    .await
+                    else {
+                        return;
+                    };
+                    if let Err(e) = stage_revision(&app_handle, &vault, &skill.id, &draft) {
+                        log::warn!("[Syn] Could not stage a revision for `{}`: {e}", skill.name);
+                        return;
+                    }
+                    log::info!(
+                        "[Syn] Proposed a revision to `{}`, waiting to be read",
+                        skill.name
+                    );
+                });
+            }
+        }
+
         // A run that did the same multi-step job twice may be worth writing
         // down. The decision that it repeated itself is arithmetic and already
         // made; the model is only asked to name the thing and write the steps,
@@ -636,6 +688,106 @@ fn write_suggested_skill(
         }),
     )?;
     Ok(())
+}
+
+/// Put a proposed revision on the skill, without applying it.
+///
+/// Frontmatter, not the body. The skill is enabled — that is why it ran and why
+/// it went wrong — so writing the new steps in would change behaviour the
+/// moment they were written, which is an agent editing its own live procedure
+/// while nobody is looking. It waits here until a person has read both.
+fn stage_revision(
+    app: &tauri::AppHandle,
+    vault_path: &str,
+    skill_id: &str,
+    draft: &crate::syn::reflect::RevisionDraft,
+) -> Result<(), AppError> {
+    use tauri::Manager;
+    let state = app.state::<crate::db::DbState>();
+    let ctx = crate::syn::tools::ToolContext {
+        db: &state,
+        vault_path,
+        app,
+        run_id: None,
+    };
+    crate::syn::tools::execute_tool(
+        &ctx,
+        "update_node",
+        &serde_json::json!({
+            "node_id": skill_id,
+            "properties": {
+                "pending_revision": draft.steps,
+                "revision_because": draft.because,
+            },
+        }),
+    )?;
+    Ok(())
+}
+
+/// Start a skill the user will write.
+///
+/// The app's job here is a well-formed starting point, not a form. A skill is a
+/// Markdown file and the place to write one is wherever they already edit their
+/// notes; what they cannot be expected to know is which frontmatter keys mean
+/// anything, so the template carries that documentation inside itself.
+///
+/// Turned off, like everything else that arrives without being read. The
+/// difference from one Syn wrote is that this one needs no trial — it is theirs,
+/// and they may switch it on the moment it says what they want.
+#[tauri::command]
+pub async fn syn_create_skill(
+    app: tauri::AppHandle,
+    vault_path: String,
+    name: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<String, AppError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::General("A skill needs a name".to_string()));
+    }
+
+    {
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        if crate::syn::skill::find(&crate::syn::skill::all(&db)?, name).is_some() {
+            return Err(AppError::General(format!(
+                "There is already a skill called `{name}`"
+            )));
+        }
+    }
+
+    let ctx = crate::syn::tools::ToolContext {
+        db: state.inner(),
+        vault_path: &vault_path,
+        app: &app,
+        run_id: None,
+    };
+    let out = crate::syn::tools::execute_tool(
+        &ctx,
+        "create_node",
+        &serde_json::json!({
+            "node_type": crate::syn::skill::SKILL_TYPE,
+            "title": name,
+            "content": crate::syn::skill::starter_body(),
+            "properties": crate::syn::skill::frontmatter(
+                name,
+                "",
+                "",
+                crate::syn::skill::Tier::Prose,
+                &[],
+                "user",
+                false,
+                1,
+            ),
+        }),
+    )?;
+
+    let id = serde_json::from_str::<serde_json::Value>(&out)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    Ok(id)
 }
 
 /// One question, answered with the skill and without it.

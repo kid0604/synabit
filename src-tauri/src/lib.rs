@@ -824,6 +824,7 @@ pub fn run() {
             syn_commands::syn_list_skills,
             syn_commands::syn_skill_usage,
             syn_commands::syn_skill_trial,
+            syn_commands::syn_create_skill,
             syn_commands::syn_list_memories,
             syn_commands::syn_memory_budget,
             syn_commands::syn_list_proposals,

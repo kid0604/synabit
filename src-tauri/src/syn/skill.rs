@@ -154,6 +154,15 @@ pub struct Skill {
     /// What this prevents is Syn enabling its own work, and what it offers the
     /// user is a reason not to do it blind.
     pub trial_at: Option<String>,
+    /// A revision Syn is proposing, waiting on the user.
+    ///
+    /// Not applied. The skill is enabled — that is why it ran and why it went
+    /// wrong — so rewriting the body would change behaviour the moment it was
+    /// written, which is an agent editing its own live procedure without anyone
+    /// knowing. It sits here until a person reads the two side by side.
+    pub pending_revision: Option<String>,
+    /// What went wrong that prompted the revision, in the model's own words.
+    pub revision_because: Option<String>,
     /// The steps, in Markdown. What `load_skill` returns.
     pub body: String,
 }
@@ -224,6 +233,18 @@ impl Skill {
                 .unwrap_or(false),
             source_run: props
                 .get("source_run")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            pending_revision: props
+                .get("pending_revision")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            revision_because: props
+                .get("revision_because")
                 .and_then(|v| v.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
@@ -461,6 +482,63 @@ pub fn repeated_chain(run: &crate::syn::run::Run) -> Option<Vec<String>> {
     None
 }
 
+/// A run that followed a skill and still went wrong.
+///
+/// Returns the skill it was following, when there is one and the run has
+/// something to learn from: a failed tool call, or a ceiling reached. Both are
+/// facts on the transcript, so the decision that there is something to revise
+/// costs no inference — the same reason `repeated_chain` is arithmetic.
+///
+/// A run that followed a skill and went fine teaches nothing. A run that went
+/// wrong without following one has no skill to blame.
+pub fn skill_that_struggled(run: &crate::syn::run::Run) -> Option<String> {
+    let followed = run.steps.iter().find_map(|step| {
+        if step.tool.as_deref() != Some(LOAD_TOOL) || step.ok != Some(true) {
+            return None;
+        }
+        step.args
+            .as_ref()
+            .and_then(|a| a.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+    })?;
+
+    let something_failed = run.steps.iter().any(|s| s.ok == Some(false));
+    // `error` carries what the engine had to say — a ceiling reached, a limit
+    // hit — and an interrupted run stopped before it could finish the job the
+    // skill described.
+    let hit_a_ceiling = run.state == crate::syn::run::RunState::Interrupted
+        || run.error.as_deref().is_some_and(|e| !e.trim().is_empty());
+
+    (something_failed || hit_a_ceiling).then_some(followed)
+}
+
+/// What went wrong, in enough detail for a model to fix a procedure.
+///
+/// Names and error text, not the whole transcript. A revision is a change to a
+/// list of steps; the useful evidence is which step broke and what it said.
+pub fn what_went_wrong(run: &crate::syn::run::Run) -> String {
+    let mut lines = Vec::new();
+    for step in run.steps.iter().filter(|s| s.ok == Some(false)) {
+        let tool = step.tool.as_deref().unwrap_or("(unknown tool)");
+        let said = step.preview.trim();
+        lines.push(if said.is_empty() {
+            format!("- `{tool}` failed")
+        } else {
+            format!("- `{tool}` failed: {}", said.chars().take(300).collect::<String>())
+        });
+    }
+    if let Some(reason) = run.error.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        lines.push(format!("- the run stopped early: {reason}"));
+    }
+    if lines.is_empty() {
+        "- the run was interrupted before it finished".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
 /// How many proposed chains are remembered.
 const KEEP_CHAINS: usize = 100;
 
@@ -510,6 +588,46 @@ pub fn remember_proposed(vault_path: &str, chain: &[String]) -> AppResult<()> {
     let path = chains_path(vault_path)?;
     std::fs::write(&path, serde_json::to_string_pretty(&chains)?)?;
     Ok(())
+}
+
+/// The body a blank skill starts with.
+///
+/// Not an empty file. The roadmap's first gate criterion is that somebody can
+/// write a skill that changes behaviour *without having to ask anyone*, and an
+/// empty file with eight frontmatter keys they have never seen fails that on
+/// the first screen. This is the documentation, placed where it will be read:
+/// inside the thing being edited.
+///
+/// It is also a working skill as written — a person who changes nothing has a
+/// skill that does something small and legible, which is a better starting
+/// point than one that does nothing and has to be debugged before it can be
+/// judged.
+pub fn starter_body() -> String {
+    "## Các bước\n\
+     \n\
+     1. `query_nodes` với `type:task status:done` để lấy việc đã xong.\n\
+     2. `create_node` một note tiêu đề `Tổng kết` chứa danh sách đó.\n\
+     \n\
+     ## Định dạng đầu ra\n\
+     \n\
+     Một danh sách gạch đầu dòng, mỗi việc một dòng, không thêm lời bình.\n\
+     \n\
+     ## Bài học\n\
+     \n\
+     (Để trống. Đây là chỗ ghi lại những lần làm sai, để lần sau không lặp lại.)\n\
+     \n\
+     ---\n\
+     \n\
+     Sửa file này thoải mái — nó là một note trong vault của bạn, có lịch sử\n\
+     phiên bản và thùng rác như mọi note khác. Các khoá ở đầu file:\n\
+     \n\
+     - `name` — tên Syn dùng để gọi kỹ năng này.\n\
+     - `description` — một dòng nói nó làm gì.\n\
+     - `when_to_use` — một dòng nói khi nào nên dùng. Syn chỉ thấy hai dòng này\n\
+     \u{20}\u{20}cho tới khi nó mở kỹ năng ra, nên hãy viết chúng cho rõ.\n\
+     - `tier` — `prose` nghĩa là Syn tự làm theo hướng dẫn.\n\
+     - `enabled` — `false` thì Syn không được biết kỹ năng này tồn tại.\n"
+        .to_string()
 }
 
 /// The frontmatter a new skill is written with.
@@ -803,6 +921,45 @@ mod tests {
         );
     }
 
+    /// The template has to teach the thing the gate says nobody may have to ask.
+    ///
+    /// P3's first criterion is that somebody writes a skill that changes
+    /// behaviour *without asking anyone*. An empty file with eight unfamiliar
+    /// frontmatter keys fails that on the first screen, so the documentation
+    /// lives inside the file being edited — and this checks it still names the
+    /// keys that actually do something, rather than drifting into prose about
+    /// keys that were renamed two refactors ago.
+    #[test]
+    fn a_new_skill_explains_itself_in_the_file() {
+        let body = starter_body();
+        for key in ["name", "description", "when_to_use", "tier", "enabled"] {
+            assert!(
+                body.contains(key),
+                "the template should say what `{key}` is for, since nothing else will"
+            );
+        }
+        assert!(
+            body.contains("prose"),
+            "and name the tier a hand-written skill actually gets"
+        );
+    }
+
+    /// A blank skill is still a skill: parsed, named, and off.
+    #[test]
+    fn the_template_parses_into_something_usable() {
+        let made = Skill::from_node(&node(
+            "tong-ket-tuan",
+            &starter_body(),
+            frontmatter("tong-ket-tuan", "", "", Tier::Prose, &[], "user", false, 1),
+        ));
+
+        assert_eq!(made.name, "tong-ket-tuan");
+        assert_eq!(made.author, "user");
+        assert!(!made.enabled, "nothing arrives switched on");
+        assert!(made.may_be_enabled(), "but it is theirs to switch on at once");
+        assert!(!made.body.trim().is_empty());
+    }
+
     /// Who may turn a skill on.
     ///
     /// The roadmap's steps 3 and 4 say a skill Syn wrote must be tried and then
@@ -823,6 +980,63 @@ mod tests {
 
         theirs.trial_at = Some("2026-09-04".into());
         assert!(theirs.may_be_enabled(), "and after a trial, it is theirs to judge");
+    }
+
+    fn run_following(skill: Option<&str>, failures: &[&str]) -> crate::syn::run::Run {
+        let mut run = crate::syn::run::Run::new(
+            "test",
+            None,
+            crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default()),
+        );
+        if let Some(name) = skill {
+            run.record_tool(
+                0,
+                LOAD_TOOL,
+                serde_json::json!({ "name": name }),
+                true,
+                crate::syn::registry::Reversal::Nothing,
+                "{}",
+                1,
+            );
+        }
+        for tool in failures {
+            run.record_tool(
+                1,
+                tool,
+                serde_json::json!({}),
+                false,
+                crate::syn::registry::Reversal::Nothing,
+                "{\"error\":\"no such field\"}",
+                1,
+            );
+        }
+        run
+    }
+
+    /// A revision is proposed only where there is something to learn from.
+    #[test]
+    fn only_a_run_that_followed_a_skill_and_still_went_wrong_asks_for_a_revision() {
+        assert_eq!(
+            skill_that_struggled(&run_following(Some("weekly-review"), &["query_nodes"])).as_deref(),
+            Some("weekly-review"),
+        );
+
+        assert!(
+            skill_that_struggled(&run_following(Some("weekly-review"), &[])).is_none(),
+            "a skill that worked teaches nothing"
+        );
+        assert!(
+            skill_that_struggled(&run_following(None, &["query_nodes"])).is_none(),
+            "a run that went wrong without following a skill has no skill to blame"
+        );
+    }
+
+    /// What the model is shown is the broken step, not the whole transcript.
+    #[test]
+    fn the_evidence_is_the_step_that_broke_and_what_it_said() {
+        let told = what_went_wrong(&run_following(Some("s"), &["query_nodes", "update_node"]));
+        assert!(told.contains("query_nodes") && told.contains("update_node"));
+        assert!(told.contains("no such field"), "including what it said: {told}");
     }
 
     /// A shape offered once is never offered again.

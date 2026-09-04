@@ -102,6 +102,51 @@ export function useSynSkills(vaultPath: () => string) {
   };
 
   /**
+   * Take a revision Syn proposed, or leave it.
+   *
+   * Accepting writes the new steps as a new version, so the one before is a
+   * `restore_version` away — which is what makes reading a revision a cheap
+   * decision rather than a commitment.
+   */
+  const decideRevision = async (skill: Skill, accept: boolean) => {
+    error.value = null;
+    try {
+      await ns.writeNode({
+        relPath: skill.id,
+        nodeType: 'syn_skill',
+        title: skill.title,
+        content: accept ? (skill.pending_revision ?? skill.body) : undefined,
+        properties: accept
+          ? { version: skill.version + 1, pending_revision: '', revision_because: '' }
+          : { pending_revision: '', revision_because: '' },
+      });
+      await load();
+    } catch (e) {
+      logger.error('[Syn] Failed to decide on a revision', e);
+      error.value = asMessage(e);
+    }
+  };
+
+  /**
+   * Start a skill for the user to write.
+   *
+   * Creates the file and stops. What goes in it is theirs, and the template
+   * carries the documentation, so there is no form here to fill in badly.
+   */
+  const create = async (name: string) => {
+    error.value = null;
+    try {
+      await invoke<string>('syn_create_skill', { vaultPath: vaultPath(), name });
+      await load();
+      return true;
+    } catch (e) {
+      logger.error('[Syn] Failed to start a skill', e);
+      error.value = asMessage(e);
+      return false;
+    }
+  };
+
+  /**
    * Run a skill against the question it was invented for, both ways.
    *
    * The result is shown, not scored. Whether one answer is better than the
@@ -131,6 +176,6 @@ export function useSynSkills(vaultPath: () => string) {
 
   return {
     skills, usage, ordered, isLoading, error, trials, trialling,
-    load, setEnabled, usageOf, trial,
+    load, setEnabled, usageOf, trial, create, decideRevision,
   };
 }

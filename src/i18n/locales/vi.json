@@ -1839,7 +1839,14 @@
     "skill_trial_running": "Đang hỏi hai lần…",
     "skill_trial_question": "Câu hỏi",
     "skill_trial_without": "Không có kỹ năng",
-    "skill_trial_with": "Có kỹ năng"
+    "skill_trial_with": "Có kỹ năng",
+    "skill_new": "Tạo mới",
+    "skill_new_placeholder": "Đặt tên kỹ năng mới, ví dụ tong-ket-tuan",
+    "skill_revision_title": "Syn đề xuất sửa các bước này",
+    "skill_revision_now": "Hiện tại",
+    "skill_revision_proposed": "Đề xuất",
+    "skill_revision_accept": "Dùng bản mới",
+    "skill_revision_keep": "Giữ bản cũ"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
