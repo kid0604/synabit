@@ -520,6 +520,7 @@ pub async fn syn_send_message(
                 let vault = vault_path.clone();
                 let model_name = model.clone();
                 let goal = run.goal.clone();
+                let run_id_for_skill = run.id.clone();
                 let num_ctx = settings.num_ctx;
                 let app_handle = app.clone();
                 let taken: Vec<String> = state
@@ -549,7 +550,9 @@ pub async fn syn_send_message(
                         return;
                     };
 
-                    if let Err(e) = write_suggested_skill(&app_handle, &vault, &draft, &chain) {
+                    if let Err(e) =
+                        write_suggested_skill(&app_handle, &vault, &draft, &chain, Some(&run_id_for_skill))
+                    {
                         log::warn!("[Syn] Could not write the suggested skill: {e}");
                         return;
                     }
@@ -590,6 +593,7 @@ fn write_suggested_skill(
     vault_path: &str,
     draft: &crate::syn::reflect::SkillDraft,
     chain: &[String],
+    source_run: Option<&str>,
 ) -> Result<(), AppError> {
     use tauri::Manager;
     let state = app.state::<crate::db::DbState>();
@@ -613,10 +617,12 @@ fn write_suggested_skill(
     // The shape it came from, kept on the file so a person reading it can see
     // what Syn actually watched them do.
     if let Some(map) = properties.as_object_mut() {
-        map.insert(
-            "from_chain".to_string(),
-            serde_json::json!(chain),
-        );
+        map.insert("from_chain".to_string(), serde_json::json!(chain));
+        if let Some(run) = source_run {
+            // So the trial can ask the same question the skill was invented to
+            // answer, rather than a question somebody made up for it.
+            map.insert("source_run".to_string(), serde_json::json!(run));
+        }
     }
 
     crate::syn::tools::execute_tool(
@@ -630,6 +636,153 @@ fn write_suggested_skill(
         }),
     )?;
     Ok(())
+}
+
+/// One question, answered with the skill and without it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillTrial {
+    pub question: String,
+    pub without: String,
+    pub with: String,
+}
+
+/// Try a skill before turning it on.
+///
+/// The roadmap's third step, and the one it says may not be skipped. It asks
+/// the question the skill was invented to answer — the goal of the run that
+/// produced it — twice: once with the vault as it stands, and once with this
+/// skill's steps in front of the model.
+///
+/// The second arm hands the model the body directly rather than waiting for it
+/// to call `load_skill`. That is deliberate and worth being clear about: the
+/// question here is "if it follows these steps, is the answer better", not
+/// "will it choose to". The second question is real and is what
+/// `syn_skill_usage` counts, but it is not what somebody deciding whether to
+/// trust a procedure needs to know first.
+///
+/// Recording the trial on the file is what makes step 4 enforceable: until this
+/// has run, `Skill::may_be_enabled` says no.
+#[tauri::command]
+pub async fn syn_skill_trial(
+    app: tauri::AppHandle,
+    vault_path: String,
+    skill_id: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<SkillTrial, AppError> {
+    let settings = settings_for(&vault_path);
+    let model = settings
+        .default_model
+        .clone()
+        .ok_or_else(|| AppError::General("No model is configured".to_string()))?;
+
+    let (skill, remembered, index_without) = {
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        let skills = crate::syn::skill::all(&db)?;
+        let skill = skills
+            .iter()
+            .find(|s| s.id == skill_id)
+            .cloned()
+            .ok_or_else(|| AppError::General(format!("No skill at {skill_id}")))?;
+        let remembered = crate::syn::memory::all(&db)
+            .map(|m| crate::syn::memory::memory_block(&m, crate::syn::memory::MEMORY_BUDGET_CHARS))
+            .unwrap_or(None);
+        let index = crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS);
+        (skill, remembered, index)
+    };
+
+    // The question the skill exists to answer. Its own `when_to_use` is the
+    // fallback, and a poor one — it describes the moment, not the request — but
+    // a run can be pruned away and a trial should still be possible.
+    let question = skill
+        .source_run
+        .as_deref()
+        .and_then(|id| crate::syn::run::get_run(&vault_path, id).ok())
+        .map(|run| run.goal)
+        .filter(|goal| !goal.trim().is_empty())
+        .unwrap_or_else(|| {
+            if skill.when_to_use.trim().is_empty() {
+                skill.description.clone()
+            } else {
+                skill.when_to_use.clone()
+            }
+        });
+
+    // With the skill: it is named in the index and its steps are in front of
+    // the model, as they would be after `load_skill`.
+    let mut enabled_for_trial = skill.clone();
+    enabled_for_trial.enabled = true;
+    let index_with = crate::syn::skill::index_block(
+        &[enabled_for_trial],
+        crate::syn::skill::INDEX_BUDGET_CHARS,
+    )
+    .map(|index| {
+        format!(
+            "{index}\n\n=== THE STEPS OF `{}` ===\n{}\n=== END ===",
+            skill.name, skill.body
+        )
+    });
+
+    let provider = provider_for(&app, &settings).await;
+    let ask = |skills: Option<&str>| {
+        let system = PromptPlan::for_chat(ChatPrompt {
+            context: "",
+            personality: &settings.personality,
+            custom: settings.custom_system_prompt.as_deref(),
+            skills,
+            memory: remembered.as_deref(),
+            budget_chars: DEFAULT_BUDGET_CHARS,
+        })
+        .render();
+        vec![
+            crate::syn::provider::ChatMessage::new("system", system),
+            crate::syn::provider::ChatMessage::new("user", question.clone()),
+        ]
+    };
+
+    let mut answers = Vec::new();
+    for messages in [ask(index_without.as_deref()), ask(index_with.as_deref())] {
+        let reply = provider
+            .chat(crate::syn::provider::ChatRequest {
+                model: &model,
+                messages: &messages,
+                temperature: Some(settings.temperature),
+                num_ctx: settings.num_ctx,
+                tools: None,
+            })
+            .await
+            .map_err(|e| AppError::General(format!("The trial could not run: {e}")))?;
+        answers.push(reply.content);
+    }
+
+    // Only now, and only because both halves came back: a trial that failed
+    // half way should not unlock anything.
+    {
+        use tauri::Manager;
+        let handle = app.clone();
+        let db = handle.state::<crate::db::DbState>();
+        let ctx = crate::syn::tools::ToolContext {
+            db: &db,
+            vault_path: &vault_path,
+            app: &app,
+            run_id: None,
+        };
+        crate::syn::tools::execute_tool(
+            &ctx,
+            "update_node",
+            &serde_json::json!({
+                "node_id": skill.id,
+                "properties": { "trial_at": chrono::Utc::now().to_rfc3339()[..10].to_string() },
+            }),
+        )?;
+    }
+
+    Ok(SkillTrial {
+        question,
+        without: answers[0].clone(),
+        with: answers[1].clone(),
+    })
 }
 
 /// Signal the engine to stop the current generation.

@@ -1833,7 +1833,13 @@
     "skill_never_used": "never opened",
     "skill_enable": "Turn on",
     "skill_disable": "Turn off",
-    "skill_try": "Try it"
+    "skill_try": "Try it",
+    "skill_needs_trial": "Syn wrote this one. Try it before turning it on — you have only its own summary to go on until then.",
+    "skill_trial": "Try it both ways",
+    "skill_trial_running": "Asking twice…",
+    "skill_trial_question": "Asked",
+    "skill_trial_without": "Without the skill",
+    "skill_trial_with": "With the skill"
   },
   "update": {
     "available": "Synabit {version} is available!",

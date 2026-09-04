@@ -138,6 +138,22 @@ pub struct Skill {
     /// Disabled skills do not appear in the index at all. Anything Syn proposes
     /// starts here, and only a person moves it.
     pub enabled: bool,
+    /// The run that prompted this skill, when Syn wrote it. Lets the trial ask
+    /// the same question the skill was invented to answer.
+    pub source_run: Option<String>,
+    /// When this skill was last tried with and without, as `YYYY-MM-DD`.
+    ///
+    /// The roadmap's third step, given a place to live: a skill Syn wrote is not
+    /// offered a switch until somebody has seen it answer something both ways.
+    /// Kept on the file rather than in memory so the evidence travels with the
+    /// skill and survives closing the app.
+    ///
+    /// A gate on the screen, not on the write path. The vault is the user's and
+    /// this is a Markdown file with `enabled:` in the frontmatter — anybody who
+    /// wants to turn a skill on in a text editor may, and should be able to.
+    /// What this prevents is Syn enabling its own work, and what it offers the
+    /// user is a reason not to do it blind.
+    pub trial_at: Option<String>,
     /// The steps, in Markdown. What `load_skill` returns.
     pub body: String,
 }
@@ -206,6 +222,18 @@ impl Skill {
                 .get("enabled")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            source_run: props
+                .get("source_run")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            trial_at: props
+                .get("trial_at")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             body: node.content.clone(),
         }
     }
@@ -223,6 +251,23 @@ impl Skill {
             format!(": {}", self.description)
         };
         format!("- {}{what}{when}", self.name)
+    }
+}
+
+impl Skill {
+    /// May this be turned on yet?
+    ///
+    /// A skill the user wrote is theirs to enable whenever they like — they know
+    /// what is in it, because they typed it. One Syn wrote has to have been
+    /// tried first: the roadmap's third step, and the reason it gives is the one
+    /// that matters. A person who has not seen a skill answer anything is being
+    /// asked to trust a procedure on the strength of its own summary.
+    ///
+    /// Read by the screen, which is where it bites. Nothing on the write path
+    /// consults it, deliberately: hand-editing a file in your own vault is not
+    /// something this app gets to refuse.
+    pub fn may_be_enabled(&self) -> bool {
+        self.author != "syn" || self.trial_at.is_some()
     }
 }
 
@@ -756,6 +801,28 @@ mod tests {
             repeated_chain(&run).is_none(),
             "a sequence that failed is not a sequence worth repeating"
         );
+    }
+
+    /// Who may turn a skill on.
+    ///
+    /// The roadmap's steps 3 and 4 say a skill Syn wrote must be tried and then
+    /// reviewed before it is enabled, and that neither may be skipped. This is
+    /// the half a rule can carry: until a trial has happened, the answer is no.
+    #[test]
+    fn a_skill_syn_wrote_cannot_be_enabled_until_it_has_been_tried() {
+        let mut mine = skill("weekly-review", false);
+        mine.author = "user".into();
+        assert!(mine.may_be_enabled(), "a skill I wrote is mine to switch on");
+
+        let mut theirs = skill("weekly-review", false);
+        theirs.author = "syn".into();
+        assert!(
+            !theirs.may_be_enabled(),
+            "a procedure nobody has watched run is not one to trust on its own summary"
+        );
+
+        theirs.trial_at = Some("2026-09-04".into());
+        assert!(theirs.may_be_enabled(), "and after a trial, it is theirs to judge");
     }
 
     /// A shape offered once is never offered again.

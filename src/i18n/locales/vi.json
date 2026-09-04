@@ -1833,7 +1833,13 @@
     "skill_never_used": "chưa mở lần nào",
     "skill_enable": "Bật",
     "skill_disable": "Tắt",
-    "skill_try": "Thử xem"
+    "skill_try": "Thử xem",
+    "skill_needs_trial": "Syn tự viết cái này. Hãy chạy thử trước khi bật — chưa thử thì bạn chỉ có bản tóm tắt do chính nó viết.",
+    "skill_trial": "Chạy thử cả hai cách",
+    "skill_trial_running": "Đang hỏi hai lần…",
+    "skill_trial_question": "Câu hỏi",
+    "skill_trial_without": "Không có kỹ năng",
+    "skill_trial_with": "Có kỹ năng"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

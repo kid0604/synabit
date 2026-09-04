@@ -19,7 +19,7 @@ import {
 } from 'lucide-vue-next';
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
-import { useSynSkills } from '../composables/useSynSkills';
+import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import type { RunState, RunStep, Reversal, Memory } from '../types';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -41,8 +41,8 @@ const {
 } = useSynMemory(() => props.vaultPath);
 
 const {
-  ordered: orderedSkills, error: skillError,
-  load: loadSkills, setEnabled, usageOf,
+  ordered: orderedSkills, error: skillError, trials, trialling,
+  load: loadSkills, setEnabled, usageOf, trial,
 } = useSynSkills(() => props.vaultPath);
 
 /** How full the pinned budget is, for the bar on the memory tab. */
@@ -345,8 +345,41 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               {{ t('syn.skill_tools') }}: {{ skill.tools.join(', ') }}
             </p>
 
+            <p v-if="!mayBeEnabled(skill)" class="mt-2 text-[11px] text-amber-600">
+              {{ t('syn.skill_needs_trial') }}
+            </p>
+
+            <!-- Shown, not scored: which answer is better is a judgement about
+                 this person's work, and the app has no business making it. -->
+            <div v-if="trials[skill.id]" class="mt-3 rounded-lg bg-gray-50 dark:bg-gray-900/60 p-3">
+              <p class="text-[11px] text-gray-500">
+                {{ t('syn.skill_trial_question') }}: {{ trials[skill.id].question }}
+              </p>
+              <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p class="text-[11px] font-medium text-gray-500">{{ t('syn.skill_trial_without') }}</p>
+                  <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].without }}</p>
+                </div>
+                <div>
+                  <p class="text-[11px] font-medium text-violet-600">{{ t('syn.skill_trial_with') }}</p>
+                  <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].with }}</p>
+                </div>
+              </div>
+            </div>
+
             <div class="mt-3 flex gap-2">
               <button
+                v-if="!mayBeEnabled(skill)"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                :disabled="trialling === skill.id"
+                @click="trial(skill)"
+              >
+                <Sparkles class="w-3 h-3" />
+                {{ trialling === skill.id ? t('syn.skill_trial_running') : t('syn.skill_trial') }}
+              </button>
+              <button
+                v-else
                 class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
                        bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
                 @click="setEnabled(skill, !skill.enabled)"

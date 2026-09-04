@@ -259,8 +259,24 @@ export interface Skill {
   author: string;
   /** Disabled skills are not named to the model at all. */
   enabled: boolean;
+  /** The run that prompted this skill, when Syn wrote it. */
+  source_run?: string | null;
+  /**
+   * When this skill was last answered a question both ways, as `YYYY-MM-DD`.
+   *
+   * A skill Syn wrote cannot be turned on until this is set. Somebody who has
+   * not seen a procedure run is being asked to trust it on its own summary.
+   */
+  trial_at?: string | null;
   /** The steps, in Markdown. */
   body: string;
+}
+
+/** One question, answered with a skill and without it. */
+export interface SkillTrial {
+  question: string;
+  without: string;
+  with: string;
 }
 
 /**

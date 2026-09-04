@@ -15,7 +15,17 @@ import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
-import type { Skill, SkillUsage } from '../types';
+import type { Skill, SkillTrial, SkillUsage } from '../types';
+
+/**
+ * May the user turn this on yet?
+ *
+ * Mirrors `Skill::may_be_enabled`. A skill they wrote is theirs to enable
+ * whenever they like — they know what is in it, because they typed it. One Syn
+ * wrote has to have answered something both ways first.
+ */
+export const mayBeEnabled = (skill: Skill): boolean =>
+  skill.author !== 'syn' || !!skill.trial_at;
 
 /**
  * How a skill list is read: on first, then by name.
@@ -34,6 +44,8 @@ export const orderSkills = (skills: Skill[]): Skill[] =>
 
 export function useSynSkills(vaultPath: () => string) {
   const skills = ref<Skill[]>([]);
+  const trials = ref<Record<string, SkillTrial>>({});
+  const trialling = ref<string | null>(null);
   const usage = ref<SkillUsage[]>([]);
   const isLoading = ref(false);
   const error = ref<string | null>(null);
@@ -89,5 +101,36 @@ export function useSynSkills(vaultPath: () => string) {
     }
   };
 
-  return { skills, usage, ordered, isLoading, error, load, setEnabled, usageOf };
+  /**
+   * Run a skill against the question it was invented for, both ways.
+   *
+   * The result is shown, not scored. Whether one answer is better than the
+   * other is a judgement about this person's work, and the app has no business
+   * making it for them — the same conclusion the memory eval reached after four
+   * separate scorer defects each produced a plausible number.
+   */
+  const trial = async (skill: Skill) => {
+    error.value = null;
+    trialling.value = skill.id;
+    try {
+      trials.value = {
+        ...trials.value,
+        [skill.id]: await invoke<SkillTrial>('syn_skill_trial', {
+          vaultPath: vaultPath(),
+          skillId: skill.id,
+        }),
+      };
+      await load();
+    } catch (e) {
+      logger.error('[Syn] A skill trial failed', e);
+      error.value = asMessage(e);
+    } finally {
+      trialling.value = null;
+    }
+  };
+
+  return {
+    skills, usage, ordered, isLoading, error, trials, trialling,
+    load, setEnabled, usageOf, trial,
+  };
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { orderSkills } from '../useSynSkills';
+import { mayBeEnabled, orderSkills } from '../useSynSkills';
 import type { Skill } from '../../types';
 
 const skill = (over: Partial<Skill> & { name: string }): Skill => ({
@@ -58,5 +58,25 @@ describe('the order the skills screen reads in', () => {
     orderSkills(rows);
 
     expect(rows.map(s => s.name)).toEqual(before);
+  });
+});
+
+describe('who may turn a skill on', () => {
+  /**
+   * The roadmap's steps 3 and 4 say a skill Syn wrote must be tried and then
+   * reviewed before it is enabled, and that neither may be skipped. This is the
+   * half a rule can carry.
+   *
+   * Mirrors `Skill::may_be_enabled` in Rust. Two copies of one rule, and the
+   * one that matters is the Rust one — this is the button being honest about
+   * it, not the enforcement.
+   */
+  it('lets me enable what I wrote, and makes Syn earn it', () => {
+    expect(mayBeEnabled(skill({ name: 'mine', author: 'user' }))).toBe(true);
+
+    const untried = skill({ name: 'theirs', author: 'syn' });
+    expect(mayBeEnabled(untried)).toBe(false);
+
+    expect(mayBeEnabled({ ...untried, trial_at: '2026-09-04' })).toBe(true);
   });
 });
