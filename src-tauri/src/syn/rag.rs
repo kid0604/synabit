@@ -1402,10 +1402,10 @@ mod rag_vs_agentic {
             };
             let retrieval =
                 retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
-            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: &format_context(&retrieval), personality: &settings.personality, custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: &format_context(&retrieval), personality: &settings.personality, custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         } else {
-            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: &settings.personality, custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: &settings.personality, custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         };
 

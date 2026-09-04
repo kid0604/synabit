@@ -49,6 +49,8 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "whiteboard" => "Whiteboards".to_string(),
         // Not `Memory`, which is where a user's own `memory` kind would land.
         "syn_memory" => crate::syn::memory::MEMORY_FOLDER.to_string(),
+        // Nor `Skills`, for the same reason.
+        "syn_skill" => crate::syn::skill::SKILL_FOLDER.to_string(),
         other => {
             let clean = other.trim();
             if clean.is_empty() {
@@ -85,6 +87,7 @@ pub(crate) fn is_internal_type(node_type: &str) -> bool {
             | "schema"
             | "view"
             | "syn_memory"
+            | "syn_skill"
     ) || node_type.starts_with("finance_")
 }
 
@@ -510,6 +513,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: crate::syn::skill::LOAD_TOOL.to_string(),
+                description: "Read the steps of one of the skills listed under WHAT YOU KNOW HOW TO DO. That list gives a name and a summary; this gives the procedure. Read it before following it — a summary is not the steps. Two skills may be opened in one run.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": { "type": "string", "description": "The skill's name, exactly as the list gives it." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "search_feed_articles".to_string(),
                 description: "Search articles pulled in from the user's RSS feeds. These are not vault nodes and query_nodes cannot reach them.".to_string(),
                 parameters: serde_json::json!({
@@ -659,6 +676,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         // that do one thing is what the collapse from twenty to twelve was
         // for, and the description above says which one to reach for.
         "remember" => tool_remember(ctx, args),
+        name if name == crate::syn::skill::LOAD_TOOL => tool_load_skill(&*lock(ctx)?, args),
         "recall" => tool_recall(&*lock(ctx)?, args),
 
         // Reversible by construction: the first moves a file to `.trash/`, the
@@ -1000,6 +1018,60 @@ fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
         "memories": rows,
         "total_matches": total,
         "_returned": rows.len(),
+    })
+    .to_string())
+}
+
+/// Open one skill's steps.
+///
+/// The index in the prompt carries a name and a summary; this carries the
+/// procedure. A summary is not a procedure, and a model that acts on one is
+/// guessing at steps somebody wrote down precisely so it would not have to.
+///
+/// A name that is not there returns the names that are. The alternative — an
+/// error saying "not found" — makes the model guess again, and it guesses at
+/// the same wrong name surprisingly often.
+fn tool_load_skill(db: &DbBridge, args: &Value) -> AppResult<String> {
+    use crate::syn::skill;
+
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| AppError::General("Missing required parameter: name".to_string()))?;
+
+    let skills = skill::all(db)?;
+    let Some(found) = skill::find(&skills, name) else {
+        let offered: Vec<&str> = skills
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.name.as_str())
+            .collect();
+        return Ok(serde_json::json!({
+            "error": format!("No skill called `{name}`."),
+            "available": offered,
+        })
+        .to_string());
+    };
+
+    // Disabled skills are absent from the index, so this is a guessed name
+    // rather than a followed link. Saying so is better than pretending it does
+    // not exist: the user turned it off, and that is a fact about their wishes.
+    if !found.enabled {
+        return Ok(serde_json::json!({
+            "error": format!("`{}` is turned off. Do not use it.", found.name),
+        })
+        .to_string());
+    }
+
+    Ok(serde_json::json!({
+        "name": found.name,
+        "tier": found.tier.as_str(),
+        "version": found.version,
+        "author": found.author,
+        "expects_tools": found.tools,
+        "steps": found.body,
     })
     .to_string())
 }
@@ -2969,7 +3041,20 @@ mod tests {
         // There is deliberately no `forget`: memories are nodes, `trash_node`
         // already removes one and `restore_node` brings it back, and two tools
         // doing one thing is what the collapse from twenty to twelve was for.
-        let memory = ["remember", "recall"];
+        //
+        // `load_skill` earns its place on the same ground and one more. Skills
+        // are `syn_skill` nodes, also listed in `is_internal_type`, so the
+        // generic tools cannot see them either — and unlike memories, their
+        // bodies cannot all ride in the prompt. Forty procedures do not fit
+        // where forty sentences do. The prompt carries an index and this is the
+        // only door to what the index names.
+        //
+        // It is worth being uneasy about. `docs/adr-memory-shape-2026-09-04.md`
+        // records `recall` going uncalled across fifteen real runs, which is
+        // this exact shape failing. The difference is that memory had an
+        // alternative and skills do not; the response is to measure whether
+        // this one is called, not to assume it will be.
+        let memory = ["remember", "recall", crate::syn::skill::LOAD_TOOL];
         for tool in memory {
             assert!(names.contains(&tool), "{tool} is missing");
         }
@@ -3458,7 +3543,7 @@ mod tests {
     /// assistant refusing to do its job.
     #[test]
     fn the_system_prompt_only_names_tools_that_exist() {
-        let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+        let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render();
         let names: Vec<String> = get_tool_definitions()
             .iter()

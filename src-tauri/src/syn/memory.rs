@@ -811,7 +811,7 @@ mod through_the_tools {
             context: "",
             personality: "auto",
             custom: None,
-            memory: Some(&block),
+            skills: None, memory: Some(&block),
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1440,7 +1440,7 @@ mod does_memory_reach_the_model {
             context: "",
             personality: "auto",
             custom: None,
-            memory: Some(&block),
+            skills: None, memory: Some(&block),
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1746,6 +1746,7 @@ mod memory_changes_the_answer {
                         context: "",
                         personality: &settings.personality,
                         custom: None,
+                        skills: None,
                         memory,
                         budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
                     },

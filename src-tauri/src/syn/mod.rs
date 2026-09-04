@@ -4,6 +4,7 @@ pub mod memory;
 pub mod prompt;
 pub mod proposal;
 pub mod reflect;
+pub mod skill;
 pub mod provider;
 pub mod rag;
 pub mod registry;

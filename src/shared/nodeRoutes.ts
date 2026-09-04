@@ -55,6 +55,7 @@ const TYPE_FOR_DIRECTORY: Readonly<Record<string, string>> = {
   // Syn's own memory, prefixed and filed apart so that a user who wants a kind
   // called `memory` — for a language deck, for anything — can have one.
   SynMemory: 'syn_memory',
+  SynSkills: 'syn_skill',
 };
 
 /**

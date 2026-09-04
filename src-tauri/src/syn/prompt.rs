@@ -100,6 +100,8 @@ pub enum SectionKind {
     ToolShape,
     /// Pinned memories, and any recalled for this question.
     Memory,
+    /// The one-line index of skills the user has enabled.
+    Skills,
     /// Chunks retrieved for this question.
     VaultContext,
 }
@@ -115,6 +117,7 @@ impl SectionKind {
             SectionKind::Today => "Today",
             SectionKind::ToolShape => "Tools and vault shape",
             SectionKind::Memory => "What Syn remembers",
+            SectionKind::Skills => "What Syn knows how to do",
             SectionKind::VaultContext => "Retrieved context",
         }
     }
@@ -127,7 +130,10 @@ impl SectionKind {
     /// either defines the assistant or is something it cannot recover by
     /// looking — the date most of all.
     pub fn is_required(self) -> bool {
-        !matches!(self, SectionKind::VaultContext | SectionKind::Memory)
+        !matches!(
+            self,
+            SectionKind::VaultContext | SectionKind::Memory | SectionKind::Skills
+        )
     }
 }
 
@@ -305,6 +311,8 @@ pub struct ChatPrompt<'a> {
     pub personality: &'a str,
     /// The user's own standing instructions, from settings.
     pub custom: Option<&'a str>,
+    /// The skill index, already formatted by `skill::index_block`.
+    pub skills: Option<&'a str>,
     /// What Syn remembers, already formatted by `memory::memory_block`.
     pub memory: Option<&'a str>,
     pub budget_chars: usize,
@@ -331,6 +339,7 @@ impl PromptPlan {
             context,
             personality,
             custom,
+            skills,
             memory,
             budget_chars,
         } = p;
@@ -354,6 +363,13 @@ impl PromptPlan {
         // Absent rather than empty when nothing is remembered, which is what
         // keeps a vault with no memories sending byte for byte the prompt it
         // sent before memory existed. The snapshots assert it.
+        if let Some(skills) = skills.filter(|s| !s.trim().is_empty()) {
+            sections.push(Section {
+                kind: SectionKind::Skills,
+                body: skills.to_string(),
+            });
+        }
+
         if let Some(memory) = memory.filter(|m| !m.trim().is_empty()) {
             sections.push(Section {
                 kind: SectionKind::Memory,
@@ -387,7 +403,13 @@ impl PromptPlan {
             // is something it was told and cannot recover by searching.
             let droppable = |kind: SectionKind| match kind {
                 SectionKind::VaultContext => Some(0),
-                SectionKind::Memory => Some(1),
+                // Skills before memory. Losing the index means Syn does a task
+                // its own way instead of the way the user wrote down; losing
+                // memory means it gets the person wrong — and the memories that
+                // matter most are constraints, like an allergy. Doing a job
+                // clumsily is recoverable in a way that is not.
+                SectionKind::Skills => Some(1),
+                SectionKind::Memory => Some(2),
                 _ => None,
             };
             let biggest = self
@@ -522,7 +544,7 @@ mod tests {
     /// has changed that premise, and should have to notice.
     #[test]
     fn the_fixed_sections_still_cost_what_the_budget_assumes() {
-        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
+        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
 
         assert!(
             fixed <= FIXED_SECTIONS_CHARS,
@@ -562,7 +584,7 @@ mod tests {
                         context,
                         personality,
                         custom: None,
-                        memory: None,
+                        skills: None, memory: None,
                         budget_chars: DEFAULT_BUDGET_CHARS,
                     }).render();
                 let masked = today.replace_all(&rendered, "- Today's date: <DATE>");
@@ -611,7 +633,7 @@ mod tests {
     /// ordering, and moving it here must not move it on the page.
     #[test]
     fn a_custom_prompt_comes_first_and_is_followed_by_a_blank_line() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("Always answer in haiku."), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("Always answer in haiku."), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.starts_with("Always answer in haiku.\n\nYou are Syn,"));
     }
@@ -622,7 +644,7 @@ mod tests {
     #[test]
     fn an_empty_custom_prompt_adds_no_section() {
         for empty in [Some(""), Some("   "), None] {
-            let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: empty, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+            let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: empty, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
             assert!(plan.render().starts_with("You are Syn,"), "{empty:?}");
             assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::Custom));
         }
@@ -630,14 +652,14 @@ mod tests {
 
     #[test]
     fn no_context_means_no_context_section() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(!plan.render().contains("VAULT CONTEXT"));
         assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::VaultContext));
     }
 
     #[test]
     fn context_is_wrapped_in_the_instructions_for_reading_it() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.contains("=== VAULT CONTEXT ==="));
         assert!(rendered.contains("a note about ducks"));
@@ -648,13 +670,13 @@ mod tests {
     /// on the user's behalf.
     #[test]
     fn an_unrecognised_personality_falls_back_to_adapting() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "klingon", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "klingon", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(plan.render().contains("Match the user's language"));
     }
 
     #[test]
     fn the_breakdown_accounts_for_every_character_that_was_sent() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "casual", custom: Some("be brief"), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "casual", custom: Some("be brief"), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let counted: usize = plan.breakdown().iter().filter(|c| !c.dropped).map(|c| c.chars).sum();
         assert_eq!(counted, plan.render().chars().count());
         assert_eq!(counted, plan.chars());
@@ -664,7 +686,7 @@ mod tests {
     /// search past, and never the rules.
     #[test]
     fn a_tight_budget_drops_context_and_keeps_the_rules() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), personality: "auto", custom: None, memory: None, budget_chars: 6000 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), personality: "auto", custom: None, skills: None, memory: None, budget_chars: 6000 });
         let rendered = plan.render();
         assert!(!rendered.contains("VAULT CONTEXT"));
         assert!(rendered.contains("Key rules:"));
@@ -680,7 +702,7 @@ mod tests {
     /// to send an assistant that has forgotten how to cite a note.
     #[test]
     fn an_impossible_budget_goes_over_rather_than_cutting_what_matters() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "auto", custom: None, memory: None, budget_chars: 10 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "auto", custom: None, skills: None, memory: None, budget_chars: 10 });
         let rendered = plan.render();
         assert!(rendered.contains("Key rules:"));
         assert!(rendered.contains("Tool usage guidelines:"));
@@ -692,6 +714,7 @@ mod tests {
             context,
             personality: "auto",
             custom: None,
+            skills: None,
             memory,
             budget_chars: budget,
         })
@@ -753,6 +776,65 @@ mod tests {
             review_after: None,
             supersedes: None,
         }
+    }
+
+    fn plan_with_skills(context: &str, skills: &str, memory: &str, budget: usize) -> PromptPlan {
+        PromptPlan::for_chat(ChatPrompt {
+            context,
+            personality: "auto",
+            custom: None,
+            skills: Some(skills),
+            memory: Some(memory),
+            budget_chars: budget,
+        })
+    }
+
+    /// The skill index reaches the model, and sits where it can be read.
+    #[test]
+    fn what_syn_knows_how_to_do_is_in_the_prompt() {
+        let block = crate::syn::skill::index_block(
+            &[],
+            crate::syn::skill::INDEX_BUDGET_CHARS,
+        );
+        assert!(block.is_none(), "no skills, no section — the snapshots depend on it");
+
+        let rendered = plan_with_skills(
+            "",
+            "=== WHAT YOU KNOW HOW TO DO ===\n- weekly-review: sums the week",
+            "=== WHAT YOU REMEMBER ===\n- [fact] họ tên là Minh",
+            DEFAULT_BUDGET_CHARS,
+        )
+        .render();
+
+        let skills_at = rendered.find("KNOW HOW TO DO").expect("the index is there");
+        let memory_at = rendered.find("WHAT YOU REMEMBER").expect("memory is there");
+        assert!(
+            skills_at < memory_at,
+            "what it can do comes before what it knows, so the procedure is read \
+             in the light of the person"
+        );
+    }
+
+    /// Under pressure the index goes before memory does.
+    ///
+    /// Losing the index means Syn does a task its own way instead of the way
+    /// the user wrote down. Losing memory means it gets the person wrong, and
+    /// the memories that matter most are constraints — an allergy, an injury.
+    /// Doing a job clumsily is recoverable in a way that is not.
+    #[test]
+    fn a_tight_budget_gives_up_skills_before_it_gives_up_memory() {
+        let skills = format!("=== WHAT YOU KNOW HOW TO DO ===\n{}", "s".repeat(3000));
+        let memory = "=== WHAT YOU REMEMBER ===\n- [fact] vợ dị ứng hải sản";
+
+        let p = plan_with_skills("", &skills, memory, 6000);
+        let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
+
+        assert_eq!(dropped, vec![SectionKind::Skills], "only the index went");
+        assert!(
+            p.render().contains("dị ứng hải sản"),
+            "the constraint survives:\n{}",
+            p.render()
+        );
     }
 
     /// Memory gives up its least important entries before it gives up itself.
@@ -822,7 +904,7 @@ mod tests {
     /// Vietnamese is where a byte-counting mistake would show up first.
     #[test]
     fn costs_are_counted_in_characters_not_bytes() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("đường"), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("đường"), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let custom = plan
             .breakdown()
             .into_iter()

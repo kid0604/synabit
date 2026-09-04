@@ -270,9 +270,9 @@ pub async fn syn_send_message(
         }
     };
 
-    // Retrieval and memory in one lock, because they are both reads and the
-    // lock has to be gone before anything async below.
-    let (retrieval, context_str, remembered) = {
+    // Retrieval, memory and the skill index in one lock: they are all reads,
+    // and the lock has to be gone before anything async below.
+    let (retrieval, context_str, remembered, skill_index) = {
         let db = state
             .lock()
             .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
@@ -295,11 +295,25 @@ pub async fn syn_send_message(
                 None
             });
 
+        // The skill index, on the same terms. Only what the user enabled is
+        // named, because a name in this list is an invitation.
+        let skill_index = crate::syn::skill::all(&db)
+            .map(|skills| {
+                crate::syn::skill::index_block(
+                    &skills,
+                    crate::syn::skill::INDEX_BUDGET_CHARS,
+                )
+            })
+            .unwrap_or_else(|e| {
+                log::warn!("[Syn] Could not read skills: {e}");
+                None
+            });
+
         if settings.rag_enabled {
             let retrieval_result =
                 rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
             let context_str = rag::format_context(&retrieval_result);
-            (retrieval_result, context_str, remembered)
+            (retrieval_result, context_str, remembered, skill_index)
         } else {
             (
                 crate::models::syn::RetrievalResult {
@@ -309,6 +323,7 @@ pub async fn syn_send_message(
                 },
                 String::new(),
                 remembered,
+                skill_index,
             )
         }
     };
@@ -323,6 +338,7 @@ pub async fn syn_send_message(
         context: &context_str,
         personality: &settings.personality,
         custom: settings.custom_system_prompt.as_deref(),
+        skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
@@ -733,15 +749,25 @@ pub async fn syn_preview_prompt(
 ) -> Result<PromptPreview, AppError> {
     let settings = settings_for(&vault_path);
 
-    // The preview has to show the memory section too, or the one screen that
-    // says what Syn is told would be the one place it is not visible.
-    let remembered = {
+    // The preview has to show the memory and skill sections too, or the one
+    // screen that says what Syn is told would be the one place they are not
+    // visible.
+    let (remembered, skill_index) = {
         let db = state
             .lock()
             .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
-        crate::syn::memory::all(&db)
-            .map(|m| crate::syn::memory::memory_block(&m, crate::syn::memory::MEMORY_BUDGET_CHARS))
-            .unwrap_or(None)
+        (
+            crate::syn::memory::all(&db)
+                .map(|m| {
+                    crate::syn::memory::memory_block(&m, crate::syn::memory::MEMORY_BUDGET_CHARS)
+                })
+                .unwrap_or(None),
+            crate::syn::skill::all(&db)
+                .map(|s| {
+                    crate::syn::skill::index_block(&s, crate::syn::skill::INDEX_BUDGET_CHARS)
+                })
+                .unwrap_or(None),
+        )
     };
 
     let context = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
@@ -767,6 +793,7 @@ pub async fn syn_preview_prompt(
         context: &context,
         personality: &settings.personality,
         custom: settings.custom_system_prompt.as_deref(),
+        skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
         budget_chars: DEFAULT_BUDGET_CHARS,
     })

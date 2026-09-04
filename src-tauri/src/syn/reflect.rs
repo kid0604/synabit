@@ -507,7 +507,7 @@ mod what_reflection_costs {
             context: &"x".repeat(12_000),
             personality: "auto",
             custom: None,
-            memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)),
+            skills: None, memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)),
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();

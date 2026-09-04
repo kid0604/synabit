@@ -388,6 +388,17 @@ impl Run {
         });
     }
 
+    /// How many times this run has successfully called one tool.
+    ///
+    /// Failures do not count: a run that asked for a skill body and got an
+    /// error has not spent its allowance on anything it could read.
+    pub fn successful_calls_of(&self, tool: &str) -> usize {
+        self.steps
+            .iter()
+            .filter(|s| s.tool.as_deref() == Some(tool) && s.ok == Some(true))
+            .count()
+    }
+
     /// One tool was called and came back.
     #[allow(clippy::too_many_arguments)]
     pub fn record_tool(

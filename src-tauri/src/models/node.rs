@@ -43,6 +43,13 @@ pub enum NodeType {
     /// Spelled `syn_memory` on disk. The unprefixed word belongs to the user,
     /// who may well want a kind of their own by that name.
     Memory,
+    /// A procedure written down for the assistant to follow.
+    ///
+    /// Storage in the same sense, and for a sharper reason: a skill changes
+    /// what Syn *does*, so it has to be a file the user can read, diff against
+    /// the last version, and turn off. Spelled `syn_skill` on disk, leaving the
+    /// plain word to whoever owns the vault.
+    Skill,
     /// A kept way of looking at the vault: a query plus how to arrange it.
     ///
     /// Written by Things and read by nothing else. Deliberately not `Filter`,
@@ -79,6 +86,7 @@ impl NodeType {
         "filter",
         "view",
         "syn_memory",
+        "syn_skill",
         "json",
         "canvas",
     ];
@@ -104,6 +112,7 @@ impl NodeType {
             NodeType::Filter => "filter",
             NodeType::View => "view",
             NodeType::Memory => "syn_memory",
+            NodeType::Skill => "syn_skill",
             NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
@@ -138,6 +147,7 @@ impl From<&str> for NodeType {
             "filter" => NodeType::Filter,
             "view" => NodeType::View,
             "syn_memory" => NodeType::Memory,
+            "syn_skill" => NodeType::Skill,
             "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,

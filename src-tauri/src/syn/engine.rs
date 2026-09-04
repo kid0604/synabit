@@ -406,9 +406,35 @@ impl SynEngine {
                 }
 
                 let call_started = std::time::Instant::now();
-                let outcome =
+
+                // A run may open two skill bodies, and the ceiling is enforced
+                // here rather than inside the tool because it is a budget over
+                // a run, and the run is what this loop owns. The tool has no
+                // way to know what else the run has already read.
+                //
+                // Refused rather than errored: the model asked for something
+                // reasonable and the answer is "not this time, use what you
+                // have", which is a sentence it can act on.
+                let over_skill_budget = tc.function.name == crate::syn::skill::LOAD_TOOL
+                    && run.successful_calls_of(crate::syn::skill::LOAD_TOOL)
+                        >= crate::syn::skill::BODIES_PER_RUN;
+
+                let outcome = if over_skill_budget {
+                    Ok(crate::syn::registry::ToolOutcome {
+                        content: serde_json::json!({
+                            "refused": format!(
+                                "You have already opened {} skills in this run, which is the \
+                                 limit. Work from what you have read, or answer without a skill.",
+                                crate::syn::skill::BODIES_PER_RUN
+                            ),
+                        })
+                        .to_string(),
+                        reversal: crate::syn::registry::Reversal::Nothing,
+                    })
+                } else {
                     req.registry
-                        .execute(&ctx, &tc.function.name, &tc.function.arguments);
+                        .execute(&ctx, &tc.function.name, &tc.function.arguments)
+                };
 
                 let (content, reversal) = match outcome {
                     Ok(o) => (o.content, o.reversal),
@@ -1047,7 +1073,7 @@ mod gate_one {
             SynMessage {
                 id: "sys".into(),
                 role: "system".into(),
-                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
                 .render(),
                 model: None,
                 timestamp: String::new(),

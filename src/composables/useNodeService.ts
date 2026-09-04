@@ -30,7 +30,8 @@ export type NodeType =
   | 'note' | 'task' | 'project' | 'event' | 'person' | 'interaction'
   | 'quickcap' | 'finance_month' | 'finance_config' | 'finance_debts'
   | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter' | 'view' | 'schema'
-  | 'syn_memory';
+  | 'syn_memory'
+  | 'syn_skill';
 
 export interface WriteNodeParams {
   relPath: string;
