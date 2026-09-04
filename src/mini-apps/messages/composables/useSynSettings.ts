@@ -50,6 +50,14 @@ export interface SynSettings {
   // Context limits
   num_ctx: number;
   max_history_messages: number;
+  /**
+   * Whether Syn looks back at each exchange and proposes what to remember.
+   *
+   * One extra completion per answered message — no tools, a small prompt.
+   * Proposals go to a tray for review; nothing is written to the vault without
+   * being accepted.
+   */
+  memory_reflection: boolean;
 }
 
 /**
@@ -77,6 +85,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   custom_system_prompt: null,
   num_ctx: 8192,
   max_history_messages: 50,
+  memory_reflection: true,
 };
 
 export function useSynSettings(vaultPath: string) {

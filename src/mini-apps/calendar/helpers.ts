@@ -164,7 +164,7 @@ export function buildEventPayload(
 ) {
     const tags = parseTags(form.tagsStr);
     return {
-        relPath: overrides?.relPath || form.path || `Events/${form.title}`,
+        relPath: overrides?.relPath || form.id || `Events/${form.title}`,
         title: form.title,
         nodeType: 'event' as const,
         properties: {

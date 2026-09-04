@@ -4,7 +4,7 @@ use crate::models::syn::{
     SynMessage, SynProvider, SynSettings,
 };
 use crate::syn::engine::DriveRequest;
-use crate::syn::prompt::{PromptPlan, PromptPreview, DEFAULT_BUDGET_CHARS};
+use crate::syn::prompt::{ChatPrompt, PromptPlan, PromptPreview, DEFAULT_BUDGET_CHARS};
 use crate::syn::provider::{ollama::OllamaProvider, openai::OpenAiCompatProvider, ChatProvider};
 use crate::syn::registry::Registry;
 use crate::syn::run::{Budget, Run, RunSummary};
@@ -15,15 +15,64 @@ use crate::syn::{conversation, engine::SynEngine, rag};
 /// The API key is fetched here, from the keychain, rather than read out of
 /// `settings` — it is never in `settings`, on purpose. See the doc comment on
 /// `SynSettings`.
-fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
+/// How long a keychain read may take before the app gives up on it.
+///
+/// The keychain is not a file read. macOS decides whether the *binary asking*
+/// is allowed near the item, and when it is not sure it puts a dialog in front
+/// of a person and blocks the caller until they answer — with no timeout, on
+/// whatever thread asked.
+///
+/// A development build hits this constantly: `tauri dev` recompiles on every
+/// Rust change, and a recompiled binary is a different binary, so the "always
+/// allow" granted to the last one does not cover it. Every rebuild earns a new
+/// prompt.
+///
+/// The cost was the whole app. `syn_check_status` reads the key before it
+/// touches the network, so a pending dialog left that command open forever —
+/// visible in a Web Inspector Network panel as a `syn_check_status` with no
+/// size and no time, still spinning. The Rust process sat idle, the timeline
+/// was empty, and it read as a freeze.
+///
+/// Eight seconds: long enough that somebody who sees the dialog and clicks it
+/// is served, short enough that somebody who does not is not held hostage.
+const KEYCHAIN_PATIENCE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The API key, or `None` if the keychain will not answer promptly.
+///
+/// `spawn_blocking` because the read blocks a thread, and the timeout because
+/// a blocked thread must not become a blocked command. Answering `None` is the
+/// honest outcome: without a key the provider reports "not connected", which
+/// is a screen the user can act on, rather than a spinner that never resolves.
+async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> Option<String> {
+    let handle = app.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        crate::secrets::SecretManager::get_syn_api_key(Some(&handle), slot)
+    });
+
+    match tokio::time::timeout(KEYCHAIN_PATIENCE, read).await {
+        Ok(Ok(key)) => key,
+        Ok(Err(e)) => {
+            log::warn!("[Syn] Keychain read panicked: {e}");
+            None
+        }
+        Err(_) => {
+            log::warn!(
+                "[Syn] The keychain did not answer within {}s — most likely a macOS \
+                 permission dialog is waiting. Carrying on without the key; approve it and \
+                 the next check will pick it up.",
+                KEYCHAIN_PATIENCE.as_secs()
+            );
+            None
+        }
+    }
+}
+
+async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
     match settings.provider {
         SynProvider::Ollama => Box::new(OllamaProvider::new(&settings.ollama_url)),
         SynProvider::OpenAiCompat => Box::new(OpenAiCompatProvider::new(
             &settings.openai_base_url,
-            crate::secrets::SecretManager::get_syn_api_key(
-                Some(app),
-                SynProvider::OpenAiCompat.key_slot(),
-            ),
+            api_key_for(app, SynProvider::OpenAiCompat.key_slot()).await,
             settings.openai_reasoning_effort.clone(),
         )),
     }
@@ -44,7 +93,7 @@ pub async fn syn_check_status(
     vault_path: String,
 ) -> Result<ProviderStatus, AppError> {
     let settings = settings_for(&vault_path);
-    provider_for(&app, &settings).check_status().await
+    provider_for(&app, &settings).await.check_status().await
 }
 
 /// List the models the configured provider will accept.
@@ -54,7 +103,7 @@ pub async fn syn_list_models(
     vault_path: String,
 ) -> Result<Vec<ModelInfo>, AppError> {
     let settings = settings_for(&vault_path);
-    provider_for(&app, &settings).list_models().await
+    provider_for(&app, &settings).await.list_models().await
 }
 
 /// Pull (download) a model from Ollama's registry.
@@ -221,25 +270,47 @@ pub async fn syn_send_message(
         }
     };
 
-    let (retrieval, context_str) = if settings.rag_enabled {
-        // The DB lock is scoped: retrieval reads, and the lock is gone before
-        // anything async happens below.
+    // Retrieval and memory in one lock, because they are both reads and the
+    // lock has to be gone before anything async below.
+    let (retrieval, context_str, remembered) = {
         let db = state
             .lock()
             .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
-        let retrieval_result =
-            rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
-        let context_str = rag::format_context(&retrieval_result);
-        (retrieval_result, context_str)
-    } else {
-        (
-            crate::models::syn::RetrievalResult {
-                context_chunks: Vec::new(),
-                total_tokens_estimate: 0,
-                sources: Vec::new(),
-            },
-            String::new(),
-        )
+
+        // What Syn remembers is not conditional on `rag_enabled`. That setting
+        // is about searching the vault for this question; a pinned memory is
+        // what Syn knows about the person, and turning off retrieval should not
+        // give them an assistant that has forgotten their name.
+        let remembered = crate::syn::memory::all(&db)
+            .map(|memories| {
+                crate::syn::memory::memory_block(
+                    &memories,
+                    crate::syn::memory::MEMORY_BUDGET_CHARS,
+                )
+            })
+            .unwrap_or_else(|e| {
+                // Best effort: an unreadable memory store is a reason to answer
+                // without it, not a reason to refuse the message.
+                log::warn!("[Syn] Could not read memories: {e}");
+                None
+            });
+
+        if settings.rag_enabled {
+            let retrieval_result =
+                rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
+            let context_str = rag::format_context(&retrieval_result);
+            (retrieval_result, context_str, remembered)
+        } else {
+            (
+                crate::models::syn::RetrievalResult {
+                    context_chunks: Vec::new(),
+                    total_tokens_estimate: 0,
+                    sources: Vec::new(),
+                },
+                String::new(),
+                remembered,
+            )
+        }
     };
 
     // 5. Assemble the system prompt from its parts.
@@ -248,12 +319,13 @@ pub async fn syn_send_message(
     // prompt had already been built. They are a section of the plan now, so
     // there is one place that knows what the prompt is made of — and one place
     // that can report on it, which is what `syn_preview_prompt` reads.
-    let final_system_prompt = PromptPlan::for_chat(
-        &context_str,
-        &settings.personality,
-        settings.custom_system_prompt.as_deref(),
-        DEFAULT_BUDGET_CHARS,
-    )
+    let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
+        context: &context_str,
+        personality: &settings.personality,
+        custom: settings.custom_system_prompt.as_deref(),
+        memory: remembered.as_deref(),
+        budget_chars: DEFAULT_BUDGET_CHARS,
+    })
     .render();
 
     // 6. Build messages for LLM: system prompt + conversation history
@@ -292,7 +364,7 @@ pub async fn syn_send_message(
     );
     crate::syn::run::prune_runs(&vault_path);
 
-    let engine = SynEngine::new(provider_for(&app, &settings));
+    let engine = SynEngine::new(provider_for(&app, &settings).await);
     let assistant_message_id = uuid::Uuid::new_v4().to_string();
 
     let mut assistant_message = engine
@@ -331,7 +403,7 @@ pub async fn syn_send_message(
     // the provider with it, since the name alone does not identify a model.
     // Rewritten rather than only filled in: a conversation that has just
     // switched provider must not keep pointing at the old one's model.
-    conv.meta.model = Some(model);
+    conv.meta.model = Some(model.clone());
     conv.meta.provider = Some(settings.provider);
 
     // Update message count
@@ -346,6 +418,86 @@ pub async fn syn_send_message(
 
     // Save the conversation
     conversation::save_conversation(&vault_path, &conv)?;
+
+    // 11. Look back at the exchange and propose what might be worth keeping.
+    //
+    // Spawned rather than awaited. The user has their answer — it streamed
+    // while the run was driving — and making them wait another second or two
+    // for a background suggestion would be charging them for a feature that is
+    // supposed to cost them nothing but tokens.
+    //
+    // Only for a run that finished. A cancelled or failed exchange is not
+    // evidence of anything, and reflecting on one would propose memories drawn
+    // from work the user stopped.
+    if settings.memory_reflection && run.state == crate::syn::run::RunState::Done {
+        let provider = provider_for(&app, &settings).await;
+        let vault = vault_path.clone();
+        let model_name = model.clone();
+        let asked = request.message.clone();
+        let answered = assistant_message.content.clone();
+        let run_id = run.id.clone();
+        let conversation_id = request.conversation_id.clone();
+        let num_ctx = settings.num_ctx;
+        // Read before spawning: the state guard is not `Send`, and the memories
+        // are what the reflector is told not to propose again.
+        let existing = state
+            .lock()
+            .ok()
+            .and_then(|db| crate::syn::memory::all(&db).ok())
+            .unwrap_or_default();
+
+        tauri::async_runtime::spawn(async move {
+            let proposals = crate::syn::reflect::reflect(
+                provider.as_ref(),
+                &model_name,
+                num_ctx,
+                &asked,
+                &answered,
+                &existing,
+                &run_id,
+                Some(&conversation_id),
+            )
+            .await;
+
+            // Every outcome says something, including the empty one. Silence
+            // used to mean either "it ran and found nothing worth keeping" —
+            // which the reflection prompt calls the normal answer — or "it
+            // never ran at all", and those two look identical from outside
+            // while meaning opposite things. A quiet feature that cannot be
+            // told apart from a dead one is a feature nobody can debug.
+            //
+            // Nothing-proposed and everything-was-a-duplicate are also kept
+            // apart. `proposal::add` dedups against the queue only — not
+            // against memories already saved, which the reflection prompt
+            // handles by listing them and asking for neither again. So a run
+            // that proposes two things and queues none is re-suggesting what
+            // the user has not answered yet, which is worth seeing rather than
+            // hiding behind the same zero.
+            let proposed = proposals.len();
+            match crate::syn::proposal::add(&vault, proposals) {
+                Ok(0) if proposed == 0 => {
+                    log::info!("[Syn] Reflection ran, proposed nothing (run {run_id})");
+                }
+                Ok(0) => log::info!(
+                    "[Syn] Reflection proposed {proposed} thing(s), all already in the \
+                     queue (run {run_id})"
+                ),
+                Ok(n) => log::info!(
+                    "[Syn] Reflection proposed {n} thing(s) to remember (run {run_id})"
+                ),
+                Err(e) => log::warn!("[Syn] Could not queue proposals: {e}"),
+            }
+        });
+    } else {
+        log::info!(
+            "[Syn] Reflection skipped: {}",
+            if settings.memory_reflection {
+                "the run did not finish"
+            } else {
+                "turned off in settings"
+            }
+        );
+    }
 
     // Return the assistant message
     Ok(assistant_message)
@@ -393,6 +545,178 @@ pub async fn syn_delete_run(vault_path: String, run_id: String) -> Result<(), Ap
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  MEMORY
+// ═══════════════════════════════════════════════════════════════
+
+/// Everything Syn remembers, most recently confirmed first.
+///
+/// One typed command rather than letting the screen read raw nodes: a memory
+/// has a dozen frontmatter keys with defaults and clamping, and a screen that
+/// re-derived those would be a second opinion about what a memory is — the
+/// sort that agrees until it does not. Editing goes the other way, through the
+/// ordinary node write path, because a memory is an ordinary node and that
+/// path already has versions, sync and a trash behind it.
+#[tauri::command]
+pub async fn syn_list_memories(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<crate::syn::memory::Memory>, AppError> {
+    let db = state
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+    crate::syn::memory::all(&db)
+}
+
+/// What the pinned memories cost, against what they are allowed.
+///
+/// Shown on the memory screen so that pinning is visibly a budget rather than
+/// a checkbox: a user who pins their twentieth memory should be able to see
+/// that the earlier ones are being dropped before it happens to them.
+#[derive(serde::Serialize)]
+pub struct MemoryBudget {
+    /// Everything remembered. All of it rides in the prompt until the budget
+    /// bites, so this — not `pinned` — is what the user is looking at when they
+    /// ask what Syn is working from.
+    pub total: usize,
+    /// How many of those are pinned, which now decides only who survives a cut.
+    pub pinned: usize,
+    pub chars: usize,
+    pub budget_chars: usize,
+    /// Memories that do not fit and are being left out of the prompt.
+    pub dropped: usize,
+}
+
+#[tauri::command]
+pub async fn syn_memory_budget(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<MemoryBudget, AppError> {
+    let memories = {
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        crate::syn::memory::all(&db)?
+    };
+    let total = memories.len();
+    let pinned = memories.iter().filter(|m| m.pinned).count();
+    let block = crate::syn::memory::memory_block(
+        &memories,
+        crate::syn::memory::MEMORY_BUDGET_CHARS,
+    );
+    let chars = block.as_deref().map(|b| b.chars().count()).unwrap_or(0);
+    // Counted by the module that renders the lines. Counting `- [` here was
+    // wrong the moment instructions stopped carrying a `[kind]` label, and it
+    // was wrong quietly: the number just drifted.
+    let shown = block
+        .as_deref()
+        .map(crate::syn::memory::lines_shown)
+        .unwrap_or(0);
+
+    Ok(MemoryBudget {
+        total,
+        pinned,
+        chars,
+        budget_chars: crate::syn::memory::MEMORY_BUDGET_CHARS,
+        dropped: total.saturating_sub(shown),
+    })
+}
+
+/// What Syn would like to remember, waiting to be allowed to.
+#[tauri::command]
+pub async fn syn_list_proposals(
+    vault_path: String,
+) -> Result<Vec<crate::syn::proposal::Proposal>, AppError> {
+    Ok(crate::syn::proposal::list(&vault_path))
+}
+
+/// Accept one: write the memory, and take it out of the tray.
+///
+/// The memory is written through the same tool the assistant calls, so a
+/// memory the user approved and one Syn was told directly are the same kind of
+/// thing on disk — same provenance fields, same folder, same history.
+#[tauri::command]
+pub async fn syn_accept_proposal(
+    app: tauri::AppHandle,
+    vault_path: String,
+    proposal_id: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<(), AppError> {
+    let Some(p) = crate::syn::proposal::take(&vault_path, &proposal_id)? else {
+        // Already gone — a second click, or two windows. Not an error.
+        return Ok(());
+    };
+
+    // A proposal may say it replaces something. The reflector names the entry
+    // by its text, because text is what it was shown; the id is resolved here,
+    // where the memories actually are.
+    let replaced = p.supersedes.as_deref().and_then(|body| {
+        let wanted = body.trim().to_lowercase();
+        let db = state.lock().ok()?;
+        crate::syn::memory::all(&db)
+            .ok()?
+            .into_iter()
+            .find(|m| m.body.trim().to_lowercase() == wanted)
+            .map(|m| m.id)
+    });
+
+    let ctx = crate::syn::tools::ToolContext {
+        db: state.inner(),
+        vault_path: &vault_path,
+        app: &app,
+        run_id: Some(&p.source_run),
+    };
+    crate::syn::tools::execute_tool(
+        &ctx,
+        "remember",
+        &serde_json::json!({
+            "body": p.body,
+            "kind": p.kind,
+            "subject": p.subject,
+            "confidence": p.confidence,
+            // Explicit, against `remember`'s default. A memory Syn proposed and
+            // the user merely agreed to should not outrank one the user asked
+            // for by name when the budget eventually has to choose.
+            "pinned": false,
+            "supersedes": replaced,
+        }),
+    )?;
+
+    // Retire the old one only after the new one is written, and by trashing it
+    // rather than deleting it: the user accepted a replacement, not a loss, and
+    // `restore_node` is the way back if the replacement turns out to be wrong.
+    if let Some(old) = replaced {
+        if let Err(e) = crate::syn::tools::execute_tool(
+            &ctx,
+            "trash_node",
+            &serde_json::json!({ "node_id": old }),
+        ) {
+            // The new memory is already saved. Failing the whole accept here
+            // would leave the user unable to accept anything, so this reports
+            // and moves on: two memories that disagree is a worse prompt, not a
+            // broken one.
+            log::warn!("[Syn] Superseded memory {old} could not be retired: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// Decline one. Nothing is written, and nothing is left behind.
+#[tauri::command]
+pub async fn syn_dismiss_proposal(
+    vault_path: String,
+    proposal_id: String,
+) -> Result<(), AppError> {
+    // Taking it out of the queue is not enough. Reflection runs after every
+    // message and is free to suggest the same thing again; without a record of
+    // the refusal it will, and the user declines it a second time.
+    crate::syn::proposal::dismiss(&vault_path, &proposal_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn syn_clear_proposals(vault_path: String) -> Result<(), AppError> {
+    crate::syn::proposal::clear(&vault_path)
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  WHAT SYN IS ACTUALLY TOLD
 // ═══════════════════════════════════════════════════════════════
 
@@ -408,6 +732,17 @@ pub async fn syn_preview_prompt(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<PromptPreview, AppError> {
     let settings = settings_for(&vault_path);
+
+    // The preview has to show the memory section too, or the one screen that
+    // says what Syn is told would be the one place it is not visible.
+    let remembered = {
+        let db = state
+            .lock()
+            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        crate::syn::memory::all(&db)
+            .map(|m| crate::syn::memory::memory_block(&m, crate::syn::memory::MEMORY_BUDGET_CHARS))
+            .unwrap_or(None)
+    };
 
     let context = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
         Some(message) if settings.rag_enabled => {
@@ -428,12 +763,13 @@ pub async fn syn_preview_prompt(
         _ => String::new(),
     };
 
-    Ok(PromptPlan::for_chat(
-        &context,
-        &settings.personality,
-        settings.custom_system_prompt.as_deref(),
-        DEFAULT_BUDGET_CHARS,
-    )
+    Ok(PromptPlan::for_chat(ChatPrompt {
+        context: &context,
+        personality: &settings.personality,
+        custom: settings.custom_system_prompt.as_deref(),
+        memory: remembered.as_deref(),
+        budget_chars: DEFAULT_BUDGET_CHARS,
+    })
     .into())
 }
 

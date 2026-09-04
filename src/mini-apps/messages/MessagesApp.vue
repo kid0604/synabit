@@ -303,16 +303,11 @@ watch(() => status.value.connected, (connected, wasConnected) => {
 onMounted(async () => {
   loading.value = true;
   try {
-    await checkStatus(props.vaultPath);
-    if (status.value.connected) {
-      await fetchModels(props.vaultPath);
-      startHealthCheck(props.vaultPath);
-    } else {
-      startPolling(props.vaultPath);
-    }
+    // The vault first, and only the vault. Conversations and notifications are
+    // files on this machine; everything the screen needs to draw is here.
     await initConversation();
     await fetchNotifications();
-    
+
     // Auto select Syn on desktop
     if (!isMobile.value) {
        activeChatId.value = 'syn-main';
@@ -322,6 +317,33 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+
+  // Reaching the provider is deliberately *not* awaited before the screen is
+  // shown, and deliberately not inside the block above.
+  //
+  // It used to be first, and the whole app hung behind it: `list_models` was
+  // built on the generation client, which waits five minutes, so an endpoint
+  // that accepted the connection and went quiet left Messages showing a
+  // spinner and "No chat selected" with nothing clickable. The Rust side was
+  // idle and a Web Inspector timeline of that state was empty — the main
+  // thread was not busy, it was waiting on an IPC call that had not come back.
+  //
+  // The timeout is fixed too, in `catalogue_client`. The ordering is the part
+  // that matters: whether the network answers is not a precondition for
+  // reading your own conversations.
+  void (async () => {
+    try {
+      await checkStatus(props.vaultPath);
+      if (status.value.connected) {
+        await fetchModels(props.vaultPath);
+        startHealthCheck(props.vaultPath);
+      } else {
+        startPolling(props.vaultPath);
+      }
+    } catch (e) {
+      logger.error('[Syn] Could not reach the provider', e);
+    }
+  })();
 
   const handleResize = () => {
       isMobile.value = window.innerWidth < 768;

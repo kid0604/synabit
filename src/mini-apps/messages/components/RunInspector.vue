@@ -15,10 +15,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   X, RefreshCw, Loader2, Trash2, Square, Wrench, MessageSquare,
-  Info, AlertTriangle, ChevronRight,
+  Info, AlertTriangle, ChevronRight, Pin, PinOff, Check, Sparkles, X as XIcon,
 } from 'lucide-vue-next';
 import { useSynRuns } from '../composables/useSynRuns';
-import type { RunState, RunStep, Reversal } from '../types';
+import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
+import type { RunState, RunStep, Reversal, Memory } from '../types';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -30,8 +31,37 @@ const {
   loadRuns, openRun, cancelRun, deleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
 
-type Tab = 'runs' | 'prompt';
+type Tab = 'runs' | 'prompt' | 'memory';
 const tab = ref<Tab>('runs');
+
+const {
+  memories, proposals, budget, error: memoryError,
+  load: loadMemories, setPinned, confirm: confirmMemory, forget, accept, dismiss,
+} = useSynMemory(() => props.vaultPath);
+
+/** How full the pinned budget is, for the bar on the memory tab. */
+const memoryUsed = computed(() => {
+  if (!budget.value || budget.value.budget_chars === 0) return 0;
+  return Math.min(100, Math.round((budget.value.chars / budget.value.budget_chars) * 100));
+});
+
+const confidenceLabel = (memory: Memory) => `${Math.round(memory.confidence * 100)}%`;
+
+/** Both live with the data they order, so nothing here is a second opinion. */
+const orderedMemories = computed(() => orderMemories(memories.value));
+
+/**
+ * Open the conversation a memory came out of.
+ *
+ * "Why do you believe this about me?" is the question this screen most needs to
+ * answer, and every memory has carried `source_run` since it was written.
+ */
+const showTheRunBehind = async (memory: Memory) => {
+  if (!memory.source_run) return;
+  tab.value = 'runs';
+  if (!runs.value.length) await loadRuns();
+  await openRun(memory.source_run);
+};
 
 /** The question the prompt preview is built for. Optional, and worth giving. */
 const previewQuestion = ref('');
@@ -39,6 +69,7 @@ const previewQuestion = ref('');
 const showTab = async (next: Tab) => {
   tab.value = next;
   if (next === 'prompt' && !preview.value) await loadPreview(previewQuestion.value);
+  if (next === 'memory') await loadMemories();
 };
 
 /**
@@ -121,7 +152,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">
             <button
-              v-for="option in (['runs', 'prompt'] as Tab[])"
+              v-for="option in (['runs', 'prompt', 'memory'] as Tab[])"
               :key="option"
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
@@ -137,7 +168,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <button
             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
-            @click="tab === 'runs' ? loadRuns() : loadPreview(previewQuestion)"
+            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : loadPreview(previewQuestion)"
           >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -151,8 +182,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         </div>
       </div>
 
-      <div v-if="error" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
-        {{ error }}
+      <div v-if="error || memoryError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
+        {{ error || memoryError }}
       </div>
 
       <!-- ── Runs ─────────────────────────────────────────── -->
@@ -264,6 +295,147 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             </ol>
           </div>
         </div>
+      </div>
+
+      <!-- ── Memory ───────────────────────────────────────── -->
+      <div v-else-if="tab === 'memory'" class="flex-1 overflow-y-auto p-6">
+        <p class="text-sm text-gray-500">{{ t('syn.memory_explainer') }}</p>
+
+        <div v-if="budget" class="mt-4">
+          <div class="flex items-baseline justify-between text-sm">
+            <span class="text-text dark:text-text-dark font-medium">
+              {{ t('syn.memory_count', { n: budget.total }) }}
+            </span>
+            <span class="text-xs text-gray-400">
+              <span v-if="budget.pinned">{{ t('syn.memory_pinned_count', { n: budget.pinned }) }} · </span>
+              {{ t('syn.memory_budget', { used: budget.chars, total: budget.budget_chars }) }}
+            </span>
+          </div>
+          <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+            <div class="h-full rounded-full"
+                 :class="budget.dropped > 0 ? 'bg-amber-500' : 'bg-violet-500'"
+                 :style="{ width: `${memoryUsed}%` }" />
+          </div>
+          <p v-if="budget.dropped > 0" class="mt-1 text-[11px] text-amber-600">
+            {{ t('syn.memory_dropped', { n: budget.dropped }) }}
+          </p>
+        </div>
+
+        <!-- Waiting on a decision, so it goes above what is already settled. -->
+        <div v-if="proposals.length" class="mt-6">
+          <div class="flex items-center gap-2 mb-2">
+            <Sparkles class="w-3.5 h-3.5 text-violet-500" />
+            <h3 class="text-sm font-medium text-text dark:text-text-dark">
+              {{ t('syn.proposals_title', { n: proposals.length }) }}
+            </h3>
+          </div>
+          <p class="text-xs text-gray-500 mb-3">{{ t('syn.proposals_explainer') }}</p>
+
+          <ul class="space-y-2">
+            <li
+              v-for="proposal in proposals"
+              :key="proposal.id"
+              class="rounded-xl border border-violet-200 dark:border-violet-900/60
+                     bg-violet-50/40 dark:bg-violet-950/20 p-3"
+            >
+              <div class="flex items-center gap-2 text-[11px] text-gray-500">
+                <span class="px-1.5 py-0.5 rounded bg-white dark:bg-gray-800">{{ proposal.kind }}</span>
+                <span v-if="proposal.subject" class="text-gray-400">{{ proposal.subject }}</span>
+                <span
+                  v-if="proposal.from_correction"
+                  class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700
+                         dark:bg-amber-950/50 dark:text-amber-400"
+                >{{ t('syn.proposal_from_correction') }}</span>
+                <span class="ml-auto text-gray-400">{{ Math.round(proposal.confidence * 100) }}%</span>
+              </div>
+              <p class="mt-2 text-sm text-text dark:text-text-dark">{{ proposal.body }}</p>
+              <p v-if="proposal.supersedes" class="mt-1 text-[11px] text-gray-500 line-through">
+                {{ t('syn.proposal_replaces', { body: proposal.supersedes }) }}
+              </p>
+              <p class="mt-1 text-[11px] text-gray-500 italic">{{ proposal.because }}</p>
+              <div class="mt-3 flex gap-2">
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-violet-600 text-white hover:bg-violet-700"
+                  @click="accept(proposal)"
+                >
+                  <Check class="w-3 h-3" /> {{ t('syn.proposal_accept') }}
+                </button>
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  @click="dismiss(proposal)"
+                >
+                  <XIcon class="w-3 h-3" /> {{ t('syn.proposal_dismiss') }}
+                </button>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <p v-if="!memories.length" class="mt-6 text-sm text-gray-500">
+          {{ t('syn.memory_empty') }}
+        </p>
+
+        <ul class="mt-5 space-y-3">
+          <li
+            v-for="memory in orderedMemories"
+            :key="memory.id"
+            class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
+            :class="memory.pinned ? 'border-violet-200 dark:border-violet-900/60' : ''"
+          >
+            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+              <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ memory.kind }}</span>
+              <span v-if="memory.subject" class="text-gray-400">{{ memory.subject }}</span>
+              <span class="text-gray-400">{{ confidenceLabel(memory) }}</span>
+              <span v-if="isStale(memory)" class="text-amber-600">{{ t('syn.memory_stale') }}</span>
+              <span class="ml-auto text-gray-400">{{ memory.last_confirmed }}</span>
+            </div>
+
+            <p class="mt-2 text-sm text-text dark:text-text-dark whitespace-pre-wrap">{{ memory.body }}</p>
+
+            <p v-if="isStale(memory)" class="mt-2 text-[11px] text-amber-600">
+              {{ t('syn.memory_review_prompt') }}
+            </p>
+
+            <p v-if="memory.source_nodes.length" class="mt-1 text-[11px] text-gray-400">
+              {{ t('syn.memory_from') }}: {{ memory.source_nodes.join(', ') }}
+            </p>
+
+            <div class="mt-3 flex gap-2">
+              <button
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                @click="setPinned(memory, !memory.pinned)"
+              >
+                <component :is="memory.pinned ? PinOff : Pin" class="w-3 h-3" />
+                {{ memory.pinned ? t('syn.memory_unpin') : t('syn.memory_pin') }}
+              </button>
+              <button
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                @click="confirmMemory(memory)"
+              >
+                <Check class="w-3 h-3" /> {{ t('syn.memory_confirm') }}
+              </button>
+              <button
+                v-if="memory.source_run"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                @click="showTheRunBehind(memory)"
+              >
+                <Info class="w-3 h-3" /> {{ t('syn.memory_source_run') }}
+              </button>
+              <button
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg text-red-600
+                       hover:bg-red-50 dark:hover:bg-red-950/40"
+                @click="forget(memory)"
+              >
+                <Trash2 class="w-3 h-3" /> {{ t('syn.memory_forget') }}
+              </button>
+            </div>
+          </li>
+        </ul>
       </div>
 
       <!-- ── Prompt ───────────────────────────────────────── -->

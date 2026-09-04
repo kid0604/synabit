@@ -21,7 +21,6 @@ export function useEventForm(
     const eventForm = ref<EventFormData>({
         isEdit: false,
         id: '',
-        path: '',
         title: '',
         isAllDay: false,
         tzid: '',
@@ -155,7 +154,7 @@ export function useEventForm(
         const startHour = hr !== undefined ? hr.toString().padStart(2, '0') : '12';
         const endHour = hr !== undefined ? (hr + 1).toString().padStart(2, '0') : '13';
         eventForm.value = {
-            isEdit: false, id: '', path: '', title: '',
+            isEdit: false, id: '', title: '',
             isAllDay: false,
             tzid: '',
             colour: '',
@@ -197,7 +196,7 @@ export function useEventForm(
         if (endAt.includes('T')) endAt = endAt.slice(0, 16);
 
         return {
-            isEdit: true, id: ev.id, path: ev.path, title: ev.title,
+            isEdit: true, id: ev.id, title: ev.title,
             isAllDay: ev.is_all_day, tzid: ev.tzid || '', colour: ev.colour || '',
             start_at: startAt, end_at: endAt, location: ev.location,
             description: ev.content ?? '', tagsStr: (ev.tags || []).join(', '),
@@ -310,7 +309,7 @@ export function useEventForm(
         // Normalize format to drop seconds or keep ISO consistent if desired, but HTML datetime-local uses YYYY-MM-DDTHH:mm
         
         try {
-            let relPath = eventForm.value.path;
+            let relPath = eventForm.value.id;
             let isCreatingNewNode = !eventForm.value.isEdit || !relPath;
             
             const properties: any = {
@@ -451,7 +450,7 @@ export function useEventForm(
                 }
                 
                 await ns.writeNode({
-                    relPath: parentEv.path,
+                    relPath: parentEv.id,
                     title: parentEv.title,
                     nodeType: 'event',
                     properties: parentProps,
@@ -591,7 +590,7 @@ export function useEventForm(
                         await ns.deleteNode({ relPath: famEv.id, silent: true });
                     }
                 }
-                await ns.deleteNode({ relPath: ev.path });
+                await ns.deleteNode({ relPath: ev.id });
             } else {
                 const parentProps = {
                     is_all_day: ev.is_all_day,
@@ -616,7 +615,7 @@ export function useEventForm(
                 }
                 
                 await ns.writeNode({
-                    relPath: ev.path,
+                    relPath: ev.id,
                     title: ev.title,
                     nodeType: 'event',
                     properties: parentProps,

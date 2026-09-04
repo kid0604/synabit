@@ -138,6 +138,7 @@ impl<R: tauri::Runtime> RunContext<'_, R> {
             db: self.db,
             vault_path: self.vault_path,
             app: self.app,
+            run_id: Some(self.run_id),
         }
     }
 }
@@ -182,10 +183,12 @@ impl VaultTools {
         Some(match tool {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
             | "list_versions" | "search_feed_articles" | "search_files" | "read_file_text"
-            | "get_finance_summary" | "search_finance" | "get_transactions" => VaultRead,
+            | "get_finance_summary" | "search_finance" | "get_transactions" | "recall" => {
+                VaultRead
+            }
 
             "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version"
-            | "update_feed_article" | "create_transaction" => VaultWrite,
+            | "update_feed_article" | "create_transaction" | "remember" => VaultWrite,
 
             "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => VaultStructural,
 
@@ -303,7 +306,7 @@ mod tests {
             "get_finance_summary", "search_finance", "get_transactions", "create_node",
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
-            "rename_kind", "delete_kind",
+            "rename_kind", "delete_kind", "remember", "recall",
         ];
 
         for name in declared {

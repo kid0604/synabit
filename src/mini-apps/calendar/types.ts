@@ -26,7 +26,6 @@ export interface EventMetadata {
     location: string;
     tags: string[];
     content: string;
-    path: string;
     created_at: string;
     relations?: string[];
     /** The zone the stored clock belongs to; empty means floating. */
@@ -59,8 +58,20 @@ export type ViewMode = 'day' | 'week' | 'month' | 'year' | 'agenda';
 
 export interface EventFormData {
     isEdit: boolean;
+    /**
+     * The file this form is editing, or empty for a new event.
+     *
+     * There used to be a `path` beside this holding the same string, and the
+     * writes read *that* one. Nothing on the wire ever set it: events reach
+     * the grid as `EventSummary`, which has an `id` and no `path`, so every
+     * event on screen carried `path: undefined` — deleting one called
+     * `delete_node_file` with no path and failed into a `console.error`, and
+     * saving an edit saw "no path" as "new event" and wrote a duplicate.
+     * The fixtures in the tests set `path` by hand, so none of it showed.
+     *
+     * One name for one fact. A node's id *is* its path in the vault.
+     */
     id: string;
-    path: string;
     title: string;
     isAllDay: boolean;
     start_at: string;

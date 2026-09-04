@@ -516,6 +516,8 @@ mod things_gate {
             db: db_state.inner(),
             vault_path: &vault_path,
             app: &handle,
+            // Not part of a run: this is a screen calling a tool directly.
+            run_id: None,
         };
 
         crate::syn::tools::execute_tool(

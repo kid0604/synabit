@@ -109,6 +109,7 @@ mod tests {
         assert_eq!(declared("max_context_chars"), d.max_context_chars.to_string());
         assert_eq!(declared("max_tool_iterations"), d.max_tool_iterations.to_string());
         assert_eq!(declared("temperature"), d.temperature.to_string());
+        assert_eq!(declared("memory_reflection"), d.memory_reflection.to_string());
         assert_eq!(declared("ollama_url"), d.ollama_url);
         assert_eq!(declared("openai_base_url"), d.openai_base_url);
         assert_eq!(declared("personality"), d.personality);

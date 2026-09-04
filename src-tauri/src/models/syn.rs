@@ -203,6 +203,9 @@ fn default_max_history() -> usize {
 fn default_max_tool_iterations() -> u8 {
     12
 }
+fn default_memory_reflection() -> bool {
+    true
+}
 
 /// Which service Syn talks to.
 ///
@@ -312,6 +315,19 @@ pub struct SynSettings {
     pub include_feeds: bool,
     pub graph_expansion_depth: u8,
 
+    // Memory
+    /// Whether Syn looks back at each exchange and proposes what to remember.
+    ///
+    /// On by default, because a memory nobody has to ask for is the point. It
+    /// costs one extra completion per answered message — no tools, a small
+    /// prompt — which is roughly a fifth of a main turn, and it is the sort of
+    /// cost somebody should be able to switch off rather than discover.
+    ///
+    /// Absent in settings files written before this existed, and those vaults
+    /// get it on, like a fresh one.
+    #[serde(default = "default_memory_reflection")]
+    pub memory_reflection: bool,
+
     // Personality
     pub personality: String,
     pub custom_system_prompt: Option<String>,
@@ -334,6 +350,7 @@ impl Default for SynSettings {
             include_finance: true,
             include_feeds: true,
             graph_expansion_depth: 1,
+            memory_reflection: default_memory_reflection(),
             personality: "auto".to_string(),
             custom_system_prompt: None,
         }

@@ -47,6 +47,8 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "note" => "Notes".to_string(),
         "quickcap" => "QuickCaps".to_string(),
         "whiteboard" => "Whiteboards".to_string(),
+        // Not `Memory`, which is where a user's own `memory` kind would land.
+        "syn_memory" => crate::syn::memory::MEMORY_FOLDER.to_string(),
         other => {
             let clean = other.trim();
             if clean.is_empty() {
@@ -75,8 +77,77 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
 pub(crate) fn is_internal_type(node_type: &str) -> bool {
     matches!(
         node_type,
-        "json" | "canvas" | "pdf_highlight" | "pdf_drawing" | "interaction" | "schema" | "view"
+        "json"
+            | "canvas"
+            | "pdf_highlight"
+            | "pdf_drawing"
+            | "interaction"
+            | "schema"
+            | "view"
+            | "syn_memory"
     ) || node_type.starts_with("finance_")
+}
+
+/// What this app itself can do with one of its own kinds.
+///
+/// # The gap this fills
+///
+/// `list_schemas` answers "what is in this vault" from two sources, and both
+/// are readings of the vault: the fields nodes actually carry, and the shape
+/// declared in `Schema/<kind>.md` that Things writes. Between them they teach
+/// the assistant every kind the user invents, and they keep teaching it as the
+/// user changes their mind — which is the right arrangement and is not what is
+/// missing.
+///
+/// What is missing is the third thing, which is not in the vault at all. An
+/// event can carry `reminders`; that is defined in `EventMetadata` and read by
+/// `calendar/reminders.rs`, and no amount of looking at a vault reveals it
+/// until somebody has already used it. Observed on a real vault holding one
+/// event: asked "tầm 8h30 sáng nhớ nhắc tao uống thuốc", the assistant was
+/// told by `list_schemas` that an event has `start_at`, `end_at`, `is_all_day`
+/// and nothing else — so it could not set a reminder, and improvised by
+/// rescheduling the only event it could see.
+///
+/// # Why a table here rather than schema files in the vault
+///
+/// Shipping `Schema/event.md` would write into somebody's vault to tell them
+/// something about the app, and then either overwrite their edits on the next
+/// release or never reach an existing vault at all. This is read from the
+/// binary, so it is always the truth about the version that is running, and it
+/// costs the user's folder nothing.
+///
+/// It constrains nothing. It sits *beside* the observed and declared fields
+/// rather than replacing them, and a kind the user invented has none — which
+/// is correct, because this app cannot do anything special with an `animal`.
+///
+/// A test reads the front end's own interfaces and fails if a name here has
+/// been renamed or removed there.
+pub(crate) fn app_fields(node_type: &str) -> &'static [(&'static str, &'static str)] {
+    match node_type {
+        "event" => &[
+            ("start_at", "When it starts. A bare date `YYYY-MM-DD` for an all-day event, or `YYYY-MM-DDTHH:MM:SS` when it has a time. The calendar shows nothing without this."),
+            ("end_at", "When it ends, same shape as start_at."),
+            ("is_all_day", "true when start_at carries no time, false when it does."),
+            ("reminders", "How long before the start to notify, as a list of durations: [\"1d\", \"2h\", \"15m\"]. \"0m\" means at the moment it starts. This is how a user is reminded of something."),
+            ("location", "Free text."),
+            ("tags", "A list of strings, without the #."),
+            ("tzid", "The zone the clock belongs to, e.g. Asia/Ho_Chi_Minh. Empty means it floats with the device."),
+            ("rrule", "How it repeats, as an RFC 5545 rule: FREQ=WEEKLY;BYDAY=MO."),
+            ("colour", "A colour name the calendar draws it in."),
+        ],
+        "task" => &[
+            ("status", "todo, in_progress, done, backlog or canceled."),
+            ("due_date", "The day it is due, `YYYY-MM-DD`."),
+            ("due_time", "The time of day it is due, `HH:mm`. Empty for a whole-day task; separate from due_date on purpose."),
+            ("reminders", "How long before the deadline to notify: [\"1d\", \"30m\"]. \"0m\" means at the deadline. This is how a user is reminded of something."),
+            ("priority", "P1, P2, P3 or P4."),
+            ("start_date", "When work on it starts, `YYYY-MM-DD`."),
+            ("recurrence", "none, daily, weekly, monthly or yearly."),
+            ("recurrence_end_at", "Last date the series may fall on, `YYYY-MM-DD`. Empty for forever."),
+            ("tags", "A list of strings, without the #."),
+        ],
+        _ => &[],
+    }
 }
 
 /// Maximum characters allowed in a single tool result.
@@ -104,6 +175,13 @@ pub struct ToolContext<'a, R: tauri::Runtime> {
     pub db: &'a crate::db::DbState,
     pub vault_path: &'a str,
     pub app: &'a tauri::AppHandle<R>,
+    /// The run this call belongs to, when there is one.
+    ///
+    /// Only `remember` reads it, and only to write provenance: a memory that
+    /// cannot say where it came from is a claim about somebody that nobody can
+    /// check. `None` for a call made outside a run — the Nexus screen has one —
+    /// which is honest rather than a made-up id.
+    pub run_id: Option<&'a str>,
 }
 
 /// The database, for the length of one tool call.
@@ -184,7 +262,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         },
                         "properties": {
                             "type": "object",
-                            "description": "Frontmatter fields, as an object. For a task: status (todo/in_progress/done/backlog/canceled), due_date and start_date as YYYY-MM-DD, priority, tags. For an event: start_date, end_date. Any other field is allowed and is kept as written."
+                            "description": "Frontmatter fields, as an object. For a task: status (todo/in_progress/done/backlog/canceled), due_date and start_date as YYYY-MM-DD, priority, tags. For an EVENT the calendar reads start_at and end_at, NOT start_date: use a bare date 'YYYY-MM-DD' for an all-day event, or 'YYYY-MM-DDTHH:MM:SS' when there is a time. An event without start_at is created but never appears in the calendar. Any other field is allowed and is kept as written."
                         }
                     }
                 }),
@@ -396,6 +474,42 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "remember".to_string(),
+                description: "Write down something about this person that should outlive this conversation: a preference, a standing instruction, a fact about them or someone they know. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. Do NOT use it for things that belong in their vault as notes or tasks — those are create_node. To stop remembering something, trash_node its id.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["body"],
+                    "properties": {
+                        "body": { "type": "string", "description": "The memory, in the user's own language, as one or two sentences. Write it so it still makes sense read cold in six months." },
+                        "kind": { "type": "string", "description": "One of: fact, preference, instruction, relationship, project. Defaults to fact." },
+                        "subject": { "type": "string", "description": "Who or what it is about, when that is one nameable thing — a person's name, a project. Leave out for something about the user themselves." },
+                        "confidence": { "type": "number", "description": "0 to 1. Use below 0.6 when inferring rather than being told; the prompt marks those as unsure." },
+                        "source_nodes": { "type": "array", "items": { "type": "string" }, "description": "Ids of vault nodes this was drawn from, if any." },
+                        "pinned": { "type": "boolean", "description": "True only for something true regardless of what is being asked — a name, a timezone, how they want to be addressed. Pinned memories are sent with EVERY message, so pin sparingly." },
+                        "supersedes": { "type": "string", "description": "The id of a memory this replaces, when correcting one." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "recall".to_string(),
+                description: "Search what you have remembered about this person. Everything remembered is already in your prompt under WHAT YOU REMEMBER, so you will rarely need this: it is here for the case where there is more than fits, and the prompt says so by ending with a note about memories left out. Use it then, or when you want to filter by kind or subject.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Free text. Omit to list everything remembered." },
+                        "kind": { "type": "string", "description": "Filter: fact, preference, instruction, relationship, project." },
+                        "subject": { "type": "string", "description": "Filter by who or what it is about." },
+                        "limit": { "type": "number", "description": "Maximum to return. Defaults to 6." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "search_feed_articles".to_string(),
                 description: "Search articles pulled in from the user's RSS feeds. These are not vault nodes and query_nodes cannot reach them.".to_string(),
                 parameters: serde_json::json!({
@@ -539,6 +653,14 @@ pub fn execute_tool<R: tauri::Runtime>(
         "update_node" => tool_update_node(ctx, args),
         "get_linked_nodes" => tool_get_linked_nodes(&*lock(ctx)?, args),
 
+        // What Syn knows about the person rather than about their vault.
+        // Stored as nodes, so `trash_node` and `restore_node` already forget
+        // and un-forget — which is why there is no `forget` here. Two tools
+        // that do one thing is what the collapse from twenty to twelve was
+        // for, and the description above says which one to reach for.
+        "remember" => tool_remember(ctx, args),
+        "recall" => tool_recall(&*lock(ctx)?, args),
+
         // Reversible by construction: the first moves a file to `.trash/`, the
         // rest exist so a wrong move can be undone in the same conversation.
         "trash_node" => tool_trash_node(ctx, args),
@@ -593,6 +715,294 @@ pub fn execute_tool<R: tauri::Runtime>(
 /// People filtered by how the relationship stands, not by name.
 
 /// 1. search_vault — Universal FTS5 search
+
+/// Make an event the Calendar app will actually show.
+///
+/// The Calendar reads `start_at`, `end_at` and `is_all_day`. Nothing anywhere
+/// reads `start_date` on an event — and `create_node`'s own description used to
+/// tell the model to write exactly that. So the assistant would report having
+/// created the event, the file would be correct-looking, Things would list it,
+/// and the Calendar would be empty. Observed, not theorised: "tạo event onboard
+/// Phương network, hôm nay" produced a node with `start_date`/`end_date` and a
+/// calendar with nothing in it.
+///
+/// The description is fixed, and this is here anyway, for the same reason the
+/// task branch above defaults `status`: a task with no status is invisible to
+/// every bucket in the Tasks app, and an event with no `start_at` is dropped by
+/// `layoutFor` before it can be drawn. Both failures are silent, and a tool
+/// whose failure is silent should not depend on the model reading its
+/// description carefully.
+///
+/// Returns the legacy keys it consumed, so an *update* can clear them —
+/// `resolve_properties` removes a key sent as null — and a wrongly-shaped event
+/// heals the next time anything touches it.
+fn normalise_event_properties(props: &mut serde_json::Map<String, Value>) -> Vec<&'static str> {
+    let mut consumed = Vec::new();
+
+    for (legacy, wanted) in [("start_date", "start_at"), ("end_date", "end_at")] {
+        let Some(value) = props.remove(legacy) else {
+            continue;
+        };
+        consumed.push(legacy);
+        // Only when the right key is absent. A caller that sent both meant the
+        // one the app reads.
+        props.entry(wanted.to_string()).or_insert(value);
+    }
+
+    // A date with no time is an all-day event, which is what the app calls it
+    // and how its own form stores one: `start_at` is a bare `YYYY-MM-DD` and
+    // `is_all_day` is true. With a time, `start_at` carries a `T`.
+    if !props.contains_key("is_all_day") {
+        if let Some(start) = props.get("start_at").and_then(|v| v.as_str()) {
+            props.insert(
+                "is_all_day".to_string(),
+                serde_json::json!(!start.contains('T')),
+            );
+        }
+    }
+
+    consumed
+}
+
+/// A title for a memory, taken from the memory itself.
+///
+/// It is also the filename, so it has to be short and readable. The first
+/// sentence, capped — a memory whose title is its whole body makes a folder of
+/// files nobody can scan.
+fn memory_title(body: &str) -> String {
+    let first = body
+        .split(['.', '\n', '!', '?'])
+        .next()
+        .unwrap_or(body)
+        .trim();
+    let capped: String = first.chars().take(60).collect();
+    if capped.trim().is_empty() {
+        "Memory".to_string()
+    } else {
+        capped.trim().to_string()
+    }
+}
+
+/// Write something down that should outlive the conversation.
+///
+/// Reports a clash rather than resolving one. Two memories that make a claim
+/// about the same thing are a question for the user — "you told me the
+/// opposite in August, which is right?" — and an assistant that silently
+/// changes its mind about somebody, and cannot say when or why, is the thing
+/// this whole feature is arranged to avoid.
+fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use crate::syn::memory;
+
+    let body = args
+        .get("body")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| AppError::General("Missing required parameter: body".into()))?;
+
+    let kind = args
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .unwrap_or("fact")
+        .to_lowercase();
+    let subject = args.get("subject").and_then(|v| v.as_str()).map(str::trim);
+    let confidence = args
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.8);
+    // Pinned unless told otherwise. `remember` is reached two ways: the user
+    // asked for it, or the user accepted a proposal — and the second passes
+    // `pinned: false` explicitly. Someone who says "remember this" has already
+    // made the judgement the flag encodes, so defaulting it away made their
+    // instruction rank below a machine's guess the moment a budget bit.
+    let pinned = args
+        .get("pinned")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+    let source_nodes: Vec<String> = args
+        .get("source_nodes")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let existing = memory::all(&*lock(ctx)?)?;
+    let clashes: Vec<Value> = memory::conflicting(&existing, &kind, subject)
+        .into_iter()
+        .filter(|m| Some(m.id.as_str()) != supersedes)
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id,
+                "body": m.body,
+                "last_confirmed": m.last_confirmed,
+            })
+        })
+        .collect();
+
+    let props = memory::frontmatter(
+        &kind,
+        subject,
+        confidence,
+        ctx.run_id,
+        &source_nodes,
+        pinned,
+        supersedes,
+        &memory::today(),
+    );
+
+    let (id, title) = write_tool_node(
+        ctx,
+        memory::MEMORY_TYPE,
+        &memory_title(body),
+        body,
+        props,
+    )?;
+
+    Ok(serde_json::json!({
+        "success": true,
+        "id": id,
+        "title": title,
+        "pinned": pinned,
+        // Named rather than counted, so the model can quote one back to the
+        // user instead of announcing that a conflict exists.
+        "existing_claims_about_the_same_thing": clashes,
+        "message": if clashes.is_empty() {
+            format!("Remembered: {title}")
+        } else {
+            format!(
+                "Remembered: {title}. You already have {} other memory/memories about the \
+                 same thing — tell the user and ask which is right rather than assuming.",
+                clashes.len()
+            )
+        },
+    })
+    .to_string())
+}
+
+/// What has been remembered, filtered.
+/// The words of a string, split on anything that is not a letter or a digit.
+///
+/// Punctuation has to go: "rồi?" and "rồi" are the same word being asked, and
+/// a trailing question mark is enough to make them miss each other.
+fn words_of(text: &str) -> Vec<&str> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Does a memory use this word?
+///
+/// Whole words, with substrings allowed only for a word long enough that a
+/// coincidence is unlikely. Vietnamese writes its syllables apart, so "án" is a
+/// word in "dự án" and an accident inside a dozen unrelated ones; matching on
+/// substrings alone made every short syllable match nearly everything, which is
+/// how a scan that looked like search turned into a scan that ranked by nothing.
+fn word_hits(haystack: &[&str], word: &str) -> bool {
+    haystack.contains(&word)
+        || (word.chars().count() >= 5 && haystack.iter().any(|h| h.contains(word)))
+}
+
+fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
+    use crate::syn::memory;
+
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|q| !q.is_empty());
+    let kind = args.get("kind").and_then(|v| v.as_str()).map(str::trim);
+    let subject = args.get("subject").and_then(|v| v.as_str()).map(str::trim);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(memory::RECALL_LIMIT as u64) as usize;
+
+    let mut memories = memory::all(db)?;
+
+    if let Some(kind) = kind.filter(|k| !k.is_empty()) {
+        memories.retain(|m| m.kind.eq_ignore_ascii_case(kind));
+    }
+    if let Some(subject) = subject.filter(|s| !s.is_empty()) {
+        memories.retain(|m| {
+            m.subject
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case(subject))
+        });
+    }
+    // Matched in Rust rather than through FTS. A personal vault holds tens of
+    // these, not thousands, and every word of every one is already in memory —
+    // so an index lookup would cost a round trip to answer a question a scan
+    // answers exactly. Revisit if anyone reaches hundreds.
+    //
+    // Ranked, then cut — not filtered, then cut. `recall` hands back six, so
+    // *which* six is the whole question. The rule here used to be "keep
+    // anything sharing a substring with any query word, then sort pinned
+    // first", and in a vault with six pinned memories that spent the entire
+    // budget on memories the model was already holding: the pinned block rides
+    // in every prompt. The measured casualty was "Dự án Everest đang đến đâu
+    // rồi?", which could not reach "Dự án Everest bị hoãn đến quý 2" — the
+    // rarest word in the whole set, matched and then sorted out of view.
+    let mut scored: Vec<(usize, memory::Memory)> = match query {
+        Some(query) => {
+            let needle = query.to_lowercase();
+            let asked = words_of(&needle);
+            memories
+                .into_iter()
+                .filter_map(|m| {
+                    let hay = format!(
+                        "{} {} {}",
+                        m.body.to_lowercase(),
+                        m.kind.to_lowercase(),
+                        m.subject.clone().unwrap_or_default().to_lowercase()
+                    );
+                    let hay = words_of(&hay);
+                    let score = asked.iter().filter(|w| word_hits(&hay, w)).count();
+                    (score > 0).then_some((score, m))
+                })
+                .collect()
+        }
+        None => memories.into_iter().map(|m| (0, m)).collect(),
+    };
+
+    // Most of the question first; pinned and recency only break ties.
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.pinned.cmp(&a.1.pinned))
+            .then(b.1.last_confirmed.cmp(&a.1.last_confirmed))
+    });
+
+    let total = scored.len();
+    let rows: Vec<Value> = scored
+        .iter()
+        .map(|(_, m)| m)
+        .take(limit)
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id,
+                "kind": m.kind,
+                "subject": m.subject,
+                "body": m.body,
+                "confidence": m.confidence,
+                "pinned": m.pinned,
+                "last_confirmed": m.last_confirmed,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "memories": rows,
+        "total_matches": total,
+        "_returned": rows.len(),
+    })
+    .to_string())
+}
 
 /// 2. get_node — Read full node content
 fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
@@ -1518,6 +1928,13 @@ fn tool_list_schemas(db: &DbBridge) -> AppResult<String> {
             "count": count,
             "fields": fields,
         });
+        let capabilities = app_fields(&node_type);
+        if !capabilities.is_empty() {
+            entry["app_fields"] = serde_json::json!(capabilities
+                .iter()
+                .map(|(name, what)| serde_json::json!({ "field": name, "means": what }))
+                .collect::<Vec<_>>());
+        }
         if let Some(keys) = declared.get(&node_type) {
             entry["declared_fields"] = serde_json::json!(keys);
         }
@@ -1548,7 +1965,7 @@ fn tool_list_schemas(db: &DbBridge) -> AppResult<String> {
     Ok(serde_json::json!({
         "types": kinds,
         "app_storage": storage,
-        "_note": "`fields` is what nodes of this type actually carry, not a list of what is allowed — a node may be missing any of them and may carry others. `declared_fields` is the structure the user chose for this kind; prefer those keys when creating one. `app_storage` is Synabit's own bookkeeping, not things the user keeps: never create or edit those, and do not count them when describing the vault.",
+        "_note": "`fields` is what nodes of this type actually carry, not a list of what is allowed — a node may be missing any of them and may carry others. `declared_fields` is the structure the user chose for this kind; prefer those keys when creating one. `app_fields` is what Synabit itself can do with a built-in kind, whether or not any node uses it yet — this is where reminders, recurrence and priorities live, so read it before deciding something cannot be done. `app_storage` is Synabit's own bookkeeping, not things the user keeps: never create or edit those, and do not count them when describing the vault.",
     })
     .to_string())
 }
@@ -1587,6 +2004,11 @@ fn tool_create_node<R: tauri::Runtime>(
     // Tasks app. `create_task` used to set this; nothing else would.
     if node_type == "task" && !properties.contains_key("status") {
         properties.insert("status".to_string(), serde_json::json!("todo"));
+    }
+
+    // The same shape of fix, for the same shape of silent failure.
+    if node_type == "event" {
+        normalise_event_properties(&mut properties);
     }
 
     let (id, created_title) = write_tool_node(
@@ -1647,7 +2069,37 @@ fn tool_update_node<R: tauri::Runtime>(
         .unwrap_or("md")
         .to_string();
 
+    // An event's dates are normalised twice, and it takes both.
+    //
+    // On the *patch*, so that a caller who sends the old name with a new value
+    // still changes the date. On the *merged result*, so that an event written
+    // before this fix is repaired by any edit at all, not only one that happens
+    // to mention its dates.
+    //
+    // Each pass alone was tried and each was wrong in its own direction. Patch
+    // only: asked to correct the title of a wrongly-shaped event, the assistant
+    // sent `{title, content}`, nothing renamed, and the file stayed invisible to
+    // the Calendar — found on a real vault after the first fix was called done.
+    // Merged only: `{"start_date": "2026-09-10"}` merged behind an existing
+    // `start_at`, which then won, and the update silently did nothing.
+    let patch = if node.node_type == "event" {
+        let mut fields = match &patch {
+            Value::Object(map) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        normalise_event_properties(&mut fields);
+        Value::Object(fields)
+    } else {
+        patch
+    };
+
     let mut properties = resolve_properties(existing_properties(&full_path, &ext), &patch);
+
+    if node.node_type == "event" {
+        if let Some(fields) = properties.as_object_mut() {
+            normalise_event_properties(fields);
+        }
+    }
 
     // `completed_at` is derived from `status` by every other writer in the
     // app, and the Tasks views read it. A generic write that set one without
@@ -2426,6 +2878,13 @@ mod tests {
 
         // And the rule for everything else, which is where they would drift
         // apart most quietly, since neither side has a list to compare.
+        // The app's own kinds are prefixed and filed apart, so that the
+        // unprefixed word stays available to whoever owns the vault. A user
+        // who keeps a `memory` kind gets `Memory/`; Syn does not.
+        assert_eq!(folder_for_type("syn_memory"), "SynMemory");
+        assert_eq!(folder_for_type("memory"), "Memory");
+        assert_ne!(folder_for_type("syn_memory"), folder_for_type("memory"));
+
         assert_eq!(folder_for_type("animal"), "Animal");
         assert_eq!(folder_for_type("book"), "Book");
         assert_eq!(folder_for_type("cá"), "Cá");
@@ -2492,6 +2951,29 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // A third way to earn a place, and the only one so far: reaching a
+        // store the generic tools are deliberately blinded to.
+        //
+        // Memories *are* nodes, so `query_nodes` with `type:memory` would find
+        // them — except that `is_internal_type` lists `memory`, which is what
+        // keeps `list_schemas` from telling the assistant the user "keeps"
+        // forty memories alongside their notes. Having hidden the type, the
+        // app owes it an explicit door, or the only memory the model can ever
+        // use is whatever the prompt already pinned.
+        //
+        // `remember` earns its place twice over: it stamps provenance the
+        // generic write path cannot know — which run produced this, on what
+        // date — and it reports a clash with an existing claim instead of
+        // silently overwriting one.
+        //
+        // There is deliberately no `forget`: memories are nodes, `trash_node`
+        // already removes one and `restore_node` brings it back, and two tools
+        // doing one thing is what the collapse from twenty to twelve was for.
+        let memory = ["remember", "recall"];
+        for tool in memory {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -2502,6 +2984,7 @@ mod tests {
             .chain(undo)
             .chain(structure)
             .chain(specialised)
+            .chain(memory)
             .collect();
         for name in &names {
             assert!(
@@ -2512,6 +2995,269 @@ mod tests {
             );
         }
         assert_eq!(names.len(), accounted.len(), "a tool is listed twice above");
+    }
+
+    /// What the app says it can do is what the app can actually do.
+    ///
+    /// `app_fields` exists because a capability nobody has used yet is
+    /// invisible to a schema read off the vault — the assistant was told an
+    /// event has `start_at`, `end_at` and `is_all_day`, could not see that
+    /// `reminders` existed, and rescheduled an unrelated event when asked to
+    /// set one. The table is only worth having while it is true, and nothing
+    /// links it to the interfaces it describes, so this reads them.
+    #[test]
+    fn every_app_field_is_one_the_screen_that_owns_it_declares() {
+        let sources = [
+            ("event", "../src/mini-apps/calendar/types.ts", "EventMetadata"),
+            ("task", "../src/mini-apps/task/types.ts", "TaskMetadata"),
+        ];
+
+        for (node_type, path, interface) in sources {
+            let source = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("{path} should be readable from src-tauri: {e}"));
+            let block = source
+                .split(&format!("export interface {interface} {{"))
+                .nth(1)
+                .unwrap_or_else(|| panic!("{interface} is declared in {path}"))
+                .split("\n}")
+                .next()
+                .expect("the declaration closes");
+
+            let declared = app_fields(node_type);
+            assert!(!declared.is_empty(), "`{node_type}` should have app fields");
+
+            for (field, means) in declared {
+                assert!(
+                    block.contains(&format!("{field}:")) || block.contains(&format!("{field}?:")),
+                    "`{node_type}.{field}` is offered to the assistant and {interface} no \
+                     longer declares it"
+                );
+                assert!(
+                    !means.trim().is_empty(),
+                    "`{node_type}.{field}` has no explanation, which is the only part the \
+                     model can act on"
+                );
+            }
+        }
+    }
+
+    /// A kind the user invented has none, and must not.
+    ///
+    /// This app can do nothing special with an `animal`, and saying otherwise
+    /// would be inventing a capability. The two vault-read sources still
+    /// describe it fully.
+    #[test]
+    fn a_kind_the_app_knows_nothing_about_claims_nothing() {
+        for invented in ["animal", "book", "cá", "", "recipe"] {
+            assert!(
+                app_fields(invented).is_empty(),
+                "`{invented}` is not one of this app's own kinds"
+            );
+        }
+    }
+
+    /// An event the assistant creates is one the Calendar can draw.
+    ///
+    /// Found by using the app, which is the only way it was going to be found:
+    /// every test passed, the node was written correctly, Things listed it, and
+    /// the Calendar was empty. `create_node`'s own description told the model
+    /// to write `start_date`, and nothing in the Calendar has ever read that.
+    #[test]
+    fn an_event_written_by_the_assistant_carries_the_fields_the_calendar_reads() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+
+        let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext {
+                db: &state,
+                vault_path: &vault_path,
+                app: &handle,
+                run_id: None,
+            };
+            serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs"))
+                .expect("JSON")
+        };
+        let props_of = |id: &str| -> serde_json::Value {
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().expect("lock");
+            db.get_node(id).expect("read").expect("there").properties
+        };
+
+        // The shape the model reached for, because the description asked for it.
+        let created = call(
+            "create_node",
+            serde_json::json!({
+                "node_type": "event",
+                "title": "Onboard Phương Network",
+                "properties": { "start_date": "2026-09-03", "end_date": "2026-09-03" }
+            }),
+        );
+        let id = created["id"].as_str().expect("an id");
+        let props = props_of(id);
+
+        assert_eq!(props["start_at"], "2026-09-03", "the calendar reads start_at");
+        assert_eq!(props["end_at"], "2026-09-03");
+        assert_eq!(props["is_all_day"], true, "a bare date is an all-day event");
+        assert!(
+            props.get("start_date").is_none(),
+            "the key nothing reads should not be left on the file: {props}"
+        );
+
+        // A time means it is not an all-day event, and the app tells the two
+        // apart by the `T`.
+        let timed = call(
+            "create_node",
+            serde_json::json!({
+                "node_type": "event",
+                "title": "Standup",
+                "properties": { "start_at": "2026-09-04T09:30:00", "end_at": "2026-09-04T09:45:00" }
+            }),
+        );
+        let timed_props = props_of(timed["id"].as_str().expect("an id"));
+        assert_eq!(timed_props["is_all_day"], false);
+        assert_eq!(timed_props["start_at"], "2026-09-04T09:30:00");
+
+        // An update that names the dates maps them.
+        call(
+            "update_node",
+            serde_json::json!({
+                "node_id": id,
+                "properties": { "start_date": "2026-09-10", "end_date": "2026-09-10" }
+            }),
+        );
+        let healed = props_of(id);
+        assert_eq!(healed["start_at"], "2026-09-10", "an update maps the name too");
+        assert!(
+            healed.get("start_date").is_none(),
+            "and clears the dead key rather than leaving both: {healed}"
+        );
+    }
+
+    /// An event written before the fix heals when *anything* touches it.
+    ///
+    /// The first version of this fix normalised the patch, which healed an
+    /// event only when the update happened to mention its dates. Asked to
+    /// correct the title of a wrongly-shaped event, the assistant sent
+    /// `{title, content}`, nothing renamed, and the file stayed invisible to
+    /// the Calendar. Observed on a real vault, after the first fix had already
+    /// been called done.
+    #[test]
+    fn an_event_written_the_old_way_heals_on_an_edit_that_is_not_about_its_dates() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+        std::fs::create_dir_all(vault.join("Events")).expect("mkdir");
+
+        // The file exactly as it was found in the user's vault.
+        let rel = "Events/Onboard.md";
+        std::fs::write(
+            vault.join(rel),
+            "---\ntitle: Onboard Bùi Văn Phương\ntype: event\nend_date: 2026-09-03\n\
+             start_date: 2026-09-03\n---\nVị trí công việc: Network\n",
+        )
+        .expect("write");
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+        {
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().expect("lock");
+            let node = crate::utils::node_parser::parse_file_to_node(&vault_path, &vault.join(rel))
+                .expect("parses");
+            db.upsert_node(&node).expect("index");
+        }
+
+        let state = handle.state::<crate::db::DbState>();
+        let ctx = ToolContext {
+            db: &state,
+            vault_path: &vault_path,
+            app: &handle,
+            run_id: None,
+        };
+
+        // An edit that says nothing about the dates — which is what the
+        // assistant actually sent.
+        execute_tool(
+            &ctx,
+            "update_node",
+            &serde_json::json!({
+                "node_id": rel,
+                "properties": { "location": "Network" }
+            }),
+        )
+        .expect("the tool runs");
+
+        let on_disk = std::fs::read_to_string(vault.join(rel)).expect("read back");
+        assert!(
+            on_disk.contains("start_at: 2026-09-03"),
+            "the calendar's field should have been filled in:\n{on_disk}"
+        );
+        assert!(
+            on_disk.contains("is_all_day: true"),
+            "a bare date is an all-day event:\n{on_disk}"
+        );
+        assert!(
+            !on_disk.contains("start_date:"),
+            "the dead key should be gone rather than sitting beside the live one:\n{on_disk}"
+        );
+    }
+
+    /// The fields the assistant writes are the fields the Calendar declares.
+    ///
+    /// Nothing links `create_node`'s description to `EventMetadata`, and the
+    /// cost of them drifting is an event that exists everywhere except the
+    /// screen it was made for. Read out of the front end rather than
+    /// remembered, the same arrangement `NodeType` and `SynSettings` have.
+    #[test]
+    fn the_event_fields_the_assistant_is_told_to_write_are_the_ones_the_calendar_declares() {
+        let source = std::fs::read_to_string("../src/mini-apps/calendar/types.ts")
+            .expect("the calendar types should be readable from src-tauri");
+        let block = source
+            .split("export interface EventMetadata {")
+            .nth(1)
+            .expect("EventMetadata is declared")
+            .split('}')
+            .next()
+            .expect("the declaration closes");
+
+        for field in ["start_at", "end_at", "is_all_day"] {
+            assert!(
+                block.contains(field),
+                "`{field}` is what the assistant writes and EventMetadata no longer declares it"
+            );
+        }
+
+        let definitions = get_tool_definitions();
+        let create = definitions
+            .iter()
+            .find(|d| d.function.name == "create_node")
+            .expect("create_node exists");
+        let described = serde_json::to_string(&create.function.parameters).expect("serialises");
+
+        assert!(
+            described.contains("start_at"),
+            "create_node must tell the model the field the calendar actually reads"
+        );
+        assert!(
+            !block.contains("start_date"),
+            "EventMetadata has grown a `start_date`; the normaliser above now has the wrong \
+             idea about which name is the dead one"
+        );
     }
 
     /// The two lists of internal types agree.
@@ -2620,6 +3366,7 @@ mod tests {
             db: &*handle.state::<crate::db::DbState>(),
             vault_path: &vault_path,
             app: &handle,
+            run_id: None,
         };
         let still_there = || {
             (1..=3).all(|n| {
@@ -2711,7 +3458,7 @@ mod tests {
     /// assistant refusing to do its job.
     #[test]
     fn the_system_prompt_only_names_tools_that_exist() {
-        let prompt = crate::syn::prompt::PromptPlan::for_chat("", "auto", None, crate::syn::prompt::DEFAULT_BUDGET_CHARS)
+        let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render();
         let names: Vec<String> = get_tool_definitions()
             .iter()

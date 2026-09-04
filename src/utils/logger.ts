@@ -10,6 +10,18 @@ interface QueuedLog { level: LogLevel; message: string; }
 
 let logQueue: QueuedLog[] = [];
 
+/**
+ * How many deferred lines are kept while the app is in the background.
+ *
+ * The queue had no ceiling. It only drains on `visibilitychange`, so an app
+ * left hidden while anything logs in a loop grows a buffer with nothing to
+ * stop it — and every entry is a formatted string that may carry a whole
+ * stack. This is a small number on purpose: these lines exist so a failure
+ * that happened while the window was hidden is not lost, and the newest ones
+ * are the ones worth having.
+ */
+const MAX_QUEUED_LOGS = 500;
+
 // Flush queue when app returns to foreground
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
@@ -76,6 +88,16 @@ function safeLog(level: LogLevel, message: unknown, ...args: any[]) {
   // Defer IPC if backgrounded to avoid Fetch cancellation error
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     logQueue.push({ level, message: formatted });
+    if (logQueue.length > MAX_QUEUED_LOGS) {
+      // Drop the oldest, and say so once, so a truncated log does not read as
+      // a complete one.
+      const dropped = logQueue.length - MAX_QUEUED_LOGS;
+      logQueue = logQueue.slice(dropped);
+      logQueue[0] = {
+        level: 'warn',
+        message: `[Logger] ${dropped} earlier line(s) dropped: the app was hidden and the queue was full.`,
+      };
+    }
   } else {
     dispatchIpcLog(level, formatted);
   }

@@ -279,7 +279,9 @@ impl SynEngine {
             conversation_id: run.conversation_id.clone(),
             message_id: req.message_id.to_string(),
         };
-        let emit_token = |token: &str| watchers.token(token);
+        let sink = |text: &str, done: bool| watchers.send(text, done);
+        let stream = TokenStream::new(&sink);
+        let emit_token = |token: &str| stream.push(token);
         let stop_check = {
             let flag = Arc::clone(stop);
             move || flag.load(Ordering::SeqCst)
@@ -345,7 +347,7 @@ impl SynEngine {
                 run.note(iteration, "Stopped by the user.");
                 run.finish(RunState::Cancelled);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
-                watchers.done();
+                stream.done();
                 return Ok(assemble(req.message_id, req.model, reply, started, tool_log));
             }
 
@@ -371,7 +373,7 @@ impl SynEngine {
                 if !self.provider.streams_tool_calls() {
                     emit_token(&reply.content);
                 }
-                watchers.done();
+                stream.done();
 
                 return Ok(assemble(req.message_id, req.model, reply, started, tool_log));
             }
@@ -467,7 +469,7 @@ impl SynEngine {
                 run.note(run.spent.iterations, "Stopped by the user.");
                 run.finish(RunState::Cancelled);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
-                watchers.done();
+                stream.done();
                 return Ok(assemble(
                     req.message_id,
                     req.model,
@@ -513,7 +515,9 @@ impl SynEngine {
             conversation_id: run.conversation_id.clone(),
             message_id: req.message_id.to_string(),
         };
-        let emit_token = |token: &str| watchers.token(token);
+        let sink = |text: &str, done: bool| watchers.send(text, done);
+        let stream = TokenStream::new(&sink);
+        let emit_token = |token: &str| stream.push(token);
         let stop_check = {
             let flag = Arc::clone(stop);
             move || flag.load(Ordering::SeqCst)
@@ -537,7 +541,7 @@ impl SynEngine {
             )
             .await;
 
-        watchers.done();
+        stream.done();
 
         if stop_check() {
             run.note(run.spent.iterations, "Stopped by the user.");
@@ -556,6 +560,105 @@ impl SynEngine {
         Ok(assemble(req.message_id, req.model, reply, started, Vec::new()))
     }
 
+}
+
+/// How much text may pile up before it is sent on.
+///
+/// Roughly a short line. Small enough that the answer still appears to type
+/// itself; large enough that a run of one-token deltas does not become a run of
+/// events.
+const FLUSH_AFTER_CHARS: usize = 48;
+
+/// How long a partial buffer may wait.
+///
+/// Fifty milliseconds is twenty updates a second, which reads as continuous
+/// and is four times fewer than a fast model produces on its own.
+const FLUSH_AFTER: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Whether the buffer should go now.
+///
+/// Separated from the sending so it can be tested without a Tauri app, which
+/// is the only interesting part: everything else here is a string being
+/// appended to.
+fn should_flush(buffered: usize, since_last: std::time::Duration) -> bool {
+    buffered >= FLUSH_AFTER_CHARS || since_last >= FLUSH_AFTER
+}
+
+/// Gathers tokens into batches on their way to whoever is watching.
+///
+/// # Why this is not one event per token
+///
+/// The provider calls back once per delta, and a delta from an OpenAI-shaped
+/// endpoint is one model token — two to four characters. A 3,800 character
+/// answer is therefore twelve to fifteen hundred Tauri events, each of which
+/// crosses the IPC boundary, is parsed, appends to a `ref`, invalidates a
+/// computed, re-renders the bubble and schedules a `nextTick`.
+///
+/// Measured what could be measured first, because guessing is how the last
+/// three fixes in this session went wrong: turning the finished answer into
+/// sanitised HTML costs 2.29ms, and at the 100ms debounce that already exists
+/// it is about 2% of one core across a sixteen second stream. So the markdown
+/// is *not* the cost, and the remaining suspects — Vue patching, `v-html`
+/// replacing a large subtree, layout, the smooth-scroll animation — cannot be
+/// measured from a test without a browser.
+///
+/// Batching is the honest response to that. It does not claim to know which of
+/// those dominates; it makes the whole chain run four times less often, which
+/// helps whichever one it is. The observed symptom was a WebView at 62% CPU
+/// with the message half-drawn while the answer had already been complete on
+/// disk for sixteen seconds.
+struct TokenStream<'a> {
+    /// Where a batch goes. `(text, done)`.
+    emit: &'a (dyn Fn(&str, bool) + Send + Sync),
+    pending: std::sync::Mutex<String>,
+    last: std::sync::Mutex<std::time::Instant>,
+}
+
+impl<'a> TokenStream<'a> {
+    fn new(emit: &'a (dyn Fn(&str, bool) + Send + Sync)) -> Self {
+        Self {
+            emit,
+            pending: std::sync::Mutex::new(String::new()),
+            last: std::sync::Mutex::new(std::time::Instant::now()),
+        }
+    }
+
+    fn push(&self, token: &str) {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.push_str(token);
+
+        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+        if !should_flush(pending.chars().count(), last.elapsed()) {
+            return;
+        }
+        let batch = std::mem::take(&mut *pending);
+        *last = std::time::Instant::now();
+        drop(pending);
+        drop(last);
+        (self.emit)(&batch, false);
+    }
+
+    /// Send whatever is left. Called before `done`, so the last few characters
+    /// of an answer are never held back waiting for a token that never comes.
+    fn flush(&self) {
+        let batch = {
+            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *pending)
+        };
+        if !batch.is_empty() {
+            (self.emit)(&batch, false);
+        }
+    }
+
+    /// Flush, then say the answer is finished.
+    ///
+    /// The frontend leaves a message in its streaming state until it sees
+    /// `done`. It has to arrive on every path out — stopped, finished, or
+    /// failed — or the UI keeps a spinner forever.
+    fn done(&self) {
+        self.flush();
+        (self.emit)("", true);
+    }
 }
 
 /// Somewhere to send streamed tokens, or nowhere.
@@ -589,16 +692,6 @@ impl<R: tauri::Runtime> Watchers<'_, R> {
         }
     }
 
-    fn token(&self, token: &str) {
-        self.send(token, false);
-    }
-
-    /// The frontend leaves a message in its streaming state until it sees
-    /// `done`. It has to arrive on every path out — stopped, finished, or
-    /// failed — or the UI keeps a spinner forever.
-    fn done(&self) {
-        self.send("", true);
-    }
 }
 
 /// What to tell a person when a run stopped short.
@@ -660,6 +753,93 @@ fn assemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How many events a streamed answer becomes.
+    ///
+    /// The number that mattered: a 3,797 character answer arrived as one Tauri
+    /// event per model token, and each event crosses the IPC boundary, appends
+    /// to a `ref`, invalidates a computed, re-renders the bubble and schedules
+    /// a `nextTick`. The WebView was still at 62% CPU with the message
+    /// half-drawn sixteen seconds after the answer was complete on disk.
+    ///
+    /// Measured first, and the obvious suspect was cleared: turning the
+    /// finished answer into sanitised HTML costs 2.29ms, which at the 100ms
+    /// debounce already in place is about 2% of one core. What is left —
+    /// Vue patching, `v-html` replacing a subtree, layout, the smooth scroll —
+    /// cannot be measured without a browser. Batching does not pick between
+    /// them; it makes the whole chain run far less often.
+    #[test]
+    fn a_streamed_answer_becomes_far_fewer_events_than_it_has_tokens() {
+        let batches: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
+        let sink = |text: &str, done: bool| {
+            batches
+                .lock()
+                .expect("lock")
+                .push((text.to_string(), done));
+        };
+        let stream = TokenStream::new(&sink);
+
+        // A model token is two to four characters; this is the shape of a real
+        // one, at the length that caused the problem.
+        let tokens: Vec<String> = (0..1_200).map(|i| format!("{} ", i % 90)).collect();
+        for token in &tokens {
+            stream.push(token);
+        }
+        stream.done();
+
+        let sent = batches.lock().expect("lock");
+        let events = sent.len();
+        let text: String = sent.iter().filter(|(_, done)| !done).map(|(t, _)| t.as_str()).collect();
+
+        // Nothing is lost or reordered: the batches concatenate to exactly what
+        // went in. This is the part that would be unforgivable to get wrong.
+        assert_eq!(text, tokens.concat(), "the answer must survive batching intact");
+
+        // Exactly one `done`, and it is last — the frontend leaves a message in
+        // its streaming state until it sees one.
+        assert_eq!(sent.iter().filter(|(_, done)| *done).count(), 1);
+        assert!(sent.last().expect("something was sent").1, "done comes last");
+
+        assert!(
+            events < tokens.len() / 4,
+            "batching should cut the event count by at least four; {} tokens became {events} events",
+            tokens.len()
+        );
+        eprintln!("\n── {} tokens → {events} events ──\n", tokens.len());
+    }
+
+    /// The tail of an answer is never held back waiting for a token that is
+    /// not coming.
+    #[test]
+    fn a_short_answer_still_arrives_whole() {
+        let batches: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
+        let sink = |text: &str, done: bool| {
+            batches.lock().expect("lock").push((text.to_string(), done));
+        };
+        let stream = TokenStream::new(&sink);
+
+        stream.push("Vâng");
+        stream.push(", ");
+        stream.push("xong rồi.");
+        stream.done();
+
+        let sent = batches.lock().expect("lock");
+        let text: String = sent.iter().filter(|(_, d)| !d).map(|(t, _)| t.as_str()).collect();
+        assert_eq!(text, "Vâng, xong rồi.");
+        assert!(sent.last().expect("sent something").1);
+    }
+
+    /// The two reasons to send: enough has piled up, or enough time has passed.
+    #[test]
+    fn a_batch_goes_when_it_is_full_or_when_it_is_old() {
+        assert!(!should_flush(1, std::time::Duration::ZERO));
+        assert!(should_flush(FLUSH_AFTER_CHARS, std::time::Duration::ZERO));
+        assert!(should_flush(1, FLUSH_AFTER));
+        assert!(!should_flush(
+            FLUSH_AFTER_CHARS - 1,
+            FLUSH_AFTER - std::time::Duration::from_millis(1)
+        ));
+    }
 
     fn msg(role: &str, content: &str) -> SynMessage {
         SynMessage {
@@ -867,12 +1047,7 @@ mod gate_one {
             SynMessage {
                 id: "sys".into(),
                 role: "system".into(),
-                content: crate::syn::prompt::PromptPlan::for_chat(
-                    "",
-                    "auto",
-                    None,
-                    crate::syn::prompt::DEFAULT_BUDGET_CHARS,
-                )
+                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
                 .render(),
                 model: None,
                 timestamp: String::new(),

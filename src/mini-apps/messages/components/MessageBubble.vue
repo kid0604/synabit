@@ -14,7 +14,6 @@ import bash from 'highlight.js/lib/languages/bash';
 import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import sql from 'highlight.js/lib/languages/sql';
-import markdown from 'highlight.js/lib/languages/markdown';
 import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
 import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard } from 'lucide-vue-next';
@@ -36,8 +35,25 @@ hljs.registerLanguage('css', css);
 hljs.registerLanguage('html', xml);
 hljs.registerLanguage('xml', xml);
 hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('markdown', markdown);
-hljs.registerLanguage('md', markdown);
+// `markdown` and `md` are deliberately NOT registered.
+//
+// highlight.js's markdown grammar hangs this renderer. A 292-character block —
+// a daily-note template of headings and `- [ ]` items, which is exactly what
+// the assistant produces when asked for one — froze the page indefinitely.
+// The same grammar on the same input takes 2ms in Node, so this is a regex
+// that backtracks catastrophically in one engine and not the other; the
+// browser is the one that matters here.
+//
+// Established by intervention, not inference. Holding the conversation
+// constant and retagging every fence: `json` renders in 38MB and stays
+// responsive, no language at all renders fine, the block removed renders fine,
+// and `markdown` hangs. Every arm was run twice.
+//
+// A size cap would not have helped — 292 characters is already small. Nor
+// would a `try`/`catch`: it does not throw, it does not return. Not offering
+// the grammar is the only guard that works, and the cost is that a fenced
+// markdown block is shown unhighlighted, which for markdown inside markdown is
+// close to no cost at all.
 
 // Initialize mermaid with dark theme
 mermaid.initialize({
@@ -83,14 +99,48 @@ renderer.code = function (token: Tokens.Code) {
   return originalCodeRenderer.call(this, token);
 };
 
+/**
+ * A code block as literal text, with the four characters that would otherwise
+ * be markup taken out of play.
+ *
+ * `markedHighlight` treats whatever `highlight` returns as HTML, so the
+ * unhighlighted path cannot hand back the source unescaped: a block containing
+ * `<b>` would render as bold rather than as itself. DOMPurify would still keep
+ * it safe; it would just be wrong.
+ */
+const asPlainCode = (code: string): string =>
+  code
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
 marked.use(markedHighlight({
   langPrefix: 'hljs language-',
   highlight(code, lang) {
     if (lang === 'mermaid') return code; // Don't highlight mermaid — it's handled by the renderer
     if (lang && hljs.getLanguage(lang)) {
-      return hljs.highlight(code, { language: lang }).value;
+      // `ignoreIllegals`, because a block half-written by a stream is not yet
+      // valid in its own language and throwing over that is not useful.
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
     }
-    return hljs.highlightAuto(code).value;
+
+    // Deliberately no `highlightAuto`.
+    //
+    // It ran every registered grammar over the block to guess which language
+    // it was, and that guess is both expensive and, for anything that
+    // resembles no language, wrong — on a directory tree drawn with `├──` it
+    // answered "css". One 3,797-character answer containing a single
+    // ```text block was enough to leave the WebView unresponsive with the
+    // message half-drawn, while the Rust side had been finished for sixteen
+    // seconds.
+    //
+    // Found by bisecting a real conversation one message at a time in a
+    // browser: 39 messages rendered fine, 40 hung, and the fortieth was the
+    // only one in the whole conversation with a code fence.
+    //
+    // A block whose language nobody named is shown as what it is.
+    return asPlainCode(code);
   },
 }));
 

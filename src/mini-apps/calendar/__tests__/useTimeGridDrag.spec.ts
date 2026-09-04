@@ -16,7 +16,7 @@ const DAYS = ['2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12', '2026-03-1
 const meeting: EventMetadata = {
     id: 'Events/a.md', title: 'Sync', is_all_day: false,
     start_at: '2026-03-10T10:00', end_at: '2026-03-10T11:00',
-    location: '', tags: [], content: '', path: 'Events/a.md', created_at: '',
+    location: '', tags: [], content: '', created_at: '',
     relations: [], recurrence: 'none', recurrence_end_at: '', exceptions: [],
     series_id: '', reminders: [],
 };

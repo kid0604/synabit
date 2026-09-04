@@ -1,0 +1,157 @@
+“Dọn kiến trúc” không phải là xóa bớt notes, mà là **sắp xếp lại để sau này tìm, liên kết và biến kiến thức thành hành động dễ hơn**.
+
+Tao thấy vault của mày hiện có:
+
+- **152 notes**
+- **127 tasks**
+- **106 people**
+- **87 files**
+- **2 projects**
+- **2 whiteboards**
+
+## 1. Tách note lớn thành các note nhỏ
+
+Một số note kiểu daily note hoặc “bộ nhớ công việc” đang chứa nhiều chủ đề khác nhau. Ví dụ [[MDP Memory]] có thể bao gồm:
+
+- Kiến trúc hệ thống
+- Danh sách server
+- Ticket đang xử lý
+- Link trao đổi
+- Việc cần follow-up
+- Vấn đề đã biết
+
+Nên tách thành các note riêng như:
+
+- `PSS - Kiến trúc hệ thống`
+- `PSS - Danh sách vấn đề`
+- `PSS - Checklist vận hành`
+- `PSS - Các quyết định kỹ thuật`
+- `PSS - Ticket và follow-up`
+
+Lợi ích: mỗi note có một mục đích rõ ràng, dễ tìm và dễ cập nhật.
+
+## 2. Phân biệt “kiến thức” và “việc cần làm”
+
+Một note có thể ghi:
+
+> Cần kiểm tra TLS certificate trên Zabbix.
+
+Nếu đây là việc phải làm, nên tạo task riêng [[Kiểm tra cấu hình check TLS certificate trên Zabbix]]. Note chỉ giữ lại:
+
+- Bối cảnh
+- Cách kiểm tra
+- Kết quả
+- Quyết định
+- Link liên quan
+
+Như vậy task dùng để **hành động**, note dùng để **tham khảo**.
+
+## 3. Chuẩn hóa cách đặt tên
+
+Hiện tên notes/tasks có vẻ khá lẫn lộn: viết hoa, viết thường, tiếng Việt, tiếng Anh, có khi là câu ngắn, có khi là mô tả dài.
+
+Có thể dùng quy tắc:
+
+- Task: bắt đầu bằng động từ  
+  `Kiểm tra...`, `Tạo...`, `Cấu hình...`, `Đánh giá...`
+- Note kiến thức: `Chủ đề - Nội dung`  
+  `PSS - Cơ chế failover`
+- Biên bản họp: `YYYY-MM-DD - Tên cuộc họp`
+- Dự án: tên sản phẩm hoặc initiative
+
+Ví dụ thay vì tên chung chung như `review rule fw pss`, dùng:
+
+> `Rà soát rule firewall PSS`
+
+## 4. Dùng project để gom task
+
+Mày có khá nhiều task liên quan đến PSS, monitoring, alert, DR và network. Nên gom chúng vào các project rõ ràng, chẳng hạn:
+
+- `PSS Operations`
+- `Monitoring & Alerting`
+- `DR / TADBP`
+- `Network & Connectivity`
+- `Synabit`
+
+Task vẫn là task, nhưng project trả lời câu hỏi: **việc này thuộc initiative nào?**
+
+## 5. Dọn task quá hạn và task “treo”
+
+Có **127 tasks**, nhưng nhiều task có ngày bắt đầu/ngày hết hạn cũ. Nên chia thành:
+
+- Đang làm
+- Chờ người khác
+- Có thể làm ngay
+- Chưa cần làm
+- Đã lỗi thời
+- Đã hoàn thành nhưng chưa cập nhật trạng thái
+
+Đặc biệt, task quá hạn không nhất thiết phải làm ngay. Mỗi task nên có một quyết định:
+
+1. Làm tiếp và đặt hạn mới
+2. Chuyển thành “waiting”
+3. Hủy
+4. Gộp vào task khác
+5. Chuyển thành note tham khảo
+
+## 6. Tăng liên kết giữa người, dự án, task và note
+
+Mày đã có **106 people**, nhưng hiện thông tin liên kết chưa đồng đều. Với các việc onboard hoặc phối hợp, nên liên kết:
+
+- Người phụ trách
+- Dự án
+- Biên bản họp
+- Task follow-up
+- Tài liệu liên quan
+
+Ví dụ [[Onboard Bùi Văn Phương]] nên liên quan đến người [[Bùi Văn Phương]] và project/network tương ứng, nếu có.
+
+## 7. Tách “inbox” khỏi kho kiến thức
+
+Các ý tưởng mới, việc phát sinh, link chưa đọc nên đi vào một khu vực tạm thời — kiểu `Inbox`. Sau đó định kỳ xử lý:
+
+- Xóa nếu không còn giá trị
+- Chuyển thành task
+- Chuyển thành note
+- Gắn vào project
+- Liên kết với người hoặc tài liệu
+
+Nếu không làm bước này, vault sẽ dần thành một bãi chứa thông tin: có rất nhiều dữ liệu nhưng khó biết cái nào còn hiệu lực.
+
+## Cấu trúc tao đề xuất
+
+```text
+Inbox
+├── Ý tưởng mới
+├── Việc phát sinh
+└── Link chưa xử lý
+
+Projects
+├── PSS Operations
+├── Monitoring & Alerting
+├── DR / TADBP
+└── Synabit
+
+Knowledge
+├── Network
+├── Database
+├── Monitoring
+├── Incident Management
+└── Security
+
+Meetings
+├── Biên bản họp
+└── Quyết định
+
+People
+Tasks
+Files
+```
+
+Nếu làm từng bước, tao sẽ ưu tiên:
+
+1. Dọn các task quá hạn và task treo.
+2. Tách các note lớn như [[MDP Memory]].
+3. Gom task vào project.
+4. Chuẩn hóa tên và liên kết.
+5. Tạo quy trình Inbox để vault không rối trở lại.

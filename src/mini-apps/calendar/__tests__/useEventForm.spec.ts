@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computed } from 'vue';
 import { useEventForm } from '../composables/useEventForm';
+import { indexOccurrencesByDate } from '../helpers';
 import type { EventMetadata } from '../types';
+import type { EventsInRange } from '../../../types/ipc';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn(async () => true) }));
 
 const event = (over: Partial<EventMetadata>): EventMetadata => ({
     id: 'Events/a.md', title: 'Standup', is_all_day: false,
     start_at: '2026-03-02T09:00', end_at: '2026-03-02T09:15',
-    location: '', tags: [], content: '', path: 'Events/a.md', created_at: '',
+    location: '', tags: [], content: '', created_at: '',
     relations: [], recurrence: 'none', recurrence_end_at: '', exceptions: [],
     series_id: '', reminders: [],
     ...over,
@@ -168,7 +170,7 @@ describe('editing a whole series', () => {
             exceptions: ['2026-03-16', '2026-03-23'],
         });
         const child = event({
-            id: 'Events/b.md', path: 'Events/b.md', series_id: 'Events/a.md',
+            id: 'Events/b.md', series_id: 'Events/a.md',
             recurrence: 'none', start_at: '2026-03-23T11:00', end_at: '2026-03-23T11:30',
         });
         const h = harness([root, child]);
@@ -184,7 +186,7 @@ describe('editing a whole series', () => {
 
 describe('taking a drag back', () => {
     const meeting = () => event({
-        id: 'Events/m.md', path: 'Events/m.md',
+        id: 'Events/m.md',
         start_at: '2026-03-10T09:00', end_at: '2026-03-10T10:00',
     });
 
@@ -209,7 +211,7 @@ describe('taking a drag back', () => {
      */
     it('offers nothing to undo after moving one occurrence of a series', async () => {
         const series = event({
-            id: 'Events/s.md', path: 'Events/s.md', rrule: 'FREQ=WEEKLY',
+            id: 'Events/s.md', rrule: 'FREQ=WEEKLY',
             start_at: '2026-03-02T09:00', end_at: '2026-03-02T09:15',
         });
         const h = harness([series]);
@@ -255,5 +257,52 @@ describe('trimming a series from a given day', () => {
         // The legacy pair is removed on write, so nothing is left to disagree.
         expect(written.recurrence).toBeNull();
         expect(written.recurrence_end_at).toBeNull();
+    });
+});
+
+/**
+ * Every event a user can click on came out of `indexOccurrencesByDate`, and
+ * what the vault sends is an `EventSummary`: it has an `id` and nothing called
+ * `path`. The fixtures above used to set a `path` as well, which is how a
+ * delete that called `delete_node_file` with `undefined` — failing into a
+ * `logger.error` and leaving the event on screen — and an edit that saw "no
+ * path" as "new event" and wrote a duplicate both passed a green suite.
+ *
+ * So these two take their event from that seam rather than from a fixture.
+ */
+describe('an event as it actually arrives from the vault', () => {
+    const fromTheVault = (): EventMetadata => {
+        const range: EventsInRange = {
+            events: [{
+                id: 'Events/a.md', title: 'Standup', is_all_day: false,
+                start_at: '2026-03-02T09:00', end_at: '2026-03-02T09:15',
+                location: '', tags: [], tzid: '', colour: '', subscription_id: '',
+                rrule: '', recurrence: '', recurrence_end_at: '',
+                series_id: '', exceptions: [], reminders: [], relations: [], created_at: '',
+            }],
+            occurrences: [{
+                date: '2026-03-02', event: 0,
+                start_at: '2026-03-02T09:00', end_at: '2026-03-02T09:15',
+            }],
+        };
+        return indexOccurrencesByDate(range).get('2026-03-02')![0];
+    };
+
+    it('deletes the file the event came from', async () => {
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        await h.form.deleteEvent(ev, '2026-03-02');
+
+        expect(h.deletes.map(d => d.relPath)).toEqual(['Events/a.md']);
+    });
+
+    it('saves an edit over that file rather than writing a second one', async () => {
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        await h.form.openEditEventModal(ev, '2026-03-02');
+        h.form.eventForm.value.location = 'Room 2';
+        await h.form.submitEvent();
+
+        expect(h.writes.map(w => w.relPath)).toEqual(['Events/a.md']);
     });
 });
