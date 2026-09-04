@@ -151,6 +151,30 @@ pub(crate) fn chat_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
+/// The client for asking a provider *about itself*.
+///
+/// Listing models is not generating text, and it must not be given the
+/// patience of something that is. `list_models` used `chat_client`, so a
+/// provider that accepted the connection and then went quiet held the request
+/// for five minutes — and the Messages screen awaits it before it will show
+/// anything, so the whole app sat behind a spinner with "No chat selected" and
+/// nothing clickable. A Web Inspector timeline of that state is empty: the main
+/// thread is not busy, it is waiting.
+///
+/// This is the same lesson `probe_client` below already records for status
+/// checks. The fix reached one of the two calls that needed it and not the
+/// other, which is a shape this codebase has hit before.
+///
+/// Longer than a liveness probe, because a catalogue can be a few hundred
+/// entries over a slow link, and short enough that a screen may wait for it.
+pub(crate) fn catalogue_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
+}
+
 /// A short-tempered client for liveness checks.
 ///
 /// Separate from `chat_client` on purpose: status is polled, and polling with

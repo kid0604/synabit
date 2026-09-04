@@ -98,6 +98,8 @@ pub enum SectionKind {
     Today,
     /// What the vault is shaped like and which tool reaches what.
     ToolShape,
+    /// Pinned memories, and any recalled for this question.
+    Memory,
     /// Chunks retrieved for this question.
     VaultContext,
 }
@@ -112,6 +114,7 @@ impl SectionKind {
             SectionKind::Rules => "Rules",
             SectionKind::Today => "Today",
             SectionKind::ToolShape => "Tools and vault shape",
+            SectionKind::Memory => "What Syn remembers",
             SectionKind::VaultContext => "Retrieved context",
         }
     }
@@ -124,7 +127,7 @@ impl SectionKind {
     /// either defines the assistant or is something it cannot recover by
     /// looking — the date most of all.
     pub fn is_required(self) -> bool {
-        !matches!(self, SectionKind::VaultContext)
+        !matches!(self, SectionKind::VaultContext | SectionKind::Memory)
     }
 }
 
@@ -290,6 +293,23 @@ const CONTEXT_SUFFIX: &str = r#"=== END CONTEXT ==="#;
 //  THE PLAN
 // ═══════════════════════════════════════════════════════════════
 
+/// What one chat turn's prompt is built from.
+///
+/// A struct rather than a growing argument list, for the reason `DriveRequest`
+/// is one: the next two things that want a section here — a skill index, and
+/// whatever follows it — are fields, not another pair of positional `Option`s
+/// that can be swapped without the compiler noticing.
+pub struct ChatPrompt<'a> {
+    /// Chunks retrieved for this question, already formatted.
+    pub context: &'a str,
+    pub personality: &'a str,
+    /// The user's own standing instructions, from settings.
+    pub custom: Option<&'a str>,
+    /// What Syn remembers, already formatted by `memory::memory_block`.
+    pub memory: Option<&'a str>,
+    pub budget_chars: usize,
+}
+
 /// The sections that make up one system prompt, and what they cost.
 #[derive(Debug, Clone)]
 pub struct PromptPlan {
@@ -306,12 +326,14 @@ impl PromptPlan {
     /// which is where the caller used to put it — `format!("{custom}\n\n{prompt}")`
     /// in `syn_send_message`. That composition lives here now, so there is one
     /// place that knows what the prompt is made of.
-    pub fn for_chat(
-        context: &str,
-        personality: &str,
-        custom: Option<&str>,
-        budget_chars: usize,
-    ) -> Self {
+    pub fn for_chat(p: ChatPrompt<'_>) -> Self {
+        let ChatPrompt {
+            context,
+            personality,
+            custom,
+            memory,
+            budget_chars,
+        } = p;
         let mut sections = Vec::new();
 
         if let Some(custom) = custom.map(str::trim).filter(|c| !c.is_empty()) {
@@ -328,6 +350,16 @@ impl PromptPlan {
         sections.push(Section { kind: SectionKind::Rules, body: rules().to_string() });
         sections.push(Section { kind: SectionKind::Today, body: today() });
         sections.push(Section { kind: SectionKind::ToolShape, body: tool_shape().to_string() });
+
+        // Absent rather than empty when nothing is remembered, which is what
+        // keeps a vault with no memories sending byte for byte the prompt it
+        // sent before memory existed. The snapshots assert it.
+        if let Some(memory) = memory.filter(|m| !m.trim().is_empty()) {
+            sections.push(Section {
+                kind: SectionKind::Memory,
+                body: memory.to_string(),
+            });
+        }
 
         let ctx = vault_context(context);
         if !ctx.is_empty() {
@@ -349,15 +381,41 @@ impl PromptPlan {
     /// assistant that is confidently wrong about how to cite a note.
     fn fit(&mut self) {
         while self.chars() > self.budget_chars {
+            // Retrieved context goes before remembered facts, whatever their
+            // sizes. Context is a sample of the vault that the model is told it
+            // may need to search past, and it can go and look again; a memory
+            // is something it was told and cannot recover by searching.
+            let droppable = |kind: SectionKind| match kind {
+                SectionKind::VaultContext => Some(0),
+                SectionKind::Memory => Some(1),
+                _ => None,
+            };
             let biggest = self
                 .sections
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| !s.kind.is_required())
-                .max_by_key(|(_, s)| s.body.chars().count())
-                .map(|(i, s)| (i, s.kind));
+                .filter_map(|(i, s)| droppable(s.kind).map(|rank| (rank, i, s)))
+                .min_by_key(|(rank, _, s)| (*rank, usize::MAX - s.body.chars().count()))
+                .map(|(_, i, s)| (i, s.kind));
 
             match biggest {
+                // Memory shrinks before it goes. The trimmer removes whole
+                // sections, and for this one that meant forgetting everything
+                // rather than the least important thing — a cliff that gets
+                // likelier exactly as memory gets more valuable, and that is
+                // invisible from inside a conversation. `memory::shrink_block`
+                // knows the eviction order, which is the same order it wrote
+                // the block in.
+                Some((index, SectionKind::Memory)) => {
+                    let over = self.chars().saturating_sub(self.budget_chars);
+                    match crate::syn::memory::shrink_block(&self.sections[index].body, over) {
+                        Some(smaller) => self.sections[index].body = smaller,
+                        None => {
+                            self.sections.remove(index);
+                            self.dropped.push(SectionKind::Memory);
+                        }
+                    }
+                }
                 Some((index, kind)) => {
                     self.sections.remove(index);
                     self.dropped.push(kind);
@@ -464,7 +522,7 @@ mod tests {
     /// has changed that premise, and should have to notice.
     #[test]
     fn the_fixed_sections_still_cost_what_the_budget_assumes() {
-        let fixed = PromptPlan::for_chat("", "auto", None, DEFAULT_BUDGET_CHARS).chars();
+        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
 
         assert!(
             fixed <= FIXED_SECTIONS_CHARS,
@@ -500,7 +558,13 @@ mod tests {
         for personality in ["auto", "casual", "professional"] {
             for (label, context) in [("bare", ""), ("with-context", "some context")] {
                 let rendered =
-                    PromptPlan::for_chat(context, personality, None, DEFAULT_BUDGET_CHARS).render();
+                    PromptPlan::for_chat(ChatPrompt {
+                        context,
+                        personality,
+                        custom: None,
+                        memory: None,
+                        budget_chars: DEFAULT_BUDGET_CHARS,
+                    }).render();
                 let masked = today.replace_all(&rendered, "- Today's date: <DATE>");
 
                 let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -547,7 +611,7 @@ mod tests {
     /// ordering, and moving it here must not move it on the page.
     #[test]
     fn a_custom_prompt_comes_first_and_is_followed_by_a_blank_line() {
-        let plan = PromptPlan::for_chat("", "auto", Some("Always answer in haiku."), DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("Always answer in haiku."), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.starts_with("Always answer in haiku.\n\nYou are Syn,"));
     }
@@ -558,7 +622,7 @@ mod tests {
     #[test]
     fn an_empty_custom_prompt_adds_no_section() {
         for empty in [Some(""), Some("   "), None] {
-            let plan = PromptPlan::for_chat("", "auto", empty, DEFAULT_BUDGET_CHARS);
+            let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: empty, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
             assert!(plan.render().starts_with("You are Syn,"), "{empty:?}");
             assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::Custom));
         }
@@ -566,14 +630,14 @@ mod tests {
 
     #[test]
     fn no_context_means_no_context_section() {
-        let plan = PromptPlan::for_chat("", "auto", None, DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(!plan.render().contains("VAULT CONTEXT"));
         assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::VaultContext));
     }
 
     #[test]
     fn context_is_wrapped_in_the_instructions_for_reading_it() {
-        let plan = PromptPlan::for_chat("a note about ducks", "auto", None, DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", personality: "auto", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.contains("=== VAULT CONTEXT ==="));
         assert!(rendered.contains("a note about ducks"));
@@ -584,13 +648,13 @@ mod tests {
     /// on the user's behalf.
     #[test]
     fn an_unrecognised_personality_falls_back_to_adapting() {
-        let plan = PromptPlan::for_chat("", "klingon", None, DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "klingon", custom: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(plan.render().contains("Match the user's language"));
     }
 
     #[test]
     fn the_breakdown_accounts_for_every_character_that_was_sent() {
-        let plan = PromptPlan::for_chat("ctx", "casual", Some("be brief"), DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "casual", custom: Some("be brief"), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let counted: usize = plan.breakdown().iter().filter(|c| !c.dropped).map(|c| c.chars).sum();
         assert_eq!(counted, plan.render().chars().count());
         assert_eq!(counted, plan.chars());
@@ -600,7 +664,7 @@ mod tests {
     /// search past, and never the rules.
     #[test]
     fn a_tight_budget_drops_context_and_keeps_the_rules() {
-        let plan = PromptPlan::for_chat(&"x".repeat(5000), "auto", None, 6000);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), personality: "auto", custom: None, memory: None, budget_chars: 6000 });
         let rendered = plan.render();
         assert!(!rendered.contains("VAULT CONTEXT"));
         assert!(rendered.contains("Key rules:"));
@@ -616,17 +680,149 @@ mod tests {
     /// to send an assistant that has forgotten how to cite a note.
     #[test]
     fn an_impossible_budget_goes_over_rather_than_cutting_what_matters() {
-        let plan = PromptPlan::for_chat("ctx", "auto", None, 10);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "auto", custom: None, memory: None, budget_chars: 10 });
         let rendered = plan.render();
         assert!(rendered.contains("Key rules:"));
         assert!(rendered.contains("Tool usage guidelines:"));
         assert!(plan.chars() > plan.budget_chars());
     }
 
+    fn plan(context: &str, memory: Option<&str>, budget: usize) -> PromptPlan {
+        PromptPlan::for_chat(ChatPrompt {
+            context,
+            personality: "auto",
+            custom: None,
+            memory,
+            budget_chars: budget,
+        })
+    }
+
+    /// The property that let memory ship without re-blessing a single
+    /// snapshot: a vault that remembers nothing sends exactly what it sent
+    /// before this section existed.
+    #[test]
+    fn nothing_remembered_adds_no_section() {
+        for empty in [None, Some(""), Some("   ")] {
+            let p = plan("", empty, DEFAULT_BUDGET_CHARS);
+            assert!(!p.breakdown().iter().any(|c| c.kind == SectionKind::Memory), "{empty:?}");
+        }
+    }
+
+    /// Order is meaning here. Memory goes after the rules and the tools, so the
+    /// model knows how to act before it is told what it knows, and before the
+    /// retrieved context, so a standing fact is not buried under a sample.
+    #[test]
+    fn memory_sits_between_the_tools_and_the_retrieved_context() {
+        let rendered = plan("some context", Some("=== WHAT YOU REMEMBER ===\n- [fact] x"), DEFAULT_BUDGET_CHARS)
+            .render();
+
+        let tools = rendered.find("Tool usage guidelines:").expect("tools are there");
+        let memory = rendered.find("WHAT YOU REMEMBER").expect("memory is there");
+        let context = rendered.find("VAULT CONTEXT").expect("context is there");
+        assert!(tools < memory, "memory must come after the tools");
+        assert!(memory < context, "memory must come before the retrieved context");
+    }
+
+    /// Under pressure the sample goes before the standing fact, whatever their
+    /// sizes. The model can search the vault again; it cannot re-derive
+    /// something it was told once.
+    #[test]
+    fn a_tight_budget_gives_up_context_before_it_gives_up_memory() {
+        let big_context = "c".repeat(4000);
+        let small_memory = "=== WHAT YOU REMEMBER ===\n- [preference] họp buổi sáng";
+
+        let p = plan(&big_context, Some(small_memory), 6000);
+        let kinds: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
+        assert_eq!(kinds, vec![SectionKind::VaultContext]);
+        assert!(p.render().contains("họp buổi sáng"), "memory should have survived");
+    }
+
+    fn a_memory(body: &str, kind: &str, pinned: bool) -> crate::syn::memory::Memory {
+        crate::syn::memory::Memory {
+            id: format!("SynMemory/{body}.md"),
+            title: body.to_string(),
+            body: body.to_string(),
+            kind: kind.to_string(),
+            subject: None,
+            confidence: 0.9,
+            pinned,
+            first_seen: "2026-09-01".into(),
+            last_confirmed: "2026-09-01".into(),
+            source_run: None,
+            source_nodes: Vec::new(),
+            review_after: None,
+            supersedes: None,
+        }
+    }
+
+    /// Memory gives up its least important entries before it gives up itself.
+    ///
+    /// The trimmer removes whole sections, so before this a budget tight enough
+    /// to reach memory made Syn forget everything it knew about the person
+    /// rather than the least important thing — and nothing in the reply says so.
+    ///
+    /// Built from a real `memory_block` rather than a hand-written string, so
+    /// that a change to the block's format shows up here instead of leaving the
+    /// test asserting things about a shape nothing produces any more.
+    #[test]
+    fn a_tight_budget_shrinks_memory_rather_than_forgetting_everything() {
+        use crate::syn::memory::{memory_block, MEMORY_BUDGET_CHARS};
+
+        let memories = vec![
+            a_memory("Luôn trả lời bằng tiếng Việt.", "instruction", true),
+            a_memory("Ghét hành.", "preference", false),
+            a_memory("Sinh nhật 12 tháng 3.", "fact", false),
+            a_memory("Vợ dị ứng hải sản.", "fact", false),
+        ];
+        let block = memory_block(&memories, MEMORY_BUDGET_CHARS).expect("a block");
+
+        // No context, so memory is the only thing the trimmer can reach.
+        let roomy = plan("", Some(&block), 100_000);
+        let shortest = memories
+            .iter()
+            .map(|m| m.line().chars().count() + 1)
+            .min()
+            .expect("some memories");
+        let p = plan("", Some(&block), roomy.chars() - shortest);
+
+        let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
+        assert!(
+            !dropped.contains(&SectionKind::Memory),
+            "the section shrinks instead of going: {dropped:?}"
+        );
+
+        let rendered = p.render();
+        assert!(
+            rendered.contains("Luôn trả lời bằng tiếng Việt."),
+            "the instruction is the last thing to go:\n{rendered}"
+        );
+        assert!(
+            memories.iter().any(|m| !rendered.contains(m.body.as_str())),
+            "something was actually given up:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("did not fit and were left out"),
+            "and the loss is declared:\n{rendered}"
+        );
+    }
+
+    /// And when dropping the context is not enough, memory goes too — rather
+    /// than the rules, which are never dropped.
+    #[test]
+    fn memory_goes_before_anything_that_defines_the_assistant() {
+        let huge_memory = "=== WHAT YOU REMEMBER ===\n".to_string() + &"m".repeat(4000);
+        let p = plan("ctx", Some(&huge_memory), 6000);
+
+        let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
+        assert!(dropped.contains(&SectionKind::Memory));
+        assert!(p.render().contains("Key rules:"));
+        assert!(p.render().contains("Tool usage guidelines:"));
+    }
+
     /// Vietnamese is where a byte-counting mistake would show up first.
     #[test]
     fn costs_are_counted_in_characters_not_bytes() {
-        let plan = PromptPlan::for_chat("", "auto", Some("đường"), DEFAULT_BUDGET_CHARS);
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("đường"), memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let custom = plan
             .breakdown()
             .into_iter()

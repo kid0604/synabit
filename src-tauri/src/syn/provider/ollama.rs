@@ -300,8 +300,9 @@ impl ChatProvider for OllamaProvider {
     async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
         let url = format!("{}/api/tags", self.base_url);
 
-        let resp = self
-            .client
+        // The catalogue client, not the generation one — see `list_models` in
+        // the OpenAI provider for what the five-minute timeout cost.
+        let resp = crate::syn::provider::catalogue_client()
             .get(&url)
             .send()
             .await

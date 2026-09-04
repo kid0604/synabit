@@ -34,6 +34,15 @@ pub enum NodeType {
     PdfDrawing,
     /// A saved search. Holds a query rather than content of its own.
     Filter,
+    /// Something Syn was told or worked out, kept between conversations.
+    ///
+    /// Storage in the sense `Schema` is: written by the app, read by the app,
+    /// and deliberately a file so that the person it makes claims about can
+    /// read it, argue with it and delete it.
+    ///
+    /// Spelled `syn_memory` on disk. The unprefixed word belongs to the user,
+    /// who may well want a kind of their own by that name.
+    Memory,
     /// A kept way of looking at the vault: a query plus how to arrange it.
     ///
     /// Written by Things and read by nothing else. Deliberately not `Filter`,
@@ -69,6 +78,7 @@ impl NodeType {
         "pdf_drawing",
         "filter",
         "view",
+        "syn_memory",
         "json",
         "canvas",
     ];
@@ -93,6 +103,7 @@ impl NodeType {
             NodeType::PdfDrawing => "pdf_drawing",
             NodeType::Filter => "filter",
             NodeType::View => "view",
+            NodeType::Memory => "syn_memory",
             NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
@@ -126,6 +137,7 @@ impl From<&str> for NodeType {
             "pdf_drawing" => NodeType::PdfDrawing,
             "filter" => NodeType::Filter,
             "view" => NodeType::View,
+            "syn_memory" => NodeType::Memory,
             "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,

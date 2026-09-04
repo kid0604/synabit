@@ -64,7 +64,7 @@ const USUAL = 0.5;
  */
 const INTERNAL = new Set([
   'json', 'canvas', 'pdf_highlight', 'pdf_drawing', 'interaction',
-  'schema', 'view',
+  'schema', 'view', 'syn_memory',
 ]);
 
 /**

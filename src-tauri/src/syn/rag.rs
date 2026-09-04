@@ -481,6 +481,16 @@ pub fn retrieve_context(
                 {
                     continue;
                 }
+                // A memory is not a note about the topic; it is a standing
+                // claim about the person, and it has its own section of the
+                // prompt with its own rules for reading it. Arriving here as
+                // one more retrieved chunk would strip that framing and let a
+                // remembered preference read as evidence from the vault.
+                // Matched on the type rather than the folder, because a file
+                // moved out of `Memory/` is still a memory.
+                if result.item_type == crate::syn::memory::MEMORY_TYPE {
+                    continue;
+                }
                 if seen_ids.contains(&result.id) {
                     continue;
                 }
@@ -1392,20 +1402,10 @@ mod rag_vs_agentic {
             };
             let retrieval =
                 retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
-            crate::syn::prompt::PromptPlan::for_chat(
-                &format_context(&retrieval),
-                &settings.personality,
-                None,
-                crate::syn::prompt::DEFAULT_BUDGET_CHARS,
-            )
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: &format_context(&retrieval), personality: &settings.personality, custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         } else {
-            crate::syn::prompt::PromptPlan::for_chat(
-                "",
-                &settings.personality,
-                None,
-                crate::syn::prompt::DEFAULT_BUDGET_CHARS,
-            )
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: &settings.personality, custom: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         };
 
@@ -1788,6 +1788,7 @@ mod rag_vs_agentic {
             db: &db,
             vault_path: dir.path().to_str().expect("utf8"),
             app: &app,
+            run_id: None,
         };
 
         let ask = |query: &str| -> (u64, bool) {
@@ -1866,6 +1867,7 @@ mod rag_vs_agentic {
             db: &db,
             vault_path: dir.path().to_str().expect("utf8"),
             app: &app,
+            run_id: None,
         };
 
         eprintln!("\n── widening, on questions the vault cannot answer ──");

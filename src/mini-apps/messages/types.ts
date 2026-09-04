@@ -204,3 +204,67 @@ export interface PromptPreview {
   budget_chars: number;
   sections: PromptSectionCost[];
 }
+
+// ─── Memory ──────────────────────────────────────────────────
+//
+// What Syn remembers between conversations. Stored as ordinary nodes under
+// `Memory/`, which is why editing one goes through `useNodeService` rather
+// than a command of its own — see `src-tauri/src/syn/memory.rs`.
+
+export interface Memory {
+  /** Vault-relative path, which is also how every node tool addresses it. */
+  id: string;
+  title: string;
+  body: string;
+  /** `fact`, `preference`, `instruction`, `relationship`, `project`, or one the user invented. */
+  kind: string;
+  subject?: string | null;
+  /** 0 to 1. A sort order and a reason to ask again, not a probability. */
+  confidence: number;
+  source_run?: string | null;
+  source_nodes: string[];
+  first_seen: string;
+  last_confirmed: string;
+  review_after?: string | null;
+  /**
+   * Every memory rides in every prompt. Pinning decides only who survives if
+   * there is ever more than the budget holds.
+   */
+  pinned: boolean;
+  supersedes?: string | null;
+}
+
+/** What the pinned memories cost against what they are allowed. */
+export interface MemoryBudget {
+  /** Everything remembered. All of it is sent, up to the budget. */
+  total: number;
+  /** How many of those are pinned, which now decides only who survives a cut. */
+  pinned: number;
+  chars: number;
+  budget_chars: number;
+  /** Memories that do not fit, and so are not reaching the model. */
+  dropped: number;
+}
+
+/**
+ * Something Syn worked out and would like to remember, waiting to be allowed.
+ *
+ * Not a memory and not a node: it lives in `Syn/proposals.json` until it is
+ * accepted, so declining one leaves nothing behind in the vault.
+ */
+export interface Proposal {
+  id: string;
+  body: string;
+  kind: string;
+  subject?: string | null;
+  confidence: number;
+  /** The evidence, which is what makes the tray reviewable rather than a coin toss. */
+  because: string;
+  source_run: string;
+  conversation_id?: string | null;
+  /** The exact text of the memory this replaces, when it replaces one. */
+  supersedes?: string | null;
+  /** Whether this came out of the user correcting Syn — the strongest evidence there is. */
+  from_correction: boolean;
+  proposed_at: string;
+}

@@ -89,3 +89,8 @@ synabit_logcat.txt
 root@*
 *.jks
 keystore.properties
+
+# A stubbed-IPC entry point for driving the UI in a browser. Debug aid, never shipped.
+dev-stub.html
+dev-stub-conversation.json
+dev-stub-notifications.json

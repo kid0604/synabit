@@ -821,6 +821,12 @@ pub fn run() {
             syn_commands::syn_cancel_run,
             syn_commands::syn_delete_run,
             syn_commands::syn_preview_prompt,
+            syn_commands::syn_list_memories,
+            syn_commands::syn_memory_budget,
+            syn_commands::syn_list_proposals,
+            syn_commands::syn_accept_proposal,
+            syn_commands::syn_dismiss_proposal,
+            syn_commands::syn_clear_proposals,
             // P2P Sync
             sync_cmds::sync_connect,
             sync_cmds::sync_full,

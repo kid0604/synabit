@@ -29,7 +29,8 @@ import { localTimeZone } from '../mini-apps/calendar/timezone';
 export type NodeType =
   | 'note' | 'task' | 'project' | 'event' | 'person' | 'interaction'
   | 'quickcap' | 'finance_month' | 'finance_config' | 'finance_debts'
-  | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter' | 'view' | 'schema';
+  | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter' | 'view' | 'schema'
+  | 'syn_memory';
 
 export interface WriteNodeParams {
   relPath: string;

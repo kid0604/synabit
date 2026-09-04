@@ -511,8 +511,11 @@ impl ChatProvider for OpenAiCompatProvider {
     async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
         let url = format!("{}/models", self.base_url);
 
+        // Not `self.client`: that one is built for generation and waits five
+        // minutes. A catalogue that has not answered in fifteen seconds is not
+        // going to.
         let resp = self
-            .authorize(self.client.get(&url))
+            .authorize(crate::syn::provider::catalogue_client().get(&url))
             .send()
             .await
             .map_err(|e| AppError::General(format!("Failed to connect to {}: {}", self.base_url, e)))?;
