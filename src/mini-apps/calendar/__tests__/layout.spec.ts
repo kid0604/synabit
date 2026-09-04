@@ -4,7 +4,7 @@ import type { EventMetadata } from '../types';
 
 const ev = (id: string, start: string, end: string, over: Partial<EventMetadata> = {}): EventMetadata => ({
     id, title: id, is_all_day: false, start_at: start, end_at: end,
-    location: '', tags: [], content: '', path: id, created_at: '',
+    location: '', tags: [], content: '', created_at: '',
     relations: [], recurrence: 'none', recurrence_end_at: '', exceptions: [],
     series_id: '', reminders: [], ...over,
 });

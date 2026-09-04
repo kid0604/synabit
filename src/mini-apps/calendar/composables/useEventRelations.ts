@@ -60,9 +60,9 @@ export function useEventRelations(
         // Saved straight away, because the graph edge is what makes the
         // question answerable and a link that only exists in an open form
         // answers nothing.
-        if (eventForm.value.isEdit && eventForm.value.path) {
+        if (eventForm.value.isEdit && eventForm.value.id) {
             await ns.writeNode(buildEventPayload(eventForm.value, {
-                relPath: eventForm.value.path,
+                relPath: eventForm.value.id,
                 silent: true,
             }));
             if (eventForm.value.title && eventForm.value.id) {
@@ -75,9 +75,9 @@ export function useEventRelations(
         eventForm.value.relations = (eventForm.value.relations || [])
             .filter(link => !link.includes(id));
         eventBacklinks.value = eventBacklinks.value.filter(n => n.id !== id);
-        if (eventForm.value.isEdit && eventForm.value.path) {
+        if (eventForm.value.isEdit && eventForm.value.id) {
             await ns.writeNode(buildEventPayload(eventForm.value, {
-                relPath: eventForm.value.path,
+                relPath: eventForm.value.id,
                 silent: true,
             }));
         }
@@ -131,10 +131,10 @@ export function useEventRelations(
             isCreatingNote.value = false;
             newNoteTitle.value = '';
             
-            if (eventForm.value.id && eventForm.value.path) {
+            if (eventForm.value.id) {
                 // Auto-save the event so the graph edge is created immediately
                 await ns.writeNode(buildEventPayload(eventForm.value, {
-                    relPath: eventForm.value.path,
+                    relPath: eventForm.value.id,
                     silent: true,
                 }));
                 await loadEventBacklinks(eventForm.value.title, eventForm.value.id);
@@ -160,7 +160,7 @@ export function useEventRelations(
                 if (eventForm.value.relations.length < originalLength && eventForm.value.id) {
                     // Background save without closing modal
                         await ns.writeNode(buildEventPayload(eventForm.value, {
-                    relPath: eventForm.value.path,
+                    relPath: eventForm.value.id,
                     silent: true,
                 }));
                 }
@@ -213,7 +213,7 @@ export function useEventRelations(
             for (const index of chosen) {
                 const item = noteActions.value[index];
                 if (!item) continue;
-                const links = [`[${eventForm.value.title}](synabit://event/${eventForm.value.path})`];
+                const links = [`[${eventForm.value.title}](synabit://event/${eventForm.value.id})`];
                 if (item.noteId) links.push(`[${item.noteTitle}](synabit://note/${item.noteId})`);
                 try {
                     await ns.writeNode({
