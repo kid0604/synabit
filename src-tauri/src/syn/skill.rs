@@ -1002,3 +1002,53 @@ mod through_the_tools {
         assert!(!block.contains("off-one"), "the off one is unmentioned:\n{block}");
     }
 }
+
+
+/// Would Syn have offered to write a skill, on the runs that actually happened?
+///
+/// A probe, not an assertion. It reads the real vault and uses the real
+/// detector, because replicating the rule in a script to measure it would be a
+/// second implementation free to disagree with the first — which is how a
+/// measurement ends up being the broken thing.
+///
+/// ```bash
+/// cargo test --lib what_syn_would_have_offered -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod what_syn_would_have_offered {
+    use super::*;
+
+    #[test]
+    #[ignore = "reads the real vault; run by hand"]
+    fn on_the_runs_that_actually_happened() {
+        let vault = std::env::var("SYN_EVAL_VAULT").unwrap_or_else(|_| {
+            format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default())
+        });
+        let runs = crate::syn::run::load_all(&vault).expect("the real runs");
+
+        eprintln!("\n═══ would a skill have been proposed? ═══");
+        eprintln!("runs on disk: {}\n", runs.len());
+
+        let mut offered = 0;
+        for run in &runs {
+            let calls: Vec<&str> = run
+                .steps
+                .iter()
+                .filter(|s| s.ok == Some(true))
+                .filter_map(|s| s.tool.as_deref())
+                .collect();
+            match repeated_chain(run) {
+                Some(chain) => {
+                    offered += 1;
+                    eprintln!("  {} → {}", &run.id[..8], chain.join(" → "));
+                }
+                None if calls.len() >= MIN_CHAIN * 2 => {
+                    eprintln!("  {} → {} calls, no repetition", &run.id[..8], calls.len());
+                }
+                None => {}
+            }
+        }
+        eprintln!("\n{offered} of {} runs would have prompted a skill.", runs.len());
+        eprintln!("(runs with fewer than {} successful calls cannot, and are not listed)\n", MIN_CHAIN * 2);
+    }
+}
