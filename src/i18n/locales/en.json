@@ -1822,7 +1822,18 @@
     "proposal_from_correction": "you corrected me",
     "proposal_replaces": "Replaces: {body}",
     "proposals_explainer": "Worked out from your conversations, not asked for. Nothing is written to your vault until you accept it.",
-    "proposals_title": "Syn would like to remember {n} thing(s)"
+    "proposals_title": "Syn would like to remember {n} thing(s)",
+    "inspector_tab_skills": "Skills",
+    "skills_explainer": "Procedures Syn can follow. Only the ones you turn on are offered to it, and it has to open a skill before following it — so the right-hand count is how often it actually did. Each is a file in your vault: edit it, and the version history keeps the one before.",
+    "skills_empty": "No skills yet. Write one as a note in SynSkills/, or wait for Syn to suggest one after it repeats itself.",
+    "skill_by_syn": "written by Syn",
+    "skill_when": "Use when",
+    "skill_tools": "Expects",
+    "skill_used": "opened {n}×",
+    "skill_never_used": "never opened",
+    "skill_enable": "Turn on",
+    "skill_disable": "Turn off",
+    "skill_try": "Try it"
   },
   "update": {
     "available": "Synabit {version} is available!",

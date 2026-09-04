@@ -1822,7 +1822,18 @@
     "proposal_from_correction": "bạn đã sửa lưng tôi",
     "proposal_replaces": "Thay cho: {body}",
     "proposals_explainer": "Do Syn tự rút ra từ hội thoại, không phải bạn yêu cầu. Không có gì được ghi vào vault cho tới khi bạn đồng ý.",
-    "proposals_title": "Syn muốn nhớ {n} điều"
+    "proposals_title": "Syn muốn nhớ {n} điều",
+    "inspector_tab_skills": "Kỹ năng",
+    "skills_explainer": "Những quy trình Syn có thể làm theo. Chỉ những cái bạn bật mới được đưa cho nó, và nó phải mở kỹ năng ra trước khi làm theo — nên con số bên phải là số lần nó thật sự mở. Mỗi cái là một file trong vault: sửa thoải mái, lịch sử phiên bản giữ lại bản trước.",
+    "skills_empty": "Chưa có kỹ năng nào. Viết một cái như ghi chú trong SynSkills/, hoặc chờ Syn tự đề xuất sau khi nó lặp lại chính mình.",
+    "skill_by_syn": "Syn viết",
+    "skill_when": "Dùng khi",
+    "skill_tools": "Cần tool",
+    "skill_used": "đã mở {n} lần",
+    "skill_never_used": "chưa mở lần nào",
+    "skill_enable": "Bật",
+    "skill_disable": "Tắt",
+    "skill_try": "Thử xem"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

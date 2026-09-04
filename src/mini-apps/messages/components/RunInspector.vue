@@ -19,10 +19,11 @@ import {
 } from 'lucide-vue-next';
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
+import { useSynSkills } from '../composables/useSynSkills';
 import type { RunState, RunStep, Reversal, Memory } from '../types';
 
 const props = defineProps<{ vaultPath: string }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; use: [name: string] }>();
 
 const { t } = useI18n();
 
@@ -31,13 +32,18 @@ const {
   loadRuns, openRun, cancelRun, deleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
 
-type Tab = 'runs' | 'prompt' | 'memory';
+type Tab = 'runs' | 'prompt' | 'memory' | 'skills';
 const tab = ref<Tab>('runs');
 
 const {
   memories, proposals, budget, error: memoryError,
   load: loadMemories, setPinned, confirm: confirmMemory, forget, accept, dismiss,
 } = useSynMemory(() => props.vaultPath);
+
+const {
+  ordered: orderedSkills, error: skillError,
+  load: loadSkills, setEnabled, usageOf,
+} = useSynSkills(() => props.vaultPath);
 
 /** How full the pinned budget is, for the bar on the memory tab. */
 const memoryUsed = computed(() => {
@@ -70,6 +76,7 @@ const showTab = async (next: Tab) => {
   tab.value = next;
   if (next === 'prompt' && !preview.value) await loadPreview(previewQuestion.value);
   if (next === 'memory') await loadMemories();
+  if (next === 'skills') await loadSkills();
 };
 
 /**
@@ -152,7 +159,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">
             <button
-              v-for="option in (['runs', 'prompt', 'memory'] as Tab[])"
+              v-for="option in (['runs', 'prompt', 'memory', 'skills'] as Tab[])"
               :key="option"
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
@@ -168,7 +175,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <button
             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
-            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : loadPreview(previewQuestion)"
+            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : loadPreview(previewQuestion)"
           >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -182,8 +189,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         </div>
       </div>
 
-      <div v-if="error || memoryError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
-        {{ error || memoryError }}
+      <div v-if="error || memoryError || skillError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
+        {{ error || memoryError || skillError }}
       </div>
 
       <!-- ── Runs ─────────────────────────────────────────── -->
@@ -295,6 +302,69 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             </ol>
           </div>
         </div>
+      </div>
+
+      <!-- ── Skills ───────────────────────────────────────── -->
+      <div v-else-if="tab === 'skills'" class="flex-1 overflow-y-auto p-6">
+        <p class="text-sm text-gray-500">{{ t('syn.skills_explainer') }}</p>
+
+        <p v-if="!orderedSkills.length" class="mt-6 text-sm text-gray-500">
+          {{ t('syn.skills_empty') }}
+        </p>
+
+        <ul class="mt-5 space-y-3">
+          <li
+            v-for="skill in orderedSkills"
+            :key="skill.id"
+            class="rounded-xl border p-3"
+            :class="skill.enabled
+              ? 'border-violet-200 dark:border-violet-900/60'
+              : 'border-gray-100 dark:border-gray-800/60 opacity-70'"
+          >
+            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+              <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ skill.tier }}</span>
+              <span
+                v-if="skill.author === 'syn'"
+                class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700
+                       dark:bg-amber-950/50 dark:text-amber-400"
+              >{{ t('syn.skill_by_syn') }}</span>
+              <span class="text-gray-400">v{{ skill.version }}</span>
+              <span class="ml-auto text-gray-400">
+                {{ usageOf(skill)
+                  ? t('syn.skill_used', { n: usageOf(skill)!.runs })
+                  : t('syn.skill_never_used') }}
+              </span>
+            </div>
+
+            <p class="mt-2 text-sm font-medium text-text dark:text-text-dark">{{ skill.name }}</p>
+            <p v-if="skill.description" class="mt-0.5 text-sm text-gray-500">{{ skill.description }}</p>
+            <p v-if="skill.when_to_use" class="mt-1 text-[11px] text-gray-500 italic">
+              {{ t('syn.skill_when') }}: {{ skill.when_to_use }}
+            </p>
+            <p v-if="skill.tools.length" class="mt-1 text-[11px] text-gray-400">
+              {{ t('syn.skill_tools') }}: {{ skill.tools.join(', ') }}
+            </p>
+
+            <div class="mt-3 flex gap-2">
+              <button
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                @click="setEnabled(skill, !skill.enabled)"
+              >
+                <component :is="skill.enabled ? PinOff : Pin" class="w-3 h-3" />
+                {{ skill.enabled ? t('syn.skill_disable') : t('syn.skill_enable') }}
+              </button>
+              <button
+                v-if="skill.enabled"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-violet-600 text-white hover:bg-violet-700"
+                @click="emit('use', skill.name); emit('close')"
+              >
+                <Sparkles class="w-3 h-3" /> {{ t('syn.skill_try') }}
+              </button>
+            </div>
+          </li>
+        </ul>
       </div>
 
       <!-- ── Memory ───────────────────────────────────────── -->

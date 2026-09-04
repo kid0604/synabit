@@ -35,6 +35,28 @@ const emit = defineEmits<{
 const inputText = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
+
+/**
+ * Put text in the composer without sending it.
+ *
+ * Exposed rather than driven by a prop because it is an event, not a state: the
+ * Skills screen says "try this one" once, and what the person then types is
+ * theirs. A prop would fight them for the box every time it re-rendered.
+ *
+ * It deliberately does not send. Somebody trying a skill for the first time
+ * should read the sentence that will run before it runs — that is the whole
+ * reason the roadmap asks for a skill to be runnable by hand.
+ */
+defineExpose({
+  prefill(text: string) {
+    inputText.value = text;
+    void nextTick(() => {
+      textareaRef.value?.focus();
+      const end = textareaRef.value?.value.length ?? 0;
+      textareaRef.value?.setSelectionRange(end, end);
+    });
+  },
+});
 const isComposing = ref(false);
 const pendingImages = ref<string[]>([]);
 

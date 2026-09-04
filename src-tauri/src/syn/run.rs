@@ -590,6 +590,31 @@ pub fn list_runs(vault_path: &str, live: impl Fn(&str) -> bool) -> AppResult<Vec
     Ok(summaries)
 }
 
+/// Every run on disk, whole.
+///
+/// `list_runs` returns summaries and repairs stale `Working` states on the way
+/// past; this one only reads. A caller asking which skills have actually been
+/// opened has no business changing anything while it looks.
+pub fn load_all(vault_path: &str) -> AppResult<Vec<Run>> {
+    let dir = runs_dir(vault_path)?;
+    let mut runs = Vec::new();
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match serde_json::from_str::<Run>(&content) {
+            Ok(run) => runs.push(run),
+            Err(e) => log::warn!("[Syn] Skipping corrupt run file {:?}: {}", path.file_name(), e),
+        }
+    }
+    runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(runs)
+}
+
 /// Remove the oldest runs past `KEEP_RUNS`.
 ///
 /// Called when a run is created rather than when one is saved: pruning reads

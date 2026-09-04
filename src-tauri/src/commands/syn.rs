@@ -572,6 +572,34 @@ pub async fn syn_delete_run(vault_path: String, run_id: String) -> Result<(), Ap
 /// sort that agrees until it does not. Editing goes the other way, through the
 /// ordinary node write path, because a memory is an ordinary node and that
 /// path already has versions, sync and a trash behind it.
+/// Every skill in the vault, enabled or not.
+///
+/// Both, unlike the index the model is given. The screen is where a person
+/// turns one on, and they cannot turn on something they cannot see.
+#[tauri::command]
+pub async fn syn_list_skills(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<crate::syn::skill::Skill>, AppError> {
+    let db = state
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+    crate::syn::skill::all(&db)
+}
+
+/// Which skills have actually been opened, and when.
+///
+/// The one number that says whether any of this works. A skill can be enabled,
+/// indexed, well written and never once reached for, and nothing else in the
+/// app would say so — the model deciding to skip it is a decision with no
+/// trace. Memory spent weeks in exactly that state.
+#[tauri::command]
+pub async fn syn_skill_usage(
+    vault_path: String,
+) -> Result<Vec<crate::syn::skill::Usage>, AppError> {
+    let runs = crate::syn::run::load_all(&vault_path)?;
+    Ok(crate::syn::skill::usage(&runs))
+}
+
 #[tauri::command]
 pub async fn syn_list_memories(
     state: tauri::State<'_, crate::db::DbState>,

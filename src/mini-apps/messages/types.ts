@@ -235,6 +235,48 @@ export interface Memory {
 }
 
 /** What the pinned memories cost against what they are allowed. */
+/**
+ * A procedure written down for Syn to follow.
+ *
+ * Mirrors `Skill` in `src-tauri/src/syn/skill.rs`. A skill is an ordinary vault
+ * node, so everything here is frontmatter a person can edit in any editor —
+ * which is the point, because a skill changes what the assistant does.
+ */
+export interface Skill {
+  /** Vault-relative path, which is also how every node tool addresses it. */
+  id: string;
+  title: string;
+  /** The handle `load_skill` takes. */
+  name: string;
+  description: string;
+  when_to_use: string;
+  /** `prose` runs in the prompt, `recipe` in Rust, `code` in a sandbox. */
+  tier: 'prose' | 'recipe' | 'code';
+  /** What it expects to call. Shown to the user, not enforced — that is P4. */
+  tools: string[];
+  version: number;
+  /** `user` or `syn`. Read differently, and shown differently. */
+  author: string;
+  /** Disabled skills are not named to the model at all. */
+  enabled: boolean;
+  /** The steps, in Markdown. */
+  body: string;
+}
+
+/**
+ * How often a skill has actually been opened.
+ *
+ * The number this feature answers for: a skill can be enabled, indexed, well
+ * written and never once reached for, and nothing else would say so.
+ */
+export interface SkillUsage {
+  name: string;
+  /** Across the runs still on disk. Runs are pruned, so this is "recently". */
+  runs: number;
+  last_run: string;
+  last_at: string;
+}
+
 export interface MemoryBudget {
   /** Everything remembered. All of it is sent, up to the budget. */
   total: number;

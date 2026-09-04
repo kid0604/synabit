@@ -17,6 +17,20 @@ import { useSynChat } from './composables/useSynChat';
 import { useSynModels } from './composables/useSynModels';
 import type { SynConversation, SynConversationFull, SynMessage } from './types';
 
+/**
+ * Trying a skill by hand.
+ *
+ * It writes the request into the composer and stops. The roadmap asks for a
+ * skill to be runnable from the screen rather than only when the model picks
+ * it, and the reason it gives is the right one: a person needs to see what a
+ * skill does before trusting it. Sending on their behalf would be the opposite
+ * of that — they would find out what it does by having it done.
+ */
+const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
+const trySkill = (name: string) => {
+  chatPanel.value?.prefill(`Dùng skill \`${name}\` giúp tao.`);
+};
+
 const props = defineProps<{
   vaultPath: string;
 }>();
@@ -469,6 +483,7 @@ defineExpose({ refresh, fetchNotifications });
 
             <template v-if="activeChatId === 'syn-main'">
                 <ChatPanel
+                  ref="chatPanel"
                   :messages="mixedMessages"
                   :streaming-content="streamingContent"
                   :is-streaming="isStreaming"
@@ -499,6 +514,7 @@ defineExpose({ refresh, fetchNotifications });
       v-if="showInspector"
       :vault-path="props.vaultPath"
       @close="showInspector = false"
+      @use="trySkill"
     />
 
     <!-- Settings Panel -->

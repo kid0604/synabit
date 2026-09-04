@@ -307,6 +307,65 @@ pub fn index_block(skills: &[Skill], budget_chars: usize) -> Option<String> {
     Some(block)
 }
 
+/// How often a skill has actually been opened, and when it last was.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Usage {
+    pub name: String,
+    /// Times `load_skill` returned this skill's body, across the runs still on
+    /// disk. Runs are pruned, so this is "recently" rather than "ever" — and
+    /// the screen says so, because a number that quietly means something
+    /// narrower than it reads is worse than no number.
+    pub runs: usize,
+    pub last_run: String,
+    pub last_at: String,
+}
+
+/// Which skills have been opened, newest use first.
+///
+/// This is the number this whole feature has to answer for. A skill that is
+/// enabled, indexed, well written and never opened is doing nothing, and there
+/// is no other way to find that out — the model reaching for a skill is a
+/// decision nobody sees. `recall` was in exactly that position for weeks.
+pub fn usage(runs: &[crate::syn::run::Run]) -> Vec<Usage> {
+    let mut seen: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
+
+    for run in runs {
+        for step in &run.steps {
+            if step.tool.as_deref() != Some(LOAD_TOOL) || step.ok != Some(true) {
+                continue;
+            }
+            let Some(name) = step
+                .args
+                .as_ref()
+                .and_then(|a| a.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+            else {
+                continue;
+            };
+
+            let entry = seen.entry(name.to_lowercase()).or_insert_with(|| Usage {
+                name: name.clone(),
+                runs: 0,
+                last_run: run.id.clone(),
+                last_at: run.created_at.clone(),
+            });
+            entry.runs += 1;
+            // Runs arrive newest first, so the first one to mention a skill is
+            // the most recent use of it.
+            if run.created_at > entry.last_at {
+                entry.last_at = run.created_at.clone();
+                entry.last_run = run.id.clone();
+            }
+        }
+    }
+
+    let mut out: Vec<Usage> = seen.into_values().collect();
+    out.sort_by(|a, b| b.last_at.cmp(&a.last_at));
+    out
+}
+
 /// The frontmatter a new skill is written with.
 #[allow(clippy::too_many_arguments)]
 pub fn frontmatter(
@@ -448,6 +507,64 @@ mod tests {
         assert!(
             block.contains("did not fit in this list"),
             "a skill missing from the index is one the model cannot know exists:\n{block}"
+        );
+    }
+
+    fn run_that_opened(names: &[&str], created_at: &str, ok: bool) -> crate::syn::run::Run {
+        let mut run = crate::syn::run::Run::new(
+            "test",
+            None,
+            crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default()),
+        );
+        run.created_at = created_at.to_string();
+        for (i, name) in names.iter().enumerate() {
+            run.record_tool(
+                i as u8,
+                LOAD_TOOL,
+                serde_json::json!({ "name": name }),
+                ok,
+                crate::syn::registry::Reversal::Nothing,
+                "{}",
+                1,
+            );
+        }
+        run
+    }
+
+    /// The number this whole feature has to answer for.
+    ///
+    /// A skill can be enabled, indexed, well written and never once opened, and
+    /// nothing else in the app would say so: a model deciding to skip a skill
+    /// leaves no trace. `recall` sat in exactly that state for weeks while its
+    /// unit tests passed.
+    #[test]
+    fn a_skill_that_is_never_opened_appears_nowhere_in_the_usage() {
+        let runs = vec![
+            run_that_opened(&["weekly-review"], "2026-09-04T10:00:00Z", true),
+            run_that_opened(&["weekly-review", "inbox-zero"], "2026-09-02T10:00:00Z", true),
+        ];
+
+        let used = usage(&runs);
+        let names: Vec<&str> = used.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(names, vec!["weekly-review", "inbox-zero"], "newest use first");
+
+        let weekly = &used[0];
+        assert_eq!(weekly.runs, 2, "counted across runs");
+        assert_eq!(weekly.last_at, "2026-09-04T10:00:00Z", "and dated by the newest");
+
+        assert!(
+            !used.iter().any(|u| u.name == "never-used"),
+            "a skill nobody opened is absent, which is the point of the number"
+        );
+    }
+
+    /// A failed open is not a use.
+    #[test]
+    fn asking_for_a_skill_and_getting_an_error_does_not_count() {
+        let runs = vec![run_that_opened(&["typo-name"], "2026-09-04T10:00:00Z", false)];
+        assert!(
+            usage(&runs).is_empty(),
+            "the model asked and got nothing back; it has not used a skill"
         );
     }
 
