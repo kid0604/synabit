@@ -504,6 +504,63 @@ pub async fn syn_send_message(
                 Err(e) => log::warn!("[Syn] Could not queue proposals: {e}"),
             }
         });
+        // A run that did the same multi-step job twice may be worth writing
+        // down. The decision that it repeated itself is arithmetic and already
+        // made; the model is only asked to name the thing and write the steps,
+        // and only when there is something to name — so the great majority of
+        // runs, which repeat nothing, cost nothing here.
+        //
+        // Gated on the same switch as memory reflection. They are two jobs and
+        // will want two switches, but adding a settings field is a migration
+        // across both languages and this is the wrong change to bundle it with.
+        // Stated rather than hidden: turning off reflection turns off both.
+        if let Some(chain) = crate::syn::skill::repeated_chain(&run) {
+            if !crate::syn::skill::already_proposed(&vault_path, &chain) {
+                let provider = provider_for(&app, &settings).await;
+                let vault = vault_path.clone();
+                let model_name = model.clone();
+                let goal = run.goal.clone();
+                let num_ctx = settings.num_ctx;
+                let app_handle = app.clone();
+                let taken: Vec<String> = state
+                    .lock()
+                    .ok()
+                    .and_then(|db| crate::syn::skill::all(&db).ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.name)
+                    .collect();
+
+                tauri::async_runtime::spawn(async move {
+                    let Some(draft) = crate::syn::reflect::suggest_skill(
+                        provider.as_ref(),
+                        &model_name,
+                        num_ctx,
+                        &goal,
+                        &chain,
+                        &taken,
+                    )
+                    .await
+                    else {
+                        // Recorded even so. The model looked at this shape and
+                        // said no; asking it again on the next identical run
+                        // would spend the same tokens for the same answer.
+                        let _ = crate::syn::skill::remember_proposed(&vault, &chain);
+                        return;
+                    };
+
+                    if let Err(e) = write_suggested_skill(&app_handle, &vault, &draft, &chain) {
+                        log::warn!("[Syn] Could not write the suggested skill: {e}");
+                        return;
+                    }
+                    let _ = crate::syn::skill::remember_proposed(&vault, &chain);
+                    log::info!(
+                        "[Syn] Suggested a skill `{}`, turned off until reviewed",
+                        draft.name
+                    );
+                });
+            }
+        }
     } else {
         log::info!(
             "[Syn] Reflection skipped: {}",
@@ -517,6 +574,62 @@ pub async fn syn_send_message(
 
     // Return the assistant message
     Ok(assistant_message)
+}
+
+/// Write a suggested skill into the vault, turned off.
+///
+/// Off, and it is the whole safeguard. An agent that enables its own skills is
+/// an agent changing its behaviour without anybody knowing, which is what the
+/// roadmap's N2 forbids — so this writes a file the user can read, edit and
+/// switch on, and nothing else happens until they do.
+///
+/// `author: syn` so the screen can say where it came from, and `version: 1` so
+/// the first edit somebody makes is a version they can roll back from.
+fn write_suggested_skill(
+    app: &tauri::AppHandle,
+    vault_path: &str,
+    draft: &crate::syn::reflect::SkillDraft,
+    chain: &[String],
+) -> Result<(), AppError> {
+    use tauri::Manager;
+    let state = app.state::<crate::db::DbState>();
+    let ctx = crate::syn::tools::ToolContext {
+        db: &state,
+        vault_path,
+        app,
+        run_id: None,
+    };
+
+    let mut properties = crate::syn::skill::frontmatter(
+        &draft.name,
+        &draft.description,
+        &draft.when_to_use,
+        crate::syn::skill::Tier::Prose,
+        chain,
+        "syn",
+        false,
+        1,
+    );
+    // The shape it came from, kept on the file so a person reading it can see
+    // what Syn actually watched them do.
+    if let Some(map) = properties.as_object_mut() {
+        map.insert(
+            "from_chain".to_string(),
+            serde_json::json!(chain),
+        );
+    }
+
+    crate::syn::tools::execute_tool(
+        &ctx,
+        "create_node",
+        &serde_json::json!({
+            "node_type": crate::syn::skill::SKILL_TYPE,
+            "title": draft.name,
+            "content": draft.steps,
+            "properties": properties,
+        }),
+    )?;
+    Ok(())
 }
 
 /// Signal the engine to stop the current generation.

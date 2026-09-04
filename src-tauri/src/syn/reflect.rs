@@ -271,6 +271,136 @@ fn into_proposals(
         .collect()
 }
 
+/// What the model is asked to write when a run repeated itself.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkillDraft {
+    pub name: String,
+    pub description: String,
+    pub when_to_use: String,
+    /// The steps, in Markdown. This becomes the body of the skill file.
+    pub steps: String,
+}
+
+/// Ask the model to write up a chain the run repeated.
+///
+/// Only called when `skill::repeated_chain` has already found something, so the
+/// expensive half never runs on the great majority of runs, which repeat
+/// nothing. The model's job here is narrow — name the thing and write the steps
+/// in the user's language — and the decision that there is a thing at all was
+/// made by arithmetic.
+///
+/// Returns `None` on anything unusable. A skill nobody asked for is a file in
+/// somebody's vault; the bar for writing one is that the model came back with a
+/// name, a reason and steps, and did not reuse a name already taken.
+pub async fn suggest_skill(
+    provider: &dyn ChatProvider,
+    model: &str,
+    num_ctx: u32,
+    goal: &str,
+    chain: &[String],
+    taken: &[String],
+) -> Option<SkillDraft> {
+    if chain.is_empty() {
+        return None;
+    }
+
+    let existing = if taken.is_empty() {
+        "(none yet)".to_string()
+    } else {
+        taken.join(", ")
+    };
+
+    let prompt = format!(
+        "An assistant just did this piece of work more than once in a single \
+         run, using the same tools in the same order each time:\n\n\
+         {}\n\n\
+         What it was asked to do: {goal}\n\n\
+         Write this up as a reusable skill, so the same job can be followed \
+         next time instead of worked out again. Skills that already exist, \
+         whose names you must not reuse: {existing}\n\n\
+         Reply with ONLY a JSON object, no other text:\n\
+         {{\"name\": \"a short kebab-case handle, e.g. weekly-review\", \
+         \"description\": \"one line, in the user's own language, saying what it does\", \
+         \"when_to_use\": \"one line saying when to reach for it\", \
+         \"steps\": \"the procedure as Markdown, numbered, naming the tool at each step\"}}\n\n\
+         If the repetition was an accident rather than a procedure — retrying \
+         something that failed, or two unrelated jobs that happen to use the \
+         same tools — reply with exactly: null",
+        chain.join(" → "),
+    );
+
+    let messages = vec![ChatMessage::new("user", prompt)];
+    let reply = match provider
+        .chat(ChatRequest {
+            model,
+            messages: &messages,
+            temperature: Some(0.2),
+            num_ctx,
+            tools: None,
+        })
+        .await
+    {
+        Ok(reply) => reply,
+        Err(e) => {
+            log::warn!("[Syn] Could not draft a skill, proposing none: {e}");
+            return None;
+        }
+    };
+
+    draft_from(&reply.content, taken)
+}
+
+/// Read a draft out of whatever the model actually sent.
+///
+/// Separated so it can be tested without a model, for the reason the memory
+/// work found the hard way: the judgement about what to distrust is the part
+/// that goes wrong, and it was reachable only through a network call.
+fn draft_from(reply: &str, taken: &[String]) -> Option<SkillDraft> {
+    let trimmed = reply.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return None;
+    }
+
+    // Same fenced/prose recovery `extract` needs, for the same reason: models
+    // wrap JSON in ``` and add a sentence either side.
+    let unfenced = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+    let body = match (unfenced.find('{'), unfenced.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &unfenced[start..=end],
+        _ => return None,
+    };
+
+    let draft: SkillDraft = serde_json::from_str(body)
+        .map_err(|e| log::warn!("[Syn] Skill draft was not usable JSON: {e}"))
+        .ok()?;
+
+    let name = draft.name.trim().to_string();
+    if name.is_empty() || draft.steps.trim().is_empty() {
+        return None;
+    }
+    // A name already in use would either collide on disk or quietly shadow a
+    // skill the user wrote. Unicode folding, because the name may be Vietnamese.
+    let folded = name.to_lowercase();
+    if taken.iter().any(|t| t.trim().to_lowercase() == folded) {
+        log::warn!("[Syn] Drafted skill `{name}` reuses an existing name; dropping it");
+        return None;
+    }
+
+    Some(SkillDraft {
+        name,
+        description: draft.description.trim().to_string(),
+        when_to_use: draft.when_to_use.trim().to_string(),
+        steps: draft.steps.trim().to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +433,51 @@ mod tests {
             supersedes: supersedes.map(str::to_string),
             from_correction: None,
         }
+    }
+
+    /// "This was an accident" has to be sayable, and has to be believed.
+    ///
+    /// The alternative is a model that must always produce a skill, which means
+    /// a file in somebody's vault every time a run retries a failed call twice.
+    #[test]
+    fn a_model_that_says_there_is_no_skill_here_is_taken_at_its_word() {
+        for refusal in ["null", "  null  ", "NULL", ""] {
+            assert!(draft_from(refusal, &[]).is_none(), "`{refusal}` proposes nothing");
+        }
+    }
+
+    /// A draft is read out of fenced or prose-wrapped JSON.
+    #[test]
+    fn a_draft_survives_the_way_models_actually_reply() {
+        let fenced = "```json\n{\"name\": \"weekly-review\", \"description\": \"Tổng kết tuần\",                       \"when_to_use\": \"Chiều thứ Sáu\", \"steps\": \"1. query_nodes\"}\n```";
+        let draft = draft_from(fenced, &[]).expect("read through the fence");
+        assert_eq!(draft.name, "weekly-review");
+        assert_eq!(draft.description, "Tổng kết tuần");
+
+        let chatty = "Sure, here you go:\n{\"name\": \"a\", \"description\": \"b\",                       \"when_to_use\": \"c\", \"steps\": \"1. x\"}\nHope that helps!";
+        assert!(draft_from(chatty, &[]).is_some(), "prose either side is ignored");
+    }
+
+    /// A draft with no steps is not a skill.
+    #[test]
+    fn a_draft_without_steps_is_refused() {
+        let empty = "{\"name\": \"a\", \"description\": \"b\", \"when_to_use\": \"c\", \"steps\": \"   \"}";
+        assert!(draft_from(empty, &[]).is_none());
+    }
+
+    /// A name already taken is refused rather than allowed to collide.
+    ///
+    /// Two skills of the same name would either collide on disk or quietly
+    /// shadow the one the user wrote themselves, and the second is worse: their
+    /// procedure stops being followed and nothing says so.
+    #[test]
+    fn a_drafted_name_never_shadows_one_that_exists() {
+        let json = "{\"name\": \"Weekly-Review\", \"description\": \"b\",                     \"when_to_use\": \"c\", \"steps\": \"1. x\"}";
+        assert!(
+            draft_from(json, &["weekly-review".to_string()]).is_none(),
+            "case is not a difference between two names"
+        );
+        assert!(draft_from(json, &["something-else".to_string()]).is_some());
     }
 
     /// A replacement has to name something that is actually there.

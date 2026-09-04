@@ -366,6 +366,107 @@ pub fn usage(runs: &[crate::syn::run::Run]) -> Vec<Usage> {
     out
 }
 
+/// The shortest chain worth calling a skill.
+///
+/// Two steps repeated is a coincidence — `query_nodes` then `get_node` is what
+/// half of all answers look like. Three is a shape.
+pub const MIN_CHAIN: usize = 3;
+
+/// A sequence of tool calls this run made more than once.
+///
+/// Found in Rust rather than by asking a model, and that is the whole point.
+/// The roadmap has reflection notice the pattern, which would mean a model call
+/// after every run to answer a question arithmetic answers exactly — and would
+/// mean paying for it on the great majority of runs, which repeat nothing. A
+/// deterministic detector is free, testable without a network, and cannot
+/// hallucinate a pattern that was not there.
+///
+/// What it looks for is the longest sequence of at least `MIN_CHAIN` successful
+/// tool calls that occurs at least twice without overlapping itself. Overlap
+/// matters: `a b a b a` contains `a b a` twice by position, but the second
+/// reading reuses steps the first already claimed, and a person watching would
+/// see one wobble rather than two passes.
+pub fn repeated_chain(run: &crate::syn::run::Run) -> Option<Vec<String>> {
+    let calls: Vec<&str> = run
+        .steps
+        .iter()
+        .filter(|s| s.ok == Some(true))
+        .filter_map(|s| s.tool.as_deref())
+        .collect();
+
+    if calls.len() < MIN_CHAIN * 2 {
+        return None;
+    }
+
+    // Longest first: a run that repeated five steps should be named by the five,
+    // not by the three inside them.
+    for len in (MIN_CHAIN..=calls.len() / 2).rev() {
+        for start in 0..=calls.len() - len {
+            let candidate = &calls[start..start + len];
+            // Non-overlapping: the next occurrence may only begin after this
+            // one has finished.
+            let found = calls[start + len..]
+                .windows(len)
+                .any(|window| window == candidate);
+            if found {
+                return Some(candidate.iter().map(|s| s.to_string()).collect());
+            }
+        }
+    }
+    None
+}
+
+/// How many proposed chains are remembered.
+const KEEP_CHAINS: usize = 100;
+
+fn chains_path(vault_path: &str) -> AppResult<std::path::PathBuf> {
+    let dir = std::path::Path::new(vault_path).join("Syn");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| crate::error::AppError::General(format!("Failed to create Syn dir: {e}")))?;
+    Ok(dir.join("skill-chains.json"))
+}
+
+/// Chains that have already been written up as a skill, whatever became of it.
+///
+/// The trap this closes is the one P2 walked into and had to be shown by a
+/// failing test: proposals that are refused come back. If the guard were "no
+/// skill exists with this shape", deleting a suggested skill would invite it
+/// again on the next run that repeats the same three calls — which is the run
+/// right after, since that is what made it repeat in the first place.
+///
+/// In `Syn/` and not a dotfile: a judgement about what is worth suggesting
+/// travels with the vault, the way a decline does.
+pub fn proposed_chains(vault_path: &str) -> Vec<Vec<String>> {
+    let Ok(path) = chains_path(vault_path) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&content).unwrap_or_else(|e| {
+        log::warn!("[Syn] Proposed-chain list is unreadable, treating it as empty: {e}");
+        Vec::new()
+    })
+}
+
+/// Has this shape already been offered once?
+pub fn already_proposed(vault_path: &str, chain: &[String]) -> bool {
+    proposed_chains(vault_path).iter().any(|c| c == chain)
+}
+
+/// Record that this shape has been offered, so it is not offered again.
+pub fn remember_proposed(vault_path: &str, chain: &[String]) -> AppResult<()> {
+    let mut chains = proposed_chains(vault_path);
+    if chains.iter().any(|c| c == chain) {
+        return Ok(());
+    }
+    chains.insert(0, chain.to_vec());
+    chains.truncate(KEEP_CHAINS);
+    let path = chains_path(vault_path)?;
+    std::fs::write(&path, serde_json::to_string_pretty(&chains)?)?;
+    Ok(())
+}
+
 /// The frontmatter a new skill is written with.
 #[allow(clippy::too_many_arguments)]
 pub fn frontmatter(
@@ -566,6 +667,119 @@ mod tests {
             usage(&runs).is_empty(),
             "the model asked and got nothing back; it has not used a skill"
         );
+    }
+
+    fn run_calling(tools: &[&str]) -> crate::syn::run::Run {
+        let mut run = crate::syn::run::Run::new(
+            "test",
+            None,
+            crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default()),
+        );
+        for (i, tool) in tools.iter().enumerate() {
+            run.record_tool(
+                i as u8,
+                tool,
+                serde_json::json!({}),
+                true,
+                crate::syn::registry::Reversal::Nothing,
+                "{}",
+                1,
+            );
+        }
+        run
+    }
+
+    /// A repeated chain is what a skill is for.
+    #[test]
+    fn a_sequence_done_twice_is_worth_writing_down() {
+        let run = run_calling(&[
+            "query_nodes", "get_node", "create_node",
+            "query_nodes", "get_node", "create_node",
+        ]);
+        assert_eq!(
+            repeated_chain(&run).expect("a chain"),
+            vec!["query_nodes", "get_node", "create_node"]
+        );
+    }
+
+    /// The longest repetition wins, not the shortest one inside it.
+    ///
+    /// A run that did five steps twice should be named by the five. Returning
+    /// the three in the middle would propose a skill that does part of a job
+    /// and stops, which is worse than proposing nothing.
+    #[test]
+    fn the_whole_repeated_shape_is_taken_not_a_piece_of_it() {
+        let run = run_calling(&[
+            "query_nodes", "get_node", "update_node", "create_node", "list_versions",
+            "query_nodes", "get_node", "update_node", "create_node", "list_versions",
+        ]);
+        assert_eq!(repeated_chain(&run).expect("a chain").len(), 5);
+    }
+
+    /// Two steps is a coincidence, not a procedure.
+    #[test]
+    fn a_pair_repeated_is_not_a_skill() {
+        let run = run_calling(&["query_nodes", "get_node", "query_nodes", "get_node"]);
+        assert!(
+            repeated_chain(&run).is_none(),
+            "`query_nodes` then `get_node` is what half of all answers look like"
+        );
+    }
+
+    /// Overlapping does not count as twice.
+    ///
+    /// `a b a b a` contains `a b a` at two positions, but the second reading
+    /// reuses a step the first already claimed. Somebody watching would see one
+    /// wobble, not two passes, and a skill proposed off it would be noise.
+    #[test]
+    fn a_chain_that_only_repeats_by_overlapping_itself_is_not_repeated() {
+        let run = run_calling(&["a", "b", "a", "b", "a"]);
+        assert!(repeated_chain(&run).is_none());
+    }
+
+    /// Failed calls are not part of a procedure.
+    #[test]
+    fn a_chain_of_errors_is_not_a_skill() {
+        let mut run = run_calling(&["query_nodes", "get_node", "create_node"]);
+        for tool in ["query_nodes", "get_node", "create_node"] {
+            run.record_tool(
+                9,
+                tool,
+                serde_json::json!({}),
+                false,
+                crate::syn::registry::Reversal::Nothing,
+                "{}",
+                1,
+            );
+        }
+        assert!(
+            repeated_chain(&run).is_none(),
+            "a sequence that failed is not a sequence worth repeating"
+        );
+    }
+
+    /// A shape offered once is never offered again.
+    ///
+    /// Not "no skill exists with this shape": deleting a suggested skill would
+    /// then invite it back on the next run that repeats the same three calls,
+    /// which is the very next run — repeating is what caused the suggestion.
+    /// P2 had to be shown this by a failing test; this one is written first.
+    #[test]
+    fn a_chain_already_written_up_is_not_offered_twice() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+        let chain = vec!["query_nodes".to_string(), "get_node".to_string(), "create_node".to_string()];
+
+        assert!(!already_proposed(vault, &chain), "nothing offered yet");
+        remember_proposed(vault, &chain).expect("recorded");
+        assert!(already_proposed(vault, &chain), "and it stays recorded");
+
+        // Even after the skill it produced is gone.
+        remember_proposed(vault, &chain).expect("idempotent");
+        assert_eq!(proposed_chains(vault).len(), 1, "recorded once, not twice");
+
+        let other = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert!(!already_proposed(vault, &other), "a different shape is still new");
     }
 
     /// Finding by name folds case the way Vietnamese needs.
