@@ -1,4 +1,5 @@
 pub mod conversation;
+pub mod audit;
 pub mod consent;
 pub mod engine;
 pub mod memory;

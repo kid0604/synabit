@@ -103,6 +103,9 @@ export type RunState =
   | 'failed'
   | 'cancelled'
   | 'budget_exhausted'
+  /** Stopped to ask permission. The work is unfinished, nothing went wrong,
+   *  and the next move belongs to the user. */
+  | 'awaiting_consent'
   /** Found as `working` by a process that was not driving it — the app was closed mid-run. */
   | 'interrupted';
 

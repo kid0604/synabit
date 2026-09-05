@@ -1857,7 +1857,8 @@
     "skill_tier_prose": "prose — Syn follows the steps itself",
     "skill_tier_recipe": "recipe — a fixed list of tool calls, run the same way every time",
     "skill_is_off": "Off — Syn is not told this exists, so it cannot use it.",
-    "skill_has_no_summary": "On, but with no summary: Syn only sees the name, which is rarely enough to reach for it. Add a description and when to use it."
+    "skill_has_no_summary": "On, but with no summary: Syn only sees the name, which is rarely enough to reach for it. Add a description and when to use it.",
+    "run_state_awaiting_consent": "Waiting on you"
   },
   "update": {
     "available": "Synabit {version} is available!",

@@ -90,6 +90,25 @@ pub enum Trigger {
     User,
 }
 
+/// Refuses to compile when a `RunState` variant is added and `RunState::ALL`
+/// is not updated.
+///
+/// A test cannot do this job. To check the variants it would have to enumerate
+/// them, and that enumeration is the list being checked. Only the compiler
+/// knows them all.
+#[allow(dead_code)]
+fn _every_variant_is_listed(state: RunState) {
+    match state {
+        RunState::Working
+        | RunState::Done
+        | RunState::Failed
+        | RunState::Cancelled
+        | RunState::BudgetExhausted
+        | RunState::AwaitingConsent
+        | RunState::Interrupted => {}
+    }
+}
+
 /// Where a run got to.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -107,6 +126,12 @@ pub enum RunState {
     /// model wanted to do, and the user is the one who decides whether that
     /// matters.
     BudgetExhausted,
+    /// Stopped to ask permission, and waiting for an answer.
+    ///
+    /// Distinct from every other way a run ends, because it is the only one
+    /// where the work is unfinished *and* nothing went wrong *and* the next
+    /// move belongs to the user. `Run::pending_consent` says what was asked.
+    AwaitingConsent,
     /// Found on disk as `Working` by a process that is not driving it.
     ///
     /// Which is to say: the app was closed, or crashed, in the middle. Written
@@ -116,6 +141,26 @@ pub enum RunState {
 }
 
 impl RunState {
+    /// Every state there is.
+    ///
+    /// Kept next to the enum, and guarded twice, because a hand-written list is
+    /// a third copy of the truth and this one is what gets checked against
+    /// `types.ts`. A variant missing from it is a state the panel cannot draw,
+    /// and nothing complains.
+    ///
+    /// That is not hypothetical: `AwaitingConsent` was added to the enum, the
+    /// agreement test went on passing, and the front end had no idea the state
+    /// existed. The test was enumerating the variants it was meant to check.
+    pub const ALL: [RunState; 7] = [
+        RunState::Working,
+        RunState::Done,
+        RunState::Failed,
+        RunState::Cancelled,
+        RunState::BudgetExhausted,
+        RunState::AwaitingConsent,
+        RunState::Interrupted,
+    ];
+
     /// Whether this state means the run is over, however it ended.
     pub fn is_final(self) -> bool {
         !matches!(self, RunState::Working)
@@ -319,6 +364,9 @@ pub struct Run {
     pub steps: Vec<Step>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The question this run stopped on, when it stopped on one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_consent: Option<crate::syn::consent::Ask>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -342,6 +390,7 @@ impl Run {
             spent: Spent::default(),
             steps: Vec::new(),
             error: None,
+            pending_consent: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -898,14 +947,7 @@ mod agreement {
         let source = frontend_types();
         let declared = declared_union(&source, "RunState");
 
-        let states = [
-            RunState::Working,
-            RunState::Done,
-            RunState::Failed,
-            RunState::Cancelled,
-            RunState::BudgetExhausted,
-            RunState::Interrupted,
-        ];
+        let states = RunState::ALL;
 
         for state in states {
             let wire = serde_json::to_value(state)

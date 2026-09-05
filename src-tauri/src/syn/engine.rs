@@ -168,6 +168,11 @@ enum LoopEnd {
     /// The model returned neither text nor a tool call, which is not an answer
     /// and not a request either.
     DeadEnd,
+    /// A tool needed permission the user has not given. The run stops here and
+    /// the question goes to them — not to a modal, which would make the answer
+    /// a reflex, but into the conversation where the work it is about is
+    /// visible.
+    NeedsConsent(Box<crate::syn::consent::Ask>),
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -407,6 +412,60 @@ impl SynEngine {
 
                 let call_started = std::time::Instant::now();
 
+                // What sort of power is this, and has the user agreed to it?
+                //
+                // Before anything runs, and before the skill budget below,
+                // because a refusal should not be spent out of an allowance.
+                let capability = req.registry.capability_of(&tc.function.name);
+                if let Some(capability) = &capability {
+                    let decision = crate::syn::consent::decide(
+                        capability,
+                        &crate::syn::consent::load(req.vault_path),
+                        &chrono::Utc::now().to_rfc3339(),
+                    );
+                    crate::syn::audit::record_best_effort(
+                        req.vault_path,
+                        &run_id,
+                        &tc.function.name,
+                        capability,
+                        crate::syn::audit::outcome_of(&decision),
+                    );
+
+                    match decision {
+                        crate::syn::consent::Decision::Allow => {}
+                        crate::syn::consent::Decision::Ask => {
+                            break 'drive LoopEnd::NeedsConsent(Box::new(
+                                crate::syn::consent::Ask::about(
+                                    &tc.function.name,
+                                    capability,
+                                    &chrono::Utc::now().to_rfc3339(),
+                                ),
+                            ));
+                        }
+                        crate::syn::consent::Decision::Refuse => {
+                            // Told, not hidden. The model asked for something
+                            // reasonable and the answer is a standing no; a
+                            // silent failure would have it try again by another
+                            // route, which is the opposite of respecting one.
+                            working.push(ChatMessage {
+                                role: "tool".to_string(),
+                                content: serde_json::json!({
+                                    "refused": format!(
+                                        "The user has said never to {}. Do not ask again and do not \
+                                         look for another way.",
+                                        capability.describe()
+                                    ),
+                                })
+                                .to_string(),
+                                tool_calls: None,
+                                tool_call_id: tc.id.clone(),
+                                images: None,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 // A run may open two skill bodies, and the ceiling is enforced
                 // here rather than inside the tool because it is a budget over
                 // a run, and the run is what this loop owns. The tool has no
@@ -510,6 +569,32 @@ impl SynEngine {
                 run.note(run.spent.iterations, &message);
                 run.finish(RunState::BudgetExhausted);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
+            }
+            LoopEnd::NeedsConsent(ask) => {
+                // The run ends here rather than blocking on an answer. A
+                // half-finished run on disk that says what it is waiting for is
+                // readable, resumable and survives the app closing; a task
+                // parked in memory holding a lock is none of those.
+                run.note(
+                    run.spent.iterations,
+                    &format!("Stopped to ask permission: {}.", ask.about),
+                );
+                run.pending_consent = Some(*ask.clone());
+                run.finish(RunState::AwaitingConsent);
+                crate::syn::run::save_run_best_effort(req.vault_path, run);
+
+                if let Err(e) = req.app.emit("syn-consent-needed", &*ask) {
+                    log::error!("Failed to emit syn-consent-needed: {e}");
+                }
+
+                stream.done();
+                return Ok(assemble(
+                    req.message_id,
+                    req.model,
+                    ChatReply::default(),
+                    started,
+                    tool_log,
+                ));
             }
             LoopEnd::DeadEnd => {}
         }
@@ -1382,6 +1467,159 @@ mod driving {
             tokens: None,
             wall_ms: Some(60_000),
         }
+    }
+
+    /// The gate P4 was given, run against a tool that reaches outside and does
+    /// nothing.
+    ///
+    /// Four things, in one run each: it asks exactly once, it remembers the
+    /// answer, it stops when the budget runs out, and all of it shows up in the
+    /// audit log. The roadmap says P5 does not start until this passes, and P5
+    /// is the phase that opens the door — so this is the one gate in the whole
+    /// plan that can be closed without waiting on somebody to use the app for a
+    /// fortnight.
+    #[tokio::test]
+    async fn the_p4_gate_asks_once_remembers_stops_and_is_written_down() {
+        use crate::syn::consent::{Answer, Capability};
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let registry = Registry::for_consent_test();
+
+        // ── It asks. ──────────────────────────────────────────────
+        let mut first = Run::new("send something", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &first.id,
+            vec![calls("send_test", serde_json::json!({}))],
+        )));
+        engine
+            .drive(
+                &mut first,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+
+        assert_eq!(first.state, RunState::AwaitingConsent, "it stopped to ask");
+        let ask = first.pending_consent.clone().expect("and said what it was asking");
+        assert_eq!(ask.tool, "send_test");
+        assert!(ask.can_be_remembered, "sending to a host is a scope that can be granted");
+        assert_eq!(
+            first.spent.tool_calls, 0,
+            "and it asked before doing anything, not after"
+        );
+
+        // ── It remembers. ─────────────────────────────────────────
+        crate::syn::consent::record(&vault, &ask.capability, Answer::Always, chrono::Utc::now())
+            .expect("the user said yes");
+
+        let mut second = Run::new("send something", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &second.id,
+            vec![
+                calls("send_test", serde_json::json!({})),
+                text("Sent."),
+            ],
+        )));
+        let reply = engine
+            .drive(
+                &mut second,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m2",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                },
+            )
+            .await
+            .expect("drives to an answer");
+
+        assert_eq!(second.state, RunState::Done, "the second time it did not ask");
+        assert_eq!(reply.content, "Sent.");
+        assert_eq!(second.spent.tool_calls, 1);
+
+        // Reading from the same host is still a separate question. Granting
+        // "may send to example.test" is not granting everything about it.
+        assert_eq!(
+            crate::syn::consent::decide(
+                &Capability::NetRead { domain: "example.test".into() },
+                &crate::syn::consent::load(&vault),
+                &chrono::Utc::now().to_rfc3339(),
+            ),
+            crate::syn::consent::Decision::Ask
+        );
+
+        // ── It stops when the budget runs out. ────────────────────
+        let mut third = Run::new("send forever", Some("conv-1".into()), budget(2));
+        let engine = SynEngine::new(Box::new(Scripted::looping_on(&vault, &third.id, || {
+            calls("send_test", serde_json::json!({}))
+        })));
+        engine
+            .drive(
+                &mut third,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m3",
+                    history: &history("send forever"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                },
+            )
+            .await
+            .expect("stops at the ceiling");
+
+        assert_eq!(third.state, RunState::BudgetExhausted, "it stopped, rather than going on");
+        assert!(
+            third.steps.iter().any(|s| matches!(s.kind, StepKind::Note)),
+            "and the transcript says why, rather than the run merely ending"
+        );
+
+        // ── All of it is written down. ────────────────────────────
+        let log = crate::syn::audit::read(&vault);
+        assert!(
+            log.iter().any(|e| e.outcome == crate::syn::audit::Outcome::Asked
+                && e.run_id == first.id),
+            "the question is in the log"
+        );
+        assert!(
+            log.iter().any(|e| e.outcome == crate::syn::audit::Outcome::Allowed
+                && e.run_id == second.id),
+            "and so is the permission being used"
+        );
+        assert!(
+            log.iter().all(|e| e.tool == "send_test"),
+            "and nothing about the vault is, because that would bury these"
+        );
+        assert!(
+            log[0].reversal.as_deref().is_some_and(|how| !how.is_empty()),
+            "each line says what undoing it would take"
+        );
     }
 
     /// Everything the loop did, in order, with what it would take to undo each

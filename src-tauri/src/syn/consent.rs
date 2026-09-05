@@ -144,6 +144,40 @@ impl Capability {
     }
 }
 
+/// A question the run stopped to ask.
+///
+/// Kept on the run rather than in a queue somewhere, because the answer only
+/// means anything in the context of what was being attempted. A consent prompt
+/// detached from the work it was for is a dialog box asking about a stranger.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ask {
+    pub tool: String,
+    pub capability: Capability,
+    /// The capability in one English sentence, for the audit log and for a
+    /// fallback.
+    ///
+    /// The card does *not* show this. The app is bilingual and the sentence a
+    /// person reads has to come from i18n, keyed on the capability — a
+    /// Vietnamese sentence composed in Rust around an English fragment is the
+    /// bug this field exists to not be.
+    pub about: String,
+    /// Whether "always" is on offer. False for money and for running code.
+    pub can_be_remembered: bool,
+    pub asked_at: String,
+}
+
+impl Ask {
+    pub fn about(tool: &str, capability: &Capability, now: &str) -> Self {
+        Ask {
+            tool: tool.to_string(),
+            about: capability.describe(),
+            can_be_remembered: capability.can_be_remembered(),
+            capability: capability.clone(),
+            asked_at: now.to_string(),
+        }
+    }
+}
+
 /// Every decision the user has made on this device.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Ledger {

@@ -124,6 +124,7 @@ const stateStyle = (state: RunState) => ({
   failed: 'bg-red-500',
   cancelled: 'bg-gray-400',
   budget_exhausted: 'bg-amber-500',
+  awaiting_consent: 'bg-violet-500',
   interrupted: 'bg-gray-400',
 }[state] ?? 'bg-gray-400');
 

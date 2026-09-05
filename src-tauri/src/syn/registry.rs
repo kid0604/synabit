@@ -234,6 +234,51 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
 // ═══════════════════════════════════════════════════════════════
 
 /// Every provider a run can reach, in the order they are offered to the model.
+/// A tool that reaches outside and does nothing.
+///
+/// The roadmap's P4 gate asks for exactly this: a run driven against a
+/// simulated capability, so the consent path can be proved without an account
+/// anywhere, a network, or anything that could actually be sent. It is behind
+/// `cfg(test)` and absent from `Registry::for_chat`, because a tool in the
+/// prompt costs tokens on every turn of every conversation and this one has
+/// nothing to offer a real user.
+#[cfg(test)]
+pub struct SendTest;
+
+#[cfg(test)]
+impl<R: tauri::Runtime> ToolProvider<R> for SendTest {
+    fn name(&self) -> &'static str {
+        "test"
+    }
+
+    fn definitions(&self, _ctx: &RunContext<R>) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            tool_type: "function".to_string(),
+            function: crate::models::syn::FunctionDefinition {
+                name: "send_test".to_string(),
+                description: "Send a message nowhere. Exists to exercise consent.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        }]
+    }
+
+    fn capability(&self, tool: &str) -> Option<Capability> {
+        (tool == "send_test").then(|| Capability::NetWrite {
+            domain: "example.test".to_string(),
+            tool: "send_test".to_string(),
+        })
+    }
+
+    fn execute(&self, _ctx: &RunContext<R>, _tool: &str, _args: &Value) -> AppResult<ToolOutcome> {
+        Ok(ToolOutcome {
+            content: serde_json::json!({ "sent": true }).to_string(),
+            reversal: Reversal::Manual {
+                how: "nothing was really sent; this tool exists to be asked about".into(),
+            },
+        })
+    }
+}
+
 pub struct Registry<R: tauri::Runtime> {
     providers: Vec<Box<dyn ToolProvider<R>>>,
 }
@@ -246,12 +291,30 @@ impl<R: tauri::Runtime> Registry<R> {
         }
     }
 
+    /// The providers a run gets when the point is to exercise consent.
+    #[cfg(test)]
+    pub fn for_consent_test() -> Self {
+        Self {
+            providers: vec![Box::new(VaultTools), Box::new(SendTest)],
+        }
+    }
+
     /// The tool definitions to send with a completion request.
     pub fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
         self.providers
             .iter()
             .flat_map(|p| p.definitions(ctx))
             .collect()
+    }
+
+    /// What sort of power a tool has, whoever owns it.
+    ///
+    /// `None` for a name nothing claims. The engine treats that as "no consent
+    /// question to ask" and lets `execute` produce the real error, so an
+    /// invented tool name fails as an unknown tool rather than as a permission
+    /// problem — two different things to be told.
+    pub fn capability_of(&self, tool: &str) -> Option<Capability> {
+        self.providers.iter().find_map(|p| p.capability(tool))
     }
 
     /// Run a tool, whoever owns it.
