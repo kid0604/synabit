@@ -390,6 +390,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             </div>
 
             <p class="mt-2 text-sm font-medium text-text dark:text-text-dark">{{ skill.name }}</p>
+
+            <!-- Said on the card, not only in the paragraph at the top. The
+                 first skill anybody writes gets edited, saved, and asked for —
+                 and never switched on, because nothing at the point of use says
+                 that off means invisible rather than merely idle. -->
+            <p v-if="!skill.enabled" class="mt-1 text-[11px] text-gray-500">
+              {{ t('syn.skill_is_off') }}
+            </p>
+            <p
+              v-else-if="!skill.description.trim() || !skill.when_to_use.trim()"
+              class="mt-1 text-[11px] text-amber-600"
+            >
+              {{ t('syn.skill_has_no_summary') }}
+            </p>
             <p v-if="skill.description" class="mt-0.5 text-sm text-gray-500">{{ skill.description }}</p>
             <p v-if="skill.when_to_use" class="mt-1 text-[11px] text-gray-500 italic">
               {{ t('syn.skill_when') }}: {{ skill.when_to_use }}

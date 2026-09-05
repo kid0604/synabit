@@ -1855,7 +1855,9 @@
     "skill_edit_when": "Một dòng: khi nào nên dùng. Syn cũng thấy dòng này.",
     "skill_edit_body": "Các bước, viết bằng Markdown. Nếu là recipe thì đặt trong khối ```recipe.",
     "skill_tier_prose": "prose — Syn tự làm theo hướng dẫn",
-    "skill_tier_recipe": "recipe — danh sách lệnh gọi cố định, chạy giống hệt nhau mỗi lần"
+    "skill_tier_recipe": "recipe — danh sách lệnh gọi cố định, chạy giống hệt nhau mỗi lần",
+    "skill_is_off": "Đang tắt — Syn không được cho biết kỹ năng này tồn tại, nên không dùng được.",
+    "skill_has_no_summary": "Đang bật nhưng chưa có mô tả: Syn chỉ thấy mỗi cái tên, thường là không đủ để nó với tới. Hãy điền mô tả và khi nào dùng."
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
