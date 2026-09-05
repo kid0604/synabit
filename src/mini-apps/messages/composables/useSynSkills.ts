@@ -133,6 +133,46 @@ export function useSynSkills(vaultPath: () => string) {
   };
 
   /**
+   * Save an edit to a skill.
+   *
+   * Everything the model ever sees about a skill it has not opened is
+   * `description` and `when_to_use`, so those are editable here rather than
+   * only in a text editor: a skill whose index line is just its name is a skill
+   * nothing will ever reach for.
+   *
+   * The version is bumped on every save. The node write path keeps the previous
+   * one, so `list_versions` and `restore_version` are the way back — which is
+   * what the roadmap asks for and what makes editing a live procedure safe to
+   * do at all.
+   */
+  const save = async (
+    skill: Skill,
+    edit: { description: string; when_to_use: string; tier: Skill['tier']; body: string },
+  ) => {
+    error.value = null;
+    try {
+      await ns.writeNode({
+        relPath: skill.id,
+        nodeType: 'syn_skill',
+        title: skill.title,
+        content: edit.body,
+        properties: {
+          description: edit.description,
+          when_to_use: edit.when_to_use,
+          tier: edit.tier,
+          version: skill.version + 1,
+        },
+      });
+      await load();
+      return true;
+    } catch (e) {
+      logger.error('[Syn] Failed to save a skill', e);
+      error.value = asMessage(e);
+      return false;
+    }
+  };
+
+  /**
    * Start a skill for the user to write.
    *
    * Creates the file and stops. What goes in it is theirs, and the template
@@ -181,6 +221,6 @@ export function useSynSkills(vaultPath: () => string) {
 
   return {
     skills, usage, ordered, isLoading, error, trials, trialling, recipeProblems,
-    load, setEnabled, usageOf, trial, create, decideRevision,
+    load, setEnabled, usageOf, trial, create, decideRevision, save,
   };
 }

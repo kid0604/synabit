@@ -1847,7 +1847,15 @@
     "skill_revision_proposed": "Proposed",
     "skill_revision_accept": "Use the new steps",
     "skill_revision_keep": "Keep what I have",
-    "recipe_wont_run": "This recipe will not run as written:"
+    "recipe_wont_run": "This recipe will not run as written:",
+    "skill_edit": "Edit",
+    "skill_edit_save": "Save",
+    "skill_edit_cancel": "Cancel",
+    "skill_edit_description": "One line: what it does. Syn sees this before it opens the skill.",
+    "skill_edit_when": "One line: when to reach for it. Syn sees this too.",
+    "skill_edit_body": "The steps, in Markdown. For a recipe, a ```recipe block.",
+    "skill_tier_prose": "prose — Syn follows the steps itself",
+    "skill_tier_recipe": "recipe — a fixed list of tool calls, run the same way every time"
   },
   "update": {
     "available": "Synabit {version} is available!",

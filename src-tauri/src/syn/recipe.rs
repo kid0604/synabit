@@ -852,3 +852,57 @@ mod tests {
         assert!(condition.holds(&std::collections::HashMap::new()));
     }
 }
+
+/// Check a recipe written in a file, with the real parser and the real rules.
+///
+/// A dev tool, and the reason it exists is the discipline this codebase keeps
+/// arriving at: a sample handed over without being run through the checker is a
+/// sample whose arguments are whatever somebody remembered the tools took.
+///
+/// ```bash
+/// SYN_RECIPE_FILE=path/to/skill.md \
+///   cargo test --lib check_a_recipe_file -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod check_a_recipe_file {
+    use super::*;
+
+    #[test]
+    #[ignore = "reads a file named by the environment; run by hand"]
+    fn against_the_real_rules() {
+        let path = std::env::var("SYN_RECIPE_FILE").expect("SYN_RECIPE_FILE");
+        let body = std::fs::read_to_string(&path).expect("the file");
+
+        let known: Vec<String> = crate::syn::tools::get_tool_definitions()
+            .into_iter()
+            .map(|t| t.function.name)
+            .collect();
+
+        eprintln!("\n═══ {path}");
+        match parse(&body) {
+            Ok(None) => eprintln!("  no ```recipe block — this is a prose skill\n"),
+            Err(e) => panic!("  it does not parse: {e}"),
+            Ok(Some(recipe)) => {
+                eprintln!("  params: {}", recipe.params.len());
+                for (i, step) in recipe.steps.iter().enumerate() {
+                    eprintln!(
+                        "  step {}: {}{}{}",
+                        i + 1,
+                        step.tool,
+                        step.bind.as_deref().map(|b| format!(" → {b}")).unwrap_or_default(),
+                        step.when.as_deref().map(|w| format!("  [when {w}]")).unwrap_or_default(),
+                    );
+                }
+                let problems = problems(&recipe, &known);
+                if problems.is_empty() {
+                    eprintln!("\n  sound.\n");
+                } else {
+                    for problem in &problems {
+                        eprintln!("  ✗ {problem}");
+                    }
+                    panic!("{} problem(s)", problems.len());
+                }
+            }
+        }
+    }
+}

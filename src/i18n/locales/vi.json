@@ -1847,7 +1847,15 @@
     "skill_revision_proposed": "Đề xuất",
     "skill_revision_accept": "Dùng bản mới",
     "skill_revision_keep": "Giữ bản cũ",
-    "recipe_wont_run": "Recipe này viết như vậy sẽ không chạy được:"
+    "recipe_wont_run": "Recipe này viết như vậy sẽ không chạy được:",
+    "skill_edit": "Sửa",
+    "skill_edit_save": "Lưu",
+    "skill_edit_cancel": "Huỷ",
+    "skill_edit_description": "Một dòng: nó làm gì. Syn thấy dòng này trước khi mở kỹ năng.",
+    "skill_edit_when": "Một dòng: khi nào nên dùng. Syn cũng thấy dòng này.",
+    "skill_edit_body": "Các bước, viết bằng Markdown. Nếu là recipe thì đặt trong khối ```recipe.",
+    "skill_tier_prose": "prose — Syn tự làm theo hướng dẫn",
+    "skill_tier_recipe": "recipe — danh sách lệnh gọi cố định, chạy giống hệt nhau mỗi lần"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

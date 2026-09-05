@@ -20,7 +20,7 @@ import {
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
-import type { RunState, RunStep, Reversal, Memory } from '../types';
+import type { RunState, RunStep, Reversal, Memory, Skill } from '../types';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ close: []; use: [name: string] }>();
@@ -43,7 +43,32 @@ const {
 const {
   ordered: orderedSkills, error: skillError, trials, trialling, recipeProblems,
   load: loadSkills, setEnabled, usageOf, trial, create: createSkill, decideRevision,
+  save: saveSkill,
 } = useSynSkills(() => props.vaultPath);
+
+/**
+ * The skill open for editing, and the draft of it.
+ *
+ * One at a time. A screen that lets two be edited at once has to decide what
+ * happens to the other when one is saved, and the honest answer is nothing
+ * good.
+ */
+const editingSkill = ref<string | null>(null);
+const draft = ref({ description: '', when_to_use: '', tier: 'prose' as Skill['tier'], body: '' });
+
+const beginEdit = (skill: Skill) => {
+  editingSkill.value = skill.id;
+  draft.value = {
+    description: skill.description,
+    when_to_use: skill.when_to_use,
+    tier: skill.tier,
+    body: skill.body,
+  };
+};
+
+const commitEdit = async (skill: Skill) => {
+  if (await saveSkill(skill, draft.value)) editingSkill.value = null;
+};
 
 /** The name of a skill being started. Empty when the row is closed. */
 const newSkillName = ref('');
@@ -457,7 +482,72 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               </div>
             </div>
 
+            <!-- The steps, readable without leaving the screen. The panel says
+                 these are files you can edit; saying it and offering no way to
+                 read one is worse than not saying it. -->
+            <div v-if="editingSkill === skill.id" class="mt-3 space-y-2">
+              <input
+                v-model="draft.description"
+                type="text"
+                class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700
+                       bg-white dark:bg-gray-900 text-text dark:text-text-dark"
+                :placeholder="t('syn.skill_edit_description')"
+              >
+              <input
+                v-model="draft.when_to_use"
+                type="text"
+                class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700
+                       bg-white dark:bg-gray-900 text-text dark:text-text-dark"
+                :placeholder="t('syn.skill_edit_when')"
+              >
+              <select
+                v-model="draft.tier"
+                class="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700
+                       bg-white dark:bg-gray-900 text-text dark:text-text-dark"
+              >
+                <option value="prose">{{ t('syn.skill_tier_prose') }}</option>
+                <option value="recipe">{{ t('syn.skill_tier_recipe') }}</option>
+              </select>
+              <textarea
+                v-model="draft.body"
+                rows="12"
+                class="w-full px-3 py-2 text-xs font-mono rounded-lg border border-gray-200
+                       dark:border-gray-700 bg-white dark:bg-gray-900 text-text dark:text-text-dark"
+                :placeholder="t('syn.skill_edit_body')"
+              />
+              <div class="flex gap-2">
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-violet-600 text-white hover:bg-violet-700"
+                  @click="commitEdit(skill)"
+                >
+                  <Check class="w-3 h-3" /> {{ t('syn.skill_edit_save') }}
+                </button>
+                <button
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                         bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  @click="editingSkill = null"
+                >
+                  <XIcon class="w-3 h-3" /> {{ t('syn.skill_edit_cancel') }}
+                </button>
+              </div>
+            </div>
+
+            <pre
+              v-else-if="skill.body.trim()"
+              class="mt-3 px-3 py-2 text-[11px] rounded-lg bg-gray-50 dark:bg-gray-900/60
+                     text-text dark:text-text-dark whitespace-pre-wrap overflow-x-auto"
+            >{{ skill.body.trim() }}</pre>
+
             <div class="mt-3 flex gap-2">
+              <button
+                v-if="editingSkill !== skill.id"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                @click="beginEdit(skill)"
+              >
+                {{ t('syn.skill_edit') }}
+              </button>
               <button
                 v-if="!mayBeEnabled(skill)"
                 class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
