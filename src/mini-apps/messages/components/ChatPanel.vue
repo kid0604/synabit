@@ -5,9 +5,10 @@ import { useI18n } from 'vue-i18n';
 import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { SynMessage, SynToolCallEvent, SourceRef } from '../types';
+import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
+import ConsentCard from './ConsentCard.vue';
 import NotificationCard from './NotificationCard.vue';
 import { useLicenseStore } from '../../../stores/useLicenseStore';
 
@@ -22,6 +23,8 @@ const props = defineProps<{
   vaultPath?: string;
   connectionLost?: boolean;
   chatError?: string | null;
+  /** The question a run stopped on, when one has. */
+  consentAsk?: ConsentAsk | null;
 }>();
 
 const emit = defineEmits<{
@@ -30,6 +33,7 @@ const emit = defineEmits<{
   'open-source': [source: SourceRef];
   'regenerate': [messageId: string];
   'notification-action': [notification: any];
+  consent: [choice: ConsentAnswer];
 }>();
 
 const inputText = ref('');
@@ -360,6 +364,13 @@ const handleStop = () => {
             <Sparkles class="w-4 h-4 text-white animate-pulse" />
           </div>
           <StreamingIndicator :tool-calls="toolCalls" />
+        </div>
+
+        <!-- Where the work is, not over it. A modal arrives on top of whatever
+             somebody was reading and trains them to click it away; this sits at
+             the end of the conversation it belongs to and can be left alone. -->
+        <div v-if="consentAsk" class="px-4">
+          <ConsentCard :ask="consentAsk" @answer="emit('consent', $event)" />
         </div>
 
         <!-- Error message (shown when send fails) -->

@@ -1858,7 +1858,20 @@
     "skill_tier_recipe": "recipe — a fixed list of tool calls, run the same way every time",
     "skill_is_off": "Off — Syn is not told this exists, so it cannot use it.",
     "skill_has_no_summary": "On, but with no summary: Syn only sees the name, which is rarely enough to reach for it. Add a description and when to use it.",
-    "run_state_awaiting_consent": "Waiting on you"
+    "run_state_awaiting_consent": "Waiting on you",
+    "consent_title": "Syn stopped to ask",
+    "consent_tool": "Tool: {tool}",
+    "consent_vaultread": "Syn wants to read your vault.",
+    "consent_vaultwrite": "Syn wants to change a note in your vault.",
+    "consent_vaultstructural": "Syn wants to change many files at once.",
+    "consent_netread": "Syn wants to read from {domain}.",
+    "consent_netwrite": "Syn wants to send something to {domain}, using {tool}. What goes out cannot be taken back by this app.",
+    "consent_spend": "Syn wants to spend about {amount} USD.",
+    "consent_execute": "Syn wants to run code on this computer. Nothing in this app undoes that.",
+    "consent_once": "Just this once",
+    "consent_always": "Always allow this",
+    "consent_never": "Never",
+    "consent_explainer": "The run stopped here. Answer, then tell Syn to carry on — it will not restart on its own."
   },
   "update": {
     "available": "Synabit {version} is available!",

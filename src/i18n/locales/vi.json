@@ -1858,7 +1858,20 @@
     "skill_tier_recipe": "recipe — danh sách lệnh gọi cố định, chạy giống hệt nhau mỗi lần",
     "skill_is_off": "Đang tắt — Syn không được cho biết kỹ năng này tồn tại, nên không dùng được.",
     "skill_has_no_summary": "Đang bật nhưng chưa có mô tả: Syn chỉ thấy mỗi cái tên, thường là không đủ để nó với tới. Hãy điền mô tả và khi nào dùng.",
-    "run_state_awaiting_consent": "Đang chờ bạn"
+    "run_state_awaiting_consent": "Đang chờ bạn",
+    "consent_title": "Syn dừng lại để hỏi",
+    "consent_tool": "Tool: {tool}",
+    "consent_vaultread": "Syn muốn đọc vault của bạn.",
+    "consent_vaultwrite": "Syn muốn sửa một note trong vault.",
+    "consent_vaultstructural": "Syn muốn sửa nhiều file cùng lúc.",
+    "consent_netread": "Syn muốn đọc từ {domain}.",
+    "consent_netwrite": "Syn muốn gửi gì đó tới {domain}, bằng {tool}. Thứ đã gửi đi thì app này không lấy lại được.",
+    "consent_spend": "Syn muốn tiêu khoảng {amount} USD.",
+    "consent_execute": "Syn muốn chạy code trên máy này. Không có gì trong app hoàn tác được việc đó.",
+    "consent_once": "Chỉ lần này",
+    "consent_always": "Luôn cho phép",
+    "consent_never": "Không bao giờ",
+    "consent_explainer": "Run đã dừng ở đây. Trả lời xong, hãy bảo Syn làm tiếp — nó không tự chạy lại."
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

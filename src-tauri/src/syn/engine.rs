@@ -583,7 +583,16 @@ impl SynEngine {
                 run.finish(RunState::AwaitingConsent);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
 
-                if let Err(e) = req.app.emit("syn-consent-needed", &*ask) {
+                // The run id travels with the question. Without it the card
+                // has something to show and no way to answer it, and the run it
+                // belongs to is the only thing that makes the answer mean
+                // anything.
+                let event = serde_json::json!({
+                    "run_id": run.id,
+                    "conversation_id": conversation_id,
+                    "ask": &*ask,
+                });
+                if let Err(e) = req.app.emit("syn-consent-needed", &event) {
                     log::error!("Failed to emit syn-consent-needed: {e}");
                 }
 

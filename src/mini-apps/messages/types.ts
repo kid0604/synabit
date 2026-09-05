@@ -239,6 +239,56 @@ export interface Memory {
 
 /** What the pinned memories cost against what they are allowed. */
 /**
+ * The kind of power a tool has, as `consent.rs` names it.
+ *
+ * The vault arms never ask. The rest do, and the card is keyed on which — so
+ * the sentence a person reads comes from i18n rather than from a string
+ * composed in Rust, which would be one language for a bilingual app.
+ */
+export type Capability =
+  | 'VaultRead'
+  | 'VaultWrite'
+  | 'VaultStructural'
+  | { NetRead: { domain: string } }
+  | { NetWrite: { domain: string; tool: string } }
+  | { Spend: { cents_estimate: number } }
+  | 'Execute';
+
+/** A question a run stopped on. */
+export interface ConsentAsk {
+  tool: string;
+  capability: Capability;
+  /** The capability in one English sentence — for the log, not for the card. */
+  about: string;
+  /** Whether "always" is on offer. False for money and for running code. */
+  can_be_remembered: boolean;
+  asked_at: string;
+}
+
+/** What the user said. */
+export type ConsentAnswer = 'once' | 'always' | 'never';
+
+/** One decision, written down. */
+export interface Grant {
+  scope: string;
+  about: string;
+  answer: ConsentAnswer;
+  granted_at: string;
+  /** Absent for a refusal, which does not expire. */
+  expires_at?: string | null;
+}
+
+/** One line in the audit log. */
+export interface AuditEntry {
+  at: string;
+  run_id: string;
+  tool: string;
+  about: string;
+  outcome: 'allowed' | 'asked' | 'refused' | 'done' | 'failed';
+  reversal?: string | null;
+}
+
+/**
  * A procedure written down for Syn to follow.
  *
  * Mirrors `Skill` in `src-tauri/src/syn/skill.rs`. A skill is an ordinary vault

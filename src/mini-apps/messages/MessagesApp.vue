@@ -14,6 +14,7 @@ import SynSettings from './components/SynSettings.vue';
 import RunInspector from './components/RunInspector.vue';
 
 import { useSynChat } from './composables/useSynChat';
+import { useSynConsent } from './composables/useSynConsent';
 import { useSynModels } from './composables/useSynModels';
 import type { SynConversation, SynConversationFull, SynMessage } from './types';
 
@@ -27,6 +28,9 @@ import type { SynConversation, SynConversationFull, SynMessage } from './types';
  * of that — they would find out what it does by having it done.
  */
 const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
+
+/** The question Syn stopped on, if it has. Shown in the conversation. */
+const { pending: consentPending, answer: answerConsent } = useSynConsent(() => props.vaultPath);
 const trySkill = (name: string) => {
   chatPanel.value?.prefill(`Dùng skill \`${name}\` giúp tao.`);
 };
@@ -491,11 +495,13 @@ defineExpose({ refresh, fetchNotifications });
                   :vault-path="vaultPath"
                   :connection-lost="!status.connected"
                   :chat-error="chatError"
+                  :consent-ask="consentPending?.ask ?? null"
                   @send="handleSendMessage"
                   @stop="stopGeneration"
                   @open-source="handleOpenSource"
                   @regenerate="handleRegenerate"
                   @notification-action="handleNotificationAction"
+                  @consent="answerConsent"
                 />
             </template>
             <template v-else>

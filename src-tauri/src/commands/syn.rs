@@ -978,6 +978,59 @@ pub async fn syn_skill_trial(
     })
 }
 
+/// Everything the user has agreed to, or refused, on this device.
+#[tauri::command]
+pub async fn syn_list_grants(vault_path: String) -> Result<Vec<crate::syn::consent::Grant>, AppError> {
+    Ok(crate::syn::consent::load(&vault_path).grants)
+}
+
+/// Take one of those back.
+#[tauri::command]
+pub async fn syn_revoke_grant(vault_path: String, scope: String) -> Result<(), AppError> {
+    crate::syn::consent::revoke(&vault_path, &scope)
+}
+
+/// What Syn has done that reached past the vault.
+#[tauri::command]
+pub async fn syn_audit_log(vault_path: String) -> Result<Vec<crate::syn::audit::Entry>, AppError> {
+    Ok(crate::syn::audit::read(&vault_path))
+}
+
+/// Answer the question a run stopped on.
+///
+/// Records the answer and clears the question. It deliberately does not resume
+/// the run: the user is in a conversation, and the natural way to say "go on"
+/// is to say it. Resuming behind their back would mean work restarting while
+/// they are still reading why it stopped.
+#[tauri::command]
+pub async fn syn_answer_consent(
+    vault_path: String,
+    run_id: String,
+    answer: crate::syn::consent::Answer,
+) -> Result<(), AppError> {
+    let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    let Some(ask) = run.pending_consent.clone() else {
+        // Already answered, or answered in another window. Not an error.
+        return Ok(());
+    };
+
+    crate::syn::consent::record(&vault_path, &ask.capability, answer, chrono::Utc::now())?;
+    crate::syn::audit::record_best_effort(
+        &vault_path,
+        &run_id,
+        &ask.tool,
+        &ask.capability,
+        match answer {
+            crate::syn::consent::Answer::Never => crate::syn::audit::Outcome::Refused,
+            _ => crate::syn::audit::Outcome::Allowed,
+        },
+    );
+
+    run.pending_consent = None;
+    crate::syn::run::save_run(&vault_path, &run)?;
+    Ok(())
+}
+
 /// Signal the engine to stop the current generation.
 #[tauri::command]
 pub async fn syn_stop_generation(conversation_id: Option<String>) -> Result<(), AppError> {
