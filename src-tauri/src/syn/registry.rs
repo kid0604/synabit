@@ -69,40 +69,39 @@ pub enum Reversal {
 
 /// The kind of thing a tool does.
 ///
-/// Coarse on purpose. This is not an access-control list; it is the answer to
-/// "what sort of power is this", which is the question a consent screen has to
-/// put into a sentence. Three arms today because three kinds of thing exist.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    /// Looks at the vault. Never asks.
-    VaultRead,
-    /// Changes one node. Never asks, because trash and version history put
-    /// every one of these back.
-    VaultWrite,
-    /// Changes many files at once — a field renamed on every task, a whole
-    /// kind removed. Already asks, in its own way: called without
-    /// `confirm_nodes` these report the count and change nothing, and a wrong
-    /// count is refused with the real one.
-    VaultStructural,
-}
+/// One definition, in `consent.rs`, re-exported here because the registry is
+/// where tools declare theirs. Two enums for one idea is where drift starts —
+/// and the drift that matters would be a tool declaring a power the consent
+/// ledger has never heard of.
+pub use crate::syn::consent::Capability;
 
-impl Capability {
-    /// What undoing a tool of this kind looks like.
-    ///
-    /// Uniform today, and that uniformity is the current safety model stated
-    /// out loud rather than left to be noticed: everything Syn can reach is in
-    /// the vault, and everything in the vault comes back.
-    pub fn reversal(self) -> Reversal {
-        match self {
-            Capability::VaultRead => Reversal::Nothing,
-            Capability::VaultWrite => Reversal::Automatic {
-                how: "trash_node puts a new node away; restore_version undoes an edit".into(),
-            },
-            Capability::VaultStructural => Reversal::Automatic {
-                how: "the nodes were trashed, not erased; list_trash and restore_node bring them back".into(),
-            },
-        }
+/// What undoing a capability looks like.
+///
+/// Uniform across the vault arms, and that uniformity is the current safety
+/// model stated out loud rather than left to be noticed: everything Syn can
+/// reach today is in the vault, and everything in the vault comes back.
+///
+/// The arms that reach outside are where it stops holding, which is the whole
+/// reason consent exists in front of them. A message sent is not un-sent by
+/// this app, and saying `Manual` about it is more honest than saying nothing.
+pub fn reversal_of(capability: &Capability) -> Reversal {
+    match capability {
+        Capability::VaultRead => Reversal::Nothing,
+        Capability::VaultWrite => Reversal::Automatic {
+            how: "trash_node puts a new node away; restore_version undoes an edit".into(),
+        },
+        Capability::VaultStructural => Reversal::Automatic {
+            how: "the nodes were trashed, not erased; list_trash and restore_node bring them back"
+                .into(),
+        },
+        Capability::NetRead { .. } => Reversal::Nothing,
+        Capability::NetWrite { domain, .. } => Reversal::Manual {
+            how: format!("whatever was sent is at {domain} now; undoing it happens there"),
+        },
+        Capability::Spend { .. } => Reversal::Manual {
+            how: "a refund is asked for wherever the money went".into(),
+        },
+        Capability::Execute => Reversal::Irreversible,
     }
 }
 
@@ -225,7 +224,7 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         let content = crate::syn::tools::execute_tool(&ctx.tools(), tool, args)?;
         Ok(ToolOutcome {
             content,
-            reversal: capability.reversal(),
+            reversal: reversal_of(&capability),
         })
     }
 }
@@ -334,15 +333,42 @@ mod tests {
     /// a user which steps they might want to undo.
     #[test]
     fn reads_report_nothing_to_undo_and_writes_report_how() {
-        assert_eq!(Capability::VaultRead.reversal(), Reversal::Nothing);
+        assert_eq!(reversal_of(&Capability::VaultRead), Reversal::Nothing);
         assert!(matches!(
-            Capability::VaultWrite.reversal(),
+            reversal_of(&Capability::VaultWrite),
             Reversal::Automatic { .. }
         ));
         assert!(matches!(
-            Capability::VaultStructural.reversal(),
+            reversal_of(&Capability::VaultStructural),
             Reversal::Automatic { .. }
         ));
+    }
+
+    /// Nothing that leaves this machine claims to be undoable from inside it.
+    ///
+    /// The vault arms are `Automatic` because trash and version history really
+    /// do put things back. A message that has been sent is at somebody else's
+    /// server, and the app saying it can undo that would be the transcript
+    /// telling the user something false at the moment they most need it true.
+    #[test]
+    fn nothing_that_leaves_the_machine_claims_to_be_undoable_here() {
+        assert!(matches!(
+            reversal_of(&Capability::NetWrite {
+                domain: "example.com".into(),
+                tool: "post".into()
+            }),
+            Reversal::Manual { .. }
+        ));
+        assert!(matches!(
+            reversal_of(&Capability::Spend { cents_estimate: 100 }),
+            Reversal::Manual { .. }
+        ));
+        assert_eq!(reversal_of(&Capability::Execute), Reversal::Irreversible);
+        assert_eq!(
+            reversal_of(&Capability::NetRead { domain: "example.com".into() }),
+            Reversal::Nothing,
+            "reading changes nothing, wherever it reads from"
+        );
     }
 
     #[test]
