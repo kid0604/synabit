@@ -478,7 +478,37 @@ impl SynEngine {
                     && run.successful_calls_of(crate::syn::skill::LOAD_TOOL)
                         >= crate::syn::skill::BODIES_PER_RUN;
 
-                let outcome = if over_skill_budget {
+                // A dry run says what it would do instead of doing it — but
+                // only for the steps whose undoing is somebody else's problem.
+                // Reads and reversible writes go ahead, because a plan built
+                // without looking is a guess.
+                let only_describing = run.plan_only
+                    && capability.as_ref().is_some_and(|c| {
+                        matches!(
+                            crate::syn::registry::reversal_of(c),
+                            crate::syn::registry::Reversal::Manual { .. }
+                                | crate::syn::registry::Reversal::Irreversible
+                        )
+                    });
+
+                let outcome = if only_describing {
+                    let about = capability
+                        .as_ref()
+                        .map(|c| c.describe())
+                        .unwrap_or_else(|| tc.function.name.clone());
+                    Ok(crate::syn::registry::ToolOutcome {
+                        content: serde_json::json!({
+                            "planned": format!(
+                                "This is a dry run. `{}` would {about}, with these arguments. \
+                                 Nothing was done. Carry on planning as though it had worked.",
+                                tc.function.name
+                            ),
+                            "arguments": tc.function.arguments,
+                        })
+                        .to_string(),
+                        reversal: crate::syn::registry::Reversal::Nothing,
+                    })
+                } else if over_skill_budget {
                     Ok(crate::syn::registry::ToolOutcome {
                         content: serde_json::json!({
                             "refused": format!(
@@ -1628,6 +1658,93 @@ mod driving {
         assert!(
             log[0].reversal.as_deref().is_some_and(|how| !how.is_empty()),
             "each line says what undoing it would take"
+        );
+    }
+
+    /// A dry run reads, and describes what it would send.
+    ///
+    /// The line is where undoing happens. `query_nodes` runs, because a plan
+    /// built without looking is a guess and the whole point is a plan somebody
+    /// can judge. `send_test` does not, because what leaves this machine is not
+    /// this app's to take back — and a dry run that sent something would be the
+    /// one bug this mode exists to make impossible.
+    #[tokio::test]
+    async fn a_dry_run_looks_but_does_not_send() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+
+        // Granted, so consent is not what stops it. The dry run is.
+        crate::syn::consent::record(
+            &vault,
+            &crate::syn::consent::Capability::NetWrite {
+                domain: "example.test".into(),
+                tool: "send_test".into(),
+            },
+            crate::syn::consent::Answer::Always,
+            chrono::Utc::now(),
+        )
+        .expect("granted");
+
+        let mut run = Run::new("what would you do", Some("conv-1".into()), budget(12));
+        run.plan_only = true;
+
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("query_nodes", serde_json::json!({ "query": "type:task" })),
+                calls("send_test", serde_json::json!({ "body": "hello" })),
+                text("That is the plan."),
+            ],
+        )));
+        let app = app();
+        let registry = Registry::for_consent_test();
+
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("what would you do"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                },
+            )
+            .await
+            .expect("drives to an answer");
+
+        let looked = run
+            .steps
+            .iter()
+            .find(|s| s.tool.as_deref() == Some("query_nodes"))
+            .expect("it looked");
+        assert!(
+            !looked.preview.contains("dry run"),
+            "reading really happened: {}",
+            looked.preview
+        );
+
+        let sending = run
+            .steps
+            .iter()
+            .find(|s| s.tool.as_deref() == Some("send_test"))
+            .expect("it planned to send");
+        assert!(
+            sending.preview.contains("dry run") && sending.preview.contains("Nothing was done"),
+            "sending was described, not done: {}",
+            sending.preview
+        );
+        assert!(
+            !sending.preview.contains("\"sent\":true"),
+            "and the tool itself never ran: {}",
+            sending.preview
         );
     }
 

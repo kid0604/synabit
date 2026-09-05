@@ -20,6 +20,7 @@ import {
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
+import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
 import type { RunState, RunStep, Reversal, Memory, Skill } from '../types';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -32,7 +33,7 @@ const {
   loadRuns, openRun, cancelRun, deleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
 
-type Tab = 'runs' | 'prompt' | 'memory' | 'skills';
+type Tab = 'runs' | 'prompt' | 'memory' | 'skills' | 'permissions';
 const tab = ref<Tab>('runs');
 
 const {
@@ -45,6 +46,11 @@ const {
   load: loadSkills, setEnabled, usageOf, trial, create: createSkill, decideRevision,
   save: saveSkill,
 } = useSynSkills(() => props.vaultPath);
+
+const {
+  entries: auditEntries, ordered: orderedGrants, error: auditError,
+  load: loadAudit, revoke: revokeGrant,
+} = useSynAudit(() => props.vaultPath);
 
 /**
  * The skill open for editing, and the draft of it.
@@ -110,6 +116,7 @@ const showTab = async (next: Tab) => {
   if (next === 'prompt' && !preview.value) await loadPreview(previewQuestion.value);
   if (next === 'memory') await loadMemories();
   if (next === 'skills') await loadSkills();
+  if (next === 'permissions') await loadAudit();
 };
 
 /**
@@ -193,7 +200,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">
             <button
-              v-for="option in (['runs', 'prompt', 'memory', 'skills'] as Tab[])"
+              v-for="option in (['runs', 'prompt', 'memory', 'skills', 'permissions'] as Tab[])"
               :key="option"
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
@@ -209,7 +216,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <button
             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
-            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : loadPreview(previewQuestion)"
+            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : loadPreview(previewQuestion)"
           >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -223,8 +230,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         </div>
       </div>
 
-      <div v-if="error || memoryError || skillError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
-        {{ error || memoryError || skillError }}
+      <div v-if="error || memoryError || skillError || auditError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
+        {{ error || memoryError || skillError || auditError }}
       </div>
 
       <!-- ── Runs ─────────────────────────────────────────── -->
@@ -591,6 +598,77 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 <Sparkles class="w-3 h-3" /> {{ t('syn.skill_try') }}
               </button>
             </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- ── Permissions ──────────────────────────────────── -->
+      <div v-else-if="tab === 'permissions'" class="flex-1 overflow-y-auto p-6">
+        <p class="text-sm text-gray-500">{{ t('syn.permissions_explainer') }}</p>
+
+        <h3 class="mt-6 mb-2 text-sm font-medium text-text dark:text-text-dark">
+          {{ t('syn.permissions_granted') }}
+        </h3>
+        <p v-if="!orderedGrants.length" class="text-sm text-gray-500">
+          {{ t('syn.permissions_none') }}
+        </p>
+        <ul class="space-y-2">
+          <li
+            v-for="grant in orderedGrants"
+            :key="grant.scope"
+            class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
+          >
+            <div class="flex items-center gap-2 text-[11px]">
+              <span
+                class="px-1.5 py-0.5 rounded"
+                :class="grant.answer === 'never'
+                  ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
+              >{{ t(`syn.consent_${grant.answer}`) }}</span>
+              <span v-if="hasLapsed(grant)" class="text-amber-600">{{ t('syn.permission_lapsed') }}</span>
+              <span class="ml-auto text-gray-400 font-mono">{{ grant.granted_at.slice(0, 10) }}</span>
+            </div>
+            <p class="mt-1.5 text-sm text-text dark:text-text-dark">{{ grant.about }}</p>
+            <p class="mt-0.5 text-[11px] text-gray-400 font-mono">{{ grant.scope }}</p>
+            <button
+              class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                     bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+              @click="revokeGrant(grant)"
+            >
+              <XIcon class="w-3 h-3" /> {{ t('syn.permission_revoke') }}
+            </button>
+          </li>
+        </ul>
+
+        <h3 class="mt-8 mb-1 text-sm font-medium text-text dark:text-text-dark">
+          {{ t('syn.audit_title') }}
+        </h3>
+        <p class="text-xs text-gray-500 mb-3">{{ t('syn.audit_explainer') }}</p>
+        <p v-if="!auditEntries.length" class="text-sm text-gray-500">
+          {{ t('syn.audit_none') }}
+        </p>
+        <ul class="space-y-1.5">
+          <li
+            v-for="(entry, i) in auditEntries"
+            :key="`${entry.at}-${i}`"
+            class="rounded-lg bg-gray-50 dark:bg-gray-900/60 px-3 py-2"
+          >
+            <div class="flex items-center gap-2 text-[11px]">
+              <span
+                class="px-1.5 py-0.5 rounded font-mono"
+                :class="entry.outcome === 'refused'
+                  ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+                  : entry.outcome === 'asked'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
+              >{{ t(`syn.audit_${entry.outcome}`) }}</span>
+              <span class="font-mono text-gray-500">{{ entry.tool }}</span>
+              <span class="ml-auto text-gray-400 font-mono">{{ entry.at.slice(0, 16).replace('T', ' ') }}</span>
+            </div>
+            <p class="mt-1 text-xs text-text dark:text-text-dark">{{ entry.about }}</p>
+            <p v-if="entry.reversal" class="mt-0.5 text-[11px] text-gray-500 italic">
+              {{ t('syn.audit_undo') }}: {{ entry.reversal }}
+            </p>
           </li>
         </ul>
       </div>

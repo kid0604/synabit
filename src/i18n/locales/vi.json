@@ -1871,7 +1871,22 @@
     "consent_once": "Chỉ lần này",
     "consent_always": "Luôn cho phép",
     "consent_never": "Không bao giờ",
-    "consent_explainer": "Run đã dừng ở đây. Trả lời xong, hãy bảo Syn làm tiếp — nó không tự chạy lại."
+    "consent_explainer": "Run đã dừng ở đây. Trả lời xong, hãy bảo Syn làm tiếp — nó không tự chạy lại.",
+    "inspector_tab_permissions": "Quyền",
+    "permissions_explainer": "Những gì Syn được phép làm ngoài vault, và nó đã làm gì với quyền đó. Đọc và sửa note không nằm ở đây: chúng không bao giờ hỏi, vì thùng rác và lịch sử phiên bản trả lại được tất cả — và một log có chúng sẽ chôn mất những dòng đáng đọc. Không có gì ở đây được sync; cho phép ở máy này không phải cho phép ở máy khác.",
+    "permissions_granted": "Những gì bạn đã quyết",
+    "permissions_none": "Chưa có gì được hỏi tới.",
+    "permission_lapsed": "đã hết hạn — sẽ hỏi lại",
+    "permission_revoke": "Thu lại",
+    "audit_title": "Syn đã làm gì",
+    "audit_explainer": "Mới nhất trước. Mọi yêu cầu vươn ra ngoài vault, dù được cho phép, bị từ chối, hay dừng lại để hỏi.",
+    "audit_none": "Chưa có gì.",
+    "audit_allowed": "cho phép",
+    "audit_asked": "đã hỏi",
+    "audit_refused": "từ chối",
+    "audit_done": "xong",
+    "audit_failed": "hỏng",
+    "audit_undo": "Hoàn tác"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

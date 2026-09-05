@@ -364,6 +364,19 @@ pub struct Run {
     pub steps: Vec<Step>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Whether this run is reading out a plan rather than carrying it out.
+    ///
+    /// A dry run. Tools that only read, and tools this app can undo by itself,
+    /// still run — a plan built without looking is a guess, and a write that
+    /// `restore_version` reverses is one later steps can depend on. What stops
+    /// is anything whose undoing happens somewhere else, or not at all.
+    ///
+    /// The roadmap words this as "every tool with `Reversal != Automatic`", and
+    /// this differs on purpose: reads have `Reversal::Nothing`, so the literal
+    /// rule would make a dry run unable to look at anything, which is a plan
+    /// nobody can trust.
+    #[serde(default)]
+    pub plan_only: bool,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -390,6 +403,7 @@ impl Run {
             spent: Spent::default(),
             steps: Vec::new(),
             error: None,
+            plan_only: false,
             pending_consent: None,
             created_at: now.clone(),
             updated_at: now,
