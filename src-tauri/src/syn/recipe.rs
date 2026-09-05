@@ -871,14 +871,35 @@ mod check_a_recipe_file {
     #[ignore = "reads a file named by the environment; run by hand"]
     fn against_the_real_rules() {
         let path = std::env::var("SYN_RECIPE_FILE").expect("SYN_RECIPE_FILE");
-        let body = std::fs::read_to_string(&path).expect("the file");
+        let whole = std::fs::read_to_string(&path).expect("the file");
+
+        // Frontmatter first, with the library the app parses it with. A file
+        // edited by hand can have YAML that reads fine and does not parse — a
+        // quote in the wrong place — and the failure would otherwise show up as
+        // a skill that quietly stops being a skill.
+        let body = if whole.starts_with("---") {
+            let rest = &whole[3..];
+            let end = rest.find("\n---").expect("frontmatter is never closed");
+            let front: serde_yaml::Value =
+                serde_yaml::from_str(&rest[..end]).expect("the frontmatter parses");
+            eprintln!("\n═══ {path}");
+            for key in ["name", "enabled", "tier", "version", "description", "when_to_use"] {
+                let shown = front
+                    .get(key)
+                    .map(|v| format!("{v:?}"))
+                    .unwrap_or_else(|| "(absent)".to_string());
+                eprintln!("  {key}: {shown}");
+            }
+            rest[end + 4..].to_string()
+        } else {
+            whole
+        };
 
         let known: Vec<String> = crate::syn::tools::get_tool_definitions()
             .into_iter()
             .map(|t| t.function.name)
             .collect();
 
-        eprintln!("\n═══ {path}");
         match parse(&body) {
             Ok(None) => eprintln!("  no ```recipe block — this is a prose skill\n"),
             Err(e) => panic!("  it does not parse: {e}"),
