@@ -135,15 +135,18 @@ fn surface_quick_entry(app: &tauri::AppHandle) {
 /// if it is only asked to show, and one that is merely behind another needs
 /// focus rather than showing at all.
 #[cfg(desktop)]
-fn surface_main_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
-    use tauri::Manager;
+fn surface_main_window(app: &tauri::AppHandle) -> Option<tauri::window::Window> {
     // Closing hides the whole application on macOS, so bringing one window
     // forward starts by bringing the application back.
     #[cfg(target_os = "macos")]
     {
         let _ = app.show();
     }
-    let window = app.get_webview_window("main")?;
+    // `app_window`, not `get_webview_window`: the latter answers `None` as soon
+    // as a second webview joins the window, which docking the browsing pane
+    // does — and this is the code that brings the app back when somebody clicks
+    // the Dock icon. See `syn::browser::app_window`.
+    let window = syn::browser::app_window(app)?;
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
@@ -325,8 +328,7 @@ fn hide_to_background(app: tauri::AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        use tauri::Manager;
-        if let Some(window) = app.get_webview_window("main") {
+        if let Some(window) = syn::browser::app_window(app) {
             let _ = window.hide();
         }
     }

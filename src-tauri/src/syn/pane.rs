@@ -195,8 +195,9 @@ pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
 pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>) -> AppResult<Layout> {
     use tauri::Manager;
 
-    let main = app
-        .get_webview_window(crate::syn::browser::MAIN_WINDOW)
+    // `get_webview_window` is deliberately not used — see `browser::app_window`
+    // for what a second webview does to it, and what that broke.
+    let main = crate::syn::browser::app_window(app)
         .ok_or_else(|| AppError::General("There is no main window to arrange".into()))?;
 
     let size = main
@@ -271,8 +272,7 @@ pub fn open<R: tauri::Runtime>(
         .map_err(|e| AppError::General(format!("No data directory: {e}")))?
         .join(crate::syn::browser::JAR);
 
-    let main = app
-        .get_webview_window(crate::syn::browser::MAIN_WINDOW)
+    let main = crate::syn::browser::app_window(app)
         .ok_or_else(|| AppError::General("There is no main window to sit in".into()))?;
 
     let builder = tauri::webview::WebviewBuilder::new(PANE, tauri::WebviewUrl::External(target))
@@ -295,8 +295,6 @@ pub fn open<R: tauri::Runtime>(
         });
 
     let pane = main
-        .as_ref()
-        .window()
         .add_child(
             builder,
             tauri::LogicalPosition::new(x, y),
@@ -356,15 +354,10 @@ pub fn while_dragging<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dragging: bo
         // the header — and using the same mechanism for getting out of the way
         // as for coming back means there is one thing that can be wrong instead
         // of two.
-        let width = app
-            .get_webview_window(crate::syn::browser::MAIN_WINDOW)
-            .and_then(|main| main.inner_size().ok())
-            .map(|size| {
-                let scale = app
-                    .get_webview_window(crate::syn::browser::MAIN_WINDOW)
-                    .and_then(|m| m.scale_factor().ok())
-                    .unwrap_or(1.0);
-                (size.width as f64 / scale) as i32
+        let width = crate::syn::browser::app_window(app)
+            .and_then(|main| {
+                let scale = main.scale_factor().unwrap_or(1.0);
+                main.inner_size().ok().map(|size| (size.width as f64 / scale) as i32)
             })
             .unwrap_or(4000);
 
