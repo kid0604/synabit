@@ -1454,10 +1454,17 @@ pub async fn syn_pane_resize(app: tauri::AppHandle, share: f64) -> Result<f64, A
 #[tauri::command]
 pub async fn syn_pane_dragging(app: tauri::AppHandle, dragging: bool) -> Result<(), AppError> {
     #[cfg(desktop)]
-    crate::syn::pane::while_dragging(&app, dragging);
+    {
+        crate::syn::pane::while_dragging(&app, dragging)?;
+        // Coming back is `syn_pane_resize`, which places it at the width the
+        // drag chose. Two ways back would be two things to keep in step.
+        Ok(())
+    }
     #[cfg(mobile)]
-    let _ = (app, dragging);
-    Ok(())
+    {
+        let _ = (app, dragging);
+        Ok(())
+    }
 }
 
 /// Put the browsing pane away and give the app its window back.

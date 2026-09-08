@@ -93,13 +93,24 @@ pub const SHARE: f64 = 0.38;
 /// Below this a page reflows into a column of single words and stops being
 /// something anybody can read — at which point it is a picture of browsing
 /// rather than browsing.
-pub const NARROWEST: u32 = 380;
+pub const NARROWEST: u32 = 300;
 
 /// The narrowest the app may be squeezed to, in logical pixels.
 ///
-/// The conversation is the thing the pane exists to sit beside. Squeezing it
-/// past its own layout to make room for the browser gets the priority backwards.
-pub const APP_KEEPS: u32 = 520;
+/// # Why these two are as small as they are
+///
+/// They were 380 and 520, and on an ordinary window that left **no room to
+/// drag at all**. A 950-logical-pixel window — a 1900px window on a 2× display,
+/// which is nothing unusual — gave the pane a range of 380 to 430. Fifty
+/// pixels. And the default share put it at 380, the bottom of that range, so
+/// pulling the edge *rightward* did nothing whatsoever: it was already there.
+///
+/// The mistake was treating a floor as a layout opinion. A floor exists to stop
+/// something useless — a browser too narrow to read, a conversation squeezed to
+/// a ribbon — not to decide the proportions on somebody's behalf. Whoever is
+/// pulling the edge is deciding; these two only say where it stops being worth
+/// doing.
+pub const APP_KEEPS: u32 = 320;
 
 /// Two rectangles, in the units the caller measured in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,12 +210,26 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>
     // Nothing here touches the app's own webview. It cannot be moved on macOS
     // and does not need to be anywhere: it stays full-window and the *app*
     // draws itself narrower. See the header.
-    if let (Some((x, y, w, h)), Some(pane)) = (plan.pane, app.get_webview(PANE)) {
-        let _ = pane.set_bounds(tauri::Rect {
-            position: tauri::LogicalPosition::new(x, y).into(),
-            size: tauri::LogicalSize::new(w, h).into(),
-        });
-        let _ = pane.set_auto_resize(true);
+    //
+    // Errors are reported rather than dropped. Two bugs on this path hid inside
+    // a `let _ =` — a `set_bounds` that silently does nothing, and a pane the
+    // manager could not find — and each cost a round of guessing that a log
+    // line would have ended.
+    if let Some((x, y, w, h)) = plan.pane {
+        match app.get_webview(PANE) {
+            Some(pane) => {
+                pane.set_bounds(tauri::Rect {
+                    position: tauri::LogicalPosition::new(x, y).into(),
+                    size: tauri::LogicalSize::new(w, h).into(),
+                })
+                .map_err(|e| AppError::General(format!("Could not place the pane: {e}")))?;
+
+                if let Err(e) = pane.set_auto_resize(true) {
+                    log::warn!("[Syn] The pane will not keep its share on resize: {e}");
+                }
+            }
+            None => log::warn!("[Syn] A layout wanted a pane and there is no `{PANE}` webview"),
+        }
     }
 
     Ok(plan)
@@ -318,12 +343,39 @@ pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppR
 /// chosen. Which also means no IPC per frame — there is nothing to move until
 /// the pointer is let go.
 #[cfg(desktop)]
-pub fn while_dragging<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dragging: bool) {
+pub fn while_dragging<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dragging: bool) -> AppResult<()> {
     use tauri::Manager;
 
-    if let Some(pane) = app.get_webview(PANE) {
-        let _ = if dragging { pane.hide() } else { pane.show() };
+    let pane = app
+        .get_webview(PANE)
+        .ok_or_else(|| AppError::General("There is no pane to move aside".into()))?;
+
+    if dragging {
+        // Pushed off the right edge rather than hidden. `set_bounds` on a child
+        // webview is the one thing on this path known to work on macOS — see
+        // the header — and using the same mechanism for getting out of the way
+        // as for coming back means there is one thing that can be wrong instead
+        // of two.
+        let width = app
+            .get_webview_window(crate::syn::browser::MAIN_WINDOW)
+            .and_then(|main| main.inner_size().ok())
+            .map(|size| {
+                let scale = app
+                    .get_webview_window(crate::syn::browser::MAIN_WINDOW)
+                    .and_then(|m| m.scale_factor().ok())
+                    .unwrap_or(1.0);
+                (size.width as f64 / scale) as i32
+            })
+            .unwrap_or(4000);
+
+        pane.set_bounds(tauri::Rect {
+            position: tauri::LogicalPosition::new(width, 0).into(),
+            size: tauri::LogicalSize::new(NARROWEST, 100u32).into(),
+        })
+        .map_err(|e| AppError::General(format!("Could not move the pane aside: {e}")))?;
     }
+
+    Ok(())
 }
 
 /// Put the pane away and give the app its window back.
@@ -483,5 +535,49 @@ mod tests {
         }
 
         assert_eq!(layout(1600, 900, None).pane_share(), 0.0, "closed is zero");
+    }
+
+    /// A floor that leaves no room to drag is not a floor, it is a decision.
+    ///
+    /// This is the test that would have caught it. `APP_KEEPS` and `NARROWEST`
+    /// were 520 and 380, and on a 950-logical-pixel window — a 1900px window on
+    /// a 2× display, entirely ordinary — the pane could only be between 380 and
+    /// 430. Fifty pixels, with the default share sitting at the bottom of it, so
+    /// pulling the edge one way did nothing at all.
+    #[test]
+    fn the_floors_leave_room_to_actually_drag() {
+        // Two hundred logical pixels of travel. An absolute number rather than
+        // a share of the window, because what makes a drag worth doing is how
+        // far the hand moves, not what fraction of the screen that is. The old
+        // constants gave fifty on an ordinary window, which is what this bites
+        // on.
+        const ROOM_TO_PULL: u32 = 200;
+
+        for width in [900u32, 950, 1280, 1600, 2560] {
+            let widest = layout(width, 900, Some(1.0)).pane.expect("a pane at any width").2;
+            let narrowest = layout(width, 900, Some(0.0)).pane.expect("a pane at any width").2;
+            let room = widest - narrowest;
+
+            assert!(
+                room >= ROOM_TO_PULL,
+                "at {width} the pane can only move {room}px, between {narrowest} and {widest}"
+            );
+        }
+    }
+
+    /// And the default sits inside that range rather than pinned to an end of
+    /// it, so the edge moves both ways from where it opens.
+    #[test]
+    fn it_opens_somewhere_it_can_be_pulled_from_either_side() {
+        for width in [950u32, 1280, 1600, 2560] {
+            let opened = layout(width, 900, Some(SHARE)).pane.expect("open").2;
+            let widest = layout(width, 900, Some(1.0)).pane.expect("open").2;
+            let narrowest = layout(width, 900, Some(0.0)).pane.expect("open").2;
+
+            assert!(
+                opened > narrowest && opened < widest,
+                "at {width} it opens at {opened}, pinned against {narrowest}..{widest}"
+            );
+        }
     }
 }

@@ -35,8 +35,10 @@ const endPaneDrag = () => {
 
   // What is left of the window to the right of where the pointer stopped.
   // Rust decides whether that is allowed; this only says what was asked for.
+  // One way back: placing it at the chosen width is also what brings it in
+  // from the edge. Two routes home would be two things to keep in step.
   const share = (window.innerWidth - paneDragAt.value) / window.innerWidth;
-  dragPaneTo(share).finally(() => paneDragging(false));
+  dragPaneTo(share);
 };
 
 const startPaneDrag = (e: MouseEvent) => {

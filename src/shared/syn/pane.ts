@@ -79,6 +79,15 @@ export async function paneDragging(dragging: boolean): Promise<void> {
 }
 
 /**
+ * Where the pane was before a drag started, so a failed drag can put it back.
+ *
+ * The way home is `dragPaneTo`, and it is the only one — but if the call that
+ * brings it home is the call that fails, the pane is left parked off the right
+ * edge with nothing to fetch it. This is that.
+ */
+let lastGood = 0;
+
+/**
  * Settle the pane at the width the drag ended on.
  *
  * Once, on release, rather than per frame — with the pane hidden there is
@@ -87,10 +96,20 @@ export async function paneDragging(dragging: boolean): Promise<void> {
  * would be a second opinion that drifts the first time one of them changed.
  */
 export async function dragPaneTo(share: number): Promise<void> {
+  const before = lastGood || paneShare.value;
   try {
     paneShare.value = await invoke<number>('syn_pane_resize', { share });
+    lastGood = paneShare.value;
   } catch (e) {
     logger.error('[Syn] The pane would not move', e);
+    // Parked off the edge with the call that fetches it having failed. One
+    // attempt to put it back where it was; if that fails too, the globe closes
+    // and reopens it.
+    try {
+      paneShare.value = await invoke<number>('syn_pane_resize', { share: before });
+    } catch (again) {
+      logger.error('[Syn] And could not be put back; close and reopen it', again);
+    }
   }
 }
 
