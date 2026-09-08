@@ -1446,6 +1446,20 @@ pub async fn syn_pane_resize(app: tauri::AppHandle, share: f64) -> Result<f64, A
     }
 }
 
+/// Hide the pane while its edge is being dragged, and show it again after.
+///
+/// Only one webview gets the pointer at a time, and a pane that moves to meet
+/// the pointer takes the pointer with it — killing the drag after one frame.
+/// See `syn::pane::while_dragging`.
+#[tauri::command]
+pub async fn syn_pane_dragging(app: tauri::AppHandle, dragging: bool) -> Result<(), AppError> {
+    #[cfg(desktop)]
+    crate::syn::pane::while_dragging(&app, dragging);
+    #[cfg(mobile)]
+    let _ = (app, dragging);
+    Ok(())
+}
+
 /// Put the browsing pane away and give the app its window back.
 #[tauri::command]
 pub async fn syn_pane_close(app: tauri::AppHandle) -> Result<(), AppError> {

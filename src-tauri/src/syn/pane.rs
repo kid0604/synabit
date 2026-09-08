@@ -299,6 +299,33 @@ pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppR
     Ok(arrange(app, Some(share))?.pane_share())
 }
 
+/// Take the pane off the screen for the length of a drag, and put it back.
+///
+/// # Why a drag needs this at all
+///
+/// The pane is a separate OS webview, and only one webview gets the pointer at
+/// a time. Drag its edge and the pane moves to meet the pointer — which puts
+/// the pointer **on the pane**, and the app stops receiving mouse events
+/// entirely. The drag dies after one frame, having looked, from the outside,
+/// like a handle that does nothing.
+///
+/// Pointer capture does not help: that is a DOM mechanism, and this boundary is
+/// below the DOM.
+///
+/// So the pane is hidden while the edge is being pulled. The whole window
+/// belongs to the app again, the drag is tracked in one webview from start to
+/// finish against a preview line, and the pane comes back at the width that was
+/// chosen. Which also means no IPC per frame — there is nothing to move until
+/// the pointer is let go.
+#[cfg(desktop)]
+pub fn while_dragging<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dragging: bool) {
+    use tauri::Manager;
+
+    if let Some(pane) = app.get_webview(PANE) {
+        let _ = if dragging { pane.hide() } else { pane.show() };
+    }
+}
+
 /// Put the pane away and give the app its window back.
 #[cfg(desktop)]
 pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {

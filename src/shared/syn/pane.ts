@@ -53,31 +53,45 @@ export async function openPane(url: string = SOMEWHERE_TO_START): Promise<void> 
 }
 
 /**
- * Drag the edge between the conversation and the pane.
+ * Take the pane off the screen for the length of a drag, and put it back.
  *
- * The clamping is Rust's — `pane::layout` holds the floors, and what comes back
- * is what the window could actually give. Keeping a copy of those numbers here
- * would be a second opinion, and the two would part company the first time one
- * of them moved.
+ * # Why a drag needs this
  *
- * Coalesced to one call a frame. A pointer produces far more events than a
- * webview can usefully be moved, and the extra ones buy nothing but IPC.
+ * The pane is a separate OS webview, and only one webview has the pointer at a
+ * time. Drag its edge and the pane moves to meet the pointer — which puts the
+ * pointer **on the pane**, and this webview stops receiving mouse events at
+ * all. The drag dies after one frame, and from the outside it looks like a
+ * handle that does nothing. Which is exactly what it looked like.
+ *
+ * `setPointerCapture` does not help. That keeps events flowing across DOM
+ * elements; this boundary is below the DOM.
+ *
+ * So the pane is hidden for the pull. The whole window belongs to this webview
+ * again, the drag is tracked from start to finish, and the pane comes back at
+ * the width that was chosen.
  */
-let dragPending: number | null = null;
-let dragWanted = 0;
+export async function paneDragging(dragging: boolean): Promise<void> {
+  try {
+    await invoke('syn_pane_dragging', { dragging });
+  } catch (e) {
+    logger.error('[Syn] Could not put the pane aside for the drag', e);
+  }
+}
 
-export function dragPaneTo(share: number): void {
-  dragWanted = share;
-  if (dragPending !== null) return;
-
-  dragPending = requestAnimationFrame(async () => {
-    dragPending = null;
-    try {
-      paneShare.value = await invoke<number>('syn_pane_resize', { share: dragWanted });
-    } catch (e) {
-      logger.error('[Syn] The pane would not move', e);
-    }
-  });
+/**
+ * Settle the pane at the width the drag ended on.
+ *
+ * Once, on release, rather than per frame — with the pane hidden there is
+ * nothing to move until then, and the preview line is drawn in CSS. The
+ * clamping is Rust's: `pane::layout` holds the floors, and a copy of them here
+ * would be a second opinion that drifts the first time one of them changed.
+ */
+export async function dragPaneTo(share: number): Promise<void> {
+  try {
+    paneShare.value = await invoke<number>('syn_pane_resize', { share });
+  } catch (e) {
+    logger.error('[Syn] The pane would not move', e);
+  }
 }
 
 /** Put it away and give the app the whole window back. */

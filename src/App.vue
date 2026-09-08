@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { paneShare as synPaneShare, dragPaneTo } from './shared/syn/pane';
+import { paneShare as synPaneShare, dragPaneTo, paneDragging } from './shared/syn/pane';
+
+/**
+ * The preview line is placed with a raw `clientX`, but it lives inside the
+ * transformed root — which is the containing block for everything `fixed` in
+ * here. So the viewport coordinate has to come back to that box's own.
+ *
+ * Zero: the root sits at the window's left edge. Named rather than left as a
+ * bare `0` because *why* it is zero is the part worth knowing.
+ */
+const synPaneLeft = 0;
 
 /**
  * Dragging the browser pane's edge.
@@ -10,21 +20,31 @@ import { paneShare as synPaneShare, dragPaneTo } from './shared/syn/pane';
  * reason `useSidebarResize` does it that way for the DOM sidebars.
  */
 const draggingPane = ref(false);
+/** Where the preview line is, while the pane is out of the way. */
+const paneDragAt = ref(0);
 
 const onPaneDrag = (e: MouseEvent) => {
   if (!draggingPane.value) return;
-  // What is left of the window to the right of the pointer, as a fraction.
-  // Rust decides whether it is allowed; this only says what is being asked for.
-  dragPaneTo((window.innerWidth - e.clientX) / window.innerWidth);
+  paneDragAt.value = e.clientX;
 };
 
 const endPaneDrag = () => {
+  if (!draggingPane.value) return;
   draggingPane.value = false;
   document.body.style.cursor = '';
+
+  // What is left of the window to the right of where the pointer stopped.
+  // Rust decides whether that is allowed; this only says what was asked for.
+  const share = (window.innerWidth - paneDragAt.value) / window.innerWidth;
+  dragPaneTo(share).finally(() => paneDragging(false));
 };
 
-const startPaneDrag = () => {
+const startPaneDrag = (e: MouseEvent) => {
   draggingPane.value = true;
+  paneDragAt.value = e.clientX;
+  // Out of the way for the pull — see `shared/syn/pane`. Without this the pane
+  // moves under the pointer and takes the pointer with it.
+  paneDragging(true);
   // Held for the whole drag: without it the cursor flickers back to a caret
   // every time the pointer crosses text.
   document.body.style.cursor = 'col-resize';
@@ -1044,8 +1064,21 @@ onUnmounted(() => {
       v-if="synPaneShare > 0"
       class="fixed top-0 right-0 w-1.5 h-full z-[10000] cursor-col-resize
              hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-      :class="{ 'bg-black/10 dark:bg-white/10': draggingPane }"
       @mousedown.prevent="startPaneDrag"
+    ></div>
+
+    <!--
+      Where the edge will land. Drawn while the pane is hidden, because the pane
+      cannot follow the pointer without taking the pointer with it.
+
+      Positioned against the viewport rather than the app's box — `left` here is
+      a raw clientX, and the transformed root would measure it against a box
+      that is about to change width.
+    -->
+    <div
+      v-if="draggingPane"
+      class="fixed top-0 h-full w-0.5 bg-violet-500 z-[10001] pointer-events-none"
+      :style="{ left: `${paneDragAt - synPaneLeft}px` }"
     ></div>
 
     <!-- ═══ Auto-Update Banner ═══ -->

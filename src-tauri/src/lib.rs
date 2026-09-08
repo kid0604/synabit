@@ -862,6 +862,7 @@ pub fn run() {
             syn_commands::syn_pane_open,
             syn_commands::syn_pane_close,
             syn_commands::syn_pane_resize,
+            syn_commands::syn_pane_dragging,
             syn_commands::syn_set_search_key,
             syn_commands::syn_has_search_key,
             syn_commands::syn_list_grants,
