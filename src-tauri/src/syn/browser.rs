@@ -255,45 +255,6 @@ pub fn app_window<R: tauri::Runtime>(
     app.get_webview(MAIN_WINDOW).map(|webview| webview.window())
 }
 
-/// How wide the browsing window is.
-///
-/// Narrow. It is something to glance at while reading the conversation, not a
-/// browser to work in — and a pane you have to move out of the way to see the
-/// answer is a pane you close.
-pub const WIDTH: u32 = 520;
-
-/// A place on the screen, in physical pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Spot {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Beside the app, matching its height — never on top of it, never off-screen.
-///
-/// Beside rather than centred, because the whole reason to see this window is
-/// to see it *and* the conversation that caused it. A window that lands over
-/// the answer is one somebody drags away before they read either.
-///
-/// Off the right edge it flushes to the edge instead, overlapping the app.
-/// Overlapping is a nuisance; half a window past the edge of the screen is a
-/// window nobody can see, and the entire safety argument rests on it being
-/// watched.
-pub fn beside(app: Spot, screen_width: Option<u32>) -> Spot {
-    let x = app.x.saturating_add(app.width as i32);
-
-    let x = match screen_width {
-        Some(screen) if x.saturating_add(WIDTH as i32) > screen as i32 => {
-            (screen as i32).saturating_sub(WIDTH as i32)
-        }
-        _ => x,
-    };
-
-    Spot { x: x.max(0), y: app.y, width: WIDTH, height: app.height }
-}
-
 /// What Syn is told when somebody shuts the window on it.
 ///
 /// The stop button, and it is the one every person already reaches for. A
@@ -479,8 +440,9 @@ async fn open_and_read<R: tauri::Runtime>(
     use tauri::Manager;
 
     guard(url)?;
-    let target = url::Url::parse(url).map_err(|e| AppError::General(format!("Bad address: {e}")))?;
 
+    // A nonce per navigation, checked on arrival. Without it an advert in an
+    // iframe could answer first and hand Syn a page it never asked for.
     let nonce = uuid::Uuid::new_v4().to_string();
     {
         let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
@@ -489,108 +451,23 @@ async fn open_and_read<R: tauri::Runtime>(
         pending.loaded = false;
     }
 
-    let jar = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| AppError::General(format!("No data directory: {e}")))?
-        .join(JAR);
-
-    // Where the app is, so this can go beside it rather than over it. Logical
-    // units, because that is what the builder takes; the arithmetic itself is
-    // in `beside`, in physical pixels, where it can be tested.
-    let spot = app_window(app).and_then(|main| {
-        let scale = main.scale_factor().ok()?;
-        let at = main.outer_position().ok()?;
-        let size = main.outer_size().ok()?;
-        let screen = main
-            .current_monitor()
-            .ok()
-            .flatten()
-            .map(|monitor| monitor.size().width);
-
-        let spot = beside(
-            Spot { x: at.x, y: at.y, width: size.width, height: size.height },
-            screen,
-        );
-        Some((spot, scale))
-    });
-
-    match app.get_webview_window(WINDOW) {
-        Some(window) => {
-            window
-                .navigate(target)
-                .map_err(|e| AppError::General(format!("Could not navigate: {e}")))?;
-            let _ = window.show();
-            // Deliberately no `set_focus`. It was there, and it was the thing
-            // that made a four-second read feel like an interruption: whatever
-            // somebody was typing lost the keyboard to a window that then went
-            // away. Being visible is the rule; being in front is not.
-
-            // Claimed by this run. A window left over from a run that has just
-            // ended has a delayed close in flight against it; this is what
-            // tells that close the window is somebody else's now. See
-            // `close_when_done`.
-            let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
-            pending.opened_at = Some(std::time::Instant::now());
-        }
-        None => {
-            let mut builder =
-                tauri::WebviewWindowBuilder::new(app, WINDOW, tauri::WebviewUrl::External(target))
-                    .title("Syn is looking")
-                    // Visible, and not in front. Watched is the requirement.
-                    .focused(false)
-                    // Its own jar. Syn cannot borrow the session in the user's
-                    // real browser; anything it reaches behind a login, they
-                    // logged into here, watching.
-                    .data_directory(jar)
-                    // The main frame only. `initialization_script_for_all_frames`
-                    // would put the reader in every advert on the page.
-                    .initialization_script(reader_script(&nonce))
-                    // Every navigation, not just the one Syn asked for. See
-                    // `may_go_to` for the hole this closes.
-                    .on_navigation(may_go_to)
-                    // A page here starts no downloads and opens no windows.
-                    .on_download(|_, _| NOTHING_LEAVES_THE_WINDOW)
-                    .on_new_window(|url, _| {
-                        log::warn!("[Syn] A page tried to open a window at {url}");
-                        tauri::webview::NewWindowResponse::Deny
-                    })
-                    // Nothing installed here reads pages on Syn's behalf.
-                    .browser_extensions_enabled(false)
-                    // So the wait is for this page rather than for a number.
-                    .on_page_load(|webview, payload| {
-                        if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                            if let Some(waiting) = webview.app_handle().try_state::<Waiting>() {
-                                note_loaded(&waiting);
-                            }
-                        }
-                    });
-
-            builder = match spot {
-                Some((spot, scale)) => builder
-                    .position(spot.x as f64 / scale, spot.y as f64 / scale)
-                    .inner_size(spot.width as f64 / scale, spot.height as f64 / scale),
-                // No app window to sit beside — an odd state, and a sensible
-                // size beats refusing to look anything up.
-                None => builder.inner_size(WIDTH as f64, 760.0),
-            };
-
-            builder
-                .build()
-                .map_err(|e| AppError::General(format!("Could not open the window: {e}")))?;
-
-            // When it went up, so nothing closes it before it can be seen.
-            let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
-            pending.opened_at = Some(std::time::Instant::now());
-        }
+    // Whose it is, before it exists. A pane already on screen is the person's
+    // and Syn is only borrowing it; one Syn opens for itself goes away with the
+    // run. `pane::open` does not change this, so it has to be said here — and
+    // only when there is nothing to claim.
+    if app.get_webview(crate::syn::pane::PANE).is_none() {
+        crate::syn::pane::opened_by_the_person(false);
     }
 
-    // Wait for *this page*, not for a number.
-    //
-    // It used to sleep `SETTLE_MS` flat, every time, which was three seconds
-    // added to every read whether the page arrived in two hundred milliseconds
-    // or never. `on_page_load` says when it actually arrived; `SETTLE_MS` is now
-    // only the ceiling for a page that never says so.
+    crate::syn::pane::open(app, url, &nonce)?;
+
+    {
+        let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+        pending.opened_at = Some(std::time::Instant::now());
+    }
+
+    // Wait for *this page*, not for a number. `SETTLE_MS` is the ceiling for a
+    // page that never says it loaded, not the wait itself.
     let waited_from = std::time::Instant::now();
     while waited_from.elapsed() < std::time::Duration::from_millis(SETTLE_MS) {
         if waiting.lock().unwrap_or_else(|e| e.into_inner()).loaded {
@@ -605,15 +482,18 @@ async fn open_and_read<R: tauri::Runtime>(
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(PATIENCE_MS);
     while std::time::Instant::now() < deadline {
         // Gone means somebody shut it, which is the stop button. Giving up here
-        // rather than polling an empty label for the rest of the twenty seconds
-        // is the difference between a control and a delay.
-        let Some(window) = app.get_webview_window(WINDOW) else {
+        // rather than polling an absent label for the rest of the twenty
+        // seconds is the difference between a control and a delay.
+        let Some(pane) = app.get_webview(crate::syn::pane::PANE) else {
             return Err(AppError::General(CLOSED_ON_IT.to_string()));
         };
-        // Re-injected each time: on a window that already existed the
+        // Re-injected each time: on a pane that already existed the
         // initialization script belongs to the *previous* navigation, and
         // carries the previous nonce.
-        let _ = window.eval(format!("{}\nwindow.__synRead && window.__synRead();", reader_script(&nonce)));
+        let _ = pane.eval(format!(
+            "{}\nwindow.__synRead && window.__synRead();",
+            reader_script(&nonce)
+        ));
 
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
@@ -622,9 +502,8 @@ async fn open_and_read<R: tauri::Runtime>(
             pending.reply.take()
         };
         if let Some(read) = landed {
-            // Left open. `close_when_done` shuts it when the run ends — a page
-            // read is not the end of anything, and a run that looks at three
-            // pages should not flicker a window three times.
+            // Left open. `close_when_done` shuts it when the run ends — and
+            // only if it was Syn's to shut.
             return Ok(read);
         }
     }
@@ -637,33 +516,31 @@ async fn open_and_read<R: tauri::Runtime>(
     )))
 }
 
-/// The least time the window is on screen before anything closes it.
+/// The least time the pane is on screen before anything closes it.
 ///
-/// Six seconds. Rule 1 does not say the window exists, it says a person can
+/// Six seconds. Rule 1 does not say the browser exists, it says a person can
 /// watch it — and something that appears and vanishes inside a few hundred
 /// milliseconds is not something anybody watched. This is the floor that makes
 /// the rule true rather than approximately true.
-///
-/// It only ever *delays* a close. Somebody who shuts the window themselves is
-/// not made to wait: that is `visit` giving up, not this.
 pub const AT_LEAST_MS: u64 = 6_000;
 
-/// How much longer the window has to stay up, having been open this long.
+/// How much longer it has to stay up, having been open this long.
 ///
-/// Separated from the closing so the arithmetic can be tested without a window.
+/// Separated from the closing so the arithmetic can be tested without a pane.
 pub fn still_owed(open_for: std::time::Duration) -> std::time::Duration {
     std::time::Duration::from_millis(AT_LEAST_MS).saturating_sub(open_for)
 }
 
-/// Shut the browsing window, the run being over.
+/// Shut the browsing pane, the run being over.
 ///
-/// Called at the end of a run rather than at the end of a page read — see
-/// `visit` for why. Best effort throughout: a window that has already gone, or
-/// a close that fails, is not a reason to fail a run that has its answer.
+/// Called at the end of a run rather than at the end of a page read: a run that
+/// reads three pages should show one browser, not flicker one three times.
 ///
-/// Waits out `AT_LEAST_MS` when the run was quicker than that, which is the
-/// case this exists for: an instant answer over a page that loaded fast, where
-/// everything worked and the person saw nothing.
+/// Two things stop it. **Whose it is** — a pane the person opened is not Syn's
+/// to tidy away at the end of an answer, and `pane::syn_may_close_it` is that
+/// question. And **`AT_LEAST_MS`** — a run that finished faster than a person
+/// can look is exactly the case this exists for.
+#[cfg(desktop)]
 pub fn close_when_done<R: tauri::Runtime>(app: &tauri::AppHandle<R>, waiting: &Waiting) {
     use tauri::Manager;
 
@@ -672,16 +549,19 @@ pub fn close_when_done<R: tauri::Runtime>(app: &tauri::AppHandle<R>, waiting: &W
         pending.opened_at.take()
     };
 
-    // No window was opened by this run, so there is nothing of this run's to
-    // close. Anything on screen belongs to somebody else and is not ours to
-    // shut.
+    // No pane was opened by this run, so there is nothing of this run's to
+    // close. Anything on screen belongs to somebody else.
     let Some(opened_at) = opened_at else { return };
+
+    // And the person's browser is not Syn's to close. Syn borrowed a pane that
+    // was already open; it hands it back rather than shutting it.
+    if !crate::syn::pane::syn_may_close_it() {
+        return;
+    }
 
     let owed = still_owed(opened_at.elapsed());
     if owed.is_zero() {
-        if let Some(window) = app.get_webview_window(WINDOW) {
-            let _ = window.close();
-        }
+        let _ = crate::syn::pane::close(app);
         return;
     }
 
@@ -690,23 +570,23 @@ pub fn close_when_done<R: tauri::Runtime>(app: &tauri::AppHandle<R>, waiting: &W
         tokio::time::sleep(owed).await;
 
         // Claimed again while this was waiting means a new run is using the
-        // window, and shutting it now would close a page in the middle of
-        // being read. `opened_at` is set by every `visit`, so its presence is
-        // exactly the question "does this belong to somebody else now".
-        let taken = app
-            .try_state::<Waiting>()
-            .is_some_and(|waiting| {
-                waiting.lock().unwrap_or_else(|e| e.into_inner()).opened_at.is_some()
-            });
-        if taken {
+        // pane, and shutting it now would close a page half way through being
+        // read. `opened_at` is set by every visit, so its presence is exactly
+        // the question "does this belong to somebody else now".
+        let taken = app.try_state::<Waiting>().is_some_and(|waiting| {
+            waiting.lock().unwrap_or_else(|e| e.into_inner()).opened_at.is_some()
+        });
+        if taken || !crate::syn::pane::syn_may_close_it() {
             return;
         }
 
-        if let Some(window) = app.get_webview_window(WINDOW) {
-            let _ = window.close();
-        }
+        let _ = crate::syn::pane::close(&app);
     });
 }
+
+/// Nothing to close on a platform that never opened one.
+#[cfg(mobile)]
+pub fn close_when_done<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _waiting: &Waiting) {}
 
 #[cfg(test)]
 mod tests {
@@ -894,44 +774,26 @@ mod tests {
 
     // ── where it sits ─────────────────────────────────────────────
 
-    fn app_at(x: i32, width: u32) -> Spot {
-        Spot { x, y: 40, width, height: 900 }
-    }
-
-    /// Beside the app, matching its height. The point of showing this window is
-    /// to see it *and* the conversation that caused it.
+    /// It sits inside the app now, so nothing here computes a place for it.
+    ///
+    /// There was arithmetic for putting a separate window beside the app —
+    /// flush to the screen edge rather than half off it, matching its height.
+    /// All of it went when the browser moved in: `syn::pane` decides the
+    /// layout, in the window's own coordinates, and there is no second window
+    /// left to place.
     #[test]
-    fn it_sits_next_to_the_app_rather_than_over_it() {
-        let spot = beside(app_at(100, 1200), Some(3840));
+    fn the_browser_is_laid_out_by_the_pane_and_not_by_this() {
+        let module = include_str!("browser.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("there is a module");
 
-        assert_eq!(spot.x, 1300, "immediately to the right of the app");
-        assert_eq!(spot.y, 40, "and level with it");
-        assert_eq!(spot.height, 900, "the same height, so neither is cut off");
-        assert_eq!(spot.width, WIDTH);
-    }
-
-    /// Half a window past the edge of the screen is a window nobody can see,
-    /// and the whole safety argument rests on it being watched. Overlapping is
-    /// a nuisance; invisible is a broken promise.
-    #[test]
-    fn it_never_lands_off_the_screen() {
-        let squeezed = beside(app_at(1000, 1400), Some(2560));
-        assert_eq!(squeezed.x, 2560 - WIDTH as i32, "flush to the edge instead");
         assert!(
-            squeezed.x + WIDTH as i32 <= 2560,
-            "and wholly on the screen: {squeezed:?}"
+            !module.contains("WebviewWindowBuilder"),
+            "a second window would be a second thing to watch, and the whole \
+             safety argument rests on there being one"
         );
-
-        // A screen narrower than the window itself still gets x = 0 rather than
-        // a negative coordinate.
-        assert_eq!(beside(app_at(0, 400), Some(300)).x, 0);
-    }
-
-    /// Nothing known about the screen is not a reason to refuse to look
-    /// something up.
-    #[test]
-    fn it_manages_without_knowing_the_screen() {
-        assert_eq!(beside(app_at(100, 1200), None).x, 1300);
+        assert!(module.contains("crate::syn::pane::open"), "it browses in the pane");
     }
 
     // ── stopping it ───────────────────────────────────────────────
@@ -947,19 +809,29 @@ mod tests {
         assert!(said.contains("do not open it again"), "{CLOSED_ON_IT}");
     }
 
-    /// And nothing steals the keyboard. `set_focus` on a window that lives four
-    /// seconds takes the keystroke somebody was in the middle of typing.
+    /// And nothing steals the keyboard.
+    ///
+    /// This used to also require `.focused(false)`, which was about a *second
+    /// window* appearing in front of whatever somebody was typing into. There
+    /// is no second window now; a pane inside the app has nothing to come in
+    /// front of. What survives is the half that still means something: nothing
+    /// here takes focus away.
     #[test]
-    fn it_is_visible_without_being_in_front() {
+    fn it_is_visible_without_taking_the_keyboard() {
         let source = include_str!("browser.rs");
-        let visit = source
+        let body = source
             .split("async fn open_and_read")
             .nth(1)
-            .expect("visit is still here");
-        let body = visit.split("#[cfg(test)]").next().unwrap_or(visit);
+            .expect("it is still here")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default();
 
-        assert!(!body.contains("set_focus()"), "the window must not take focus");
-        assert!(body.contains(".focused(false)"), "and must not open in front");
+        assert!(!body.contains("set_focus()"), "reading a page must not take focus");
+        assert!(
+            !include_str!("pane.rs").contains("set_focus()"),
+            "and neither must opening the pane"
+        );
     }
 
     // ── how long it stays ─────────────────────────────────────────
@@ -1081,15 +953,17 @@ mod tests {
     /// run looking up a football score has any business doing.
     #[test]
     fn nothing_a_page_starts_gets_out_of_the_window() {
-        let source = include_str!("browser.rs");
-        let built = source
-            .split("WebviewWindowBuilder::new")
+        // The builder moved to `pane.rs` when the browser moved into the
+        // window. The rules did not move — they are what this file is about —
+        // so this reads the place they are now applied.
+        let built = include_str!("pane.rs")
+            .split("WebviewBuilder::new(PANE")
             .nth(1)
-            .expect("the window is still built here");
-        let built = built.split(".build()").next().unwrap_or(built);
+            .expect("the browser is still built there");
+        let built = built.split("main\n").next().unwrap_or(built);
 
         for hook in [".on_navigation(", ".on_download(", ".on_new_window("] {
-            assert!(built.contains(hook), "the window is built without {hook}");
+            assert!(built.contains(hook), "the browser is built without {hook}");
         }
         assert!(
             built.contains(".browser_extensions_enabled(false)"),
@@ -1122,12 +996,8 @@ mod tests {
         );
         assert!(body.contains(".loaded"), "it has to ask whether the page said it was ready");
 
-        let built = source
-            .split("WebviewWindowBuilder::new")
-            .nth(1)
-            .expect("the window is still built here");
         assert!(
-            built.split(".build()").next().unwrap_or(built).contains(".on_page_load("),
+            include_str!("pane.rs").contains(".on_page_load("),
             "and something has to set that flag"
         );
     }
