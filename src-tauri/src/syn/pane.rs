@@ -187,6 +187,29 @@ pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
 //  PUTTING IT ON THE SCREEN
 // ═══════════════════════════════════════════════════════════════
 
+/// The event that tells the app how much room to leave.
+///
+/// # Why an event and not a return value
+///
+/// A return value only reaches whoever called. The globe calls, so the globe
+/// learns — but when **Syn** opens the pane to look something up, nothing on
+/// the screen called anything. The app went on drawing itself full width and
+/// the pane painted straight over the conversation, which is exactly what a
+/// browser appearing out of nowhere on top of your work looks like.
+///
+/// So the share is announced instead of returned. Whoever caused it, the app
+/// hears the same thing.
+pub const SHARE_CHANGED: &str = "syn-pane-share";
+
+/// Say how much of the window the pane is taking now.
+#[cfg(desktop)]
+fn announce<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit(SHARE_CHANGED, share) {
+        log::warn!("[Syn] Could not say how wide the pane is: {e}");
+    }
+}
+
 /// Lay both webviews out for the window's current size.
 ///
 /// Best effort on each move: a webview that has gone, or a runtime that refuses
@@ -217,22 +240,24 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>
     // manager could not find — and each cost a round of guessing that a log
     // line would have ended.
     if let Some((x, y, w, h)) = plan.pane {
-        match app.get_webview(PANE) {
-            Some(pane) => {
-                pane.set_bounds(tauri::Rect {
-                    position: tauri::LogicalPosition::new(x, y).into(),
-                    size: tauri::LogicalSize::new(w, h).into(),
-                })
-                .map_err(|e| AppError::General(format!("Could not place the pane: {e}")))?;
+        // `if let`, not a `match` with an empty arm: no pane yet simply means
+        // `open` is about to make one. Nothing is wrong there — it used to log
+        // a warning, which fired on every single opening, and that is how a log
+        // stops being read.
+        if let Some(pane) = app.get_webview(PANE) {
+            pane.set_bounds(tauri::Rect {
+                position: tauri::LogicalPosition::new(x, y).into(),
+                size: tauri::LogicalSize::new(w, h).into(),
+            })
+            .map_err(|e| AppError::General(format!("Could not place the pane: {e}")))?;
 
-                if let Err(e) = pane.set_auto_resize(true) {
-                    log::warn!("[Syn] The pane will not keep its share on resize: {e}");
-                }
+            if let Err(e) = pane.set_auto_resize(true) {
+                log::warn!("[Syn] The pane will not keep its share on resize: {e}");
             }
-            None => log::warn!("[Syn] A layout wanted a pane and there is no `{PANE}` webview"),
         }
     }
 
+    announce(app, plan.pane_share());
     Ok(plan)
 }
 
@@ -307,6 +332,9 @@ pub fn open<R: tauri::Runtime>(
         log::warn!("[Syn] The pane will not keep its share when the window resizes: {e}");
     }
 
+    // Now that it exists. The `arrange` above ran before `add_child` and so
+    // announced a pane that was not there yet.
+    announce(app, plan.pane_share());
     Ok(plan.pane_share())
 }
 
@@ -392,6 +420,7 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     }
     // Closed, so it is nobody's until somebody opens one again.
     opened_by_the_person(false);
+    announce(app, 0.0);
     Ok(())
 }
 

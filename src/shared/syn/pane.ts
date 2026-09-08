@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../utils/logger';
 
 /**
@@ -27,6 +28,22 @@ import { logger } from '../../utils/logger';
 export const paneShare = ref(0);
 
 /**
+ * Rust says how much room to leave; nothing here works it out.
+ *
+ * A return value only reaches whoever called, and the globe is not the only
+ * thing that opens the pane — **Syn** opens it to look something up, and then
+ * nothing on this side has called anything. The app went on drawing itself full
+ * width while the pane painted over the conversation, which is what a browser
+ * appearing on top of your work looks like.
+ *
+ * Listened for once, at module load, because the pane belongs to the window and
+ * not to any component that might be unmounted when the news arrives.
+ */
+listen<number>('syn-pane-share', event => {
+  paneShare.value = event.payload;
+}).catch(e => logger.error('[Syn] Could not listen for the pane', e));
+
+/**
  * Where the pane opens when nothing else is said.
  *
  * A real page rather than a blank one: a blank pane says nothing about whether
@@ -45,7 +62,7 @@ export const SOMEWHERE_TO_START = 'https://vnexpress.net/';
  */
 export async function openPane(url: string = SOMEWHERE_TO_START): Promise<void> {
   try {
-    paneShare.value = await invoke<number>('syn_pane_open', { url });
+    await invoke<number>('syn_pane_open', { url });
   } catch (e) {
     logger.error('[Syn] The browsing pane would not open', e);
     paneShare.value = 0;
@@ -92,7 +109,7 @@ export function dragPaneTo(share: number): void {
   requestAnimationFrame(async () => {
     dragPending = false;
     try {
-      paneShare.value = await invoke<number>('syn_pane_resize', { share: dragWanted });
+      await invoke<number>('syn_pane_resize', { share: dragWanted });
     } catch (e) {
       logger.error('[Syn] The pane would not move', e);
     }
