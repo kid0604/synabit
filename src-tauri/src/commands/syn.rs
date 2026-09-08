@@ -1384,6 +1384,61 @@ pub async fn syn_answer_consent(
     Ok(true)
 }
 
+/// Open the browsing pane on a page, inside the main window.
+///
+/// The gate for `docs/syn-the-pane-2026-09-08.md`. Nothing calls this yet —
+/// it is here so the one question reading the source could not answer can be
+/// answered by looking at a screen: does the app's own webview stay where it is
+/// put when the window is resized, and does it get there without flickering?
+///
+/// From the app's devtools:
+///
+/// ```js
+/// __TAURI_INTERNALS__.invoke('syn_pane_open', { url: 'https://vnexpress.net' })
+/// __TAURI_INTERNALS__.invoke('syn_pane_close')
+/// ```
+#[tauri::command]
+pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<(), AppError> {
+    #[cfg(desktop)]
+    {
+        // A nonce per opening, exactly as `browser::visit` does: without one an
+        // advert in an iframe could answer first and hand Syn a page nobody
+        // asked for.
+        use tauri::Manager;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        {
+            let waiting = app.state::<crate::syn::browser::Waiting>();
+            let mut pending: std::sync::MutexGuard<'_, crate::syn::browser::Pending> =
+                waiting.lock().unwrap_or_else(|e| e.into_inner());
+            pending.nonce = nonce.clone();
+            pending.reply = None;
+            pending.loaded = false;
+        }
+        crate::syn::pane::open(&app, &url, &nonce)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, url);
+        Err(AppError::General(
+            "The browsing pane is a desktop thing; `add_child` does not exist on mobile".into(),
+        ))
+    }
+}
+
+/// Put the browsing pane away and give the app its window back.
+#[tauri::command]
+pub async fn syn_pane_close(app: tauri::AppHandle) -> Result<(), AppError> {
+    #[cfg(desktop)]
+    {
+        crate::syn::pane::close(&app)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
 /// Signal the engine to stop the current generation.
 #[tauri::command]
 pub async fn syn_stop_generation(conversation_id: Option<String>) -> Result<(), AppError> {
