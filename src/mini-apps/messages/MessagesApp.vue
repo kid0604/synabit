@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, PanelRight } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -899,7 +899,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     : 'text-gray-500 dark:text-gray-400'"
                   :title="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
                 >
-                  <PanelRight class="w-4 h-4" />
+                  <Globe class="w-4 h-4" />
                 </button>
 
                 <button

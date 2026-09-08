@@ -594,12 +594,6 @@ pub fn run() {
                 });
             }
 
-            // Keeps the app's webview and the browsing pane laid out beside each
-            // other while the window changes size. A no-op while the pane is
-            // closed. See `syn::pane`.
-            #[cfg(desktop)]
-            syn::pane::watch_resizes(&app.handle().clone());
-
             Ok(())
         })
         // Every invoke in the app passes through here, which is the point.

@@ -33,13 +33,27 @@
 //! the app is already responsive. That is what Electron apps do, and Tauri can
 //! do it too.
 //!
-//! # What is still unproven
+//! # What the gate found
 //!
-//! Whether the app's webview *stays* where it is put when the window is
-//! resized. It was created from `tauri.conf.json` as a window-filling webview,
-//! and whether it snaps back is a question about the runtime that reading the
-//! source did not answer. `layout` below is the arithmetic, tested here; the
-//! part that has to be watched on a screen is the part I cannot test.
+//! Opening and closing hold: the app's webview goes to the left and **stays
+//! there**, which was the expensive question. Resizing the window did not, and
+//! the reason is worth writing down because it is the opposite of a bug in the
+//! runtime — it is the runtime already doing this job, and me fighting it.
+//!
+//! `auto_resize` in wry does not mean *fill the window*. It stores **rates** —
+//! `x_rate`, `y_rate`, `width_rate`, `height_rate` — and reapplies them every
+//! time the window changes size. That is exactly what a docked column is: a
+//! fraction of the width, pinned to an edge, full height.
+//!
+//! And `set_bounds` does **not** recompute those rates. So the app's webview,
+//! created window-filling with rates of `1.0`, kept them after being moved to
+//! the left — and the next resize snapped it back over the pane, while a
+//! `WindowEvent::Resized` handler of mine tried to put it back. Two things
+//! moving the same view on the same event.
+//!
+//! So there is no handler now. Both webviews get `set_auto_resize(true)` after
+//! being placed, wry keeps the proportions, and the layout survives a resize
+//! because nothing is arguing with it.
 
 use crate::error::{AppError, AppResult};
 
@@ -143,17 +157,36 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: bool) -> Ap
         size: tauri::LogicalSize::new(w, h).into(),
     };
 
-    if let Err(e) = main.as_ref().set_bounds(rect(plan.app)) {
-        log::warn!("[Syn] The app's webview would not move: {e}");
-    }
+    place(main.as_ref(), rect(plan.app), "the app's webview");
 
     // Only ever moves what is already there. Making the pane and taking it away
     // belong to `open` and `close`.
     if let (Some(bounds), Some(pane)) = (plan.pane, app.get_webview(PANE)) {
-        let _ = pane.set_bounds(rect(bounds));
+        place(&pane, rect(bounds), "the pane");
     }
 
     Ok(plan)
+}
+
+/// Put a webview somewhere, and teach it to stay in proportion there.
+///
+/// The second half is the part that was missing. `set_bounds` moves a webview
+/// and leaves its `auto_resize` rates alone — so a webview created to fill the
+/// window keeps rates of `1.0`, and the next resize snaps it straight back over
+/// whatever was placed beside it. `set_auto_resize(true)` recomputes the rates
+/// from where it is *now*, which is what makes a docked column survive a drag.
+///
+/// Best effort on both: a runtime that refuses is a pane that looks wrong, not
+/// an app that stops.
+#[cfg(desktop)]
+fn place<R: tauri::Runtime>(webview: &tauri::webview::Webview<R>, to: tauri::Rect, what: &str) {
+    if let Err(e) = webview.set_bounds(to) {
+        log::warn!("[Syn] {what} would not move: {e}");
+        return;
+    }
+    if let Err(e) = webview.set_auto_resize(true) {
+        log::warn!("[Syn] {what} will not keep its share when the window resizes: {e}");
+    }
 }
 
 /// Open the pane on a page, making it if it is not there.
@@ -215,7 +248,8 @@ pub fn open<R: tauri::Runtime>(
             }
         });
 
-    main.as_ref()
+    let pane = main
+        .as_ref()
         .window()
         .add_child(
             builder,
@@ -223,6 +257,11 @@ pub fn open<R: tauri::Runtime>(
             tauri::LogicalSize::new(w, h),
         )
         .map_err(|e| AppError::General(format!("Could not open the pane: {e}")))?;
+
+    // Its share of the window, kept by the runtime from here on.
+    if let Err(e) = pane.set_auto_resize(true) {
+        log::warn!("[Syn] The pane will not keep its share when the window resizes: {e}");
+    }
 
     Ok(())
 }
@@ -237,39 +276,6 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     }
     arrange(app, false)?;
     Ok(())
-}
-
-/// Keep the two laid out while the window changes size.
-///
-/// Registered once, at startup, and a no-op while the pane is closed. This is
-/// the half of the design that reading the source could not settle: the app's
-/// webview was created from `tauri.conf.json` as a window-filling one, and
-/// whether it stays where it is put when the window resizes is a question about
-/// the runtime. If it snaps back, this is what puts it right — and if it
-/// flickers doing so, that is the thing to watch on a screen.
-#[cfg(desktop)]
-pub fn watch_resizes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use tauri::Manager;
-
-    let Some(main) = app.get_webview_window(crate::syn::browser::MAIN_WINDOW) else {
-        return;
-    };
-
-    let handle = app.clone();
-    main.on_window_event(move |event| {
-        if !matches!(event, tauri::WindowEvent::Resized(_)) {
-            return;
-        }
-        // Only while the pane is up. With it closed the app's webview is the
-        // whole window already, and moving it on every resize would be work
-        // done to change nothing.
-        if handle.get_webview(PANE).is_none() {
-            return;
-        }
-        if let Err(e) = arrange(&handle, true) {
-            log::warn!("[Syn] Could not re-lay-out after a resize: {e}");
-        }
-    });
 }
 
 #[cfg(test)]
