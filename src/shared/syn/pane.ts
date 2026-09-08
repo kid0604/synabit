@@ -53,39 +53,25 @@ export async function openPane(url: string = SOMEWHERE_TO_START): Promise<void> 
 }
 
 /**
- * Take the pane off the screen for the length of a drag, and put it back.
+ * Move the pane's edge, live, while it is being dragged.
  *
- * # Why a drag needs this
+ * # Why the pane moves with the pointer rather than after it
  *
- * The pane is a separate OS webview, and only one webview has the pointer at a
- * time. Drag its edge and the pane moves to meet the pointer — which puts the
- * pointer **on the pane**, and this webview stops receiving mouse events at
- * all. The drag dies after one frame, and from the outside it looks like a
- * handle that does nothing. Which is exactly what it looked like.
+ * There was a version that pushed the pane off the right edge for the length of
+ * the pull, drew a line where the edge would land, and put it back on release.
+ * It worked and it looked terrible: the column went white while the pane was
+ * away, and flashed as it came back, every single time.
  *
- * `setPointerCapture` does not help. That keeps events flowing across DOM
- * elements; this boundary is below the DOM.
+ * That trick existed for a real reason — the pane moves to meet the pointer,
+ * which puts the pointer *on the pane*, and this webview then gets no mouse
+ * events at all. But live dragging did not fail because of the mechanism. It
+ * failed because the floors were so tight that the pane never moved, so its
+ * edge stood still while the pointer walked onto it. With floors that leave
+ * room, the edge keeps up and the pointer stays on this side of it.
  *
- * So the pane is hidden for the pull. The whole window belongs to this webview
- * again, the drag is tracked from start to finish, and the pane comes back at
- * the width that was chosen.
+ * Coalesced to one call a frame: a pointer produces far more events than a
+ * webview can usefully be moved, and the rest buy nothing but IPC.
  */
-export async function paneDragging(dragging: boolean): Promise<void> {
-  try {
-    await invoke('syn_pane_dragging', { dragging });
-  } catch (e) {
-    logger.error('[Syn] Could not put the pane aside for the drag', e);
-  }
-}
-
-/**
- * Where the pane was before a drag started, so a failed drag can put it back.
- *
- * The way home is `dragPaneTo`, and it is the only one — but if the call that
- * brings it home is the call that fails, the pane is left parked off the right
- * edge with nothing to fetch it. This is that.
- */
-let lastGood = 0;
 
 /**
  * Settle the pane at the width the drag ended on.
@@ -95,22 +81,22 @@ let lastGood = 0;
  * clamping is Rust's: `pane::layout` holds the floors, and a copy of them here
  * would be a second opinion that drifts the first time one of them changed.
  */
-export async function dragPaneTo(share: number): Promise<void> {
-  const before = lastGood || paneShare.value;
-  try {
-    paneShare.value = await invoke<number>('syn_pane_resize', { share });
-    lastGood = paneShare.value;
-  } catch (e) {
-    logger.error('[Syn] The pane would not move', e);
-    // Parked off the edge with the call that fetches it having failed. One
-    // attempt to put it back where it was; if that fails too, the globe closes
-    // and reopens it.
+let dragPending = false;
+let dragWanted = 0;
+
+export function dragPaneTo(share: number): void {
+  dragWanted = share;
+  if (dragPending) return;
+  dragPending = true;
+
+  requestAnimationFrame(async () => {
+    dragPending = false;
     try {
-      paneShare.value = await invoke<number>('syn_pane_resize', { share: before });
-    } catch (again) {
-      logger.error('[Syn] And could not be put back; close and reopen it', again);
+      paneShare.value = await invoke<number>('syn_pane_resize', { share: dragWanted });
+    } catch (e) {
+      logger.error('[Syn] The pane would not move', e);
     }
-  }
+  });
 }
 
 /** Put it away and give the app the whole window back. */

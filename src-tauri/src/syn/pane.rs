@@ -317,59 +317,26 @@ pub fn open<R: tauri::Runtime>(
 /// `NARROWEST`, and a second copy in CSS would be a second opinion that drifts.
 /// What comes back is what the window could actually give, which is what the
 /// app then draws itself to.
+///
+/// # Called on every frame of a drag, and that is deliberate
+///
+/// There was a version of this that pushed the pane off the right edge for the
+/// length of the pull, drew a line where the edge would land, and put the pane
+/// back on release. It worked, and it looked terrible: the column went white
+/// while the pane was away and flashed as it came back, every single time.
+///
+/// That trick existed to solve a real problem — the pane moves to meet the
+/// pointer, which puts the pointer *on the pane*, and this app then receives no
+/// mouse events at all. But the reason live dragging failed the first time was
+/// not the mechanism. It was `APP_KEEPS` and `NARROWEST` being so tight that
+/// the pane never moved at all, so its edge sat still while the pointer walked
+/// onto it. With floors that leave room, the edge keeps up with the pointer and
+/// the pointer stays on the app's side of it.
 #[cfg(desktop)]
 pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppResult<f64> {
     Ok(arrange(app, Some(share))?.pane_share())
 }
 
-/// Take the pane off the screen for the length of a drag, and put it back.
-///
-/// # Why a drag needs this at all
-///
-/// The pane is a separate OS webview, and only one webview gets the pointer at
-/// a time. Drag its edge and the pane moves to meet the pointer — which puts
-/// the pointer **on the pane**, and the app stops receiving mouse events
-/// entirely. The drag dies after one frame, having looked, from the outside,
-/// like a handle that does nothing.
-///
-/// Pointer capture does not help: that is a DOM mechanism, and this boundary is
-/// below the DOM.
-///
-/// So the pane is hidden while the edge is being pulled. The whole window
-/// belongs to the app again, the drag is tracked in one webview from start to
-/// finish against a preview line, and the pane comes back at the width that was
-/// chosen. Which also means no IPC per frame — there is nothing to move until
-/// the pointer is let go.
-#[cfg(desktop)]
-pub fn while_dragging<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dragging: bool) -> AppResult<()> {
-    use tauri::Manager;
-
-    let pane = app
-        .get_webview(PANE)
-        .ok_or_else(|| AppError::General("There is no pane to move aside".into()))?;
-
-    if dragging {
-        // Pushed off the right edge rather than hidden. `set_bounds` on a child
-        // webview is the one thing on this path known to work on macOS — see
-        // the header — and using the same mechanism for getting out of the way
-        // as for coming back means there is one thing that can be wrong instead
-        // of two.
-        let width = crate::syn::browser::app_window(app)
-            .and_then(|main| {
-                let scale = main.scale_factor().unwrap_or(1.0);
-                main.inner_size().ok().map(|size| (size.width as f64 / scale) as i32)
-            })
-            .unwrap_or(4000);
-
-        pane.set_bounds(tauri::Rect {
-            position: tauri::LogicalPosition::new(width, 0).into(),
-            size: tauri::LogicalSize::new(NARROWEST, 100u32).into(),
-        })
-        .map_err(|e| AppError::General(format!("Could not move the pane aside: {e}")))?;
-    }
-
-    Ok(())
-}
 
 /// Put the pane away and give the app its window back.
 #[cfg(desktop)]
