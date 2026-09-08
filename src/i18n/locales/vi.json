@@ -1816,6 +1816,8 @@
     "confirm_pull_btn": "Tải",
     "pull_error_title": "Không thể tải model",
     "pull_error_desc": "Không tìm thấy model hoặc lỗi mạng. Kiểm tra lại tên model và thử lại.",
+    "pane_open": "Mở trình duyệt cạnh cuộc trò chuyện",
+    "pane_close": "Đóng trình duyệt",
     "inspector": "Syn đã làm gì",
     "inspector_tab_runs": "Lượt chạy",
     "inspector_tab_prompt": "Prompt",

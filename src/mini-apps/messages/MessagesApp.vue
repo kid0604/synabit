@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, PanelRight } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -377,6 +377,32 @@ const handleSendMessage = async (text: string, images?: string[]) => {
     clearStreaming();
     // The title is generated from the first exchange, and the count changed.
     await loadConversations();
+  }
+};
+
+/**
+ * Open or close the browsing pane beside the conversation.
+ *
+ * The way in to `syn::pane`, and for now the only one — nothing in the engine
+ * reaches for it yet. It exists so the question reading the runtime source
+ * could not settle can be answered by looking: does the app's own webview stay
+ * where it is put when the window is resized?
+ *
+ * It opens on a real page rather than a blank one, because a blank pane says
+ * nothing about whether text reflows sensibly at that width.
+ */
+const paneOpen = ref(false);
+const togglePane = async () => {
+  try {
+    if (paneOpen.value) {
+      await invoke('syn_pane_close');
+      paneOpen.value = false;
+    } else {
+      await invoke('syn_pane_open', { url: 'https://vnexpress.net/' });
+      paneOpen.value = true;
+    }
+  } catch (e) {
+    logger.error('[Syn] The browsing pane would not open', e);
   }
 };
 
@@ -858,6 +884,22 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :title="$t('syn.export')"
                 >
                   <Download class="w-4 h-4" />
+                </button>
+
+                <!-- The gate for `syn::pane`. Here rather than in devtools
+                     because the person who has to answer *does it hold when you
+                     resize the window* is the person looking at the screen, and
+                     making them paste an invoke to find out puts the friction on
+                     the wrong side. See docs/syn-the-pane-2026-09-08.md. -->
+                <button
+                  @click="togglePane"
+                  class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                  :class="paneOpen
+                    ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10'
+                    : 'text-gray-500 dark:text-gray-400'"
+                  :title="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
+                >
+                  <PanelRight class="w-4 h-4" />
                 </button>
 
                 <button

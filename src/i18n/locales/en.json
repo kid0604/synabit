@@ -1816,6 +1816,8 @@
     "confirm_pull_btn": "Pull",
     "pull_error_title": "Failed to download model",
     "pull_error_desc": "Model not found or network error. Check the model name and try again.",
+    "pane_open": "Open a browser beside the conversation",
+    "pane_close": "Close the browser",
     "inspector": "What Syn did",
     "inspector_tab_runs": "Runs",
     "inspector_tab_prompt": "Prompt",
