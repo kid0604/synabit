@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { paneShare as synPaneShare, dragPaneTo } from './shared/syn/pane';
+import { paneShare as synPaneShare, dragPaneTo, openPane, closePane } from './shared/syn/pane';
 
 /**
  * Dragging the browser pane's edge.
@@ -45,7 +45,7 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
   window.removeEventListener('mouseup', endPaneDrag);
 });
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, X } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -1049,10 +1049,30 @@ onUnmounted(() => {
     -->
     <div
       v-if="synPaneShare > 0"
-      class="fixed top-0 right-0 w-1.5 h-full z-[10000] cursor-col-resize
+      class="group fixed top-0 right-0 w-1.5 h-full z-[10000] cursor-col-resize
              hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
       @mousedown.prevent="startPaneDrag"
-    ></div>
+    >
+      <!--
+        The way out, and it lives on the pane's own edge rather than in Syn.
+        A pane opened in Syn and left open followed you into Notes with its
+        only off switch on a screen you had left — forty per cent of the window
+        with no way to dismiss it.
+
+        Drawn to the *left* of the edge, because everything right of it belongs
+        to a webview this app cannot draw on.
+      -->
+      <button
+        class="absolute top-3 right-2 w-6 h-6 rounded-full flex items-center justify-center
+               bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity
+               cursor-pointer hover:bg-black/70"
+        title="Close the browser"
+        @mousedown.stop
+        @click.stop="closePane()"
+      >
+        <X class="w-3.5 h-3.5" />
+      </button>
+    </div>
 
 
     <!-- ═══ Auto-Update Banner ═══ -->
@@ -1239,6 +1259,22 @@ onUnmounted(() => {
              
              <!-- Settings & Sync bottom icons for desktop -->
              <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
+                <!--
+                  The browser belongs to the whole app, not to Syn. Syn's header
+                  has one too, because that is where somebody asking a question
+                  wants it — but a pane opened there and left open has to be
+                  reachable from wherever you went next, and the mini-apps are
+                  where you went next.
+                -->
+                <button
+                  @click="synPaneShare > 0 ? closePane() : openPane()"
+                  :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer',
+                           synPaneShare > 0 ? 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']"
+                >
+                   <Globe class="w-5 h-5" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ synPaneShare > 0 ? 'Close the browser' : 'Open a browser beside the app' }}</span>
+                </button>
+
                 <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
                    <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />

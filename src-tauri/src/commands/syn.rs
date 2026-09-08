@@ -1417,6 +1417,9 @@ pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<f64, Ap
         // The fraction of the window the pane takes. The app draws itself
         // narrower by exactly that much — see `syn::pane` for why the app's own
         // webview is not moved instead.
+        // Pressed the globe, so it is theirs: it stays until they close it, and
+        // the end of a run does not take it away. See `pane::syn_may_close_it`.
+        crate::syn::pane::opened_by_the_person(true);
         crate::syn::pane::open(&app, &url, &nonce)
     }
     #[cfg(mobile)]

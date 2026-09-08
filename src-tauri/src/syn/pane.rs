@@ -338,6 +338,50 @@ pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppR
 }
 
 
+// ═══════════════════════════════════════════════════════════════
+//  WHOSE PANE IT IS
+// ═══════════════════════════════════════════════════════════════
+
+/// Whether the person opened this pane, rather than Syn.
+///
+/// # Two lifetimes, and the difference is who opened it
+///
+/// **The person opened it** — they pressed the globe. That is somebody who
+/// wants a browser, and it stays until they close it. It follows them into
+/// Notes and back, because a page you were reading should still be there when
+/// you return, and having to rebuild it is the exact complaint that made this
+/// pane worth building.
+///
+/// **Syn opened it** — it went to look something up. That belongs to the turn,
+/// and it goes away when the turn does. `browser::close_when_done` already does
+/// this for the separate window.
+///
+/// The rule is *who opened it*, not *which mini-app is showing*. A pane that
+/// vanished on leaving Syn would rebuild the page every time somebody glanced
+/// at their notes — which is the disease, not the cure.
+///
+/// # Why this exists before anything needs it
+///
+/// `browse` still uses the separate window; nothing here opens a pane on Syn's
+/// behalf yet. But the day it does, the end of a run will reach for whatever
+/// pane is on screen and close it — taking with it the page the person was
+/// reading, mid-sentence, because they happened to ask a question. Writing the
+/// rule down after that has happened means finding it first.
+static THE_PERSONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mark the pane as opened by the person, or by Syn.
+pub fn opened_by_the_person(theirs: bool) {
+    THE_PERSONS.store(theirs, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether Syn may close the pane when a run finishes.
+///
+/// No, if the person opened it. Their browser is not Syn's to tidy away at the
+/// end of an answer.
+pub fn syn_may_close_it() -> bool {
+    !THE_PERSONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Put the pane away and give the app its window back.
 #[cfg(desktop)]
 pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
@@ -346,6 +390,8 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     if let Some(pane) = app.get_webview(PANE) {
         let _ = pane.close();
     }
+    // Closed, so it is nobody's until somebody opens one again.
+    opened_by_the_person(false);
     Ok(())
 }
 
@@ -537,6 +583,46 @@ mod tests {
             assert!(
                 opened > narrowest && opened < widest,
                 "at {width} it opens at {opened}, pinned against {narrowest}..{widest}"
+            );
+        }
+    }
+
+    // ── whose pane it is ──────────────────────────────────────────
+
+    /// The person's browser is not Syn's to tidy away at the end of an answer.
+    ///
+    /// This exists before anything needs it, which is the point. `browse` still
+    /// uses the separate window — but the day it opens a pane instead, the end
+    /// of a run will reach for whatever is on screen and close it, taking the
+    /// page somebody was reading mid-sentence because they happened to ask a
+    /// question. A rule written after that has happened is a rule written after
+    /// somebody has hunted for the cause.
+    #[test]
+    fn syn_does_not_close_a_pane_the_person_opened() {
+        opened_by_the_person(true);
+        assert!(!syn_may_close_it());
+
+        opened_by_the_person(false);
+        assert!(syn_may_close_it(), "one Syn opened for itself is Syn's to close");
+    }
+
+    /// And the rule is *who opened it*, never *which mini-app is showing*.
+    ///
+    /// A pane that vanished on leaving Syn would rebuild the page every time
+    /// somebody glanced at their notes — which is the disease this pane was
+    /// built to cure, not the cure.
+    #[test]
+    fn nothing_here_knows_or_cares_which_screen_is_showing() {
+        // The module, not the file: a test that reads its own source finds the
+        // words it is looking for in its own list of them. This one did, on the
+        // first run.
+        let source = include_str!("pane.rs");
+        let module = source.split("#[cfg(test)]").next().expect("there is a module");
+
+        for screen in ["mini_app", "active_app", "current_app", "route"] {
+            assert!(
+                !module.contains(screen),
+                "the pane's lifetime must not depend on `{screen}`"
             );
         }
     }
