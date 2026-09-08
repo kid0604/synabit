@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { useSidebarResize } from '../../composables/useSidebarResize';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
@@ -406,6 +407,28 @@ const togglePane = async () => {
   }
 };
 
+/**
+ * A sidebar somebody can pull.
+ *
+ * Through the shared composable rather than a fourth implementation of
+ * dragging an edge — Notes lifted it out, Things uses it, and this was the one
+ * app left with a hard-coded `w-[320px]`. That is the whole reason it was also
+ * the one app whose layout would not stretch.
+ *
+ * 320 to start, which is where it has always sat, so nothing moves until
+ * somebody pulls it.
+ */
+const sidebar = useSidebarResize({ left: { initial: 320, min: 240, max: 560 } });
+
+onMounted(() => {
+  window.addEventListener('mousemove', sidebar.onMouseMove);
+  window.addEventListener('mouseup', sidebar.onMouseUp);
+});
+onUnmounted(() => {
+  window.removeEventListener('mousemove', sidebar.onMouseMove);
+  window.removeEventListener('mouseup', sidebar.onMouseUp);
+});
+
 const handlePullModel = async (name: string) => {
   await pullModel(name, props.vaultPath);
 };
@@ -783,10 +806,27 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
   <div class="flex-1 w-full h-full flex bg-gray-50 dark:bg-[#0f1115] text-text dark:text-text-dark relative overflow-hidden">
     
     <!-- Sidebar -->
-    <div 
-        class="flex-shrink-0 h-full border-r border-border dark:border-border-dark transition-all duration-300 z-20"
-        :class="[isMobile ? (selection ? 'hidden' : 'w-full') : 'w-[320px] max-w-[35%]']"
+    <div
+        class="flex-shrink-0 h-full border-r border-border dark:border-border-dark z-20 relative"
+        :class="[isMobile ? (selection ? 'hidden' : 'w-full') : '', sidebar.isDraggingLeft.value ? '' : 'transition-[width] duration-300']"
+        :style="isMobile ? undefined : { width: `${sidebar.leftWidth.value}px` }"
     >
+        <!--
+          The edge, draggable, the same way Notes and Things have always been.
+          This app was the only one where the sidebar was a hard 320px, which is
+          why it was the only one that would not stretch.
+
+          Wider than the border it sits on: a hairline target is a target people
+          miss. Desktop only — below `md` the sidebar is the whole screen and
+          there is no second pane to take width from.
+        -->
+        <div
+          v-if="!isMobile"
+          class="hidden md:block absolute top-0 right-0 w-1.5 h-full z-10
+                 cursor-col-resize opacity-0 hover:opacity-100 transition-opacity
+                 hover:bg-black/10 dark:hover:bg-white/10"
+          @mousedown.stop="sidebar.startDragLeft($event)"
+        ></div>
         <ChatSidebar
             :threads="threads"
             :conversations="conversations"
