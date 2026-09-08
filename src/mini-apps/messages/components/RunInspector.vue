@@ -11,29 +11,51 @@
  * A panel rather than a screen, and a wide one, because a transcript is read
  * beside the conversation it came from rather than instead of it.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
 import {
   X, RefreshCw, Loader2, Trash2, Square, Wrench, MessageSquare,
   Info, AlertTriangle, ChevronRight, Pin, PinOff, Check, Sparkles, X as XIcon,
 } from 'lucide-vue-next';
+import { invoke } from '@tauri-apps/api/core';
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
-import type { RunState, RunStep, Reversal, Memory, Skill } from '../types';
+import { captureFocus } from '../../../shared/syn/focus';
+import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard } from '../types';
+import { capabilityLabel } from '../composables/useSynConsent';
 
-const props = defineProps<{ vaultPath: string }>();
+const props = defineProps<{
+  vaultPath: string;
+  /**
+   * Which tab to open on, when something sent the reader here.
+   *
+   * `null` for the ordinary case — somebody pressed the inspector button and
+   * wants the runs.
+   */
+  initialTab?: 'memory' | 'skills' | null;
+  /**
+   * The id to scroll to and ring, when one was named.
+   *
+   * A notice saying *"I am holding two contradictory things about you"* is only
+   * half an act if it lands the reader in a list of forty and leaves them to
+   * find the two. See `syn::notice`.
+   */
+  highlight?: string | null;
+}>();
 const emit = defineEmits<{ close: []; use: [name: string] }>();
 
 const { t } = useI18n();
+const route = useRoute();
 
 const {
   runs, selected, preview, isLoading, error,
   loadRuns, openRun, cancelRun, deleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
 
-type Tab = 'runs' | 'prompt' | 'memory' | 'skills' | 'permissions';
+type Tab = 'runs' | 'prompt' | 'tools' | 'memory' | 'skills' | 'permissions';
 const tab = ref<Tab>('runs');
 
 const {
@@ -108,12 +130,118 @@ const showTheRunBehind = async (memory: Memory) => {
   await openRun(memory.source_run);
 };
 
+/**
+ * Everything Syn can reach, and what each one costs to undo.
+ *
+ * Its own tab rather than a block at the top of Permissions. That tab is about
+ * decisions — what has been granted, what was done with it — and it says so in
+ * its own explainer: *what Syn is allowed to do outside the vault*. The
+ * catalogue is not a decision and most of it never leaves the vault, so it
+ * would have been the largest thing on a screen that explicitly excludes it.
+ */
+const tools = ref<ToolCard[]>([]);
+const toolError = ref<string | null>(null);
+
+const loadTools = async () => {
+  if (tools.value.length) return;
+  try {
+    tools.value = await invoke<ToolCard[]>('syn_list_tools');
+  } catch (e) {
+    toolError.value = (e as { message?: string })?.message ?? String(e);
+  }
+};
+
+/**
+ * Grouped by what they need, in order of how much they can change.
+ *
+ * The shape of the list is the answer to "what can it reach": fourteen tools
+ * that only read, nine that change one note, four that change many files at
+ * once. A flat alphabetical list of twenty-seven hides exactly that.
+ */
+const CAPABILITY_ORDER = ['VaultRead', 'VaultWrite', 'VaultStructural'];
+
+const toolGroups = computed(() => {
+  const by = new Map<string, { label: ReturnType<typeof capabilityLabel> | null; tools: ToolCard[] }>();
+  for (const tool of tools.value) {
+    const cap = tool.capability ?? null;
+    const key = cap === null ? '' : typeof cap === 'string' ? cap : Object.keys(cap)[0];
+    if (!by.has(key)) {
+      by.set(key, { label: cap === null ? null : capabilityLabel(cap), tools: [] });
+    }
+    by.get(key)!.tools.push(tool);
+  }
+  return [...by.entries()]
+    .sort(([a], [b]) => {
+      // Unclassified first: it is a bug and should not be buried.
+      if (!a) return -1;
+      if (!b) return 1;
+      return CAPABILITY_ORDER.indexOf(a) - CAPABILITY_ORDER.indexOf(b);
+    })
+    .map(([key, group]) => ({ key, ...group }));
+});
+
+/**
+ * Which descriptions are open.
+ *
+ * Clamped by default: these are written for the model, and `query_nodes` alone
+ * is a paragraph. Twenty-seven paragraphs is a page nobody reads, which would
+ * defeat the point of having built the screen.
+ */
+const openTools = ref(new Set<string>());
+const toggleTool = (name: string) => {
+  const next = new Set(openTools.value);
+  if (!next.delete(name)) next.add(name);
+  openTools.value = next;
+};
+
 /** The question the prompt preview is built for. Optional, and worth giving. */
 const previewQuestion = ref('');
 
+/**
+ * The preview, built against the screen as it is right now.
+ *
+ * Without the focus, this panel would be the one place in the app where the
+ * on-screen section is invisible — and it is the panel whose entire job is to
+ * say what Syn is told. A section nobody can see here is a section nobody can
+ * debug when it misfires.
+ *
+ * The screen is this one, honestly: the panel is open over Messages, so that
+ * is what it reports. Select some text in a message and refresh to watch the
+ * section appear and the breakdown charge for it.
+ */
+const showPrompt = (question: string) =>
+  loadPreview(question, captureFocus({ app: (route.name as string) ?? 'messages' }));
+
+/**
+ * Land on the tab that was asked for, and put the named thing in front of the
+ * reader.
+ *
+ * The scroll waits for the list to have loaded *and* rendered — the tab's data
+ * is fetched on show, so an element addressed before that is an element that
+ * does not exist yet, and the whole point would be silently lost.
+ */
+const goTo = async (next: Tab, id: string | null) => {
+  await showTab(next);
+  if (!id) return;
+  await nextTick();
+  document
+    .getElementById(`syn-item-${cssId(id)}`)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+};
+
+/**
+ * An id safe to put in `id=""`.
+ *
+ * These are vault paths — `SynMemory/1a2b.md` — with slashes and dots in them,
+ * which `getElementById` handles fine but which would break the moment anybody
+ * reached for a CSS selector instead.
+ */
+const cssId = (id: string) => id.replace(/[^A-Za-z0-9_-]/g, '-');
+
 const showTab = async (next: Tab) => {
   tab.value = next;
-  if (next === 'prompt' && !preview.value) await loadPreview(previewQuestion.value);
+  if (next === 'prompt' && !preview.value) await showPrompt(previewQuestion.value);
+  if (next === 'tools') await loadTools();
   if (next === 'memory') await loadMemories();
   if (next === 'skills') await loadSkills();
   if (next === 'permissions') await loadAudit();
@@ -132,6 +260,8 @@ const stateStyle = (state: RunState) => ({
   cancelled: 'bg-gray-400',
   budget_exhausted: 'bg-amber-500',
   awaiting_consent: 'bg-violet-500',
+  // Waiting on a person, not on permission — see `syn::ambiguity`.
+  awaiting_choice: 'bg-violet-400',
   interrupted: 'bg-gray-400',
 }[state] ?? 'bg-gray-400');
 
@@ -174,12 +304,50 @@ const budgetUsed = computed(() => {
   return Math.min(100, Math.round((preview.value.chars / preview.value.budget_chars) * 100));
 });
 
+/** The same, for the tool declarations. */
+const toolsUsed = computed(() => {
+  const tools = preview.value?.tools;
+  if (!tools || tools.budget_chars === 0) return 0;
+  return Math.min(100, Math.round((tools.chars / tools.budget_chars) * 100));
+});
+
+/**
+ * Prompt plus tools — what one turn costs before anybody has said anything.
+ *
+ * The number this screen existed to give and did not: the tool declarations
+ * are the `tools` field of the request rather than part of the prompt text, so
+ * every figure above was exactly right while the page as a whole understated a
+ * turn by more than the entire fixed prompt.
+ */
+const totalTokens = computed(() =>
+  preview.value ? preview.value.est_tokens + preview.value.tools.est_tokens : 0
+);
+
+/**
+ * Ollama's default `num_ctx`.
+ *
+ * Named here because it is the number that decides whether any of this matters:
+ * against a hosted model with a large window the totals above are a cost, and
+ * against this one they are a wall. The warning is about the default a local
+ * install actually gets, not about the setting this vault happens to have — a
+ * user who raised `num_ctx` has already thought about it.
+ */
+const SMALL_WINDOW = 8192;
+const overWindow = computed(() => totalTokens.value > SMALL_WINDOW * 0.6);
+
 const onKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') emit('close');
 };
 
 onMounted(() => {
-  loadRuns();
+  // Sent here by a notice, or opened by hand. The first case skips the runs
+  // entirely — loading them would be work nobody asked for on the way to a
+  // memory.
+  if (props.initialTab) {
+    void goTo(props.initialTab, props.highlight ?? null);
+  } else {
+    loadRuns();
+  }
   window.addEventListener('keydown', onKeydown);
 });
 onUnmounted(() => window.removeEventListener('keydown', onKeydown));
@@ -200,7 +368,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">
             <button
-              v-for="option in (['runs', 'prompt', 'memory', 'skills', 'permissions'] as Tab[])"
+              v-for="option in (['runs', 'prompt', 'tools', 'memory', 'skills', 'permissions'] as Tab[])"
               :key="option"
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
@@ -216,7 +384,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <button
             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
-            @click="tab === 'runs' ? loadRuns() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : loadPreview(previewQuestion)"
+            @click="tab === 'runs' ? loadRuns() : tab === 'tools' ? loadTools() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : showPrompt(previewQuestion)"
           >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -230,8 +398,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         </div>
       </div>
 
-      <div v-if="error || memoryError || skillError || auditError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
-        {{ error || memoryError || skillError || auditError }}
+      <div v-if="error || memoryError || skillError || auditError || toolError" class="mx-6 mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-700 dark:text-red-300">
+        {{ error || memoryError || skillError || auditError || toolError }}
       </div>
 
       <!-- ── Runs ─────────────────────────────────────────── -->
@@ -346,6 +514,70 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
       </div>
 
       <!-- ── Skills ───────────────────────────────────────── -->
+      <!-- ── Tools ────────────────────────────────────────
+           What Syn can reach at all. The catalogue existed from the first
+           day and was read in one place in the whole codebase, to validate
+           recipe step names; nothing ever showed it to anybody. -->
+      <div v-else-if="tab === 'tools'" class="flex-1 overflow-y-auto p-6">
+        <p class="text-sm text-gray-500">{{ t('syn.tools_explainer') }}</p>
+        <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.tools_count', { n: tools.length }) }}</p>
+
+        <div v-for="group in toolGroups" :key="group.key || 'unclassified'" class="mt-6">
+          <h3
+            class="mb-2 text-sm font-medium"
+            :class="group.label ? 'text-text dark:text-text-dark' : 'text-amber-600 dark:text-amber-500'"
+          >
+            {{ group.label ? t(group.label.key, group.label.values) : t('syn.tools_unclassified') }}
+            <span class="ml-1.5 text-[11px] font-normal text-gray-400">{{ group.tools.length }}</span>
+          </h3>
+
+          <ul class="space-y-2">
+            <li
+              v-for="tool in group.tools"
+              :key="tool.name"
+              class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
+            >
+              <button
+                class="w-full flex items-start gap-2 text-left cursor-pointer"
+                @click="toggleTool(tool.name)"
+              >
+                <ChevronRight
+                  class="w-3.5 h-3.5 mt-1 shrink-0 text-gray-400 transition-transform"
+                  :class="openTools.has(tool.name) ? 'rotate-90' : ''"
+                />
+                <span class="min-w-0 flex-1">
+                  <code class="text-[13px] font-mono text-violet-600 dark:text-violet-400">{{ tool.name }}</code>
+                  <!-- Verbatim, and clamped until asked for: written for the
+                       model, and `query_nodes` alone is a paragraph. -->
+                  <span
+                    class="block mt-1 text-xs text-gray-500 dark:text-gray-400 leading-relaxed"
+                    :class="openTools.has(tool.name) ? '' : 'line-clamp-2'"
+                  >{{ tool.description }}</span>
+                </span>
+              </button>
+
+              <!-- What puts it back. Derived from the capability in Rust rather
+                   than declared twice, so the two can never disagree. -->
+              <p class="mt-2 pl-5 text-[11px] text-gray-400">
+                <template v-if="tool.reversal?.kind === 'nothing'">
+                  {{ t('syn.tools_undo_nothing') }}
+                </template>
+                <template v-else-if="tool.reversal?.kind === 'irreversible'">
+                  <span class="text-amber-600 dark:text-amber-500">{{ t('syn.tools_undo_irreversible') }}</span>
+                </template>
+                <template v-else-if="tool.reversal && 'how' in tool.reversal">
+                  {{ t('syn.tools_undo') }}: {{ tool.reversal.how }}
+                </template>
+              </p>
+            </li>
+          </ul>
+        </div>
+
+        <p class="mt-6 text-[11px] text-gray-400 leading-relaxed max-w-prose">
+          {{ t('syn.tools_verbatim') }}
+        </p>
+      </div>
+
       <div v-else-if="tab === 'skills'" class="flex-1 overflow-y-auto p-6">
         <p class="text-sm text-gray-500">{{ t('syn.skills_explainer') }}</p>
 
@@ -377,10 +609,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <li
             v-for="skill in orderedSkills"
             :key="skill.id"
+            :id="`syn-item-${cssId(skill.id)}`"
             class="rounded-xl border p-3"
-            :class="skill.enabled
-              ? 'border-violet-200 dark:border-violet-900/60'
-              : 'border-gray-100 dark:border-gray-800/60 opacity-70'"
+            :class="[
+              skill.enabled
+                ? 'border-violet-200 dark:border-violet-900/60'
+                : 'border-gray-100 dark:border-gray-800/60 opacity-70',
+              highlight === skill.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
+            ]"
           >
             <div class="flex items-center gap-2 text-[11px] text-gray-500">
               <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ skill.tier }}</span>
@@ -757,8 +993,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <li
             v-for="memory in orderedMemories"
             :key="memory.id"
+            :id="`syn-item-${cssId(memory.id)}`"
             class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
-            :class="memory.pinned ? 'border-violet-200 dark:border-violet-900/60' : ''"
+            :class="[
+              memory.pinned ? 'border-violet-200 dark:border-violet-900/60' : '',
+              highlight === memory.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
+            ]"
           >
             <div class="flex items-center gap-2 text-[11px] text-gray-500">
               <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ memory.kind }}</span>
@@ -824,11 +1064,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             class="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
                    bg-white dark:bg-gray-900 text-text dark:text-text-dark"
             :placeholder="t('syn.prompt_question_placeholder')"
-            @keydown.enter="loadPreview(previewQuestion)"
+            @keydown.enter="showPrompt(previewQuestion)"
           />
           <button
             class="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700"
-            @click="loadPreview(previewQuestion)"
+            @click="showPrompt(previewQuestion)"
           >
             {{ t('syn.refresh') }}
           </button>
@@ -849,6 +1089,43 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             </div>
             <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.prompt_tokens_estimated') }}</p>
           </div>
+
+          <!-- The tool declarations, which are not in the prompt text and were
+               therefore not on this screen at all. They were the largest single
+               thing a turn spends — more than the whole fixed prompt — and the
+               panel whose job is to say what a turn costs said nothing about
+               them. See `tools::PAYLOAD_BUDGET_CHARS`. -->
+          <div class="mt-5">
+            <div class="flex items-baseline justify-between text-sm">
+              <span class="text-text dark:text-text-dark font-medium">
+                {{ t('syn.tools_payload', {
+                  n: preview.tools.count,
+                  chars: preview.tools.chars,
+                  tokens: preview.tools.est_tokens,
+                }) }}
+              </span>
+              <span class="text-xs text-gray-400">
+                {{ t('syn.prompt_budget', { chars: preview.tools.budget_chars }) }}
+              </span>
+            </div>
+            <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div class="h-full bg-violet-400 rounded-full" :style="{ width: `${toolsUsed}%` }" />
+            </div>
+            <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.tools_payload_note') }}</p>
+          </div>
+
+          <!-- Neither half is the answer on its own. Against Ollama's default
+               8,192-token window the sum is what decides whether the
+               conversation fits at all. -->
+          <p
+            class="mt-4 text-[13px] font-medium"
+            :class="overWindow ? 'text-amber-600 dark:text-amber-500' : 'text-text dark:text-text-dark'"
+          >
+            {{ t('syn.prompt_turn_total', { tokens: totalTokens }) }}
+          </p>
+          <p v-if="overWindow" class="mt-0.5 text-[11px] text-amber-600 dark:text-amber-500">
+            {{ t('syn.prompt_over_window', { window: SMALL_WINDOW }) }}
+          </p>
 
           <table class="mt-5 w-full text-sm">
             <thead>

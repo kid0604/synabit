@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import router from '../../router';
 import {
+  nameForNodeType,
+  folderForType,
   ROUTE_FOR_NODE_TYPE,
   routeForNodeType,
   nodeTypeFromPath,
@@ -95,5 +98,84 @@ describe('routeForNode', () => {
   it('gives up when neither identifies the node', () => {
     expect(routeForNode(null, 'Archive/abc.md')).toBeNull();
     expect(routeForNode(null, null)).toBeNull();
+  });
+});
+
+/**
+ * The folder map and the type map have to stay inverses of each other, and
+ * both have to agree with Rust.
+ *
+ * `syn/tools.rs::folder_for_type` writes a thread into `SynThreads/`. This side
+ * did not know that folder, so `folderForType('syn_thread')` answered
+ * `Syn_thread` and `nodeTypeFromPath('SynThreads/x.md')` answered nothing —
+ * two halves of one app disagreeing about where a file lives, which is the
+ * exact failure the comment on `folderForType` is about.
+ */
+describe('where a thread lives', () => {
+  it('agrees with the folder Rust writes it into', () => {
+    expect(folderForType('syn_thread')).toBe('SynThreads');
+    expect(nodeTypeFromPath('SynThreads/General.md')).toBe('syn_thread');
+  });
+
+  /** The prefixed kinds are filed apart so the plain words stay the user's. */
+  it('files Syn\'s own kinds apart from the words they borrow', () => {
+    expect(folderForType('syn_memory')).toBe('SynMemory');
+    expect(folderForType('syn_skill')).toBe('SynSkills');
+    // A user's own `thread` kind is untouched by any of it.
+    expect(folderForType('thread')).toBe('Thread');
+    expect(nodeTypeFromPath('Thread/mine.md')).toBeNull();
+  });
+});
+
+/**
+ * A name on screen only for the types this app invented.
+ *
+ * Things shows a type's own name on purpose, so that `animal` has a name at
+ * all. This is the narrow exception — a prefix the user never chose — and it
+ * has to keep the fallback, or that property is gone.
+ */
+describe('what a node type is called on screen', () => {
+  it('names the kind whose prefix the user never chose', () => {
+    expect(nameForNodeType('syn_thread')).toBe('Syn thread');
+  });
+
+  /**
+   * Not shortened to `thread`. A rail showing `thread` twice would recreate
+   * exactly the collision the prefix was invented to prevent.
+   */
+  it('stays distinguishable from a kind the user made', () => {
+    expect(nameForNodeType('syn_thread')).not.toBe('thread');
+    expect(nameForNodeType('thread')).toBe('thread');
+  });
+
+  it('leaves every other type exactly as it is written', () => {
+    for (const raw of ['note', 'task', 'animal', 'réunion', 'cá', '']) {
+      expect(nameForNodeType(raw), raw).toBe(raw);
+    }
+  });
+});
+
+/**
+ * A thread opens in Messages, not in an app of its own.
+ *
+ * It briefly had one — a thirteenth sidebar entry for a feature one day old,
+ * splitting one family across two entries while the conversations, the runs,
+ * what Syn remembers and what it is allowed to do all lived in Messages.
+ */
+describe('where a thread opens', () => {
+  it('routes to Messages', () => {
+    expect(routeForNodeType('syn_thread')).toBe('messages');
+  });
+
+  /**
+   * `ThingsApp::openInOwner` does `router.push({ name: route })`, so a value
+   * that is not a route sends somebody nowhere. Only this entry is asserted:
+   * `project`, `person`, `finance_month` and `pdf_highlight` name handlers
+   * rather than routes and have never worked there, which is worth fixing on
+   * its own rather than being pinned in place here.
+   */
+  it('names a route that exists, so Things can push to it', () => {
+    const names = router.getRoutes().map((r) => r.name).filter(Boolean);
+    expect(names).toContain(routeForNodeType('syn_thread'));
   });
 });

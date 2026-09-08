@@ -43,6 +43,15 @@ pub enum NodeType {
     /// Spelled `syn_memory` on disk. The unprefixed word belongs to the user,
     /// who may well want a kind of their own by that name.
     Memory,
+    /// A piece of work open between the user and Syn.
+    ///
+    /// Deliberately *not* storage in the sense the two below are. A memory is a
+    /// claim about the user and a skill is Syn's own procedure, so both are
+    /// hidden from `list_schemas`; a thread is the user's work written down,
+    /// and belongs in Things, in Nexus and in the graph beside their notes.
+    /// Spelled `syn_thread` on disk, leaving the plain word to whoever owns the
+    /// vault. See `syn/thread.rs`.
+    Thread,
     /// A procedure written down for the assistant to follow.
     ///
     /// Storage in the same sense, and for a sharper reason: a skill changes
@@ -87,6 +96,7 @@ impl NodeType {
         "view",
         "syn_memory",
         "syn_skill",
+        "syn_thread",
         "json",
         "canvas",
     ];
@@ -113,6 +123,7 @@ impl NodeType {
             NodeType::View => "view",
             NodeType::Memory => "syn_memory",
             NodeType::Skill => "syn_skill",
+            NodeType::Thread => "syn_thread",
             NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
@@ -148,6 +159,7 @@ impl From<&str> for NodeType {
             "view" => NodeType::View,
             "syn_memory" => NodeType::Memory,
             "syn_skill" => NodeType::Skill,
+            "syn_thread" => NodeType::Thread,
             "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,

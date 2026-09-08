@@ -174,12 +174,122 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                     log::error!("Could not record what was announced: {}", e);
                 }
             }
+
+            // 2. Once an hour, notice things nobody asked about.
+            //
+            // Hourly rather than per tick because it reads every thread, every
+            // memory and every run still on disk, and because none of what it
+            // finds is news that decays in a minute — a thread stuck for three
+            // weeks is still stuck at ten past.
+            //
+            // Everything the sweep needs from the index is read here, inside
+            // the lock that is already held. The runs come off disk afterwards,
+            // outside it. See `syn::notice`.
+            let for_the_sweep = if now.timestamp() % 3600 < 60
+                && crate::syn::settings::load_settings(&vault_path)
+                    .map(|s| s.enabled)
+                    .unwrap_or(true)
+            {
+                Some((
+                    crate::syn::thread::all(&db).unwrap_or_default(),
+                    crate::syn::memory::all(&db).unwrap_or_default(),
+                    crate::syn::skill::all(&db).unwrap_or_default(),
+                    // A month back, not the reminder loop's one-day catch-up
+                    // window: with that window a thread stuck for three weeks
+                    // would announce itself again every couple of days. See
+                    // `notice::SAID_FOR_DAYS`.
+                    db.delivered_reminders(
+                        (now
+                            - chrono::Duration::try_days(crate::syn::notice::SAID_FOR_DAYS)
+                                .unwrap_or_else(chrono::Duration::zero))
+                        .timestamp(),
+                    )
+                    .unwrap_or_default(),
+                ))
+            } else {
+                // Switched off, or not the hour. Either way the sweep does not
+                // run at all — noticing is Syn's own initiative, and the switch
+                // that turns Syn off has to reach the parts of it that speak
+                // without being spoken to first.
+                None
+            };
             // Only worth doing now and then; a failure here costs a little
             // disk, not a wrong reminder.
             if now.timestamp() % 3600 < 60 {
                 let _ = db.prune_reminder_deliveries(now.timestamp());
             }
             drop(db);
+
+            // The sweep itself, with the lock released: `list_runs` parses
+            // every run file in the vault, and holding the database while
+            // reading two hundred JSON files would stall every query in the app
+            // for the duration.
+            if let Some((threads, memories, skills, already_said)) = for_the_sweep {
+                let runs = crate::syn::run::load_all(&vault_path).unwrap_or_default();
+                let found = crate::syn::notice::sweep(
+                    &threads,
+                    &memories,
+                    &runs,
+                    &skills,
+                    now.with_timezone(&chrono::Utc),
+                    &already_said,
+                );
+
+                if !found.is_empty() {
+                    log::info!("[Syn] Noticed {} thing(s) worth saying", found.len());
+                }
+
+                let mut noticed_keys: Vec<String> = Vec::new();
+                for notice in found {
+                    let mut metadata = json!({});
+                    // Only when there is a screen that can open it. A "view
+                    // details" resolving to nothing is worse than no button —
+                    // see `notice::Notice::target`.
+                    if let (Some(id), Some(kind)) = (&notice.target, notice.target_type) {
+                        metadata["target_id"] = json!(id);
+                        metadata["target_type"] = json!(kind);
+                    }
+
+                    new_messages.push(ChatMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        message_type: "system".to_string(),
+                        subtype: notice.kind.subtype().to_string(),
+                        timestamp: now.to_rfc3339(),
+                        // Syn, and not "Synabit System". A reminder is the
+                        // calendar doing its job; this is a colleague saying
+                        // they noticed something, and the name is the whole
+                        // difference between the two.
+                        sender: ChatSender {
+                            id: "syn".to_string(),
+                            name: "Syn".to_string(),
+                            role: "bot".to_string(),
+                        },
+                        content: ChatContent {
+                            title: notice.title,
+                            text: notice.text,
+                            metadata,
+                        },
+                        read_receipt: false,
+                    });
+                    noticed_keys.push(notice.key);
+                }
+
+                // Deliberately no OS notification, unlike the reminders above.
+                // A reminder is time-bound and earns the interruption; a thread
+                // that has been dead for three weeks does not become urgent at
+                // 09:00. It waits in the list with an unread count, which is
+                // the difference between noticing and interrupting — and
+                // interrupting is a later nhát, with a contract behind it.
+                if !noticed_keys.is_empty() {
+                    // Recovering from a poisoned lock the way the rest of this
+                    // loop does. Skipping the record instead would mean saying
+                    // the same three things again next hour, forever.
+                    let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = db.record_reminder_deliveries(&noticed_keys, now.timestamp()) {
+                        log::error!("Could not record what was noticed: {}", e);
+                    }
+                }
+            }
 
             if !new_messages.is_empty() {
                 let daily_file_path = msg_dir.join(format!("{}.json", today_str));

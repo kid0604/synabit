@@ -84,11 +84,33 @@ const DEFAULT_COLUMNS: &[&str] = &["title", "updated_at"];
 /// Both halves are safe by construction: the first is a fixed list, and the
 /// second goes through `json_path_for`, which admits nothing but a plain key.
 fn order_expression(key: &str) -> Option<String> {
+    value_expression(key)
+}
+
+/// The SQL for reading a name, whether it is a node column or a frontmatter key.
+///
+/// # The bug this closes
+///
+/// `order_expression` already knew that `updated_at` is a column and not
+/// frontmatter, so `sort:-updated_at` has always worked. The three filter sites
+/// below went straight to `json_path_for`, which builds `$.updated_at` and
+/// looks for it inside the properties JSON — where it has never been.
+///
+/// So `updated_at:>2026-09-01` matched nothing. Not an error, not a warning:
+/// an empty result, from a query that reads as though it should work, on the
+/// most obvious question anybody would ask a vault — *what changed this week*.
+/// A filter that quietly finds nothing is worse than one that refuses, because
+/// the answer it produces is "you have nothing" rather than "I cannot ask
+/// that".
+///
+/// One resolver for both, so a name can never mean one thing to sorting and
+/// another to filtering again.
+fn value_expression(key: &str) -> Option<String> {
     match key {
         "type" => Some("node_type".to_string()),
         "path" => Some("id".to_string()),
         k if SORTABLE_COLUMNS.contains(&k) => Some(k.to_string()),
-        k => json_path_for(k).map(|path| format!("json_extract(properties, '{}')", path)),
+        k => json_path_for(k).map(|path| format!("json_extract(properties, '{path}')")),
     }
 }
 
@@ -151,12 +173,11 @@ impl DbBridge {
         // status would be excluded by `-status:done` — the opposite of what
         // "not done" means.
         for (key, value) in &parsed.property_exclusions {
-            let Some(path) = crate::search::json_path_for(key) else {
+            let Some(read) = value_expression(key) else {
                 continue;
             };
             sql.push_str(&format!(
-                " AND (json_extract(properties, '{path}') IS NULL
-                       OR lower(CAST(json_extract(properties, '{path}') AS TEXT)) <> ?{next})"
+                " AND ({read} IS NULL OR lower(CAST({read} AS TEXT)) <> ?{next})"
             ));
             params.push(text(&value.to_lowercase()));
             next += 1;
@@ -177,7 +198,7 @@ impl DbBridge {
         }
 
         for (key, value) in &parsed.property_filters {
-            let Some(path) = json_path_for(key) else {
+            let Some(read) = value_expression(key) else {
                 log::warn!("query: ignoring a filter on unusable key '{}'", key);
                 continue;
             };
@@ -200,7 +221,7 @@ impl DbBridge {
             match spellings {
                 Some((word, digit)) => {
                     sql.push_str(&format!(
-                        " AND lower(CAST(json_extract(properties, '{path}') AS TEXT)) IN (?{next}, ?{})",
+                        " AND lower(CAST({read} AS TEXT)) IN (?{next}, ?{})",
                         next + 1
                     ));
                     params.push(text(word));
@@ -209,7 +230,7 @@ impl DbBridge {
                 }
                 None => {
                     sql.push_str(&format!(
-                        " AND lower(CAST(json_extract(properties, '{path}') AS TEXT)) = ?{next}"
+                        " AND lower(CAST({read} AS TEXT)) = ?{next}"
                     ));
                     params.push(text(&value.to_lowercase()));
                     next += 1;
@@ -218,7 +239,7 @@ impl DbBridge {
         }
 
         for range in &parsed.property_ranges {
-            let Some(path) = json_path_for(&range.key) else {
+            let Some(read) = value_expression(&range.key) else {
                 log::warn!(
                     "query: ignoring a comparison on unusable key '{}'",
                     range.key
@@ -226,10 +247,7 @@ impl DbBridge {
                 continue;
             };
             // The operator comes from a fixed set; only the value is a parameter.
-            sql.push_str(&format!(
-                " AND json_extract(properties, '{path}') {} ?{next}",
-                range.op.as_sql()
-            ));
+            sql.push_str(&format!(" AND {read} {} ?{next}", range.op.as_sql()));
             params.push(comparable(&range.value));
             next += 1;
         }
@@ -381,6 +399,78 @@ mod tests {
 
     fn db() -> DbBridge {
         DbBridge::new_in_memory_full().expect("full in-memory schema")
+    }
+
+    /// Seed a node with a chosen `updated_at`, for the questions about time.
+    fn seed_at(db: &DbBridge, id: &str, title: &str, updated_at: &str) {
+        let node = NodeMetadata {
+            id: id.to_string(),
+            node_type: "note".to_string(),
+            title: title.to_string(),
+            content: format!("body of {title}"),
+            properties: serde_json::json!({}),
+            created_at: "2026-01-01 00:00:00".to_string(),
+            updated_at: updated_at.to_string(),
+            timestamp: 0,
+            blocks: None,
+        };
+        db.upsert_node(&node).expect("seed node");
+        db.upsert_search_entry(
+            id, "note", title, "", &node.content, "{}", None, updated_at, id,
+        );
+    }
+
+    /// *What changed this week* — the most obvious question anybody asks a
+    /// vault, and it used to answer "nothing".
+    ///
+    /// `sort:-updated_at` always worked, because ordering knew `updated_at` is
+    /// a column. Filtering went to `json_path_for` and looked for
+    /// `$.updated_at` inside the frontmatter, where it has never been — so the
+    /// query returned an empty result rather than an error. A filter that
+    /// silently finds nothing is worse than one that refuses: the answer it
+    /// gives is "you have nothing" instead of "I cannot ask that".
+    #[test]
+    fn a_query_can_ask_what_changed_since_a_date() {
+        let db = db();
+        seed_at(&db, "old.md", "cũ", "2026-01-05 00:00:00");
+        seed_at(&db, "new.md", "mới", "2026-09-04 00:00:00");
+
+        let found = db
+            .run_node_query(&parse_query("updated_at:>2026-09-01"))
+            .expect("query runs");
+
+        assert_eq!(found.rows.len(), 1, "{:?}", found.rows);
+        assert_eq!(found.rows[0].title, "mới");
+    }
+
+    #[test]
+    fn the_same_works_for_when_something_was_made() {
+        let db = db();
+        seed_at(&db, "a.md", "a", "2026-09-04 00:00:00");
+        let found = db
+            .run_node_query(&parse_query("created_at:<2026-06-01"))
+            .expect("query runs");
+        assert_eq!(found.rows.len(), 1, "created_at is a column too");
+    }
+
+    /// One resolver for both, so a name cannot mean a column to sorting and
+    /// frontmatter to filtering again.
+    #[test]
+    fn sorting_and_filtering_read_a_name_the_same_way() {
+        for key in ["updated_at", "created_at", "title", "type", "path"] {
+            assert_eq!(
+                order_expression(key),
+                value_expression(key),
+                "`{key}` resolves differently for sorting than for filtering"
+            );
+        }
+    }
+
+    /// And a frontmatter key still goes where it always did.
+    #[test]
+    fn an_ordinary_field_is_still_read_out_of_the_frontmatter() {
+        let read = value_expression("status").expect("a frontmatter key");
+        assert!(read.contains("json_extract(properties, '$.status')"), "{read}");
     }
 
     fn seed(db: &DbBridge, id: &str, node_type: &str, title: &str, props: serde_json::Value) {

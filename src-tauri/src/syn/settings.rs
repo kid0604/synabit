@@ -50,6 +50,57 @@ mod tests {
     use super::*;
     use crate::models::syn::SynProvider;
 
+    /// A vault written before the switch existed is a vault where Syn was on.
+    ///
+    /// The alternative — `#[serde(default)]` on a `bool`, which is `false` —
+    /// would have switched Syn off for every existing user on upgrade, and the
+    /// only clue would have been the app going quiet.
+    #[test]
+    fn a_settings_file_that_predates_the_switch_still_has_syn_on() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+        std::fs::create_dir_all(dir.path().join("Syn")).expect("Syn dir");
+        std::fs::write(
+            dir.path().join("Syn").join("settings.json"),
+            r#"{"ollama_url":"http://localhost:11434","temperature":0.7,"rag_enabled":true,
+                "max_context_chars":12000,"include_finance":true,"include_feeds":true,
+                "graph_expansion_depth":1,"personality":"auto","custom_system_prompt":null,
+                "default_model":null}"#,
+        )
+        .expect("written");
+
+        assert!(load_settings(vault).expect("loads").enabled);
+    }
+
+    /// And switching it off survives a round trip, which is the whole point of
+    /// it being a setting rather than a runtime flag.
+    #[test]
+    fn switching_syn_off_is_remembered() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut settings = SynSettings::default();
+        settings.enabled = false;
+        save_settings(vault, &settings).expect("saved");
+
+        assert!(!load_settings(vault).expect("loads").enabled);
+    }
+
+    /// The frontend tells "Syn is off" apart from "the provider is unreachable"
+    /// by matching on this string, and the two mean opposite things about
+    /// whether anything is wrong. Read out of the TypeScript rather than
+    /// duplicated, so a reworded refusal fails here instead of silently showing
+    /// somebody an error for a choice they made.
+    #[test]
+    fn the_frontend_recognises_the_refusal_by_its_words() {
+        let source = include_str!("../../../src/mini-apps/messages/composables/useSynChat.ts");
+        assert!(
+            source.contains(crate::commands::syn::SWITCHED_OFF),
+            "`{}` no longer appears in useSynChat.ts",
+            crate::commands::syn::SWITCHED_OFF
+        );
+    }
+
     /// The strings the frontend sends back.
     ///
     /// `useSynSettings.ts` types `provider` as `'ollama' | 'open_ai_compat'`
@@ -104,6 +155,11 @@ mod tests {
         };
 
         let d = SynSettings::default();
+        // The switch most of all: a frontend that reset `enabled` to false
+        // would leave somebody pressing Reset and finding Syn gone, with the
+        // one control that brings it back on the screen they just reset.
+        assert_eq!(declared("enabled"), d.enabled.to_string());
+        assert!(d.enabled, "a fresh vault has Syn on");
         assert_eq!(declared("num_ctx"), d.num_ctx.to_string());
         assert_eq!(declared("max_history_messages"), d.max_history_messages.to_string());
         assert_eq!(declared("max_context_chars"), d.max_context_chars.to_string());
@@ -112,7 +168,6 @@ mod tests {
         assert_eq!(declared("memory_reflection"), d.memory_reflection.to_string());
         assert_eq!(declared("ollama_url"), d.ollama_url);
         assert_eq!(declared("openai_base_url"), d.openai_base_url);
-        assert_eq!(declared("personality"), d.personality);
         assert_eq!(
             declared("provider"),
             serde_json::to_value(d.provider)

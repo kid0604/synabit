@@ -38,6 +38,9 @@ import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 
 import DesktopLayout from './layouts/DesktopLayout.vue';
 import MobileLayout from './layouts/MobileLayout.vue';
+import AskBar from './shared/syn/AskBar.vue';
+import { captureFocus, type SynFocus } from './shared/syn/focus';
+import { useSynEnabled } from './shared/syn/useSynEnabled';
 
 // Stores
 import { useAppStore } from './stores/useAppStore';
@@ -147,6 +150,30 @@ const getItemIdForApp = (app: string): string | undefined => {
 
 const getCurrentItemId = (): string | undefined => getItemIdForApp(activeTool.value);
 
+/**
+ * What the open item is *called*, when its path does not say.
+ *
+ * Notes are files named by uuid in a vault that has been synced, so
+ * `Notes/4e0bc181-e384-40d2-….md` names the file and tells nobody which note
+ * it is. Only Notes exposes a list to look the title up in; the rest fall back
+ * to the path, which for a board or a file is readable anyway.
+ */
+const getCurrentItemTitle = (): string | undefined => {
+    if (activeTool.value !== 'note') return undefined;
+    const id = noteAppRef.value?.currentNoteId;
+    if (!id) return undefined;
+    const note = noteAppRef.value?.notes?.find((n: { id: string }) => n.id === id);
+    return note?.title || undefined;
+};
+
+/** Where a question is being asked from, for `captureFocus`. */
+const askingFrom = (thread?: string) => ({
+    app: activeTool.value,
+    node: getCurrentItemId(),
+    nodeTitle: getCurrentItemTitle(),
+    thread,
+});
+
 const getCurrentScrollTop = (): number => {
     const el = document.querySelector('[data-app-scroll]') as HTMLElement;
     return el?.scrollTop || 0;
@@ -169,15 +196,11 @@ watch(activeTool, async (newTool, oldTool) => {
      if (messagesAppRef.value) {
          messagesAppRef.value.fetchNotifications();
      }
-     
-     if (unreadNotificationCount.value > 0) {
-         unreadNotificationCount.value = 0;
-         try {
-             await invoke('mark_chat_read', { vaultPath: vaultPath.value });
-         } catch (e) {
-             logger.error('Failed to mark chat as read', e);
-         }
-     }
+     // Deliberately *not* marking them read here any more. Entering the app is
+     // not reading the notifications: the cards used to be interleaved into the
+     // one conversation, so opening the screen did put them in front of
+     // somebody. They have their own place now, and it marks them read when it
+     // is opened — see `markNotificationsRead` in MessagesApp.
   }
 
   if (newTool === 'whiteboard' && vaultPath.value) {
@@ -458,6 +481,26 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
         activeTool.value = 'whiteboard';
         callWhenReady(() => whiteboardAppRef.value, 'openBoardById', id);
     }
+    // A thread opened from Nexus or Things lands in Messages, where every other
+    // thing Syn keeps already lives. `syn_thread` is the only type that routes
+    // here, so this arm is unambiguous; the day a second one does, the node
+    // type has to travel with the id rather than only the route.
+    else if (type === 'messages') {
+        activeTool.value = 'messages';
+        callWhenReady(() => messagesAppRef.value, 'openThread', id);
+    }
+    // What Syn remembers, and what it knows how to do. Both live in the run
+    // inspector, which already lists them — so this opens the panel on the
+    // right tab rather than building a third screen for two lists that exist.
+    else if (type === 'syn_memory' || type === 'syn_skill') {
+        activeTool.value = 'messages';
+        callWhenReady(
+            () => messagesAppRef.value,
+            'openSynItem',
+            type === 'syn_memory' ? 'memory' : 'skills',
+            id,
+        );
+    }
     else if (type === 'person') {
         activeTool.value = 'people';
         callWhenReady(() => peopleAppRef.value, 'openPersonById', id);
@@ -557,6 +600,109 @@ const updateFeedsUnreadCount = async () => {
     }
 };
 
+// ─── Ask Syn, from wherever you are ───────────────────────
+//
+// The bar over the work, rather than the app you have to travel to. See
+// `shared/syn/AskBar.vue` for why it is a second surface rather than a
+// shortcut into Messages.
+const askBarOpen = ref(false);
+const askFocus = ref<SynFocus | undefined>(undefined);
+/**
+ * The thread the bar is working in.
+ *
+ * Held here rather than in the bar, because the piece of work outlives the
+ * question: closing the bar and pressing the key again five minutes later is
+ * still the same pricing problem. It is cleared only when the user picks
+ * "no thread", or when the vault is locked.
+ */
+const askThread = ref<string | undefined>(undefined);
+
+/**
+ * Whether a question is allowed to be asked right now.
+ *
+ * A lock screen is a promise that what is behind it stays behind it, and Syn
+ * reads the whole vault. A bar summoned over the lock would answer questions
+ * about protected notes to whoever pressed the key — which is not a smaller
+ * hole for being a convenient one. The same goes for a mini-app the user
+ * protected individually: routing around that lock through a keyboard shortcut
+ * would make the setting mean nothing.
+ *
+ * And the switch, for a different reason than the locks: those are about who is
+ * allowed to ask, this is about whether Syn exists on this vault at all. A bar
+ * that opened with Syn off would take a question, send it, and be refused by
+ * the backend — which is a worse way to learn about a setting than the bar
+ * simply not being there. See `useSynEnabled`.
+ */
+const { enabled: synEnabled } = useSynEnabled(() => vaultPath.value ?? '');
+
+const askBarAllowed = computed(() => {
+    if (!vaultPath.value) return false;
+    if (!synEnabled.value) return false;
+    if (!appLockStore.isEnabled) return true;
+    if (appLockStore.isAppLocked) return false;
+    return appLockStore.isMiniAppAccessible(activeTool.value);
+});
+
+/**
+ * Open the bar with whatever is on screen right now.
+ *
+ * The capture happens *here*, in the keydown handler, and not inside the bar.
+ * Showing the bar moves the caret into its textarea, and focusing an input
+ * collapses the document selection — so a bar that read the selection itself
+ * would read an empty one every single time, while working perfectly in any
+ * test that never focused anything.
+ */
+const openAskBar = () => {
+    if (!askBarAllowed.value) return;
+    askFocus.value = captureFocus(askingFrom(askThread.value));
+    askBarOpen.value = true;
+};
+
+// Locking while the bar is open has to put it away, and take the exchange with
+// it. A bar that survives the lock is the same hole reached from the other side.
+watch(askBarAllowed, (allowed) => {
+    if (!allowed) {
+        askBarOpen.value = false;
+        // The thread goes too. Which piece of work somebody is in the middle of
+        // is a fact about them, and it should not be sitting in memory waiting
+        // for whoever unlocks the screen next.
+        askThread.value = undefined;
+        askFocus.value = undefined;
+    }
+});
+
+/**
+ * Switch the thread, and put it into the focus the bar is already holding.
+ *
+ * Without the second half, picking a thread would do nothing until the bar was
+ * closed and reopened — the focus was captured before the choice was made.
+ */
+const chooseThread = (id: string | undefined) => {
+    askThread.value = id;
+    askFocus.value = captureFocus(askingFrom(id)) ?? { app: activeTool.value, thread: id };
+};
+
+/**
+ * Open the bar inside a thread, asked for by the Threads screen.
+ *
+ * A window event rather than a prop, because mini-apps are mounted generically
+ * by the router — the same reason `synabit-navigate` is one. Without it the
+ * Threads screen could show the work and offer no way to do any of it.
+ */
+const onAskInThread = (e: Event) => {
+    const id = (e as CustomEvent).detail?.id;
+    if (!id || !askBarAllowed.value) return;
+    askThread.value = id;
+    askFocus.value = captureFocus(askingFrom(id));
+    askBarOpen.value = true;
+};
+
+const continueInMessages = (conversationId: string) => {
+    askBarOpen.value = false;
+    activeTool.value = 'messages';
+    callWhenReady(() => messagesAppRef.value, 'openConversation', conversationId);
+};
+
 // ─── Keyboard shortcuts for navigation ───────────────────
 const handleKeyboardNav = (e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;
@@ -566,6 +712,13 @@ const handleKeyboardNav = (e: KeyboardEvent) => {
     } else if (isMeta && e.key === ']') {
         e.preventDefault();
         handleGoForward();
+    } else if (isMeta && (e.key === 'j' || e.key === 'J')) {
+        // Cmd/Ctrl+J. Clear of the neighbours that matter: Cmd+K is a search
+        // box in enough apps that taking it would surprise people, and the
+        // global capture hotkey already owns Cmd+Shift+Space.
+        e.preventDefault();
+        if (askBarOpen.value) askBarOpen.value = false;
+        else openAskBar();
     }
 };
 
@@ -621,6 +774,7 @@ onMounted(async () => {
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   window.addEventListener('keydown', handleKeyboardNav);
+  window.addEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   document.addEventListener('visibilitychange', rescanOnResume);
 
   const params = new URLSearchParams(window.location.search);
@@ -819,6 +973,7 @@ onUnmounted(() => {
   stopComposeListener?.();
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   window.removeEventListener('keydown', handleKeyboardNav);
+  window.removeEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   document.removeEventListener('visibilitychange', rescanOnResume);
   destroyEventBus();
   clearInterval(feedsUnreadInterval);
@@ -933,7 +1088,7 @@ onUnmounted(() => {
                 <button v-if="isAppVisible('messages')" @click="activeTool = 'messages'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'messages' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <MessageCircle class="w-5 h-5" />
                    <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Messages</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
                 </button>
 
                 <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
@@ -1136,6 +1291,23 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- ═══ Ask Syn (Cmd/Ctrl+J) ═══ -->
+    <!--
+      Last in the tree and fixed to the bottom, so it sits over whatever screen
+      is open rather than inside one of them. It needs a vault: with none
+      chosen there is nothing for Syn to read and nothing to save an exchange
+      into.
+    -->
+    <AskBar
+      v-if="askBarAllowed"
+      :open="askBarOpen"
+      :vault-path="vaultPath"
+      :focus="askFocus"
+      @close="askBarOpen = false"
+      @open-in-messages="continueInMessages"
+      @thread="chooseThread"
+    />
 </template>
 
 <style scoped>

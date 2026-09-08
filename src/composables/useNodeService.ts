@@ -31,7 +31,8 @@ export type NodeType =
   | 'quickcap' | 'finance_month' | 'finance_config' | 'finance_debts'
   | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter' | 'view' | 'schema'
   | 'syn_memory'
-  | 'syn_skill';
+  | 'syn_skill'
+  | 'syn_thread';
 
 export interface WriteNodeParams {
   relPath: string;

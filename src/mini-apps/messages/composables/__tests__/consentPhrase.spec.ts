@@ -19,6 +19,9 @@ const every: Capability[] = [
   'VaultWrite',
   'VaultStructural',
   { NetRead: { domain: 'example.com' } },
+  // The browser. It reached the card as "Syn wants to read from ." once, back
+  // when it was a `NetRead` with no host to name.
+  'Browse',
   { NetWrite: { domain: 'example.com', tool: 'post_message' } },
   { Spend: { cents_estimate: 250 } },
   'Execute',

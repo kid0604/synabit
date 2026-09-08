@@ -8,7 +8,12 @@ use std::collections::HashSet;
 /// Long enough that a machine off for a fortnight does not re-announce
 /// everything it missed on the way back, short enough that the table stays
 /// small forever rather than growing with the age of the vault.
-const KEEP_DAYS: i64 = 30;
+/// Public so `syn::notice` can assert its own window against it: a notice
+/// that considered itself "already said" for longer than the record survives
+/// would announce itself again the day after the row was pruned, which is a
+/// bug that only shows up a month after anybody could still remember writing
+/// it.
+pub const KEEP_DAYS: i64 = 30;
 
 impl DbBridge {
     /// The reminders already announced on or after `since` (a unix second).

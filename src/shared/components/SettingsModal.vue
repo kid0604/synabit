@@ -1214,7 +1214,7 @@ const setupE2ee = () => {
         message="Are you sure you want to disconnect? Your local data will be safe."
         confirm-text="Disconnect"
         cancel-text="Cancel"
-        type="danger"
+        is-destructive
         @confirm="showConfirmDisconnectP2P = false; emit('disconnect-server')"
         @cancel="showConfirmDisconnectP2P = false"
       />

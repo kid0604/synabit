@@ -20,6 +20,7 @@ import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight,
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
+import FootingMark from './FootingMark.vue';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
 hljs.registerLanguage('javascript', javascript);
@@ -587,9 +588,17 @@ const copyContent = async () => {
           </div>
         </div>
 
-        <!-- Source Citations (only for assistant messages with sources) -->
-        <div v-if="message.role === 'assistant' && message.sources?.length" 
-             class="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50">
+        <!-- What this answer stood on, and what it can point at. One rule
+             above both, because they are the same statement at two levels of
+             detail: the mark says whether there is a source, the chips say
+             which. See `FootingMark.vue`. -->
+        <div
+          v-if="message.role === 'assistant' && (message.footing || message.sources?.length)"
+          class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50 space-y-2"
+        >
+          <FootingMark v-if="message.footing" :footing="message.footing" />
+
+          <div v-if="message.sources?.length" class="flex flex-wrap gap-1.5">
           <button
             v-for="source in message.sources"
             :key="source.id"
@@ -601,6 +610,7 @@ const copyContent = async () => {
             <FileText class="w-3 h-3" />
             {{ source.title }}
           </button>
+          </div>
         </div>
       </div>
 

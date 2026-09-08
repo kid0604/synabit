@@ -94,7 +94,7 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
             how: "the nodes were trashed, not erased; list_trash and restore_node bring them back"
                 .into(),
         },
-        Capability::NetRead { .. } => Reversal::Nothing,
+        Capability::Browse | Capability::NetRead { .. } => Reversal::Nothing,
         Capability::NetWrite { domain, .. } => Reversal::Manual {
             how: format!("whatever was sent is at {domain} now; undoing it happens there"),
         },
@@ -153,9 +153,16 @@ pub trait ToolProvider<R: tauri::Runtime>: Send + Sync {
     /// Takes the context so the list can differ per run. Nothing varies it yet.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition>;
 
-    /// What kind of power a tool of this name has, or `None` if this provider
-    /// does not offer it.
-    fn capability(&self, tool: &str) -> Option<Capability>;
+    /// What kind of power this call has, or `None` if this provider does not
+    /// offer the tool.
+    ///
+    /// Takes the arguments as well as the name, because for anything reaching
+    /// outside the machine the *scope* is in them. `NetRead` promises to ask
+    /// once per host and remember; a capability computed from the name alone
+    /// could only say "the internet", and one yes would have granted every
+    /// site there is — which would make that promise false while every doc
+    /// comment still claimed it.
+    fn capability(&self, tool: &str, args: &Value) -> Option<Capability>;
 
     fn execute(&self, ctx: &RunContext<R>, tool: &str, args: &Value) -> AppResult<ToolOutcome>;
 }
@@ -177,13 +184,18 @@ impl VaultTools {
     /// Every name in `get_tool_definitions()` must appear here, and a test
     /// asserts it — so a tool added without deciding what sort of power it has
     /// fails to build rather than defaulting to "whatever the others get".
-    fn table(tool: &str) -> Option<Capability> {
+    /// `_args` because nothing needs them today: `browse` used to read the host
+    /// out of them and no longer does, since one capability covers the tool.
+    /// The parameter stays because the question *"what power is this call
+    /// about to use"* is one a future tool may well answer differently for
+    /// different arguments — a `run_recipe` that could declare its steps, say.
+    fn table(tool: &str, _args: &Value) -> Option<Capability> {
         use Capability::*;
         Some(match tool {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
             | "list_versions" | "search_feed_articles" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
-            | "load_skill" => {
+            | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL => {
                 VaultRead
             }
 
@@ -199,6 +211,16 @@ impl VaultTools {
 
             "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => VaultStructural,
 
+            // The one thing here that leaves the machine.
+            //
+            // One capability, whatever the argument is. It used to be scoped to
+            // the host when the call named one, which asked a question nobody
+            // could answer: given a question rather than an address, `browse`
+            // searches and then opens what the results point at, so the host is
+            // unknown when the card is drawn and already read by the time it is
+            // known. See `Capability::Browse`.
+            name if name == crate::syn::tools::BROWSE_TOOL => Browse,
+
             _ => return None,
         })
     }
@@ -209,16 +231,23 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         "vault"
     }
 
-    fn definitions(&self, _ctx: &RunContext<R>) -> Vec<ToolDefinition> {
-        crate::syn::tools::get_tool_definitions()
+    /// What this vault's settings say Syn can actually do.
+    ///
+    /// A settings read per run, to leave `web_search` out when no endpoint is
+    /// configured. Describing a tool that cannot work costs tokens on every
+    /// turn and ends in a model reaching for it and failing, which is worse
+    /// than never having offered it.
+    fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
+        let settings = crate::syn::settings::load_settings(ctx.vault_path).unwrap_or_default();
+        crate::syn::tools::get_tool_definitions_for(&settings)
     }
 
-    fn capability(&self, tool: &str) -> Option<Capability> {
-        Self::table(tool)
+    fn capability(&self, tool: &str, args: &Value) -> Option<Capability> {
+        Self::table(tool, args)
     }
 
     fn execute(&self, ctx: &RunContext<R>, tool: &str, args: &Value) -> AppResult<ToolOutcome> {
-        let capability = Self::table(tool)
+        let capability = Self::table(tool, args)
             .ok_or_else(|| crate::error::AppError::General(format!("Unknown tool: {tool}")))?;
 
         let content = crate::syn::tools::execute_tool(&ctx.tools(), tool, args)?;
@@ -262,7 +291,7 @@ impl<R: tauri::Runtime> ToolProvider<R> for SendTest {
         }]
     }
 
-    fn capability(&self, tool: &str) -> Option<Capability> {
+    fn capability(&self, tool: &str, _args: &Value) -> Option<Capability> {
         (tool == "send_test").then(|| Capability::NetWrite {
             domain: "example.test".to_string(),
             tool: "send_test".to_string(),
@@ -279,11 +308,86 @@ impl<R: tauri::Runtime> ToolProvider<R> for SendTest {
     }
 }
 
+/// One tool, as somebody deciding whether to trust this thing would read it.
+///
+/// # Why this is a screen and not just a list in the source
+///
+/// The run inspector could answer *what did Syn do* (the transcript), *what was
+/// it told* (the prompt), *what has it been allowed* (the ledger) — and not
+/// **what can it reach at all**. The catalogue existed the whole time and was
+/// read in exactly one place in the codebase, by `syn_recipe_problems`, which
+/// took the names to validate a recipe and threw the rest away.
+///
+/// That is the question people ask *before* they decide to trust something,
+/// not after. `table` already knows what power each tool needs and
+/// `reversal_of` already knows what puts it back; neither had ever reached a
+/// person.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct ToolCard {
+    pub name: String,
+    /// The description the model is given, verbatim.
+    ///
+    /// Not a friendlier paraphrase written for this screen. This panel's whole
+    /// job is to show what Syn is actually told, and a second, kinder wording
+    /// would be a second thing to keep in step — and the one people read would
+    /// be the one that was not sent.
+    pub description: String,
+    /// `None` would mean a tool the registry cannot classify.
+    ///
+    /// `every_tool_that_is_offered_has_a_declared_capability` makes that
+    /// impossible today, and it
+    /// stays an `Option` so that if it ever became possible the screen would
+    /// say so in amber rather than quietly pick a default.
+    pub capability: Option<Capability>,
+    /// What puts it back, derived from the capability rather than declared
+    /// twice.
+    pub reversal: Option<Reversal>,
+}
+
+/// Every tool a chat can reach, with what it needs and what undoes it.
+///
+/// Built from `get_tool_definitions()` paired with the registry's own
+/// classification, rather than from `ToolProvider::definitions` — that takes a
+/// `RunContext`, which needs a live database and an app handle, and this is
+/// asked for by a panel with neither.
+///
+/// The shortcut holds only while `for_chat` has one provider whose definitions
+/// are exactly that list. `the_catalogue_covers_what_a_chat_can_reach` is the
+/// guard: add a second provider and it fails here rather than silently showing
+/// a screen that is missing half of what Syn can do.
+pub fn catalogue() -> Vec<ToolCard> {
+    let registry = Registry::<tauri::Wry>::for_chat();
+    crate::syn::tools::get_tool_definitions()
+        .into_iter()
+        .map(|definition| {
+            // No arguments: this is the catalogue describing what a tool
+            // *is*, not a call about to be made. A scoped capability answers
+            // with an empty scope and the screen says so.
+            let capability = registry.capability_of(&definition.function.name, &Value::Null);
+            ToolCard {
+                name: definition.function.name,
+                description: definition.function.description,
+                reversal: capability.as_ref().map(reversal_of),
+                capability,
+            }
+        })
+        .collect()
+}
+
 pub struct Registry<R: tauri::Runtime> {
     providers: Vec<Box<dyn ToolProvider<R>>>,
 }
 
 impl<R: tauri::Runtime> Registry<R> {
+    /// No providers at all — a turn that answers from what it was given.
+    ///
+    /// The instant tempo: the question was recognised as a count, the count was
+    /// run before the model was asked, and there is nothing left to look up. A
+    /// turn with tools would spend a round deciding not to use them.
+    pub fn none() -> Self {
+        Self { providers: Vec::new() }
+    }
+
     /// The providers a chat gets. One, today.
     pub fn for_chat() -> Self {
         Self {
@@ -313,8 +417,8 @@ impl<R: tauri::Runtime> Registry<R> {
     /// question to ask" and lets `execute` produce the real error, so an
     /// invented tool name fails as an unknown tool rather than as a permission
     /// problem — two different things to be told.
-    pub fn capability_of(&self, tool: &str) -> Option<Capability> {
-        self.providers.iter().find_map(|p| p.capability(tool))
+    pub fn capability_of(&self, tool: &str, args: &Value) -> Option<Capability> {
+        self.providers.iter().find_map(|p| p.capability(tool, args))
     }
 
     /// Run a tool, whoever owns it.
@@ -324,7 +428,7 @@ impl<R: tauri::Runtime> Registry<R> {
     /// else.
     pub fn execute(&self, ctx: &RunContext<R>, tool: &str, args: &Value) -> AppResult<ToolOutcome> {
         for provider in &self.providers {
-            if provider.capability(tool).is_some() {
+            if provider.capability(tool, args).is_some() {
                 return provider.execute(ctx, tool, args);
             }
         }
@@ -349,7 +453,7 @@ mod tests {
         let missing: Vec<String> = crate::syn::tools::get_tool_definitions()
             .into_iter()
             .map(|d| d.function.name)
-            .filter(|name| VaultTools::table(name).is_none())
+            .filter(|name| VaultTools::table(name, &Value::Null).is_none())
             .collect();
 
         assert!(
@@ -377,6 +481,8 @@ mod tests {
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
+            crate::syn::tools::LOOK_BACK_TOOL,
+            crate::syn::tools::BROWSE_TOOL,
         ];
 
         for name in declared {
@@ -385,7 +491,7 @@ mod tests {
                 "`{name}` has a capability but is not offered to the model any more"
             );
             assert!(
-                VaultTools::table(name).is_some(),
+                VaultTools::table(name, &Value::Null).is_some(),
                 "`{name}` is in this list but not in the table"
             );
         }
@@ -434,9 +540,128 @@ mod tests {
         );
     }
 
+    /// The catalogue is the whole of what a chat can reach, not a sample.
+    ///
+    /// `catalogue` pairs the static definition list with the registry's
+    /// classification rather than asking the providers, because
+    /// `ToolProvider::definitions` needs a live `RunContext` and the panel
+    /// asking has none. That shortcut is exact while `for_chat` holds one
+    /// provider offering exactly that list — and this is where it stops being
+    /// exact, loudly, rather than in a screen quietly missing half of what Syn
+    /// can do.
+    #[test]
+    fn the_catalogue_covers_what_a_chat_can_reach() {
+        let cards = catalogue();
+        let offered: Vec<String> = crate::syn::tools::get_tool_definitions()
+            .into_iter()
+            .map(|t| t.function.name)
+            .collect();
+
+        assert_eq!(cards.len(), offered.len(), "the catalogue lost or invented a tool");
+        for name in &offered {
+            assert!(cards.iter().any(|c| &c.name == name), "`{name}` is missing");
+        }
+
+        // The registry must claim every one of them. A card with no capability
+        // renders as unclassified, which is the honest failure — but it should
+        // never happen, and this says so here as well as at the table.
+        let unclassified: Vec<&str> = cards
+            .iter()
+            .filter(|c| c.capability.is_none())
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(unclassified.is_empty(), "no declared power: {unclassified:?}");
+    }
+
+    /// The screen can name every power the catalogue can carry.
+    ///
+    /// `capabilityLabel` maps a capability to an i18n key by lowercasing the
+    /// variant name. A capability with no matching key renders as the raw key
+    /// string — no crash, no red anything, just `syn.cap_execute` sitting in
+    /// the list — which is exactly the kind of failure nobody reports.
+    #[test]
+    fn every_power_a_tool_can_need_has_words_in_both_languages() {
+        let variants = [
+            Capability::VaultRead,
+            Capability::VaultWrite,
+            Capability::VaultStructural,
+            Capability::NetRead { domain: "x".into() },
+            Capability::NetWrite { domain: "x".into(), tool: "y".into() },
+            Capability::Spend { cents_estimate: 1 },
+            Capability::Execute,
+        ];
+
+        for locale in ["en", "vi"] {
+            let raw = std::fs::read_to_string(format!("../src/i18n/locales/{locale}.json"))
+                .expect("locale file");
+            let json: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
+            let syn = json.get("syn").expect("a syn namespace");
+
+            for capability in &variants {
+                // The name the frontend lowercases, which is the outer key for
+                // the struct-like arms and the string itself for the unit ones.
+                let value = serde_json::to_value(capability).expect("serialises");
+                let name = value
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| value.as_object().and_then(|o| o.keys().next().cloned()))
+                    .expect("a variant name");
+                let key = format!("cap_{}", name.to_lowercase());
+                assert!(
+                    syn.get(&key).is_some(),
+                    "{locale}.json has no `syn.{key}` for {capability:?}"
+                );
+            }
+        }
+    }
+
+    /// A read says there is nothing to undo; a write says what puts it back.
+    /// That pairing is the reason the screen shows both columns, and deriving
+    /// the second from the first is what stops them ever disagreeing.
+    #[test]
+    fn the_catalogue_says_what_undoes_each_tool() {
+        let cards = catalogue();
+
+        let read = cards.iter().find(|c| c.name == "query_nodes").expect("query_nodes");
+        assert_eq!(read.reversal, Some(Reversal::Nothing));
+
+        let write = cards.iter().find(|c| c.name == "create_node").expect("create_node");
+        assert!(
+            matches!(write.reversal, Some(Reversal::Automatic { .. })),
+            "{:?}",
+            write.reversal
+        );
+
+        let structural = cards.iter().find(|c| c.name == "delete_kind").expect("delete_kind");
+        assert!(matches!(structural.reversal, Some(Reversal::Automatic { .. })));
+    }
+
+    /// The description is the model's, verbatim. A friendlier paraphrase
+    /// written for the screen would be a second wording to keep in step, and
+    /// the one people read would be the one that was never sent.
+    #[test]
+    fn the_description_is_the_one_the_model_is_given() {
+        let cards = catalogue();
+        for definition in crate::syn::tools::get_tool_definitions() {
+            let card = cards
+                .iter()
+                .find(|c| c.name == definition.function.name)
+                .expect("every tool has a card");
+            assert_eq!(card.description, definition.function.description);
+        }
+    }
+
+    /// A tool nothing in the table claims has no capability, and that is how the
+    /// engine knows to leave it alone rather than inventing a permission for it.
+    ///
+    /// This had never run. Its `#[test]` had drifted onto the function above —
+    /// which therefore carried two, and this one none — so it sat here as dead
+    /// code through every rewrite of `table`, including the one that replaced
+    /// the browsing arm. `cargo` did say so, in a warning, in a file with
+    /// twenty-five others.
     #[test]
     fn a_name_nothing_claims_is_not_a_capability() {
-        assert_eq!(VaultTools::table("send_email"), None);
-        assert_eq!(VaultTools::table(""), None);
+        assert_eq!(VaultTools::table("send_email", &Value::Null), None);
+        assert_eq!(VaultTools::table("", &Value::Null), None);
     }
 }

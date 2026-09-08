@@ -809,9 +809,8 @@ mod through_the_tools {
         let block = memory_block(&h.memories(), MEMORY_BUDGET_CHARS).expect("there are memories");
         let rendered = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: "",
-            personality: "auto",
             custom: None,
-            skills: None, memory: Some(&block),
+            skills: None, memory: Some(&block), focus: None, thread: None, counted: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1378,6 +1377,38 @@ mod does_memory_reach_the_model {
         },
     ];
 
+    /// The eval cases still read as sentences somebody would say.
+    ///
+    /// Written after a mechanical edit added a struct field across the file and
+    /// put `focus: None, thread: None, counted: None,` *inside* eleven of these strings — turning
+    /// "Ghét hành, không ăn được hành" into a memory with Rust in the middle of
+    /// it. Nothing failed. These cases are `#[ignore]`d, so they only run when
+    /// somebody spends API credit on them, and the corruption would have
+    /// surfaced as a model that suddenly got worse at remembering.
+    ///
+    /// That is the shape this repository keeps finding: a plausible number, or
+    /// a green suite, sitting on top of a broken instrument. A memory is a
+    /// sentence about a person, so this checks that each one still is.
+    #[test]
+    fn the_cases_are_sentences_and_not_code() {
+        for case in CASES {
+            for (field, text) in [("ask", case.ask), ("memory", case.memory)] {
+                for leak in ["focus:", "None,", "Some(", "budget_chars", "::"] {
+                    assert!(
+                        !text.contains(leak),
+                        "case {field} contains `{leak}`, which is code and not something \
+                         anybody said:\n  {text}"
+                    );
+                }
+                assert!(
+                    !text.trim().is_empty(),
+                    "an empty {field} measures nothing"
+                );
+            }
+        }
+    }
+
+
     fn harness() -> (tempfile::TempDir, String, tauri::AppHandle<tauri::test::MockRuntime>) {
         let dir = tempfile::tempdir().expect("temp vault");
         let vault = std::fs::canonicalize(dir.path())
@@ -1438,9 +1469,8 @@ mod does_memory_reach_the_model {
         let block = memory_block(&memories, MEMORY_BUDGET_CHARS).expect("something is pinned");
         let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: "",
-            personality: "auto",
             custom: None,
-            skills: None, memory: Some(&block),
+            skills: None, memory: Some(&block), focus: None, thread: None, counted: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1744,10 +1774,10 @@ mod memory_changes_the_answer {
                 let system = crate::syn::prompt::PromptPlan::for_chat(
                     crate::syn::prompt::ChatPrompt {
                         context: "",
-                        personality: &settings.personality,
                         custom: None,
                         skills: None,
                         memory,
+                        focus: None, thread: None, counted: None,
                         budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
                     },
                 )

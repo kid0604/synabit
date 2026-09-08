@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { CheckSquare, Calendar, Gift, MessageSquare, ArrowRight } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { CheckSquare, Calendar, Gift, MessageSquare, ArrowRight, Hourglass, Split, TriangleAlert } from 'lucide-vue-next';
 
 const props = defineProps<{
   notification: any;
@@ -11,8 +12,25 @@ const getIcon = (type: string) => {
   if (type === 'task_due') return CheckSquare;
   if (type === 'event_upcoming') return Calendar;
   if (type === 'birthday_upcoming') return Gift;
+  // Things Syn noticed rather than things the calendar is announcing. The
+  // subtypes come from `syn::notice::Kind::subtype`.
+  if (type === 'syn_stuck_thread') return Hourglass;
+  if (type === 'syn_contradiction') return Split;
+  if (type === 'syn_degrading_skill') return TriangleAlert;
   return MessageSquare;
 };
+
+/**
+ * Whether this card is Syn noticing something, rather than the calendar
+ * reminding about something.
+ *
+ * They are two different acts and the card should not pretend otherwise. A
+ * reminder is time-bound and the app owes it to you; a notice is a colleague
+ * saying they spotted something and did nothing about it. The tint is the only
+ * difference in weight, deliberately — a notice that shouted would be an
+ * interruption, and interrupting has its own contract and is not this.
+ */
+const isNotice = computed(() => String(props.notification?.subtype ?? '').startsWith('syn_'));
 
 const formatTime = (isoString?: string) => {
     if (!isoString) return '';
@@ -31,7 +49,12 @@ const formatTime = (isoString?: string) => {
       <div class="bg-white dark:bg-surface-dark border border-gray-100 dark:border-border-dark shadow-sm rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group w-full max-w-[80%] hover:border-violet-200 dark:hover:border-violet-500/30 transition-colors">
           
           <div class="flex items-start gap-3">
-              <div class="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-500 flex-shrink-0 mt-0.5">
+              <div
+                class="p-2 rounded-lg flex-shrink-0 mt-0.5"
+                :class="isNotice
+                  ? 'bg-violet-50 dark:bg-violet-900/20 text-violet-500'
+                  : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500'"
+              >
                   <component :is="getIcon(notification.subtype)" class="w-5 h-5" />
               </div>
               <div class="flex-1">

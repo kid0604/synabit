@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { Wrench } from 'lucide-vue-next';
-import type { SynToolCallEvent } from '../types';
+import { Wrench, Zap } from 'lucide-vue-next';
+import type { SynToolCallEvent, Tempo } from '../types';
 
 defineProps<{
   toolCalls?: SynToolCallEvent[];
+  /**
+   * How heavy this turn is, if the backend has said yet.
+   *
+   * The same three dots for a count answered from the index and for a question
+   * that will take four rounds is what makes the fast one feel slow and the
+   * slow one feel broken. An instant turn says so; a working one says it may
+   * take a moment, which is the sentence that lets somebody look away.
+   */
+  tempo?: Tempo | null;
 }>();
 </script>
 
@@ -15,6 +24,13 @@ defineProps<{
       <span class="text-sm text-violet-500 font-medium font-mono">
         {{ toolCalls[toolCalls.length - 1].tool_name }}
       </span>
+    </div>
+    <!-- Answered from the index: one round, no tools. Saying so is the point —
+         a spinner that implies work, for work that is not happening, is the
+         thing this tempo exists to remove. -->
+    <div v-else-if="tempo === 'instant'" class="flex items-center gap-2">
+      <Zap class="w-4 h-4 text-emerald-500" />
+      <span class="text-sm text-emerald-600 dark:text-emerald-400">{{ $t('syn.tempo_instant') }}</span>
     </div>
     <!-- Default thinking dots -->
     <div v-else class="flex items-center gap-1.5">
@@ -35,7 +51,15 @@ defineProps<{
       />
     </div>
     <span class="text-sm text-gray-500 dark:text-gray-400 italic">
-      {{ toolCalls?.length ? `${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}...` : $t('syn.thinking') }}
+      {{
+        toolCalls?.length
+          ? `${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}...`
+          : tempo === 'instant'
+            ? ''
+            : tempo === 'working'
+              ? $t('syn.tempo_working')
+              : $t('syn.thinking')
+      }}
     </span>
   </div>
 </template>

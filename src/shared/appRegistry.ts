@@ -60,9 +60,19 @@ export interface AppEntry {
  * and the bottom bar takes the first four that survive the platform filter in
  * this order.
  */
+/**
+ * `messages` is Syn.
+ *
+ * The id stays `messages` and the name does not. Ids are written to disk —
+ * `hiddenSidebarApps`, `protectedApps` and `defaultApp` all store them — so
+ * renaming one silently discards a setting somebody made; the *name* is only
+ * ever shown. The screen behind it stopped being a message list when it became
+ * the place that holds Syn's conversations, the work that is open, what it
+ * remembers, what it knows how to do, what it did and what it is allowed to do.
+ */
 export const BUILT_IN_APPS: readonly AppEntry[] = [
   { id: 'nexus',      name: 'Nexus',      icon: Globe,         view: () => import('../mini-apps/nexus/NexusApp.vue') },
-  { id: 'messages',   name: 'Messages',   icon: MessageCircle, view: () => import('../mini-apps/messages/MessagesApp.vue') },
+  { id: 'messages',   name: 'Syn',        icon: MessageCircle, view: () => import('../mini-apps/messages/MessagesApp.vue') },
   { id: 'quickcap',   name: 'QuickCap',   icon: Zap,           view: () => import('../mini-apps/quickcap/QuickCapApp.vue') },
   { id: 'note',       name: 'Notes',      icon: FileText,      view: () => import('../mini-apps/note/NoteApp.vue') },
   { id: 'task',       name: 'Tasks',      icon: CheckSquare,   view: () => import('../mini-apps/task/TaskApp.vue') },

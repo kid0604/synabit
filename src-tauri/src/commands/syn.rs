@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use tauri::Emitter;
 use crate::models::syn::{
     ModelInfo, ProviderStatus, RagConfig, SynChatRequest, SynConversation, SynConversationFull,
     SynMessage, SynProvider, SynSettings,
@@ -78,9 +79,40 @@ async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn
     }
 }
 
+/// The user's standing instructions, from the file if there is one.
+///
+/// `{vault}/SYN.md` wins whenever it exists; `custom_system_prompt` is what a
+/// vault written before the file existed still carries, and is moved into the
+/// file the first time this runs. Two sources for one thing is how they drift,
+/// so this is the only place either is read. See `syn::instructions`.
+fn standing_instructions(vault_path: &str, settings: &SynSettings) -> Option<String> {
+    if let Some(from_settings) = settings.custom_system_prompt.as_deref() {
+        crate::syn::instructions::migrate(vault_path, from_settings);
+    }
+    // The retired `personality` setting, carried across once. A voice somebody
+    // chose must not disappear in an upgrade with nothing saying why — the same
+    // reason `custom_system_prompt` was moved rather than dropped.
+    if let Some(chosen) = settings.personality.as_deref() {
+        crate::syn::instructions::migrate_personality(vault_path, chosen);
+    }
+    crate::syn::instructions::load(vault_path)
+        .or_else(|| settings.custom_system_prompt.clone())
+        .as_deref()
+        .and_then(crate::syn::instructions::block)
+}
+
 fn settings_for(vault_path: &str) -> SynSettings {
     crate::syn::settings::load_settings(vault_path).unwrap_or_default()
 }
+
+/// What every Syn command says when the switch is off.
+///
+/// One string, in one place, because the frontend matches on it to tell "Syn is
+/// off" apart from "the model provider is unreachable" — two states that look
+/// identical from the outside and mean opposite things about whether anything
+/// is wrong. A message that drifted between two call sites would show the
+/// user an error for a choice they made on purpose.
+pub const SWITCHED_OFF: &str = "Syn is switched off";
 
 // ═══════════════════════════════════════════════════════════════
 //  PROVIDER STATUS & MODEL MANAGEMENT
@@ -200,9 +232,21 @@ pub async fn syn_send_message(
     vault_path: String,
     request: SynChatRequest,
     state: tauri::State<'_, crate::db::DbState>,
+    browser_state: tauri::State<'_, crate::syn::browser::Waiting>,
 ) -> Result<SynMessage, AppError> {
     // 1. Load settings (graceful fallback to defaults)
     let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+
+    // Off means off, and it has to be enforced here rather than only on the
+    // screen. A switch that hides the composer while the command still answers
+    // is a switch that lies: the ask bar, a stale window and anything added
+    // later all reach this function, and only this function can refuse them.
+    //
+    // Nothing is written before this returns — no conversation is touched, no
+    // run file appears — so switching Syn off mid-thought leaves nothing behind.
+    if !settings.enabled {
+        return Err(AppError::General(SWITCHED_OFF.to_string()));
+    }
 
     // 2. Load existing conversation
     let mut conv = conversation::get_conversation(&vault_path, &request.conversation_id)?;
@@ -238,20 +282,51 @@ pub async fn syn_send_message(
         .or_else(|| settings.default_model.clone())
         .unwrap_or_else(|| "llama3.2".to_string());
 
-    // 3. Create and append the user message
-    let user_message = SynMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        role: "user".to_string(),
-        content: request.message.clone(),
-        model: None,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        tokens: None,
-        duration_ms: None,
-        sources: None,
-        tool_calls_log: None,
-        images: request.images.clone(),
+    // 3. Create and append the user message — unless this is the same question
+    //    being carried on after Syn stopped to ask permission.
+    //
+    //    Carrying on is not a new turn. Nobody typed anything: they pressed a
+    //    button on a card, and the question still on the table is the one they
+    //    already asked. Appending "" as a user message would put an empty
+    //    bubble in the conversation and hand the model a turn with nothing in
+    //    it. See `syn_answer_consent`.
+    let carrying_on = request.resume_run.as_deref();
+    let question = if carrying_on.is_some() {
+        // The stopped run left an assistant turn with no words in it — that is
+        // what `LoopEnd::NeedsConsent` assembles. Dropped rather than kept:
+        // sending it back to the model is a turn that says nothing, and some
+        // providers refuse an empty assistant message outright.
+        if conv
+            .messages
+            .last()
+            .is_some_and(|m| m.role == "assistant" && m.content.trim().is_empty())
+        {
+            conv.messages.pop();
+        }
+
+        let Some(asked) = conv.messages.iter().rev().find(|m| m.role == "user") else {
+            return Err(AppError::General(
+                "There is nothing to carry on with in this conversation".to_string(),
+            ));
+        };
+        asked.content.clone()
+    } else {
+        let user_message = SynMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "user".to_string(),
+            content: request.message.clone(),
+            model: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            tokens: None,
+            duration_ms: None,
+            sources: None,
+            footing: None,
+            tool_calls_log: None,
+            images: request.images.clone(),
+        };
+        conv.messages.push(user_message);
+        request.message.clone()
     };
-    conv.messages.push(user_message);
 
     // 4. Build RAG config from settings and run retrieval
     let config = if settings.rag_enabled {
@@ -261,8 +336,7 @@ pub async fn syn_send_message(
             include_finance: settings.include_finance,
             include_feeds: settings.include_feeds,
             graph_expansion_depth: settings.graph_expansion_depth,
-            personality: settings.personality.clone(),
-        }
+            }
     } else {
         RagConfig {
             enabled: false,
@@ -272,7 +346,7 @@ pub async fn syn_send_message(
 
     // Retrieval, memory and the skill index in one lock: they are all reads,
     // and the lock has to be gone before anything async below.
-    let (retrieval, context_str, remembered, skill_index) = {
+    let (retrieval, context_str, remembered, skill_index, thread_block, counted) = {
         let db = state
             .lock()
             .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
@@ -309,11 +383,34 @@ pub async fn syn_send_message(
                 None
             });
 
+        // Is this a question the index already answers? Decided here, on the
+        // same lock as everything else, and the query is run *now* rather than
+        // asked for by the model — which is the whole of the instant tempo.
+        let counted = crate::syn::tempo::countable_types(&db)
+            .ok()
+            .and_then(|types| crate::syn::tempo::of(&question, &types))
+            .and_then(|instant| {
+                let found = db.run_node_query(&crate::syn::tempo::query_for(&instant)).ok()?;
+                let sample = crate::syn::tempo::sample(&found);
+                Some(crate::syn::tempo::block(&instant, found.total, &sample))
+            });
+
+        // The open thread, if the question came from inside one. Read on this
+        // lock with everything else, and best-effort for the same reason: a
+        // thread that has been trashed since the window remembered it is a
+        // reason to answer without it, not a reason to refuse the message.
+        let thread_block = request
+            .focus
+            .as_ref()
+            .and_then(|f| f.thread.as_deref())
+            .and_then(|id| crate::syn::thread::get(&db, id))
+            .map(|t| t.block());
+
         if settings.rag_enabled {
             let retrieval_result =
-                rag::retrieve_context(&db, &request.message, &conv.messages, &config)?;
+                rag::retrieve_context(&db, &question, &conv.messages, &config)?;
             let context_str = rag::format_context(&retrieval_result);
-            (retrieval_result, context_str, remembered, skill_index)
+            (retrieval_result, context_str, remembered, skill_index, thread_block, counted)
         } else {
             (
                 crate::models::syn::RetrievalResult {
@@ -324,6 +421,8 @@ pub async fn syn_send_message(
                 String::new(),
                 remembered,
                 skill_index,
+                thread_block,
+                counted,
             )
         }
     };
@@ -334,12 +433,14 @@ pub async fn syn_send_message(
     // prompt had already been built. They are a section of the plan now, so
     // there is one place that knows what the prompt is made of — and one place
     // that can report on it, which is what `syn_preview_prompt` reads.
+    let standing = standing_instructions(&vault_path, &settings);
     let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
         context: &context_str,
-        personality: &settings.personality,
-        custom: settings.custom_system_prompt.as_deref(),
+        custom: standing.as_deref(),
         skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
+        focus: request.focus.as_ref(),
+        thread: thread_block.as_deref(), counted: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
     .render();
@@ -355,13 +456,19 @@ pub async fn syn_send_message(
         tokens: None,
         duration_ms: None,
         sources: None,
+        footing: None,
         tool_calls_log: None,
         images: None,
     }];
     messages_for_llm.extend(conv.messages.iter().cloned());
 
     // 7. Everything this run is allowed to reach.
-    let registry = Registry::for_chat();
+    //
+    // Nothing, when the count is already in the prompt. A turn with tools would
+    // spend a round deciding not to use them, which is the cost this tempo
+    // exists to remove — see `syn::tempo`.
+    let instant = counted.is_some();
+    let registry = if instant { Registry::none() } else { Registry::for_chat() };
 
     // Use settings temperature as default, allow per-request override
     let temperature = request.temperature.or(Some(settings.temperature));
@@ -373,11 +480,44 @@ pub async fn syn_send_message(
     // survives the app being closed, which the local variables it replaced did
     // not — so a request that fails now leaves something to read rather than
     // nothing at all.
+    let mut budget = Budget::from_settings(&settings);
+    if instant {
+        // One round. There is nothing to come back for.
+        budget.iterations = Some(1);
+    }
+
+    // What the stopped run was about to do, which is the thing the user just
+    // gave permission for. Read off that run rather than worked out again — see
+    // `run::Run::pending_call` for the transcript that made this necessary.
+    let resume_call = carrying_on
+        .and_then(|id| crate::syn::run::get_run(&vault_path, id).ok())
+        .and_then(|stopped| stopped.pending_call);
+
     let mut run = Run::new(
-        request.message.clone(),
+        question.clone(),
         Some(request.conversation_id.clone()),
-        Budget::from_settings(&settings),
+        budget,
     );
+    run.tempo = if instant {
+        crate::syn::tempo::Tempo::Instant
+    } else {
+        crate::syn::tempo::Tempo::Working
+    };
+
+    // Said before the work starts, not after: somebody who is about to wait
+    // should know they are about to wait.
+    if let Err(e) = app.emit(
+        "syn-tempo",
+        serde_json::json!({
+            "conversation_id": request.conversation_id,
+            "tempo": run.tempo,
+        }),
+    ) {
+        log::error!("Failed to emit syn-tempo: {e}");
+    }
+    // Which piece of work this served, so that "do threads do anything" is a
+    // question the runs can answer. See `thread::usage`.
+    run.thread = request.focus.as_ref().and_then(|f| f.thread.clone());
     crate::syn::run::prune_runs(&vault_path);
 
     let engine = SynEngine::new(provider_for(&app, &settings).await);
@@ -397,6 +537,8 @@ pub async fn syn_send_message(
                 vault_path: &vault_path,
                 num_ctx: settings.num_ctx,
                 max_history: settings.max_history_messages,
+                browser: &browser_state,
+                resume_call,
             },
         )
         .await?;
@@ -408,8 +550,53 @@ pub async fn syn_send_message(
         .tool_calls_log
         .as_ref()
         .is_some_and(|l| !l.is_empty());
+
+    // Read before the move below. `assistant_message.sources` is only filled in
+    // when no tool was used, so asking the message afterwards would report zero
+    // retrieved for precisely the runs that had the most to stand on.
+    let retrieved = retrieval.sources.len();
+
     if !retrieval.sources.is_empty() && !used_tools {
         assistant_message.sources = Some(retrieval.sources);
+    }
+
+    // What the answer turned out to be standing on. Decided from the transcript
+    // and the tempo, both of which are already written down — nothing here asks
+    // the model what it thinks it knew. See `syn::footing`.
+    //
+    // Onto both: the run keeps it so "how often was Syn guessing" stays
+    // answerable after the conversation is deleted, and the message keeps it so
+    // the mark is still there when the conversation is reopened tomorrow.
+    // Only for a turn that produced an answer.
+    //
+    // A run that stopped to ask permission has no answer, and a footing is a
+    // statement about *what an answer was standing on*. Marking those was the
+    // first thing writing the footing down revealed: four of six runs in one
+    // conversation were consent stops, and each landed in the tally as a
+    // measured answer that had never been given.
+    //
+    // The emptiness of the reply is the test rather than the run's state,
+    // because it is the same question the tally is asking. A run can end in
+    // several ways with nothing said, and every one of them means the same
+    // thing here.
+    if !assistant_message.content.trim().is_empty() {
+        // The work is finished, so a "just this once" said during it stops
+        // standing. The next question is new work and is asked about again —
+        // which is the whole difference between that answer and `Always`.
+        crate::syn::consent::work_is_done(&request.conversation_id);
+
+        let footing = crate::syn::footing::of(&run, &crate::syn::footing::Evidence { retrieved });
+        run.footing = Some(footing);
+        assistant_message.footing = Some(footing);
+
+        // Written down, or it was never decided. `drive` saved the run for the
+        // last time before this line existed, so the footing was computed here,
+        // put on a struct that nothing saved again, and dropped — every run on
+        // disk read `null`, and `footing::tally` counted the vault's whole
+        // history as unmeasured. `ENOUGH_TO_MEAN_ANYTHING` was therefore never
+        // reached and the screen showed nothing, for ever, while looking like
+        // it was working.
+        crate::syn::run::save_run_best_effort(&vault_path, &run);
     }
 
     // 10. Add the assistant response to the conversation
@@ -429,7 +616,7 @@ pub async fn syn_send_message(
     // (message_count == 2 means: 1 user + 1 assistant, i.e., first exchange)
     let is_first_exchange = conv.messages.iter().filter(|m| m.role == "user").count() == 1;
     if is_first_exchange {
-        conv.meta.title = conversation::auto_title(&request.message);
+        conv.meta.title = conversation::auto_title(&question);
     }
 
     // Save the conversation
@@ -449,8 +636,15 @@ pub async fn syn_send_message(
         let provider = provider_for(&app, &settings).await;
         let vault = vault_path.clone();
         let model_name = model.clone();
-        let asked = request.message.clone();
+        let asked = question.clone();
         let answered = assistant_message.content.clone();
+        // Decided here, where the conversation is in hand: a correction needs
+        // something to correct, and only this side knows whether the assistant
+        // had already replied. See `syn::correction`.
+        let corrected = crate::syn::correction::looks_like_one(
+            &asked,
+            conv.messages.iter().any(|m| m.role == "assistant"),
+        );
         let run_id = run.id.clone();
         let conversation_id = request.conversation_id.clone();
         let num_ctx = settings.num_ctx;
@@ -472,6 +666,7 @@ pub async fn syn_send_message(
                 &existing,
                 &run_id,
                 Some(&conversation_id),
+                corrected,
             )
             .await;
 
@@ -863,6 +1058,12 @@ pub async fn syn_skill_trial(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<SkillTrial, AppError> {
     let settings = settings_for(&vault_path);
+    // A trial drives a run of its own, so the switch has to reach it as well —
+    // otherwise "Syn is off" would still be able to call tools from the skills
+    // screen.
+    if !settings.enabled {
+        return Err(AppError::General(SWITCHED_OFF.to_string()));
+    }
     let model = settings
         .default_model
         .clone()
@@ -919,12 +1120,12 @@ pub async fn syn_skill_trial(
 
     let provider = provider_for(&app, &settings).await;
     let ask = |skills: Option<&str>| {
+        let standing = standing_instructions(&vault_path, &settings);
         let system = PromptPlan::for_chat(ChatPrompt {
             context: "",
-            personality: &settings.personality,
-            custom: settings.custom_system_prompt.as_deref(),
+            custom: standing.as_deref(),
             skills,
-            memory: remembered.as_deref(),
+            memory: remembered.as_deref(), focus: None, thread: None, counted: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -979,6 +1180,72 @@ pub async fn syn_skill_trial(
 }
 
 /// Everything the user has agreed to, or refused, on this device.
+/// A page in the browsing window handing back what it is showing.
+///
+/// # The one command remote content may call
+///
+/// Everything else in this app is unreachable from a page — a capability's
+/// `remote` field defaults to `None`, so `capabilities/*.json` grant local
+/// content only, and `browser::the_browsing_window_grants_no_page_any_command`
+/// keeps it that way.
+///
+/// This is the single exception, and it is shaped to be a boring one: it takes
+/// a string and returns nothing. It cannot read the vault, touch a file, or
+/// reach another command. The string is the page's own HTML, which was always
+/// going to be written by a stranger — it goes straight into `web::wrap`, the
+/// boundary that already assumes exactly that.
+///
+/// The nonce is why an advert in an iframe cannot answer first with a page
+/// nobody asked for.
+#[tauri::command]
+pub async fn syn_browser_content(
+    waiting: tauri::State<'_, crate::syn::browser::Waiting>,
+    nonce: String,
+    url: String,
+    html: String,
+) -> Result<(), AppError> {
+    crate::syn::browser::accept(&waiting, &nonce, url, html);
+    Ok(())
+}
+
+/// Store the search endpoint's key, or clear it when blank.
+///
+/// The keychain, never the vault, on the same terms as the model provider's
+/// key — and there is deliberately no command that reads one back. The screen
+/// needs to know *whether* one is set, never what it is.
+#[tauri::command]
+pub async fn syn_set_search_key(app: tauri::AppHandle, key: String) -> Result<(), AppError> {
+    crate::secrets::SecretManager::set_syn_api_key(
+        Some(&app),
+        crate::syn::web::SEARCH_KEY_SLOT,
+        &key,
+    )
+    .map_err(AppError::General)
+}
+
+/// Whether a search key is stored. Never the key itself.
+#[tauri::command]
+pub async fn syn_has_search_key(app: tauri::AppHandle) -> Result<bool, AppError> {
+    Ok(
+        crate::secrets::SecretManager::get_syn_api_key(
+            Some(&app),
+            crate::syn::web::SEARCH_KEY_SLOT,
+        )
+        .is_some(),
+    )
+}
+
+/// Everything Syn can reach, with what each one needs and what undoes it.
+///
+/// The question the inspector could not answer. It had *what did it do*, *what
+/// was it told* and *what has it been allowed* — and no way to find out what it
+/// can reach in the first place, which is the question people ask before they
+/// decide to trust something rather than after.
+#[tauri::command]
+pub async fn syn_list_tools() -> Result<Vec<crate::syn::registry::ToolCard>, AppError> {
+    Ok(crate::syn::registry::catalogue())
+}
+
 #[tauri::command]
 pub async fn syn_list_grants(vault_path: String) -> Result<Vec<crate::syn::consent::Grant>, AppError> {
     Ok(crate::syn::consent::load(&vault_path).grants)
@@ -996,25 +1263,95 @@ pub async fn syn_audit_log(vault_path: String) -> Result<Vec<crate::syn::audit::
     Ok(crate::syn::audit::read(&vault_path))
 }
 
+/// Say which one was meant.
+///
+/// Records the pick and puts the question away. It does **not** carry on with
+/// the work — the same reasoning as `syn_answer_consent`: the person is in a
+/// conversation, the natural way to say *go on* is to say it, and work
+/// restarting behind them while they are still reading why it stopped is the
+/// thing a card in the transcript exists to avoid.
+///
+/// What the screen does instead is put the answer in the composer, so saying
+/// *go on* is one keystroke. See `syn::ambiguity`.
+#[tauri::command]
+pub async fn syn_answer_choice(
+    vault_path: String,
+    run_id: String,
+    node_id: String,
+) -> Result<(), AppError> {
+    let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    let Some(choice) = run.pending_choice.clone() else {
+        // Already answered, or answered in another window. Not an error.
+        return Ok(());
+    };
+
+    // Written into the transcript, not only cleared. "Syn stopped, and the
+    // user said this one" is the whole record of a decision somebody made, and
+    // a run that quietly resumed with no trace of being asked would be a run
+    // nobody can audit.
+    let named = choice
+        .candidates
+        .iter()
+        .find(|c| c.id == node_id)
+        .map(|c| c.title.clone())
+        .unwrap_or_else(|| node_id.clone());
+    run.note(
+        run.spent.iterations,
+        format!("Asked which of {}; the user said \"{named}\".", choice.candidates.len()),
+    );
+
+    run.pending_choice = None;
+    crate::syn::run::save_run(&vault_path, &run)?;
+    Ok(())
+}
+
 /// Answer the question a run stopped on.
 ///
-/// Records the answer and clears the question. It deliberately does not resume
-/// the run: the user is in a conversation, and the natural way to say "go on"
-/// is to say it. Resuming behind their back would mean work restarting while
-/// they are still reading why it stopped.
+/// Records the answer, clears the question, and says whether there was one —
+/// `false` means it had already been answered, here or in another window.
+///
+/// # Why the answer has to travel
+///
+/// The run that asked has stopped for good; the work carries on as a new run.
+/// So `Always` reaches it through the ledger, `Never` reaches it through the
+/// ledger, and `Once` — which the ledger deliberately does not record — would
+/// reach nothing at all. It was, until this, a button that changed nothing:
+/// the card went away, no permission was granted, and the next attempt asked
+/// the identical question.
+///
+/// `consent::allow_once` holds it in memory instead, keyed to this
+/// conversation and spent the first time it is used.
+///
+/// # And why answering carries on
+///
+/// The earlier shape stopped here and left it to the user to say *go on*, so
+/// that work would not restart while somebody was still reading why it
+/// stopped. That reasoning is right about `syn_answer_choice`, where the answer
+/// is a fact the next message has to carry. It is wrong here. Pressing **Just
+/// this once** *is* saying go on, and asking somebody to then say it again in
+/// words is asking the same question twice — which is what it felt like: a
+/// question, an answer, and silence.
+///
+/// The carrying-on is the caller's, not this command's: it holds the stream and
+/// the conversation. See `MessagesApp`.
 #[tauri::command]
 pub async fn syn_answer_consent(
     vault_path: String,
     run_id: String,
     answer: crate::syn::consent::Answer,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
     let Some(ask) = run.pending_consent.clone() else {
         // Already answered, or answered in another window. Not an error.
-        return Ok(());
+        return Ok(false);
     };
 
     crate::syn::consent::record(&vault_path, &ask.capability, answer, chrono::Utc::now())?;
+    if answer == crate::syn::consent::Answer::Once {
+        if let Some(conversation_id) = run.conversation_id.as_deref() {
+            crate::syn::consent::allow_until_done(conversation_id, &ask.capability);
+        }
+    }
     crate::syn::audit::record_best_effort(
         &vault_path,
         &run_id,
@@ -1026,9 +1363,25 @@ pub async fn syn_answer_consent(
         },
     );
 
+    // Written into the transcript, not only cleared — the same reason as
+    // `syn_answer_choice`. A run that was stopped, answered and carried on with
+    // no record of being asked is a run nobody can audit afterwards.
+    run.note(
+        run.spent.iterations,
+        format!(
+            "Asked permission to {}; the user said {}.",
+            ask.about,
+            match answer {
+                crate::syn::consent::Answer::Once => "just this once",
+                crate::syn::consent::Answer::Always => "always",
+                crate::syn::consent::Answer::Never => "never",
+            }
+        ),
+    );
+
     run.pending_consent = None;
     crate::syn::run::save_run(&vault_path, &run)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Signal the engine to stop the current generation.
@@ -1281,10 +1634,16 @@ pub async fn syn_clear_proposals(vault_path: String) -> Result<(), AppError> {
 /// `message` is optional: with one, retrieval runs and the preview includes the
 /// context that question would pull in, which is the only way to see how much
 /// of the window retrieval is taking. Without one, it is the fixed part.
+///
+/// `focus` is the screen to preview against, and the panel passes what the user
+/// is actually looking at. Without it, the one screen that says what Syn is told
+/// would be the one screen where the on-screen section is invisible — which is
+/// the failure this command exists to prevent.
 #[tauri::command]
 pub async fn syn_preview_prompt(
     vault_path: String,
     message: Option<String>,
+    focus: Option<crate::syn::focus::Focus>,
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<PromptPreview, AppError> {
     let settings = settings_for(&vault_path);
@@ -1318,8 +1677,7 @@ pub async fn syn_preview_prompt(
                 include_finance: settings.include_finance,
                 include_feeds: settings.include_feeds,
                 graph_expansion_depth: settings.graph_expansion_depth,
-                personality: settings.personality.clone(),
-            };
+                };
             let db = state
                 .lock()
                 .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
@@ -1329,15 +1687,208 @@ pub async fn syn_preview_prompt(
         _ => String::new(),
     };
 
+    let standing = standing_instructions(&vault_path, &settings);
     Ok(PromptPlan::for_chat(ChatPrompt {
         context: &context,
-        personality: &settings.personality,
-        custom: settings.custom_system_prompt.as_deref(),
+        custom: standing.as_deref(),
         skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
+        focus: focus.as_ref(), thread: None, counted: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
     .into())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  THREADS — the work that is open between the two of them
+// ═══════════════════════════════════════════════════════════════
+//
+// Three commands and no tools. A thread is an ordinary node, so `query_nodes`,
+// `get_node` and `update_node` already reach it and adding tools that repeat
+// them would cost tokens on every turn of every conversation for nothing.
+//
+// What is *not* ordinary is starting one, and that is deliberately a person's
+// job rather than the model's. A tool the model has to think of calling is a
+// tool that does not get called — `recall` went unused across fifteen real
+// runs. So: a button calls this, and from then on the thread reaches the model
+// by riding in the prompt. See `syn/thread.rs`.
+
+/// Every thread in the vault, most recently moved first.
+#[tauri::command]
+pub async fn syn_list_threads(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<crate::syn::thread::Thread>, AppError> {
+    let db = state
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+    crate::syn::thread::all(&db)
+}
+
+/// Start a thread, and answer with the node it became.
+///
+/// The body is the three questions work always has rather than an empty file,
+/// because an empty document is one nobody writes in and both of them are meant
+/// to.
+#[tauri::command]
+pub async fn syn_open_thread(
+    app: tauri::AppHandle,
+    vault_path: String,
+    title: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<String, AppError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::General("A thread needs a name".into()));
+    }
+
+    // Through `execute_tool` rather than a write of its own. That is the path
+    // every node Syn creates already takes — free path, frontmatter, index,
+    // and the `node:created` event the open windows listen for — and a second
+    // implementation of it is a second thing to keep correct.
+    let ctx = crate::syn::tools::ToolContext {
+        db: state.inner(),
+        vault_path: &vault_path,
+        app: &app,
+        run_id: None,
+    };
+
+    let result = crate::syn::tools::execute_tool(
+        &ctx,
+        "create_node",
+        &serde_json::json!({
+            "node_type": crate::syn::thread::THREAD_TYPE,
+            "title": title,
+            "content": crate::syn::thread::starting_body(),
+            "properties": crate::syn::thread::frontmatter(
+                crate::syn::thread::State::Mine,
+                None,
+            ),
+        }),
+    )?;
+
+    serde_json::from_str::<serde_json::Value>(&result)
+        .ok()
+        .and_then(|v| v.get("node_id").and_then(|id| id.as_str()).map(str::to_string))
+        .ok_or_else(|| AppError::General(format!("The thread was not created: {result}")))
+}
+
+/// Move a thread: whose turn it is, and what it is waiting for.
+///
+/// A command rather than leaving it to `update_node`, because `state` is the
+/// one field with a closed set of values and the one a typo turns into
+/// `resting` silently. Everything else about a thread is edited as the node it
+/// is.
+#[tauri::command]
+pub async fn syn_move_thread(
+    app: tauri::AppHandle,
+    vault_path: String,
+    id: String,
+    thread_state: String,
+    waiting_for: Option<String>,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<(), AppError> {
+    let parsed = crate::syn::thread::State::parse(&thread_state);
+    if parsed.as_str() != thread_state.trim().to_lowercase() {
+        return Err(AppError::General(format!(
+            "`{thread_state}` is not a state a thread has"
+        )));
+    }
+
+    let ctx = crate::syn::tools::ToolContext {
+        db: state.inner(),
+        vault_path: &vault_path,
+        app: &app,
+        run_id: None,
+    };
+    crate::syn::tools::execute_tool(
+        &ctx,
+        "update_node",
+        &serde_json::json!({
+            "node_id": id,
+            "properties": crate::syn::thread::frontmatter(parsed, waiting_for.as_deref()),
+        }),
+    )?;
+    Ok(())
+}
+
+/// How often Syn was standing on something, across the runs still on disk.
+///
+/// The one number `syn::footing` exists to produce. Collected since Nhát 5 and
+/// shown by nothing — which is the fourth time this codebase has measured
+/// something and left it where nobody would see it. See `footing::Tally`.
+#[tauri::command]
+pub async fn syn_footing_tally(
+    vault_path: String,
+) -> Result<crate::syn::footing::Tally, AppError> {
+    let runs = crate::syn::run::load_all(&vault_path)?;
+    Ok(crate::syn::footing::tally(&runs))
+}
+
+/// How often a thread was in front of Syn, and how often it wrote back.
+///
+/// Read off the run transcripts, which already record every tool call. Nothing
+/// new is written to say this — the one field added was `Run::thread`, because
+/// the prompt that carried the thread is rebuilt each turn and kept nowhere.
+#[tauri::command]
+pub async fn syn_thread_usage(
+    vault_path: String,
+) -> Result<crate::syn::thread::Stats, AppError> {
+    Ok(crate::syn::thread::usage(&crate::syn::run::load_all(&vault_path)?))
+}
+
+/// What the user has told Syn to always do, as they wrote it.
+///
+/// The whole file, not the part that fits the prompt: somebody editing their
+/// own instructions should see all of them. `syn::instructions::block` is what
+/// decides how much is sent, and it says so when it cuts.
+#[tauri::command]
+pub async fn syn_get_instructions(vault_path: String) -> Result<String, AppError> {
+    let settings = settings_for(&vault_path);
+    if let Some(from_settings) = settings.custom_system_prompt.as_deref() {
+        crate::syn::instructions::migrate(&vault_path, from_settings);
+    }
+    Ok(crate::syn::instructions::load(&vault_path)
+        .or(settings.custom_system_prompt)
+        .unwrap_or_default())
+}
+
+/// Write them. An empty body removes the file.
+///
+/// The setting is cleared at the same time, so that what is on screen and what
+/// reaches the model cannot come from two places.
+#[tauri::command]
+pub async fn syn_save_instructions(vault_path: String, body: String) -> Result<(), AppError> {
+    crate::syn::instructions::save(&vault_path, &body)
+        .map_err(|e| AppError::General(format!("Could not write {}: {e}", crate::syn::instructions::FILE)))?;
+
+    let mut settings = settings_for(&vault_path);
+    if settings.custom_system_prompt.is_some() {
+        settings.custom_system_prompt = None;
+        crate::syn::settings::save_settings(&vault_path, &settings)?;
+    }
+    Ok(())
+}
+
+/// The four-question draft, for the editor to offer on an empty file.
+///
+/// A command rather than a copy of the text in TypeScript, for the reason every
+/// other shared literal in this app is read across the boundary rather than
+/// duplicated: two copies of a contract drift, and the half the user reads
+/// would not be the half Syn is held to.
+///
+/// It only hands the text over. Nothing here writes it — the file appears when
+/// the user saves, and until then they have agreed to nothing.
+#[tauri::command]
+pub async fn syn_instructions_template() -> Result<String, AppError> {
+    Ok(crate::syn::instructions::TEMPLATE.to_string())
+}
+
+/// Where the file is, so the interface can say it.
+#[tauri::command]
+pub async fn syn_instructions_path(vault_path: String) -> Result<String, AppError> {
+    Ok(crate::syn::instructions::path(&vault_path)
+        .to_string_lossy()
+        .to_string())
 }
 
 /// Cancel an ongoing model pull.

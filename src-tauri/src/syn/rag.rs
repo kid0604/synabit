@@ -1011,6 +1011,7 @@ mod tests {
             tokens: None,
             duration_ms: None,
             sources: None,
+            footing: None,
             tool_calls_log: None,
             images: None,
         }];
@@ -1398,14 +1399,13 @@ mod rag_vs_agentic {
                 include_finance: settings.include_finance,
                 include_feeds: settings.include_feeds,
                 graph_expansion_depth: settings.graph_expansion_depth,
-                personality: settings.personality.clone(),
-            };
+                };
             let retrieval =
                 retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
-            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: &format_context(&retrieval), personality: &settings.personality, custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: &format_context(&retrieval), custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         } else {
-            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: &settings.personality, custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+            crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render()
         };
 
@@ -1418,6 +1418,7 @@ mod rag_vs_agentic {
             tokens: None,
             duration_ms: None,
             sources: None,
+            footing: None,
             tool_calls_log: None,
             images: None,
         };
@@ -1452,6 +1453,8 @@ mod rag_vs_agentic {
                     vault_path: vault.to_str().expect("utf8"),
                     num_ctx: settings.num_ctx,
                     max_history: settings.max_history_messages,
+                    browser: &crate::syn::browser::Waiting::default(),
+                    resume_call: None,
                 },
             )
             .await;
@@ -2006,8 +2009,7 @@ mod rag_vs_agentic {
             include_finance: true,
             include_feeds: true,
             graph_expansion_depth: 1,
-            personality: "auto".into(),
-        };
+            };
 
         // What the pipeline returns, after both filters.
         let after_filters =

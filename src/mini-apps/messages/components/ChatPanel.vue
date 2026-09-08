@@ -5,10 +5,11 @@ import { useI18n } from 'vue-i18n';
 import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer } from '../types';
+import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer, AmbiguousChoice, Tempo } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
 import ConsentCard from './ConsentCard.vue';
+import ChoiceCard from './ChoiceCard.vue';
 import NotificationCard from './NotificationCard.vue';
 import { useLicenseStore } from '../../../stores/useLicenseStore';
 
@@ -20,11 +21,16 @@ const props = defineProps<{
   streamingContent: string;
   isStreaming: boolean;
   toolCalls?: SynToolCallEvent[];
+  /** How heavy this turn is, once the backend has said. See `syn::tempo`. */
+  tempo?: Tempo | null;
   vaultPath?: string;
   connectionLost?: boolean;
   chatError?: string | null;
   /** The question a run stopped on, when one has. */
   consentAsk?: ConsentAsk | null;
+  /** *Which one?* — see `syn::ambiguity`. Never both at once: a run stops on
+   *  the first thing it needs, so two cards means two runs. */
+  choiceAsk?: AmbiguousChoice | null;
 }>();
 
 const emit = defineEmits<{
@@ -34,6 +40,7 @@ const emit = defineEmits<{
   'regenerate': [messageId: string];
   'notification-action': [notification: any];
   consent: [choice: ConsentAnswer];
+  choice: [nodeId: string];
 }>();
 
 const inputText = ref('');
@@ -363,12 +370,15 @@ const handleStop = () => {
           <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-violet-500/20">
             <Sparkles class="w-4 h-4 text-white animate-pulse" />
           </div>
-          <StreamingIndicator :tool-calls="toolCalls" />
+          <StreamingIndicator :tool-calls="toolCalls" :tempo="tempo" />
         </div>
 
         <!-- Where the work is, not over it. A modal arrives on top of whatever
              somebody was reading and trains them to click it away; this sits at
              the end of the conversation it belongs to and can be left alone. -->
+        <div v-if="choiceAsk" class="px-4">
+          <ChoiceCard :choice="choiceAsk" @answer="emit('choice', $event)" />
+        </div>
         <div v-if="consentAsk" class="px-4">
           <ConsentCard :ask="consentAsk" @answer="emit('consent', $event)" />
         </div>

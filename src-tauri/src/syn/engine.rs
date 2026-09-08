@@ -172,7 +172,11 @@ enum LoopEnd {
     /// the question goes to them — not to a modal, which would make the answer
     /// a reflex, but into the conversation where the work it is about is
     /// visible.
-    NeedsConsent(Box<crate::syn::consent::Ask>),
+    NeedsConsent(Box<crate::syn::consent::Ask>, Box<crate::models::syn::ToolCall>),
+    /// A query found several and the model was about to act on one of them.
+    /// Which one is the user's to say, so the run stops and asks — see
+    /// `syn::ambiguity` for why this is decided here and not by the model.
+    NeedsChoice(Box<crate::syn::ambiguity::Choice>),
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -199,6 +203,13 @@ pub struct DriveRequest<'a, R: tauri::Runtime> {
     pub vault_path: &'a str,
     pub num_ctx: u32,
     pub max_history: usize,
+    /// The one page the browsing window may be holding. See `syn::browser`.
+    pub browser: &'a crate::syn::browser::Waiting,
+    /// The call a stopped run was about to make, now that it may.
+    ///
+    /// Injected as the first turn instead of asking the provider — see the loop.
+    /// `None` for an ordinary send. See `Run::pending_call`.
+    pub resume_call: Option<crate::models::syn::ToolCall>,
 }
 
 /// The loop, over whichever provider it was given.
@@ -263,6 +274,12 @@ impl SynEngine {
         crate::syn::run::save_run_best_effort(req.vault_path, run);
         unregister_run(&run.id);
 
+        // The browsing window belongs to the run, not to a page read. Here
+        // rather than in `visit` so a run that reads three pages shows one
+        // window rather than flickering three — and so every way out of a run
+        // closes it: answered, failed, cancelled, or stopped to ask.
+        crate::syn::browser::close_when_done(req.app, req.browser);
+
         result
     }
 
@@ -278,6 +295,29 @@ impl SynEngine {
         // carries and what the chat bubble draws. The transcript is the record;
         // this is the view the conversation file already had.
         let mut tool_log: Vec<SynToolCallEvent> = Vec::new();
+
+        // What the most recent query turned up, for `syn::ambiguity`.
+        //
+        // Held here rather than read back out of the transcript, because the
+        // transcript's `preview` is cut at `run::MAX_STEP_PREVIEW` and half a
+        // JSON document is not something to base a question on. This is the
+        // untruncated result, at the moment it came back.
+        let mut seen: Vec<crate::syn::ambiguity::Candidate> = Vec::new();
+
+        // Whether this run has read a page from the internet.
+        //
+        // Once true it stays true. Content read in round two can shape a
+        // decision in round six, and a flag that expired would stop only the
+        // clumsiest version of the attack. See `syn::web`.
+        let mut read_the_web = false;
+
+        // Pages this run actually read, for the citations under the answer.
+        //
+        // Collected here rather than derived from the transcript afterwards
+        // because the title is only whole at this moment — `Step::preview` is
+        // cut at `run::MAX_STEP_PREVIEW`, and a citation reconstructed from a
+        // truncated blob is a citation that is sometimes wrong.
+        let mut cited: Vec<crate::models::syn::SourceRef> = Vec::new();
 
         let watchers = Watchers {
             app: req.app,
@@ -304,6 +344,10 @@ impl SynEngine {
         };
         let tools = req.registry.definitions(&ctx);
 
+        // Taken on the first turn and gone thereafter: this is one call being
+        // carried over, not a mode the run stays in.
+        let mut resuming = req.resume_call.clone();
+
         let ended: LoopEnd = 'drive: loop {
             run.spent.wall_ms = started.elapsed().as_millis() as u64;
             if let Some(which) = run.budget.exceeded_by(&run.spent) {
@@ -318,7 +362,11 @@ impl SynEngine {
                 messages: &working,
                 temperature: req.temperature,
                 num_ctx: req.num_ctx,
-                tools: Some(&tools),
+                // `None` rather than an empty array when there are no tools.
+                // An instant turn runs against `Registry::none()`, and several
+                // servers speaking this API reject `tools: []` outright rather
+                // than reading it as "no tools".
+                tools: (!tools.is_empty()).then_some(&tools),
             };
 
             // Stream the turn when the provider can report tool calls that way.
@@ -326,7 +374,25 @@ impl SynEngine {
             // practice this streams exactly the turn the user is waiting to
             // read, and the answer appears as it is written.
             let turn_started = std::time::Instant::now();
-            let reply = if self.provider.streams_tool_calls() {
+            let reply = if let Some(call) = resuming.take() {
+                // A run that stopped for permission, now allowed. The call goes
+                // in as though the model had just asked for it, which is the
+                // whole point: everything below — the consent check that now
+                // passes, the audit line, the transcript, the citation — runs
+                // exactly as it would have.
+                //
+                // Asking the provider again instead is what used to happen, and
+                // it lost the thing the user had just agreed to: permission for
+                // `www.bongdanet.co`, and a resumed run that searched
+                // DuckDuckGo. See `Run::pending_call`.
+                run.note(iteration, format!("Carrying on with `{}`.", call.function.name));
+                ChatReply {
+                    content: String::new(),
+                    tool_calls: vec![call],
+                    tokens: None,
+                    duration_ms: None,
+                }
+            } else if self.provider.streams_tool_calls() {
                 let sink = StreamSink {
                     on_token: &emit_token,
                     stop_requested: &stop_check,
@@ -353,7 +419,7 @@ impl SynEngine {
                 run.finish(RunState::Cancelled);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
                 stream.done();
-                return Ok(assemble(req.message_id, req.model, reply, started, tool_log));
+                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited));
             }
 
             if reply.tool_calls.is_empty() {
@@ -380,7 +446,7 @@ impl SynEngine {
                 }
                 stream.done();
 
-                return Ok(assemble(req.message_id, req.model, reply, started, tool_log));
+                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited));
             }
 
             // Words said on the way to reaching for a tool are part of the
@@ -410,19 +476,74 @@ impl SynEngine {
                     break 'drive LoopEnd::Cancelled;
                 }
 
+                // Read the web, then asked to change something that already
+                // existed. Refused for the rest of the run, whatever the page
+                // said — this is the half of the injection defence that does
+                // not depend on the model having read the boundary. See
+                // `syn::web::REFUSED_AFTER_READING`.
+                if read_the_web
+                    && crate::syn::web::REFUSED_AFTER_READING.contains(&tc.function.name.as_str())
+                {
+                    run.note(
+                        iteration,
+                        format!("Refused `{}`: this run has read the web.", tc.function.name),
+                    );
+                    working.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: serde_json::json!({
+                            "refused": crate::syn::web::refusal(&tc.function.name),
+                        })
+                        .to_string(),
+                        tool_calls: None,
+                        tool_call_id: tc.id.clone(),
+                        images: None,
+                    });
+                    continue;
+                }
+
+                // Which one? Checked before the consent decision below,
+                // because this is not a permission question — running the
+                // ledger for it would file "may I write to the vault" in the
+                // audit log for a call that never happened.
+                if let Some(choice) = crate::syn::ambiguity::should_ask(
+                    &tc.function.name,
+                    &tc.function.arguments,
+                    &seen,
+                    &chrono::Utc::now().to_rfc3339(),
+                ) {
+                    break 'drive LoopEnd::NeedsChoice(Box::new(choice));
+                }
+
                 let call_started = std::time::Instant::now();
 
                 // What sort of power is this, and has the user agreed to it?
                 //
                 // Before anything runs, and before the skill budget below,
                 // because a refusal should not be spent out of an allowance.
-                let capability = req.registry.capability_of(&tc.function.name);
+                let capability = req.registry.capability_of(&tc.function.name, &tc.function.arguments);
                 if let Some(capability) = &capability {
-                    let decision = crate::syn::consent::decide(
+                    let mut decision = crate::syn::consent::decide(
                         capability,
                         &crate::syn::consent::load(req.vault_path),
                         &chrono::Utc::now().to_rfc3339(),
                     );
+
+                    // A "just this once" said earlier in this same piece of
+                    // work. Held in memory rather than written down, and read
+                    // rather than spent — see `consent::allowed_until_done`.
+                    // Spending it was what turned one question into eight
+                    // cards.
+                    //
+                    // Only ever `Ask` to `Allow`. A `Never` recorded in between
+                    // is a decision made later about the same thing, and later
+                    // wins.
+                    if decision == crate::syn::consent::Decision::Ask
+                        && conversation_id.as_deref().is_some_and(|conv| {
+                            crate::syn::consent::allowed_until_done(conv, capability)
+                        })
+                    {
+                        decision = crate::syn::consent::Decision::Allow;
+                    }
                     crate::syn::audit::record_best_effort(
                         req.vault_path,
                         &run_id,
@@ -434,13 +555,16 @@ impl SynEngine {
                     match decision {
                         crate::syn::consent::Decision::Allow => {}
                         crate::syn::consent::Decision::Ask => {
-                            break 'drive LoopEnd::NeedsConsent(Box::new(
-                                crate::syn::consent::Ask::about(
+                            break 'drive LoopEnd::NeedsConsent(
+                                Box::new(crate::syn::consent::Ask::about(
                                     &tc.function.name,
                                     capability,
                                     &chrono::Utc::now().to_rfc3339(),
-                                ),
-                            ));
+                                )),
+                                // What it was about to do, so answering can
+                                // carry it out rather than start again.
+                                Box::new(tc.clone()),
+                            );
                         }
                         crate::syn::consent::Decision::Refuse => {
                             // Told, not hidden. The model asked for something
@@ -508,6 +632,31 @@ impl SynEngine {
                         .to_string(),
                         reversal: crate::syn::registry::Reversal::Nothing,
                     })
+                } else if tc.function.name == crate::syn::tools::BROWSE_TOOL {
+                    // The ladder, decided here and not by the model. Async, so
+                    // it cannot live in `execute_tool`'s table.
+                    let what = tc
+                        .function
+                        .arguments
+                        .get("what")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+
+                    match browse(req, &what).await {
+                        Ok((content, sources)) => {
+                            read_the_web = true;
+                            cited.extend(sources);
+                            Ok(crate::syn::registry::ToolOutcome {
+                                content,
+                                reversal: crate::syn::registry::Reversal::Nothing,
+                            })
+                        }
+                        // Nothing was read, so nothing could have said anything:
+                        // a failure leaves the gate open.
+                        Err(e) => Err(e),
+                    }
                 } else if over_skill_budget {
                     Ok(crate::syn::registry::ToolOutcome {
                         content: serde_json::json!({
@@ -532,6 +681,17 @@ impl SynEngine {
                         crate::syn::registry::Reversal::Nothing,
                     ),
                 };
+
+                // Remember what a search turned up, while the result is whole.
+                //
+                // Replaced rather than accumulated: the question is *which of
+                // the ones you just found*, and folding in a search from four
+                // rounds ago would offer the user a list they have moved past.
+                // A query that found one thing, or none, clears it — after that
+                // there is nothing to be ambiguous between.
+                if tc.function.name == "query_nodes" {
+                    seen = crate::syn::ambiguity::candidates_from(&content);
+                }
 
                 run.record_tool(
                     iteration,
@@ -591,6 +751,7 @@ impl SynEngine {
                     ChatReply::default(),
                     started,
                     tool_log,
+                    cited,
                 ));
             }
             LoopEnd::Ceiling(which) => {
@@ -600,16 +761,42 @@ impl SynEngine {
                 run.finish(RunState::BudgetExhausted);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
             }
-            LoopEnd::NeedsConsent(ask) => {
+            LoopEnd::NeedsChoice(choice) => {
+                // Same shape as consent below, for the same reason: a run
+                // parked on disk saying what it is waiting for is readable,
+                // answerable and survives the app closing, and a task held in
+                // memory is none of those.
+                run.note(
+                    run.spent.iterations,
+                    format!(
+                        "Stopped to ask which of {} the user meant.",
+                        choice.candidates.len()
+                    ),
+                );
+                run.pending_choice = Some(*choice.clone());
+                run.finish(RunState::AwaitingChoice);
+                crate::syn::run::save_run_best_effort(req.vault_path, run);
+
+                let event = serde_json::json!({
+                    "run_id": run.id,
+                    "conversation_id": conversation_id,
+                    "choice": &*choice,
+                });
+                if let Err(e) = req.app.emit("syn-choice-needed", &event) {
+                    log::error!("Failed to emit syn-choice-needed: {e}");
+                }
+            }
+            LoopEnd::NeedsConsent(ask, asking_about) => {
                 // The run ends here rather than blocking on an answer. A
                 // half-finished run on disk that says what it is waiting for is
                 // readable, resumable and survives the app closing; a task
                 // parked in memory holding a lock is none of those.
                 run.note(
                     run.spent.iterations,
-                    &format!("Stopped to ask permission: {}.", ask.about),
+                    format!("Stopped to ask permission: {}.", ask.about),
                 );
                 run.pending_consent = Some(*ask.clone());
+                run.pending_call = Some(*asking_about.clone());
                 run.finish(RunState::AwaitingConsent);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
 
@@ -633,6 +820,7 @@ impl SynEngine {
                     ChatReply::default(),
                     started,
                     tool_log,
+                    cited,
                 ));
             }
             LoopEnd::DeadEnd => {}
@@ -707,7 +895,7 @@ impl SynEngine {
         );
         crate::syn::run::save_run_best_effort(req.vault_path, run);
 
-        Ok(assemble(req.message_id, req.model, reply, started, Vec::new()))
+        Ok(assemble(req.message_id, req.model, reply, started, Vec::new(), Vec::new()))
     }
 
 }
@@ -871,7 +1059,157 @@ fn ceiling_message(which: &'static str, run: &Run) -> String {
     }
 }
 
+/// A page that came back and has something on it, or nothing.
+///
+/// A fetch that failed and a page that came back empty are the same thing here
+/// — one of the addresses did not work out — and both leave the other one to
+/// carry the answer. Logged rather than surfaced: the model has the page that
+/// did open, and a note about a dead link is not something to spend its
+/// attention on.
+fn worth_reading(fetched: AppResult<crate::syn::web::Page>) -> Option<crate::syn::web::Page> {
+    match fetched {
+        Ok(page) if crate::syn::browser::worth_keeping(&page) => Some(page),
+        Ok(page) => {
+            log::info!("[Syn] {} had nothing readable on it", page.url);
+            None
+        }
+        Err(e) => {
+            log::info!("[Syn] A result did not open: {e}");
+            None
+        }
+    }
+}
+
+/// Look something up, or read a page — cheapest path that works.
+///
+/// The three rungs are in `tools::BROWSE_TOOL`'s doc, with the reasoning. What
+/// is here is the order, and the order is the whole design: a browser window is
+/// the *exception*, reached only when the cheap read came back with nothing
+/// worth having.
+async fn browse<R: tauri::Runtime>(
+    req: &DriveRequest<'_, R>,
+    what: &str,
+) -> AppResult<(String, Vec<crate::models::syn::SourceRef>)> {
+    use crate::syn::{browser, web};
+
+    if what.is_empty() {
+        return Err(crate::error::AppError::General(
+            "Nothing to look up. Pass a question or an http address.".into(),
+        ));
+    }
+
+    // ── Rung 1: not an address, so it is a question. ──────────────
+    if !browser::looks_like_a_url(what) {
+        // A configured endpoint still wins: somebody who set one up wants it,
+        // and an API answers faster than a window.
+        let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
+        let endpoint = settings.search_url.unwrap_or_default();
+        if !endpoint.trim().is_empty() {
+            let key = crate::secrets::SecretManager::get_syn_api_key(None, web::SEARCH_KEY_SLOT);
+            if let Ok(hits) = web::search(&endpoint, key.as_deref(), what).await {
+                let cited = hits.iter().map(web::citation_of).collect();
+                return Ok((web::wrap_hits(what, &hits), cited));
+            }
+            // Falling through rather than failing: the window needs no
+            // configuration, so a broken endpoint should cost a moment, not
+            // the answer.
+            log::warn!("[Syn] The configured search endpoint failed; using the window");
+        }
+
+        let read = browser::visit(req.app, req.browser, &browser::search_url(what)).await?;
+        let page = web::reduce(&read.html, &read.url);
+
+        // ── Rung 1½: open the top result. ─────────────────────────
+        //
+        // A results page is not an answer, and stopping there is what produced
+        // the first wrong one: four searches in the transcript, four answers,
+        // not one article opened. A snippet is a sentence written to make you
+        // click — cut to fit, with the date usually left behind.
+        //
+        // Done here rather than asked of the model, for the sixth time and the
+        // same reason: a step the model has to think of is a step that does not
+        // happen. And it could not have happened anyway — the reduced text
+        // carries breadcrumbs, not addresses, so there was nowhere to go.
+        //
+        // `web::fetch` rather than the window: it is the cheap rung, it needs no
+        // second navigation, and a page that comes back empty simply loses the
+        // climb rather than the answer.
+        let links = web::results_on(&read.html, &read.url, &page.text);
+
+        // **Two**, not one, and both at once.
+        //
+        // Ten searches in the transcript answered from a single page, and none
+        // ever checked it against anything. Asking the model to decide to
+        // cross-check is the move this codebase has watched fail six times; two
+        // pages simply being there asks nothing of it, and a disagreement
+        // between them is not something a reader can miss.
+        //
+        // In parallel because the second page must not cost a second wait.
+        let attempted = links.len().min(2);
+        let opened: Vec<web::Page> = match attempted {
+            0 => Vec::new(),
+            1 => worth_reading(web::fetch(&links[0]).await).into_iter().collect(),
+            _ => {
+                let (a, b) = tokio::join!(web::fetch(&links[0]), web::fetch(&links[1]));
+                worth_reading(a).into_iter().chain(worth_reading(b)).collect()
+            }
+        };
+
+        if !opened.is_empty() {
+            // Shorter when there are two of them. See `web::MAX_TEXT_EACH`.
+            let cap = if opened.len() > 1 { web::MAX_TEXT_EACH } else { usize::MAX };
+            let opened: Vec<web::Page> =
+                opened.into_iter().map(|p| p.trimmed_to(cap)).collect();
+
+            let mut body = String::new();
+            if opened.len() > 1 {
+                body.push_str(web::TWO_SOURCES);
+                body.push_str("\n\n");
+            }
+            body.push_str(
+                &opened.iter().map(web::wrap).collect::<Vec<_>>().join("\n\n"),
+            );
+
+            let unread: Vec<String> = links.iter().skip(attempted).cloned().collect();
+            let rest = web::keep_looking(what, &unread);
+
+            // The pages first: they are what the answer stands on, and a chip
+            // that opens the search Syn ran is not somewhere a person can check
+            // a fact.
+            let mut cited: Vec<_> = opened.iter().map(web::citation).collect();
+            cited.push(web::citation(&page));
+
+            return Ok((format!("{body}\n\n{rest}"), cited));
+        }
+
+        // Nothing opened. The results page, with the real addresses under it,
+        // so going on is possible at all.
+        let rest = web::keep_looking(what, &links);
+        return Ok((format!("{}\n\n{rest}", web::wrap(&page)), vec![web::citation(&page)]));
+    }
+
+    // ── Rung 2: an address, read the cheap way. ───────────────────
+    match web::fetch(what).await {
+        Ok(page) if browser::worth_keeping(&page) => {
+            Ok((web::wrap(&page), vec![web::citation(&page)]))
+        }
+        // ── Rung 3: nearly nothing came back. A JavaScript shell, a
+        // consent wall and a login all look the same from here, and the
+        // window answers all three.
+        _ => {
+            let read = browser::visit(req.app, req.browser, what).await?;
+            let page = web::reduce(&read.html, &read.url);
+            Ok((web::wrap(&page), vec![web::citation(&page)]))
+        }
+    }
+}
+
 /// Build the assistant message the conversation stores.
+///
+/// `cited` is the pages this run read, which become the source chips under the
+/// answer. Empty for a run that never left the machine, which is nearly all of
+/// them — and never empty for one that did, because `footing` marks those
+/// `Grounded` and grounded has to point somewhere.
 ///
 /// Prefers the provider's own timing when it reports one — Ollama measures
 /// generation, which excludes time spent waiting on a queue — and falls back to
@@ -882,6 +1220,7 @@ fn assemble(
     reply: ChatReply,
     started: std::time::Instant,
     tool_log: Vec<SynToolCallEvent>,
+    cited: Vec<crate::models::syn::SourceRef>,
 ) -> SynMessage {
     SynMessage {
         id: message_id.to_string(),
@@ -895,7 +1234,8 @@ fn assemble(
                 .duration_ms
                 .unwrap_or_else(|| started.elapsed().as_millis() as u64),
         ),
-        sources: None,
+        sources: Some(cited).filter(|c| !c.is_empty()),
+        footing: None,
         tool_calls_log: Some(tool_log).filter(|l| !l.is_empty()),
         images: None,
     }
@@ -1001,6 +1341,7 @@ mod tests {
             tokens: None,
             duration_ms: None,
             sources: None,
+            footing: None,
             tool_calls_log: None,
             images: None,
         }
@@ -1197,13 +1538,14 @@ mod gate_one {
             SynMessage {
                 id: "sys".into(),
                 role: "system".into(),
-                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
                 .render(),
                 model: None,
                 timestamp: String::new(),
                 tokens: None,
                 duration_ms: None,
                 sources: None,
+                footing: None,
                 tool_calls_log: None,
                 images: None,
             },
@@ -1216,6 +1558,7 @@ mod gate_one {
                 tokens: None,
                 duration_ms: None,
                 sources: None,
+                footing: None,
                 tool_calls_log: None,
                 images: None,
             },
@@ -1227,6 +1570,7 @@ mod gate_one {
 
         let registry = crate::syn::registry::Registry::for_chat();
         let mut run = Run::new(job, None, crate::syn::run::Budget::from_settings(&settings));
+        let browser_state = crate::syn::browser::Waiting::default();
 
         let reply = engine
             .drive(
@@ -1242,6 +1586,8 @@ mod gate_one {
                     vault_path: vault.to_str().expect("utf8 vault path"),
                     num_ctx: settings.num_ctx,
                     max_history: settings.max_history_messages,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1494,9 +1840,15 @@ mod driving {
             tokens: None,
             duration_ms: None,
             sources: None,
+            footing: None,
             tool_calls_log: None,
             images: None,
         }]
+    }
+
+    /// The browsing window's slot, for tests that never open one.
+    fn no_browser() -> crate::syn::browser::Waiting {
+        crate::syn::browser::Waiting::default()
     }
 
     fn budget(iterations: u8) -> Budget {
@@ -1506,6 +1858,300 @@ mod driving {
             tokens: None,
             wall_ms: Some(60_000),
         }
+    }
+
+    /// Reaching outside is a permission, asked per host, before anything runs.
+    ///
+    /// The model is scripted to do exactly what an injected page would talk it
+    /// into — fetch, then delete — and it never gets to the first half. The
+    /// permission names `127.0.0.1` rather than "the internet", which is the
+    /// whole reason `capability` takes the arguments: a capability derived from
+    /// the tool name alone could only ask once, for everywhere.
+    ///
+    /// The *second* defence — the tools refused for the rest of a run that did
+    /// read something — cannot be exercised end to end here: fetching needs a
+    /// server, and any server this test could stand up would be on loopback,
+    /// which `guard_url` refuses on purpose. Its list and its wording are
+    /// tested in `syn::web`, and the engine's use of them below.
+    #[tokio::test]
+    async fn reaching_outside_asks_first_and_names_the_host() {
+        use crate::models::node::NodeMetadata;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+
+        let node = NodeMetadata {
+            id: "Notes/keep.md".to_string(),
+            node_type: "note".to_string(),
+            title: "Giữ lại".to_string(),
+            content: "quan trọng".to_string(),
+            properties: serde_json::json!({}),
+            created_at: "2026-01-01 00:00:00".to_string(),
+            updated_at: "2026-01-01 00:00:00".to_string(),
+            timestamp: 0,
+            blocks: None,
+        };
+        bridge.upsert_node(&node).expect("seed");
+        std::fs::create_dir_all(dir.path().join("Notes")).expect("dir");
+        std::fs::write(dir.path().join("Notes/keep.md"), "quan trọng").expect("file");
+
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut run = Run::new("đọc trang này", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                // A URL that cannot be dialled, so the fetch fails and the flag
+                // stays false — which is the *first* thing this asserts.
+                calls("browse", serde_json::json!({ "what": "http://127.0.0.1/evil" })),
+                calls("trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
+                ChatReply { content: "xong".into(), tool_calls: vec![], tokens: None, duration_ms: None },
+            ],
+        )));
+
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("đọc trang này"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+
+        // It never got as far as dialling: reaching outside at all is a
+        // permission, and permissions are asked before anything runs. That is
+        // the outer of two defences meeting the inner — even a URL `guard_url`
+        // would refuse is not quietly attempted first.
+        //
+        // The question is *may Syn use the browser*, and it deliberately no
+        // longer names `127.0.0.1`. Naming the host read well in this test and
+        // badly in the app: given a question rather than an address, `browse`
+        // searches and then opens what the results point at, so a per-host
+        // permission is unknown when the card is drawn and already spent by the
+        // time it is known. Measured at eight cards for three questions. See
+        // `consent::Capability::Browse`.
+        //
+        // What stops this URL is `browser::guard`, which does name the host and
+        // is the check that belongs to the address rather than to the person.
+        assert_eq!(run.state, RunState::AwaitingConsent, "{:?}", run.steps);
+        let ask = run.pending_consent.clone().expect("it said what it was asking");
+        assert_eq!(ask.tool, "browse");
+        assert_eq!(ask.capability, crate::syn::consent::Capability::Browse);
+        assert!(
+            crate::syn::browser::guard("http://127.0.0.1:8080/admin").is_err(),
+            "and the address itself is refused whatever the user answers"
+        );
+
+        assert_eq!(run.spent.tool_calls, 0, "nothing ran");
+        assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
+    }
+
+    /// And with something actually read, the same call is refused.
+    #[test]
+    fn the_gate_names_the_tools_that_alter_existing_work() {
+        // The list is the defence; `syn::web` owns the reasoning for what is on
+        // it and what is deliberately not. This is the engine's half: that it
+        // consults that list rather than a copy of it.
+        let source = include_str!("engine.rs");
+        assert!(
+            source.contains("crate::syn::web::REFUSED_AFTER_READING.contains"),
+            "the engine should read the one list, not keep its own"
+        );
+        assert!(
+            source.contains("read_the_web = true"),
+            "and something has to set the flag"
+        );
+        // Set on success only. A fetch that failed read nothing, so nothing
+        // could have said anything.
+        assert!(
+            source.contains("// A failed fetch does not set the flag"),
+            "the flag is set on success only"
+        );
+    }
+
+    /// Three notes match, the model picks one, and the run stops to ask.
+    ///
+    /// The whole feature, end to end and through the real vault tools: a real
+    /// `query_nodes` against a seeded database, a real `trash_node` that never
+    /// runs, and a run parked on disk saying what it is waiting for.
+    ///
+    /// This is the case that used to end with a note the user wanted being
+    /// silently removed, and the first they knew of it being that it was gone.
+    #[tokio::test]
+    async fn three_matches_and_a_delete_becomes_a_question() {
+        use crate::models::node::NodeMetadata;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+
+        for (id, title) in [
+            ("Notes/a.md", "Hợp đồng FPT"),
+            ("Notes/b.md", "Hợp đồng VPB"),
+            ("Notes/c.md", "Hợp đồng thuê nhà"),
+        ] {
+            let node = NodeMetadata {
+                id: id.to_string(),
+                node_type: "note".to_string(),
+                title: title.to_string(),
+                content: title.to_string(),
+                properties: serde_json::json!({}),
+                created_at: "2026-01-01 00:00:00".to_string(),
+                updated_at: "2026-01-01 00:00:00".to_string(),
+                timestamp: 0,
+                blocks: None,
+            };
+            bridge.upsert_node(&node).expect("seed");
+            bridge.upsert_search_entry(
+                id, "note", title, "", title, "{}", None, "2026-01-01 00:00:00", id,
+            );
+        }
+
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut run = Run::new("xoá cái note hợp đồng", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("query_nodes", serde_json::json!({ "query": "type:note hợp đồng" })),
+                calls("trash_node", serde_json::json!({ "node_id": "Notes/b.md" })),
+            ],
+        )));
+
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("xoá cái note hợp đồng"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+
+        assert_eq!(run.state, RunState::AwaitingChoice, "it stopped to ask which");
+
+        let choice = run.pending_choice.clone().expect("and said what it was asking about");
+        assert_eq!(choice.tool, "trash_node");
+        assert_eq!(choice.chose, "Notes/b.md", "the pick is shown, not hidden");
+        assert_eq!(choice.candidates.len(), 3, "{:?}", choice.candidates);
+
+        // The search happened; the deletion did not. That is the whole point:
+        // the question is asked *before* the thing it is about.
+        assert_eq!(run.spent.tool_calls, 1, "only the query ran");
+        assert!(
+            dir.path().join("Notes/b.md").exists() || !dir.path().join("Notes").exists(),
+            "nothing was trashed"
+        );
+    }
+
+    /// One match is not a choice, and the work goes through untouched.
+    ///
+    /// The counterweight: a gate that asked about everything would be answered
+    /// without being read, which is worse than the guess it replaced.
+    #[tokio::test]
+    async fn a_single_match_is_never_interrupted() {
+        use crate::models::node::NodeMetadata;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+
+        let node = NodeMetadata {
+            id: "Notes/only.md".to_string(),
+            node_type: "note".to_string(),
+            title: "Hợp đồng FPT".to_string(),
+            content: "Hợp đồng FPT".to_string(),
+            properties: serde_json::json!({}),
+            created_at: "2026-01-01 00:00:00".to_string(),
+            updated_at: "2026-01-01 00:00:00".to_string(),
+            timestamp: 0,
+            blocks: None,
+        };
+        bridge.upsert_node(&node).expect("seed");
+        bridge.upsert_search_entry(
+            "Notes/only.md", "note", "Hợp đồng FPT", "", "Hợp đồng FPT", "{}", None,
+            "2026-01-01 00:00:00", "Notes/only.md",
+        );
+        std::fs::create_dir_all(dir.path().join("Notes")).expect("dir");
+        std::fs::write(dir.path().join("Notes/only.md"), "Hợp đồng FPT").expect("file");
+
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut run = Run::new("xoá cái note FPT", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("query_nodes", serde_json::json!({ "query": "type:note FPT" })),
+                calls("trash_node", serde_json::json!({ "node_id": "Notes/only.md" })),
+                ChatReply {
+                    content: "Đã xoá.".into(),
+                    tool_calls: vec![],
+                    tokens: None,
+                    duration_ms: None,
+                },
+            ],
+        )));
+
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("xoá cái note FPT"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+
+        assert_eq!(run.state, RunState::Done, "no question, no interruption");
+        assert!(run.pending_choice.is_none());
+        assert_eq!(run.spent.tool_calls, 2, "both the search and the removal ran");
     }
 
     /// The gate P4 was given, run against a tool that reaches outside and does
@@ -1525,6 +2171,7 @@ mod driving {
         let vault = dir.path().to_str().expect("utf8").to_string();
         let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_consent_test();
 
         // ── It asks. ──────────────────────────────────────────────
@@ -1548,6 +2195,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1589,6 +2238,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1628,6 +2279,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1658,6 +2311,401 @@ mod driving {
         assert!(
             log[0].reversal.as_deref().is_some_and(|how| !how.is_empty()),
             "each line says what undoing it would take"
+        );
+    }
+
+    /// "Just this once" has to reach the run that carries on, and stay.
+    ///
+    /// The run that asked is over. `record` writes nothing for a `Once` — by
+    /// design, and rightly — so before `consent::allow_once` existed the answer
+    /// reached nothing at all: the card went away, no permission was granted,
+    /// and the next attempt asked the identical question. The button did not
+    /// work, and it had looked like it did.
+    ///
+    /// Three runs, because all three properties matter and each needs its own:
+    /// it goes through, it goes through **once**, and it does not go through in
+    /// a conversation the person was not looking at.
+    #[tokio::test]
+    async fn a_yes_stands_for_the_work_and_ends_with_it() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_consent_test();
+
+        let mut asked = Run::new("send something", Some("conv-once".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &asked.id,
+            vec![calls("send_test", serde_json::json!({}))],
+        )));
+        engine
+            .drive(
+                &mut asked,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+
+        let ask = asked.pending_consent.clone().expect("it asked");
+
+        // What `syn_answer_consent` does with an `Answer::Once`, and all it can
+        // do: nothing goes to disk.
+        crate::syn::consent::allow_until_done("conv-once", &ask.capability);
+        assert!(
+            crate::syn::consent::load(&vault).grants.is_empty(),
+            "a Once must leave no permission behind it"
+        );
+
+        // ── Somebody else's conversation is not covered by it. ────
+        let mut elsewhere = Run::new("send something", Some("conv-other".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &elsewhere.id,
+            vec![calls("send_test", serde_json::json!({}))],
+        )));
+        engine
+            .drive(
+                &mut elsewhere,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m2",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+        assert_eq!(
+            elsewhere.state,
+            RunState::AwaitingConsent,
+            "answering in one conversation is not answering in another"
+        );
+
+        // ── And the run that carries on goes through. ─────────────
+        let mut carried = Run::new("send something", Some("conv-once".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &carried.id,
+            vec![calls("send_test", serde_json::json!({})), text("Sent.")],
+        )));
+        let reply = engine
+            .drive(
+                &mut carried,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m3",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("drives to an answer");
+
+        assert_eq!(carried.state, RunState::Done, "the answer reached the work");
+        assert_eq!(reply.content, "Sent.");
+        assert_eq!(carried.spent.tool_calls, 1);
+
+        // ── It stands while the work goes on. ─────────────────────
+        //
+        // It used to be spent here, and that was the bug the next transcript
+        // showed: a question needing three searches stopped three times, and
+        // one job became eight cards. Nobody pressing *just this once* means
+        // one outward call; they mean the thing they have just asked for.
+        let mut again = Run::new("send something", Some("conv-once".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &again.id,
+            vec![calls("send_test", serde_json::json!({})), text("Sent again.")],
+        )));
+        engine
+            .drive(
+                &mut again,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m4",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("drives to an answer");
+        assert_eq!(again.state, RunState::Done, "the same job must not be asked about twice");
+
+        // ── And stops when the work does. ─────────────────────────
+        crate::syn::consent::work_is_done("conv-once");
+
+        let mut later = Run::new("send something", Some("conv-once".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &later.id,
+            vec![calls("send_test", serde_json::json!({}))],
+        )));
+        engine
+            .drive(
+                &mut later,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m5",
+                    history: &history("send something"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+        assert_eq!(
+            later.state,
+            RunState::AwaitingConsent,
+            "a yes that outlives the work it was given for is an Always nobody granted"
+        );
+    }
+
+    /// Permission granted for one thing has to be spent on that thing.
+    ///
+    /// # The transcript this comes from
+    ///
+    /// A run searched, read the results, and asked to open `www.bongdanet.co`.
+    /// The user said yes at 15:58:02. At 15:58:04 the resumed run searched
+    /// DuckDuckGo again — because resuming re-ran the turn from the user's
+    /// message, and the intent lived in the stopped run's in-memory message
+    /// list, which died with it. The permission was spent on nothing and the
+    /// user was asked a third time.
+    ///
+    /// It was invisible until the browsing ladder started following links: a
+    /// consent stop had only ever landed on the first search, where working it
+    /// out again happens to produce the same thing.
+    #[tokio::test]
+    async fn a_resumed_run_does_the_thing_that_was_asked_about() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_consent_test();
+
+        // ── It stops, and writes down what it was about to do. ────
+        let mut stopped = Run::new("send it", Some("conv-intent".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &stopped.id,
+            vec![calls("send_test", serde_json::json!({ "body": "the particular thing" }))],
+        )));
+        engine
+            .drive(
+                &mut stopped,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("send it"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("stops cleanly");
+
+        assert_eq!(stopped.state, RunState::AwaitingConsent);
+        let pending = stopped.pending_call.clone().expect("what it was about to do");
+        assert_eq!(pending.function.name, "send_test");
+        assert_eq!(pending.function.arguments["body"], "the particular thing");
+
+        // ── Answered, and carried out. ────────────────────────────
+        crate::syn::consent::allow_until_done(
+            "conv-intent",
+            &stopped.pending_consent.clone().expect("it asked").capability,
+        );
+
+        // The model is scripted to answer with words and reach for nothing. So
+        // if the call happens at all, it happened because it was carried over —
+        // there is no other way for a tool to run in this run.
+        let mut carried = Run::new("send it", Some("conv-intent".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &carried.id,
+            vec![text("Sent.")],
+        )));
+        let reply = engine
+            .drive(
+                &mut carried,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m2",
+                    history: &history("send it"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: Some(pending),
+                },
+            )
+            .await
+            .expect("drives to an answer");
+
+        assert_eq!(carried.state, RunState::Done);
+        assert_eq!(reply.content, "Sent.");
+        assert_eq!(carried.spent.tool_calls, 1, "the thing that was allowed is the thing that ran");
+
+        let ran = carried
+            .steps
+            .iter()
+            .find(|s| s.kind == StepKind::ToolCall)
+            .expect("it is in the transcript");
+        assert_eq!(ran.tool.as_deref(), Some("send_test"));
+        assert_eq!(
+            ran.args.as_ref().map(|a| a["body"].clone()),
+            Some(serde_json::json!("the particular thing")),
+            "the same call, not a fresh attempt at the same goal"
+        );
+    }
+
+    /// And it is one call carried over, not a mode the run stays in.
+    ///
+    /// A second round asks the provider like any other. Otherwise a resumed run
+    /// would repeat the same call for as long as its budget allowed.
+    #[tokio::test]
+    async fn the_carried_call_happens_once_and_then_the_model_has_the_wheel() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_consent_test();
+
+        crate::syn::consent::record(
+            &vault,
+            &crate::syn::consent::Capability::NetWrite {
+                domain: "example.test".into(),
+                tool: "send_test".into(),
+            },
+            crate::syn::consent::Answer::Always,
+            chrono::Utc::now(),
+        )
+        .expect("granted");
+
+        let mut run = Run::new("send it", Some("conv-once-only".into()), budget(6));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![text("Done.")],
+        )));
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("send it"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: Some(crate::models::syn::ToolCall {
+                        id: Some("call-1".into()),
+                        function: crate::models::syn::ToolCallFunction {
+                            name: "send_test".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                    }),
+                },
+            )
+            .await
+            .expect("drives to an answer");
+
+        assert_eq!(run.spent.tool_calls, 1, "carried over once, not on every round");
+    }
+
+    /// A recorded `Never` outranks a `Once` said before it.
+    ///
+    /// The held answer only ever turns `Ask` into `Allow`. A refusal is a
+    /// decision made later about the same thing, and later wins — otherwise
+    /// "never do this" could be walked past by something said a minute earlier.
+    #[test]
+    fn a_refusal_is_not_undone_by_a_yes_said_earlier() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let sending = crate::syn::consent::Capability::NetWrite {
+            domain: "example.test".into(),
+            tool: "send_test".into(),
+        };
+
+        crate::syn::consent::allow_until_done("conv-refused", &sending);
+        crate::syn::consent::record(
+            &vault,
+            &sending,
+            crate::syn::consent::Answer::Never,
+            chrono::Utc::now(),
+        )
+        .expect("refused");
+
+        assert_eq!(
+            crate::syn::consent::decide(
+                &sending,
+                &crate::syn::consent::load(&vault),
+                &chrono::Utc::now().to_rfc3339(),
+            ),
+            crate::syn::consent::Decision::Refuse,
+            "and the engine only upgrades Ask, never Refuse"
         );
     }
 
@@ -1699,6 +2747,7 @@ mod driving {
             ],
         )));
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_consent_test();
 
         engine
@@ -1715,6 +2764,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1767,6 +2818,7 @@ mod driving {
         );
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         let engine = SynEngine::new(Box::new(provider));
 
@@ -1784,6 +2836,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1836,6 +2890,7 @@ mod driving {
         ));
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
 
@@ -1853,6 +2908,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1880,6 +2937,7 @@ mod driving {
         });
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         let engine = SynEngine::new(Box::new(provider));
 
@@ -1897,6 +2955,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -1956,6 +3016,7 @@ mod driving {
         };
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         let engine = SynEngine::new(Box::new(Scripted::new(&vault, &run.id, vec![greedy])));
 
@@ -1973,6 +3034,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -2013,6 +3076,7 @@ mod driving {
         }));
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         let engine = SynEngine::new(Box::new(provider));
 
@@ -2030,6 +3094,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await
@@ -2063,6 +3129,7 @@ mod driving {
         )));
 
         let app = app();
+        let browser_state = no_browser();
         let registry = Registry::for_chat();
         engine
             .drive(
@@ -2078,6 +3145,8 @@ mod driving {
                     vault_path: &vault,
                     num_ctx: 8192,
                     max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
                 },
             )
             .await

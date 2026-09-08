@@ -31,10 +31,13 @@ describe('opening Messages', () => {
   it('reads the vault before it tries the network', () => {
     const beforeLoadingCleared = mount.slice(0, mount.indexOf('loading.value = false'));
 
+    // `initConversation` until 2026-09-06, when the screen stopped holding one
+    // conversation and started listing them all. The property is unchanged: what
+    // is read off disk is read before the spinner clears.
     expect(
       beforeLoadingCleared,
-      'the conversation must load before the spinner is cleared',
-    ).toContain('initConversation');
+      'the conversations must load before the spinner is cleared',
+    ).toContain('loadConversations');
 
     for (const networkCall of ['checkStatus', 'fetchModels']) {
       expect(

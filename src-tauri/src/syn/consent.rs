@@ -52,7 +52,28 @@ pub enum Capability {
     /// these report the count and change nothing.
     VaultStructural,
     /// Reads from somewhere outside. Asked once per host, and remembered.
+    ///
+    /// Not what `browse` asks for — see `Browse`. This is for anything that
+    /// reaches one named host directly, where naming it is the whole point of
+    /// the question.
     NetRead { domain: String },
+    /// Uses the browser.
+    ///
+    /// # Why this is not `NetRead` per host
+    ///
+    /// It was, and it asked the wrong question. `NetRead { domain }` suits
+    /// *"may I read bbc.co.uk"*; `browse` is not that act. Given a question it
+    /// searches, then opens whatever the results point at — so the host is not
+    /// known when the question is put, and by the time it is known the reading
+    /// has already been agreed to.
+    ///
+    /// What that produced is measured: **eight cards for three questions.** Not
+    /// eight different things being asked, but one job cut into eight pieces,
+    /// each piece stopping the run and asking again.
+    ///
+    /// So the question is the one a person can actually answer — *may Syn use
+    /// the browser* — asked once, for the work in front of them.
+    Browse,
     /// Sends something outside. Asked per host *and* per tool, because "may
     /// read from this server" and "may post to it as me" are not one decision.
     NetWrite { domain: String, tool: String },
@@ -108,6 +129,7 @@ impl Capability {
     /// remember about them, because they are asked every time — see `decide`.
     pub fn scope_key(&self) -> Option<String> {
         match self {
+            Capability::Browse => Some("browse".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -124,6 +146,7 @@ impl Capability {
             Capability::VaultRead => "read your vault".to_string(),
             Capability::VaultWrite => "change a note in your vault".to_string(),
             Capability::VaultStructural => "change many files at once".to_string(),
+            Capability::Browse => "use the browser".to_string(),
             Capability::NetRead { domain } => format!("read from {domain}"),
             Capability::NetWrite { domain, tool } => format!("send something to {domain} ({tool})"),
             Capability::Spend { cents_estimate } => {
@@ -335,6 +358,92 @@ pub fn revoke(vault_path: &str, scope: &str) -> AppResult<()> {
         return Ok(());
     }
     save(vault_path, &ledger)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  A YES THAT HAS NOWHERE TO BE WRITTEN DOWN
+// ═══════════════════════════════════════════════════════════════
+
+/// The `Once` answers that are still in force, because the work is not finished.
+///
+/// # Why this has to exist at all
+///
+/// `record` says, correctly, that `Once` writes nothing: it was an answer about
+/// this moment, and a ledger full of them would be a log pretending to be a set
+/// of permissions.
+///
+/// But the run that asked has already stopped. It does not resume in place — it
+/// is answered, and the work carries on as a **new run**. So an answer that
+/// leaves no trace anywhere leaves no trace for that run either, and "just this
+/// once" was a button that recorded nothing, permitted nothing and changed
+/// nothing.
+///
+/// # And why it is held for the *task*, not for one call
+///
+/// It was one call, and that read the button far more literally than anybody
+/// pressing it. A person who says *just this once* means **for the thing I have
+/// just asked for**. The code took it to mean one outward call, so a question
+/// needing three searches stopped three times and asked three times — measured:
+/// **eight cards for three questions**, one job cut into eight pieces.
+///
+/// Worse than the clicking: each stop killed the run, and with it everything
+/// that run had read. An investigation was passing findings to its own next
+/// attempt through the only channel left open — the words of the next query.
+///
+/// So the grant now stands until the work is done, which is `work_is_done`:
+/// the moment a run in this conversation produces an answer. The next question
+/// asks again.
+///
+/// It deliberately does not stretch further than that. **`Always` already
+/// exists** for somebody who does not want to be asked — ninety days, written
+/// in the ledger, readable, revocable. Quietly extending "this once" to a whole
+/// conversation would be doing that button's job without its record.
+///
+/// In memory, never on disk, keyed by conversation — allowing something while
+/// looking at one conversation is not allowing it in another running beside it.
+static IN_FORCE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// What a standing `Once` is filed under.
+///
+/// `scope_key` for the things that have one. For money and running code it
+/// falls back to the sentence, which is what makes an allowance of two cents
+/// not an allowance of five dollars.
+fn in_force_key(conversation_id: &str, capability: &Capability) -> String {
+    let what = capability
+        .scope_key()
+        .unwrap_or_else(|| capability.describe());
+    format!("{conversation_id}\u{1f}{what}")
+}
+
+/// Let this stand until the work in this conversation is finished.
+pub fn allow_until_done(conversation_id: &str, capability: &Capability) {
+    if let Ok(mut held) = IN_FORCE.lock() {
+        held.insert(in_force_key(conversation_id, capability));
+    }
+}
+
+/// Whether a `Once` said earlier in this piece of work still stands.
+///
+/// Read, not consumed. Consuming it is what turned one job into eight
+/// questions.
+pub fn allowed_until_done(conversation_id: &str, capability: &Capability) -> bool {
+    match IN_FORCE.lock() {
+        Ok(held) => held.contains(&in_force_key(conversation_id, capability)),
+        Err(_) => false,
+    }
+}
+
+/// The work is finished; anything granted for it stops standing.
+///
+/// Called when a run produces an answer — see `syn_send_message`. The next
+/// question is new work and is asked about again, which is the whole difference
+/// between this and `Always`.
+pub fn work_is_done(conversation_id: &str) {
+    let prefix = format!("{conversation_id}\u{1f}");
+    if let Ok(mut held) = IN_FORCE.lock() {
+        held.retain(|key| !key.starts_with(&prefix));
+    }
 }
 
 #[cfg(test)]
@@ -574,5 +683,194 @@ mod tests {
         assert_eq!(decide(&reading, &load(&vault), NOW), Decision::Ask);
 
         revoke(&vault, "net_read:never-granted.com").expect("a no-op is not an error");
+    }
+
+    // ── a yes that is not written down ────────────────────────────
+
+    /// The bug this was written for: "just this once" recorded nothing, the run
+    /// had already stopped, and the answer therefore reached nothing at all.
+    #[test]
+    fn a_yes_survives_the_run_that_was_asking() {
+        allow_until_done("conversation-a", &Capability::Browse);
+
+        assert!(allowed_until_done("conversation-a", &Capability::Browse));
+    }
+
+    /// And it keeps standing while the work goes on.
+    ///
+    /// This is the fix for eight cards on three questions. A yes read as *one
+    /// outward call* stopped a question that needed three searches three times;
+    /// nobody pressing that button meant one call, they meant **this thing I
+    /// have just asked for**.
+    #[test]
+    fn a_yes_covers_the_whole_job_rather_than_one_call() {
+        allow_until_done("conversation-b", &Capability::Browse);
+
+        for attempt in 1..=5 {
+            assert!(
+                allowed_until_done("conversation-b", &Capability::Browse),
+                "asked again on search {attempt} of the same question"
+            );
+        }
+    }
+
+    /// And stops when the job does. The next question is new work.
+    ///
+    /// That boundary is the whole difference between this answer and `Always`,
+    /// and `Always` is the button for somebody who does not want to be asked —
+    /// ninety days, in the ledger, readable and revocable. Stretching this one
+    /// to a whole conversation would do that button's job without its record.
+    #[test]
+    fn a_yes_ends_when_the_work_does() {
+        allow_until_done("conversation-c", &Capability::Browse);
+        assert!(allowed_until_done("conversation-c", &Capability::Browse));
+
+        work_is_done("conversation-c");
+        assert!(!allowed_until_done("conversation-c", &Capability::Browse));
+    }
+
+    /// Answering while looking at one conversation is not answering for another
+    /// running beside it — and finishing one does not end the other's.
+    #[test]
+    fn a_yes_does_not_leak_between_conversations() {
+        allow_until_done("conversation-d", &Capability::Browse);
+        allow_until_done("conversation-e", &Capability::Browse);
+
+        assert!(!allowed_until_done("conversation-f", &Capability::Browse));
+
+        work_is_done("conversation-d");
+        assert!(!allowed_until_done("conversation-d", &Capability::Browse));
+        assert!(
+            allowed_until_done("conversation-e", &Capability::Browse),
+            "one conversation finishing must not revoke another's"
+        );
+        work_is_done("conversation-e");
+    }
+
+    /// Nothing else is allowed by it either. The held key is the scope for the
+    /// things that have one, and the sentence for the things that do not — so
+    /// two cents is not five dollars.
+    #[test]
+    fn a_yes_allows_only_the_thing_it_was_said_about() {
+        allow_until_done("conversation-g", &Capability::NetRead { domain: "a.example".into() });
+        assert!(!allowed_until_done(
+            "conversation-g",
+            &Capability::NetRead { domain: "b.example".into() }
+        ));
+        assert!(!allowed_until_done("conversation-g", &Capability::Browse));
+
+        allow_until_done("conversation-g", &Capability::Spend { cents_estimate: 2 });
+        assert!(!allowed_until_done(
+            "conversation-g",
+            &Capability::Spend { cents_estimate: 500 }
+        ));
+        assert!(allowed_until_done("conversation-g", &Capability::Spend { cents_estimate: 2 }));
+        work_is_done("conversation-g");
+    }
+
+    /// It is held in memory and nowhere else. A `Once` that appeared in the
+    /// ledger would be a permission somebody could read back tomorrow and
+    /// believe they had granted.
+    #[test]
+    fn a_yes_for_now_never_reaches_the_ledger() {
+        let (_dir, vault) = vault();
+
+        record(&vault, &Capability::Browse, Answer::Once, at(NOW)).expect("recorded");
+        allow_until_done("conversation-h", &Capability::Browse);
+
+        assert!(load(&vault).grants.is_empty(), "nothing about a Once belongs on disk");
+        assert_eq!(decide(&Capability::Browse, &load(&vault), NOW), Decision::Ask);
+        assert!(allowed_until_done("conversation-h", &Capability::Browse));
+        work_is_done("conversation-h");
+    }
+
+    /// Using the browser is one question, whatever it is pointed at.
+    ///
+    /// It was `NetRead { domain }` — a scope per host — which asked something
+    /// nobody could answer: given a question rather than an address, `browse`
+    /// searches and then opens what the results point at, so the host is
+    /// unknown when the card is drawn and already read by the time it is known.
+    #[test]
+    fn the_browser_is_one_permission_and_not_one_per_site() {
+        assert_eq!(Capability::Browse.scope_key().as_deref(), Some("browse"));
+        assert!(Capability::Browse.can_be_remembered(), "so `Always` is on offer for it");
+
+        let said = Capability::Browse.describe();
+        assert!(said.contains("browser"), "{said}");
+        assert!(!said.contains("from"), "it does not name a site: {said}");
+
+        // And it is still a read: nothing to undo, whichever way it is done.
+        assert!(matches!(
+            crate::syn::registry::reversal_of(&Capability::Browse),
+            crate::syn::registry::Reversal::Nothing
+        ));
+
+        // Granting the browser is not quietly granting a named host by another
+        // route. Different question, different answer, different scope.
+        assert_ne!(
+            Capability::Browse.scope_key(),
+            Capability::NetRead { domain: "bbc.co.uk".into() }.scope_key()
+        );
+    }
+
+    /// The screen has to carry on once the question is answered.
+    ///
+    /// This side cannot enforce it and would not notice it stopping: nothing
+    /// fails to compile if the frontend goes back to leaving it to the user to
+    /// type *go on*. But a `Once` is held in memory, spent by the next run, and
+    /// reaches nothing if no next run happens — so the button would grant
+    /// nothing while looking exactly as though it had. That was the bug.
+    ///
+    /// Read out of the TypeScript rather than trusted, the same way
+    /// `settings.rs` reads the refusal string.
+    #[test]
+    fn the_screen_carries_on_rather_than_waiting_to_be_told_twice() {
+        let composable =
+            include_str!("../../../src/mini-apps/messages/composables/useSynConsent.ts");
+        let app = include_str!("../../../src/mini-apps/messages/MessagesApp.vue");
+        let chat = include_str!("../../../src/mini-apps/messages/composables/useSynChat.ts");
+
+        assert!(
+            composable.contains("invoke<boolean>('syn_answer_consent'"),
+            "the screen has to read back whether there was a question to answer"
+        );
+        assert!(
+            app.contains("const onConsent"),
+            "and answering has to do more than put the card away"
+        );
+        assert!(
+            chat.contains("resume_run: resumeRun || undefined"),
+            "carrying on is a continuation of the question already asked, not a new one"
+        );
+        assert!(
+            app.contains("consentPending.value?.run_id"),
+            "and it has to name the run that stopped, or the call the user just allowed is \
+             not the call that runs — see `run::Run::pending_call`"
+        );
+    }
+
+    /// A `NetRead` still names its host, because naming it is what the question
+    /// is for.
+    ///
+    /// The hostless case that used to live here is gone rather than fixed. It
+    /// existed because `browse` produced `NetRead { domain: "" }` when it had a
+    /// question instead of an address, which read as `"read from "` on the card
+    /// and, worse, in `audit.json` — the permanent record of what somebody was
+    /// asked, with the subject missing. Patching the sentence treated the
+    /// symptom; `Capability::Browse` removed the state.
+    ///
+    /// Nothing constructs a hostless `NetRead` now, so there is nothing here to
+    /// assert about one.
+    #[test]
+    fn a_net_read_names_the_host_it_was_granted_for() {
+        assert_eq!(
+            Capability::NetRead { domain: "bbc.co.uk".into() }.describe(),
+            "read from bbc.co.uk"
+        );
+        assert_eq!(
+            Capability::NetRead { domain: "BBC.co.uk".into() }.scope_key().as_deref(),
+            Some("net_read:bbc.co.uk"),
+            "and the scope is the host, however it was typed"
+        );
     }
 }

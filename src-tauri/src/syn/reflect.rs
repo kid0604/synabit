@@ -63,7 +63,7 @@ fn cut(text: &str, limit: usize) -> String {
 }
 
 /// The question put to the model.
-fn prompt(user: &str, assistant: &str, existing: &[Memory]) -> String {
+fn prompt(user: &str, assistant: &str, existing: &[Memory], corrected: bool) -> String {
     let known = if existing.is_empty() {
         "(nothing yet)".to_string()
     } else {
@@ -90,6 +90,7 @@ fn prompt(user: &str, assistant: &str, existing: &[Memory]) -> String {
          - one-off details of what was just done;\n\
          - anything you were explicitly asked to remember, which is already saved;\n\
          - a restatement of something in the list above.\n\n\
+         {}\
          Two things change the answer:\n\
          - If the user corrected the assistant here — said that something it \
          assumed or did was wrong — that is the strongest evidence this app \
@@ -112,6 +113,7 @@ fn prompt(user: &str, assistant: &str, existing: &[Memory]) -> String {
          \"from_correction\": true or false}}",
         cut(user, MAX_EXCHANGE_CHARS),
         cut(assistant, MAX_EXCHANGE_CHARS),
+        crate::syn::correction::note(corrected),
     )
 }
 
@@ -164,7 +166,22 @@ fn extract(reply: &str) -> Vec<Suggested> {
     })
 }
 
+/// The prompt as built, for a test in a neighbouring module.
+///
+/// `correction.rs` decides whether an exchange holds a correction, and the
+/// property worth asserting is what that decision does to the prompt — which
+/// can only be seen from where the prompt is built.
+#[cfg(test)]
+pub fn prompt_for_test(user: &str, assistant: &str, corrected: bool) -> String {
+    prompt(user, assistant, &[], corrected)
+}
+
 /// Ask what is worth keeping from one exchange.
+///
+/// `corrected` says whether the user told the assistant it was wrong. It is
+/// decided in Rust by `correction::looks_like_one` rather than left for the
+/// model to notice — see that module for why asking and telling are different
+/// instructions.
 ///
 /// Returns proposals for the queue, never memories. Failure of any kind is an
 /// empty list: this runs after the user already has their answer, and nothing
@@ -179,6 +196,7 @@ pub async fn reflect(
     existing: &[Memory],
     run_id: &str,
     conversation_id: Option<&str>,
+    corrected: bool,
 ) -> Vec<Proposal> {
     if user_message.trim().is_empty() || assistant_reply.trim().is_empty() {
         return Vec::new();
@@ -186,7 +204,7 @@ pub async fn reflect(
 
     let messages = vec![ChatMessage::new(
         "user",
-        prompt(user_message, assistant_reply, existing),
+        prompt(user_message, assistant_reply, existing, corrected),
     )];
 
     let reply = match provider
@@ -762,7 +780,7 @@ mod tests {
             },
         )];
 
-        let p = prompt("chào", "chào bạn", &existing);
+        let p = prompt("chào", "chào bạn", &existing, false);
         assert!(p.contains("Tên là Minh"));
         assert!(p.contains("do not propose any of these again"));
         assert!(p.contains("Returning an empty list is the normal answer"));
@@ -770,7 +788,7 @@ mod tests {
 
     #[test]
     fn an_empty_exchange_is_not_worth_a_request() {
-        let p = prompt("", "", &[]);
+        let p = prompt("", "", &[], false);
         assert!(p.contains("(nothing yet)"));
     }
 }
@@ -815,16 +833,15 @@ mod what_reflection_costs {
         let assistant = "Minh không họp sau 16h, nên 17h sẽ không được. \
                          Tao đề xuất 15h cùng ngày, được không?";
 
-        let reflection = prompt(user, assistant, &memories);
+        let reflection = prompt(user, assistant, &memories, false);
 
         // The other side: what the chat turn itself sends. The system prompt at
         // its declared budget, plus the tool schemas, which are sent in full on
         // every single turn.
         let system = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: &"x".repeat(12_000),
-            personality: "auto",
             custom: None,
-            skills: None, memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)),
+            skills: None, memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)), focus: None, thread: None, counted: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();

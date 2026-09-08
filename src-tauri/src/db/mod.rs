@@ -12,7 +12,7 @@ pub mod metrics;
 mod nexus;
 mod nodes;
 mod rag;
-mod reminders;
+pub mod reminders;
 pub mod subscriptions;
 mod schema;
 mod search;

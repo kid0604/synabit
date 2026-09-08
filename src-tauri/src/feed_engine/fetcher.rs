@@ -49,7 +49,7 @@ pub fn build_client(timeout: Duration) -> Result<reqwest::Client, String> {
 /// `Content-Length` is a claim, not a promise, and three of the four fetch
 /// paths in this module used to call `.text()` with no ceiling at all — one
 /// hostile URL was enough to grow the process until it died.
-async fn read_capped(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+pub(crate) async fn read_capped(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     if let Some(len) = response.content_length() {
         if len as usize > limit {
             return Err(format!("Response too large: {} bytes (max {})", len, limit));

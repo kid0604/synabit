@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, computed } from 'vue';
+import { onMounted, onUnmounted, watch, computed, ref } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../../../utils/logger';
 import { useI18n } from 'vue-i18n';
 import { X, RotateCcw, Save, Loader2 } from 'lucide-vue-next';
+import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
 import { useSynSettings } from '../composables/useSynSettings';
 import type { ModelInfo } from '../types';
 
@@ -31,9 +34,47 @@ const {
 
 const usingOllama = computed(() => settings.value.provider === 'ollama');
 
+/**
+ * The search endpoint and its key.
+ *
+ * The URL is an ordinary setting and lives in the vault; the key goes to the OS
+ * keychain through its own command and never touches a file Syn can read. The
+ * box shows whether one is stored, never the value — there is deliberately no
+ * command that hands one back.
+ */
+const searchUrl = ref('');
+const searchKey = ref('');
+const hasSearchKey = ref(false);
+
+const loadSearch = async () => {
+  searchUrl.value = settings.value.search_url ?? '';
+  try {
+    hasSearchKey.value = await invoke<boolean>('syn_has_search_key');
+  } catch (e) {
+    logger.warn('[Syn] Could not check for a search key', e);
+  }
+};
+
 const handleSave = async () => {
+  settings.value.search_url = searchUrl.value.trim() || null;
+  // Only when something was typed: an empty box means "leave what is stored",
+  // not "clear it". Clearing is done by typing a space, which trims to empty
+  // and removes the key — the same rule `set_syn_api_key` already follows.
+  if (searchKey.value) {
+    try {
+      await invoke('syn_set_search_key', { key: searchKey.value.trim() });
+      hasSearchKey.value = !!searchKey.value.trim();
+      searchKey.value = '';
+    } catch (e) {
+      logger.error('[Syn] Could not store the search key', e);
+    }
+  }
   await saveSettings();
   emit('saved');
+  // The ask bar lives in `App.vue`, above every mini-app and outside this
+  // component's tree, and the switch above turns it off. Nothing else connects
+  // the two. See `useSynEnabled`.
+  window.dispatchEvent(new CustomEvent(SETTINGS_SAVED));
 };
 
 const handleReset = () => {
@@ -47,55 +88,9 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 };
 
-const personalityOptions = computed(() => [
-  {
-    value: 'auto',
-    emoji: '🔄',
-    label: t('syn.personality_auto'),
-    desc: t('syn.personality_auto_desc'),
-    example: t('syn.personality_auto_example'),
-  },
-  {
-    value: 'casual',
-    emoji: '😎',
-    label: t('syn.personality_casual'),
-    desc: t('syn.personality_casual_desc'),
-    example: t('syn.personality_casual_example'),
-  },
-  {
-    value: 'professional',
-    emoji: '👔',
-    label: t('syn.personality_professional'),
-    desc: t('syn.personality_professional_desc'),
-    example: t('syn.personality_professional_example'),
-  },
-]);
-
-const presetTemplates = computed(() => [
-  {
-    emoji: '🧠',
-    label: t('syn.tmpl_mentor'),
-    prompt: t('syn.tmpl_mentor_prompt'),
-  },
-  {
-    emoji: '✍️',
-    label: t('syn.tmpl_writer'),
-    prompt: t('syn.tmpl_writer_prompt'),
-  },
-  {
-    emoji: '📋',
-    label: t('syn.tmpl_planner'),
-    prompt: t('syn.tmpl_planner_prompt'),
-  },
-  {
-    emoji: '🤖',
-    label: t('syn.tmpl_minimal'),
-    prompt: t('syn.tmpl_minimal_prompt'),
-  },
-]);
-
 onMounted(async () => {
   await loadSettings();
+  await loadSearch();
   window.addEventListener('keydown', handleKeydown);
 });
 
@@ -162,6 +157,34 @@ watch(() => props.vaultPath, () => {
 
         <!-- Settings content -->
         <div v-else class="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+          <!-- The switch, above everything.
+               First because it outranks every control under it: a model, a
+               temperature and a memory budget are all answers to "how should
+               Syn work", and this is the answer to "should it". It stays
+               visible when off, because the control that brings Syn back must
+               not be somewhere Syn has to be on to reach. -->
+          <label
+            class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
+            :class="settings.enabled
+              ? 'border-gray-200 dark:border-gray-700/50'
+              : 'border-amber-300 dark:border-amber-500/40 bg-amber-50/50 dark:bg-amber-500/5'"
+          >
+            <input
+              type="checkbox"
+              v-model="settings.enabled"
+              class="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+            />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-text dark:text-text-dark">
+                {{ t('syn.enabled') }}
+              </span>
+              <span class="block text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+                {{ t('syn.enabled_hint') }}
+              </span>
+            </span>
+          </label>
+
           <!-- CONNECTION -->
           <section>
             <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
@@ -454,95 +477,79 @@ watch(() => props.vaultPath, () => {
             </div>
           </section>
 
-          <!-- PERSONALITY -->
+          <!-- THE WEB
+               Syn can read a page out of the box; searching needs somewhere to
+               search. Nothing is bundled and nothing is scraped — parsing a
+               search engine's HTML behind its back breaks on their next
+               redesign and is not this app's to do. -->
           <section>
             <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-              {{ t('syn.settings_personality') }}
+              {{ t('syn.settings_web') }}
             </h3>
-            <div class="space-y-4">
-              <!-- Personality cards -->
-              <div class="grid grid-cols-3 gap-2">
-                <button
-                  v-for="p in personalityOptions"
-                  :key="p.value"
-                  @click="settings.personality = p.value"
-                  class="flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-all cursor-pointer"
-                  :class="settings.personality === p.value
-                    ? 'bg-violet-50 dark:bg-violet-500/10 border-violet-300 dark:border-violet-500/40 ring-1 ring-violet-300 dark:ring-violet-500/30'
-                    : 'border-gray-200 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-white/5 hover:border-gray-300 dark:hover:border-gray-600'"
-                >
-                  <span class="text-xl">{{ p.emoji }}</span>
-                  <span class="text-xs font-semibold text-text dark:text-text-dark">{{ p.label }}</span>
-                  <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">{{ p.desc }}</span>
-                </button>
-              </div>
+            <div class="space-y-3">
+              <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                {{ t('syn.web_explainer') }}
+              </p>
 
-              <!-- Preview of selected personality -->
-              <div class="px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-gray-800/40">
-                <p class="text-[11px] text-gray-400 dark:text-gray-500 mb-1">{{ t('syn.personality_preview') }}</p>
-                <p class="text-xs text-text dark:text-text-dark italic leading-relaxed">
-                  "{{ personalityOptions.find(p => p.value === settings.personality)?.example }}"
+              <div>
+                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                  {{ t('syn.search_url') }}
+                </label>
+                <input
+                  v-model="searchUrl"
+                  type="text"
+                  :placeholder="t('syn.search_url_placeholder')"
+                  class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                         text-xs font-mono text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
+                         outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-all"
+                >
+                <p class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  {{ t('syn.search_url_hint') }}
                 </p>
               </div>
 
-              <!-- Separator -->
-              <div class="flex items-center gap-3">
-                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700/50"></div>
-                <span class="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold">{{ t('syn.advanced_customization') }}</span>
-                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700/50"></div>
-              </div>
-
-              <!-- Preset templates -->
               <div>
-                <label class="block text-sm font-medium text-text dark:text-text-dark mb-2">
-                  {{ t('syn.preset_templates') }}
+                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                  {{ t('syn.search_key') }}
                 </label>
-                <div class="flex flex-wrap gap-1.5">
-                  <button
-                    v-for="tmpl in presetTemplates"
-                    :key="tmpl.label"
-                    @click="settings.custom_system_prompt = tmpl.prompt"
-                    class="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border transition-all cursor-pointer
-                           border-gray-200 dark:border-gray-700/50
-                           hover:bg-violet-50 dark:hover:bg-violet-500/10
-                           hover:border-violet-300 dark:hover:border-violet-500/30
-                           text-gray-600 dark:text-gray-300
-                           hover:text-violet-600 dark:hover:text-violet-400"
-                  >
-                    {{ tmpl.emoji }} {{ tmpl.label }}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Custom system prompt -->
-              <div>
-                <div class="flex items-center justify-between mb-1.5">
-                  <label class="text-sm font-medium text-text dark:text-text-dark">
-                    {{ t('syn.custom_system_prompt') }}
-                  </label>
-                  <button
-                    v-if="settings.custom_system_prompt"
-                    @click="settings.custom_system_prompt = ''"
-                    class="text-[10px] text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
-                  >
-                    {{ t('syn.clear') }}
-                  </button>
-                </div>
-                <textarea
-                  v-model="settings.custom_system_prompt"
-                  :placeholder="t('syn.custom_system_prompt_placeholder_v2')"
-                  rows="6"
-                  class="w-full px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                         text-xs text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
-                         outline-none resize-y min-h-[80px] max-h-[240px]
-                         focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
-                         transition-all leading-relaxed font-mono"
-                />
-                <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
-                  {{ t('syn.custom_prompt_hint') }}
+                <input
+                  v-model="searchKey"
+                  type="password"
+                  :placeholder="hasSearchKey ? t('syn.search_key_set') : t('syn.search_key_none')"
+                  class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                         text-xs font-mono text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
+                         outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-all"
+                >
+                <!-- The keychain, never the vault, and nothing reads one back:
+                     the screen needs to know whether a key is set, never what
+                     it is. -->
+                <p class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  {{ t('syn.search_key_hint') }}
                 </p>
               </div>
             </div>
+          </section>
+
+          <!-- HOW WE WORK TOGETHER
+               This used to be a three-voice picker and a textarea. Both are
+               gone from here.
+
+               The picker chose one of three voices, two of which hard-coded
+               Vietnamese and a pronoun pair; the third was the rule that makes
+               a bilingual app work, and it is unconditional in the prompt now.
+
+               The textarea edited `{vault}/SYN.md`, which has its own screen in
+               the sidebar. Two places to edit one contract is how the two come
+               to disagree — and the file was created precisely to stop the
+               thing that shapes every answer from living in a settings
+               modal. -->
+          <section>
+            <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
+              {{ t('syn.settings_instructions') }}
+            </h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+              {{ t('syn.instructions_moved') }}
+            </p>
           </section>
         </div>
 

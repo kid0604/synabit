@@ -435,6 +435,8 @@ pub fn run() {
         .manage(watcher::WatcherState::default())
         .manage(commands::files::ScanControl::default())
         .manage(watcher::SourceWatcherState::default())
+        // One page in flight at a time — one window, one thing to watch.
+        .manage(syn::browser::Waiting::default())
         .manage(feeds::FeedSchedulerState::default())
         .on_window_event(|window, event| {
             // Closing hides. The app has to outlive its window for the global
@@ -594,7 +596,27 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        // Every invoke in the app passes through here, which is the point.
+        //
+        // The app's own 256 commands do not go through Tauri's ACL at all —
+        // that check runs for plugin commands, or for an app shipping its own
+        // ACL manifest, and this is neither. Meanwhile `__TAURI_INTERNALS__`
+        // and a valid invoke key are injected into *every* webview, remote
+        // pages included. So a page in the browsing window could call
+        // `trash_node`, and for a stretch it could.
+        //
+        // See `syn::browser::may_call` for the rule and why it is keyed on the
+        // webview rather than the window. Wrapping the generated handler rather
+        // than guarding 256 command bodies: one place, one rule, and a new
+        // command is covered the day it is added instead of the day somebody
+        // remembers.
+        .invoke_handler({
+            // Boxed for its type: `generate_handler!` expands to a closure the
+            // compiler cannot name a runtime for on its own once it is bound
+            // rather than passed straight in.
+            #[allow(clippy::type_complexity)]
+            let commands: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+                Box::new(tauri::generate_handler![
             // Nodes (Universal Architecture)
             nodes::scan_all_nodes,
             nodes::scan_specific_nodes,
@@ -821,15 +843,29 @@ pub fn run() {
             syn_commands::syn_cancel_run,
             syn_commands::syn_delete_run,
             syn_commands::syn_preview_prompt,
+            syn_commands::syn_list_threads,
+            syn_commands::syn_thread_usage,
+            syn_commands::syn_footing_tally,
+            syn_commands::syn_get_instructions,
+            syn_commands::syn_save_instructions,
+            syn_commands::syn_instructions_path,
+            syn_commands::syn_instructions_template,
+            syn_commands::syn_open_thread,
+            syn_commands::syn_move_thread,
             syn_commands::syn_list_skills,
             syn_commands::syn_skill_usage,
             syn_commands::syn_skill_trial,
             syn_commands::syn_create_skill,
             syn_commands::syn_recipe_problems,
+            syn_commands::syn_list_tools,
+            syn_commands::syn_browser_content,
+            syn_commands::syn_set_search_key,
+            syn_commands::syn_has_search_key,
             syn_commands::syn_list_grants,
             syn_commands::syn_revoke_grant,
             syn_commands::syn_audit_log,
             syn_commands::syn_answer_consent,
+            syn_commands::syn_answer_choice,
             syn_commands::syn_list_memories,
             syn_commands::syn_memory_budget,
             syn_commands::syn_list_proposals,
@@ -855,7 +891,25 @@ pub fn run() {
             license_cmds::heartbeat_license,
             // System
             open_app_log_folder,
-        ])
+                ]);
+            move |invoke| {
+                if !crate::syn::browser::may_call(
+                    invoke.message.webview_ref().label(),
+                    invoke.message.command(),
+                ) {
+                    log::warn!(
+                        "[Syn] A page in the browsing window reached for `{}`",
+                        invoke.message.command()
+                    );
+                    invoke.resolver.reject(crate::syn::browser::REFUSED);
+                    // Handled: refused, rather than falling through to "not
+                    // found". A page told the command does not exist would be
+                    // told something untrue about this app.
+                    return true;
+                }
+                commands(invoke)
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

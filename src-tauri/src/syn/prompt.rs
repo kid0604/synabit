@@ -43,7 +43,25 @@ const CHARS_PER_TOKEN: usize = 4;
 /// and `the_fixed_sections_still_cost_what_the_budget_assumes` fails if they
 /// drift far from it. Rounded up, because the number is a premise for the
 /// budget below and not a fact about any particular day.
-const FIXED_SECTIONS_CHARS: usize = 5_500;
+///
+/// Raised again to 6,500 when the prompt learned to say what Syn can and
+/// cannot do about the internet — 6,233 measured. That line exists because
+/// leaving `web_search` out when no endpoint is configured was right and left
+/// the model unable to explain itself: asked for a football score it said *"I
+/// have no live web data"*, which is vague and slightly false. About 85
+/// estimated tokens a turn buys an answer somebody can act on instead. See
+/// `web_line`.
+///
+/// Raised from 5,500 to 6,000 when `footing::RULE` joined the rules section:
+/// the fixed sections went to 5,887. That rule costs about 175 estimated tokens
+/// on **every** turn, which is the honest price of Syn saying out loud when it
+/// has not looked anything up, and of it disagreeing once instead of never. The
+/// knock-on is `DEFAULT_BUDGET_CHARS` at 26,000 — roughly 6,500 estimated
+/// tokens against Ollama's default 8,192 window, so about four fifths of it
+/// before the conversation has said a word. That number was already the
+/// strongest argument for sending a small local model less, and this makes it
+/// slightly stronger rather than changing it in kind.
+const FIXED_SECTIONS_CHARS: usize = 6_500;
 
 /// What retrieval is allowed to add, at the default in `SynSettings`.
 ///
@@ -90,12 +108,29 @@ pub enum SectionKind {
     Custom,
     /// Who Syn is and what Synabit is.
     Identity,
-    /// Which language and register to answer in.
-    Personality,
     /// How to cite, what not to fabricate, how to draw a chart.
     Rules,
     /// Today's date, which the model cannot know.
     Today,
+    /// Which screen the user is on and what they have highlighted.
+    ///
+    /// Beside `Today` because it is the same kind of fact: true right now,
+    /// unknowable from any tool, and carried with the question rather than
+    /// fetched. See `focus.rs`.
+    Focus,
+    /// A count run before the model was asked, for a question that was one.
+    ///
+    /// Required rather than droppable, and not folded into `VaultContext`: that
+    /// section is wrapped in instructions calling it *a sample you may need to
+    /// search past*, which is the opposite of what an exact total is. Dropping
+    /// it would leave a turn that has no tools and no answer.
+    Counted,
+    /// The open piece of work this question belongs to.
+    ///
+    /// After `Focus` because it is the same situation described one level up:
+    /// the screen says where the user is, this says what they are in the middle
+    /// of. See `thread.rs`.
+    Thread,
     /// What the vault is shaped like and which tool reaches what.
     ToolShape,
     /// Pinned memories, and any recalled for this question.
@@ -112,9 +147,11 @@ impl SectionKind {
         match self {
             SectionKind::Custom => "Your own instructions",
             SectionKind::Identity => "Identity",
-            SectionKind::Personality => "Personality",
             SectionKind::Rules => "Rules",
             SectionKind::Today => "Today",
+            SectionKind::Focus => "What is on screen",
+            SectionKind::Counted => "Already counted",
+            SectionKind::Thread => "The work this belongs to",
             SectionKind::ToolShape => "Tools and vault shape",
             SectionKind::Memory => "What Syn remembers",
             SectionKind::Skills => "What Syn knows how to do",
@@ -129,10 +166,19 @@ impl SectionKind {
     /// explicitly a sample the model is told to search past. Everything else
     /// either defines the assistant or is something it cannot recover by
     /// looking — the date most of all.
+    ///
+    /// `Focus` is required for that second reason and is safe to be, because it
+    /// is bounded: `focus::MAX_SELECTION_CHARS` is the only part that varies and
+    /// it is capped. A dropped focus would not shrink the prompt much and would
+    /// turn "rewrite this paragraph" back into a sentence with no referent —
+    /// which is the failure it exists to remove.
     pub fn is_required(self) -> bool {
         !matches!(
             self,
-            SectionKind::VaultContext | SectionKind::Memory | SectionKind::Skills
+            SectionKind::VaultContext
+                | SectionKind::Memory
+                | SectionKind::Skills
+                | SectionKind::Thread
         )
     }
 }
@@ -169,8 +215,19 @@ fn identity() -> &'static str {
     IDENTITY
 }
 
-fn rules() -> &'static str {
-    RULES
+/// How to cite, what not to fabricate — and how to behave when there is
+/// nothing to cite.
+///
+/// `footing::RULE` joins on here rather than becoming a section of its own for
+/// two reasons. It is the same kind of instruction: *do not present a guess in
+/// the voice of a result* is the sentence directly under *do not fabricate*,
+/// and splitting them would put a rule about honesty two headings away from
+/// the other rule about honesty. And a `SectionKind::Footing` sitting beside
+/// `SectionKind::Focus` is two nearly identical names for entirely different
+/// things — what is on screen, and what an answer stands on — in a list people
+/// read quickly.
+fn rules() -> String {
+    format!("{RULES}\n{}", crate::syn::footing::RULE)
 }
 
 /// What the tools are and what the vault is shaped like.
@@ -178,20 +235,30 @@ fn rules() -> &'static str {
 /// Named for the shape rather than the tools because that is what it teaches.
 /// The list of tool *names* is sent separately, as definitions; this is the
 /// part that says a book and a task are the same kind of thing.
-fn tool_shape() -> &'static str {
-    TOOL_SHAPE
+fn tool_shape() -> String {
+    format!("{TOOL_SHAPE}{}", web_line())
 }
 
-/// Which language and register to answer in.
+/// What Syn can do about the internet, said out loud.
 ///
-/// `auto` is the default and the fallback: an unrecognised value adapts to the
-/// user rather than picking one of the two Vietnamese registers on their behalf.
-fn personality_instructions(personality: &str) -> &'static str {
-    match personality {
-        "casual" => PERSONALITY_CASUAL,
-        "professional" => PERSONALITY_PROFESSIONAL,
-        _ => PERSONALITY_AUTO,
-    }
+/// # Why the prompt says this at all
+///
+/// Asked *"what was the score yesterday"*, Syn once answered **"I have no live
+/// web data in this conversation"** — vague, slightly false, and useless. The
+/// behaviour was right and the sentence was not, which is this codebase's
+/// recurring failure caught one turn earlier than usual.
+///
+/// # Why it no longer says "if"
+///
+/// It had two branches, because searching needed an endpoint somebody had
+/// configured. `syn::browser` removed that: a search happens in a real window
+/// the user can watch, so there is no vault in which Syn cannot search and no
+/// state left to explain away.
+///
+/// One line, always the same, is what a capability with no configuration looks
+/// like from inside a prompt.
+fn web_line() -> &'static str {
+    "- THE WEB: `browse` looks something up or reads a page — pass a question to search for, or an http address to read. It opens a window the user can watch. Never invent a URL: pass the question instead and let the search find it.\n"
 }
 
 /// Today, as the machine's own clock reads it.
@@ -219,19 +286,20 @@ fn vault_context(context: &str) -> String {
     format!("{}{}{}", CONTEXT_PREFIX, context, CONTEXT_SUFFIX)
 }
 
+/// Who Syn is, and the one thing about *how* it speaks that is not the user's
+/// to choose.
+///
+/// The second paragraph used to be a section of its own, picked from three by a
+/// `personality` setting. Two of those three hard-coded Vietnamese and a
+/// pronoun pair on the user's behalf; the third — the default — is this, and it
+/// is not a personality at all. It is the rule that makes a bilingual app work.
+/// So it stays, unconditionally, and the *choice* is gone: how Syn talks to
+/// somebody is now something they write in their own words in `SYN.md`, where
+/// they can say anything rather than one of three things. See
+/// `instructions::TEMPLATE`.
 const IDENTITY: &str = r#"You are Syn, a personal AI assistant embedded in the Synabit productivity app. Synabit is a second-brain/productivity tool that stores notes, tasks, events, contacts, files, RSS feeds, and financial records.
 
-"#;
-
-const PERSONALITY_AUTO: &str = r#"Match the user's language and communication style. If they write in Vietnamese, respond in Vietnamese. If they write in English, respond in English. If they use casual language (tao/mày), be casual back. If they are formal, be formal.
-
-"#;
-
-const PERSONALITY_CASUAL: &str = r#"Respond in Vietnamese with a casual, friendly tone. Use informal pronouns (tao/mày) when the user does. Be witty and conversational, like a close friend.
-
-"#;
-
-const PERSONALITY_PROFESSIONAL: &str = r#"Respond in Vietnamese with a professional, polite tone. Use formal pronouns (tôi/bạn). Be clear, structured, and respectful.
+Match the user's language and communication style. If they write in Vietnamese, respond in Vietnamese. If they write in English, respond in English. If they use casual language (tao/mày), be casual back. If they are formal, be formal.
 
 "#;
 
@@ -308,13 +376,26 @@ const CONTEXT_SUFFIX: &str = r#"=== END CONTEXT ==="#;
 pub struct ChatPrompt<'a> {
     /// Chunks retrieved for this question, already formatted.
     pub context: &'a str,
-    pub personality: &'a str,
     /// The user's own standing instructions, from settings.
     pub custom: Option<&'a str>,
     /// The skill index, already formatted by `skill::index_block`.
     pub skills: Option<&'a str>,
     /// What Syn remembers, already formatted by `memory::memory_block`.
     pub memory: Option<&'a str>,
+    /// The open thread, already formatted by `Thread::block`.
+    ///
+    /// Pre-rendered like memory and skills, because rendering it needs the
+    /// database and this module has never needed one. `Focus` carries the id;
+    /// the caller does the lookup.
+    pub thread: Option<&'a str>,
+    /// A count already run, from `tempo::block`.
+    pub counted: Option<&'a str>,
+    /// Which screen the user is on and what they have highlighted.
+    ///
+    /// Borrowed rather than owned like the rest, and `None` for every caller
+    /// that has no screen — a background run, an eval, a reflection turn. Those
+    /// render exactly the prompt they rendered before this field existed.
+    pub focus: Option<&'a crate::syn::focus::Focus>,
     pub budget_chars: usize,
 }
 
@@ -337,10 +418,12 @@ impl PromptPlan {
     pub fn for_chat(p: ChatPrompt<'_>) -> Self {
         let ChatPrompt {
             context,
-            personality,
             custom,
             skills,
             memory,
+            focus,
+            thread,
+            counted,
             budget_chars,
         } = p;
         let mut sections = Vec::new();
@@ -352,13 +435,25 @@ impl PromptPlan {
             });
         }
         sections.push(Section { kind: SectionKind::Identity, body: identity().to_string() });
-        sections.push(Section {
-            kind: SectionKind::Personality,
-            body: personality_instructions(personality).to_string(),
-        });
-        sections.push(Section { kind: SectionKind::Rules, body: rules().to_string() });
+        sections.push(Section { kind: SectionKind::Rules, body: rules() });
         sections.push(Section { kind: SectionKind::Today, body: today() });
-        sections.push(Section { kind: SectionKind::ToolShape, body: tool_shape().to_string() });
+
+        // Absent rather than empty when there is no screen, on the same terms
+        // as memory and skills below: a heading announcing what is on screen,
+        // above nothing, tells the model something false.
+        if let Some(block) = focus.and_then(crate::syn::focus::Focus::block) {
+            sections.push(Section { kind: SectionKind::Focus, body: block });
+        }
+
+        if let Some(counted) = counted.filter(|c| !c.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Counted, body: counted.to_string() });
+        }
+
+        if let Some(thread) = thread.filter(|t| !t.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Thread, body: thread.to_string() });
+        }
+
+        sections.push(Section { kind: SectionKind::ToolShape, body: tool_shape() });
 
         // Absent rather than empty when nothing is remembered, which is what
         // keeps a vault with no memories sending byte for byte the prompt it
@@ -518,6 +613,44 @@ pub struct PromptPreview {
     pub est_tokens: usize,
     pub budget_chars: usize,
     pub sections: Vec<SectionCost>,
+    /// What the tool declarations cost, which is not part of the prompt text.
+    ///
+    /// # Why a panel about the prompt has to report something that is not in it
+    ///
+    /// Because the question people bring here is *what does one turn cost*, and
+    /// the answer was under-reported by more than the whole fixed prompt. The
+    /// tool list does not go through `PromptPlan` — it is the `tools` field of
+    /// the request, beside `messages` — so every number on this screen was
+    /// exactly right and the screen as a whole was misleading.
+    ///
+    /// The measured figures when this was added: the fixed sections came to
+    /// 5,887 characters and the twenty-seven tool declarations to 18,022.
+    /// **Declaring the tools cost three times the entire fixed prompt**, and
+    /// nothing had ever said so.
+    pub tools: ToolPayload,
+}
+
+/// What the tool declarations cost, measured rather than estimated.
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct ToolPayload {
+    pub count: usize,
+    /// Serialised JSON length — what actually goes on the wire.
+    pub chars: usize,
+    pub est_tokens: usize,
+    /// The ceiling this is held to. See `tools::PAYLOAD_BUDGET_CHARS`.
+    pub budget_chars: usize,
+}
+
+impl PromptPreview {
+    /// Prompt plus tools, which is what a turn actually costs before anybody
+    /// has said anything.
+    ///
+    /// Worth having as one number because neither half is the answer on its
+    /// own, and against Ollama's default 8,192-token window the sum is the
+    /// figure that decides whether a conversation fits at all.
+    pub fn total_est_tokens(&self) -> usize {
+        self.est_tokens + self.tools.est_tokens
+    }
 }
 
 impl From<PromptPlan> for PromptPreview {
@@ -528,6 +661,7 @@ impl From<PromptPlan> for PromptPreview {
             est_tokens: plan.est_tokens(),
             budget_chars: plan.budget_chars(),
             sections: plan.breakdown(),
+            tools: crate::syn::tools::payload_cost(),
         }
     }
 }
@@ -544,7 +678,7 @@ mod tests {
     /// has changed that premise, and should have to notice.
     #[test]
     fn the_fixed_sections_still_cost_what_the_budget_assumes() {
-        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
+        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
 
         assert!(
             fixed <= FIXED_SECTIONS_CHARS,
@@ -577,21 +711,23 @@ mod tests {
     fn the_system_prompt_matches_its_snapshot() {
         let today = regex::Regex::new(r"- Today's date: [^\n]*").expect("valid");
 
-        for personality in ["auto", "casual", "professional"] {
+        // One prompt, not three. The loop used to be parameterised by the
+        // personality setting; that setting is gone, so the six snapshots
+        // become two and the four naming a register were deleted with it.
+        {
             for (label, context) in [("bare", ""), ("with-context", "some context")] {
                 let rendered =
                     PromptPlan::for_chat(ChatPrompt {
                         context,
-                        personality,
                         custom: None,
-                        skills: None, memory: None,
+                        skills: None, memory: None, focus: None, thread: None, counted: None,
                         budget_chars: DEFAULT_BUDGET_CHARS,
                     }).render();
                 let masked = today.replace_all(&rendered, "- Today's date: <DATE>");
 
                 let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("src/syn/testdata")
-                    .join(format!("system-prompt.{personality}.{label}.txt"));
+                    .join(format!("system-prompt.{label}.txt"));
 
                 // Re-blessing is deliberate and leaves a trace in the shell
                 // history that made it happen:
@@ -621,7 +757,7 @@ mod tests {
                 assert_eq!(
                     masked.as_ref(),
                     expected,
-                    "the system prompt for {personality}/{label} no longer matches {}",
+                    "the system prompt for {label} no longer matches {}",
                     path.display()
                 );
             }
@@ -633,7 +769,7 @@ mod tests {
     /// ordering, and moving it here must not move it on the page.
     #[test]
     fn a_custom_prompt_comes_first_and_is_followed_by_a_blank_line() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("Always answer in haiku."), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("Always answer in haiku."), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.starts_with("Always answer in haiku.\n\nYou are Syn,"));
     }
@@ -644,7 +780,7 @@ mod tests {
     #[test]
     fn an_empty_custom_prompt_adds_no_section() {
         for empty in [Some(""), Some("   "), None] {
-            let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: empty, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+            let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: empty, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
             assert!(plan.render().starts_with("You are Syn,"), "{empty:?}");
             assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::Custom));
         }
@@ -652,31 +788,23 @@ mod tests {
 
     #[test]
     fn no_context_means_no_context_section() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(!plan.render().contains("VAULT CONTEXT"));
         assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::VaultContext));
     }
 
     #[test]
     fn context_is_wrapped_in_the_instructions_for_reading_it() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", personality: "auto", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.contains("=== VAULT CONTEXT ==="));
         assert!(rendered.contains("a note about ducks"));
         assert!(rendered.trim_end().ends_with("=== END CONTEXT ==="));
     }
 
-    /// An unknown personality adapts rather than picking a Vietnamese register
-    /// on the user's behalf.
-    #[test]
-    fn an_unrecognised_personality_falls_back_to_adapting() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "klingon", custom: None, skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
-        assert!(plan.render().contains("Match the user's language"));
-    }
-
     #[test]
     fn the_breakdown_accounts_for_every_character_that_was_sent() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "casual", custom: Some("be brief"), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: Some("be brief"), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let counted: usize = plan.breakdown().iter().filter(|c| !c.dropped).map(|c| c.chars).sum();
         assert_eq!(counted, plan.render().chars().count());
         assert_eq!(counted, plan.chars());
@@ -686,7 +814,7 @@ mod tests {
     /// search past, and never the rules.
     #[test]
     fn a_tight_budget_drops_context_and_keeps_the_rules() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), personality: "auto", custom: None, skills: None, memory: None, budget_chars: 6000 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: 6000 });
         let rendered = plan.render();
         assert!(!rendered.contains("VAULT CONTEXT"));
         assert!(rendered.contains("Key rules:"));
@@ -702,7 +830,7 @@ mod tests {
     /// to send an assistant that has forgotten how to cite a note.
     #[test]
     fn an_impossible_budget_goes_over_rather_than_cutting_what_matters() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", personality: "auto", custom: None, skills: None, memory: None, budget_chars: 10 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: 10 });
         let rendered = plan.render();
         assert!(rendered.contains("Key rules:"));
         assert!(rendered.contains("Tool usage guidelines:"));
@@ -712,10 +840,10 @@ mod tests {
     fn plan(context: &str, memory: Option<&str>, budget: usize) -> PromptPlan {
         PromptPlan::for_chat(ChatPrompt {
             context,
-            personality: "auto",
             custom: None,
             skills: None,
             memory,
+            focus: None, thread: None, counted: None,
             budget_chars: budget,
         })
     }
@@ -746,6 +874,241 @@ mod tests {
         assert!(memory < context, "memory must come before the retrieved context");
     }
 
+    /// Refuses to compile when a `SectionKind` is added and `ALL` is not.
+    ///
+    /// The same trick `RunState` uses, and for the same reason: only the
+    /// compiler knows every variant, so a test that enumerates them is
+    /// enumerating the list it is meant to be checking.
+    #[allow(dead_code)]
+    fn _every_section_is_listed(kind: SectionKind) {
+        match kind {
+            SectionKind::Custom
+            | SectionKind::Identity
+            | SectionKind::Rules
+            | SectionKind::Today
+            | SectionKind::Focus
+            | SectionKind::Counted
+            | SectionKind::Thread
+            | SectionKind::ToolShape
+            | SectionKind::Memory
+            | SectionKind::Skills
+            | SectionKind::VaultContext => {}
+        }
+    }
+
+    const ALL: [SectionKind; 11] = [
+        SectionKind::Custom,
+        SectionKind::Identity,
+        SectionKind::Rules,
+        SectionKind::Today,
+        SectionKind::Focus,
+        SectionKind::Counted,
+        SectionKind::Thread,
+        SectionKind::ToolShape,
+        SectionKind::Memory,
+        SectionKind::Skills,
+        SectionKind::VaultContext,
+    ];
+
+    /// The panel that says what Syn is told must have a name for every part of
+    /// it.
+    ///
+    /// This list had already fallen two behind before anyone noticed: `memory`
+    /// and `skills` both shipped without reaching the union, so the one screen
+    /// built to make the prompt legible could not name two of its sections. A
+    /// section the panel has no word for is a section nobody can debug.
+    #[test]
+    fn the_frontend_knows_every_section_the_prompt_can_have() {
+        let source = std::fs::read_to_string("../src/mini-apps/messages/types.ts")
+            .expect("the messages types should be readable from src-tauri");
+
+        let union = source
+            .split("export type PromptSectionKind =")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("types.ts should still declare a PromptSectionKind union");
+
+        let declared: Vec<&str> = union
+            .split('|')
+            .map(|part| part.trim().trim_matches(|c| c == '\'' || c == '"'))
+            .filter(|part| !part.is_empty())
+            .collect();
+
+        assert!(
+            declared.len() >= 8,
+            "parsed too few kinds from the frontend union — the parsing broke, not the code: \
+             {declared:?}"
+        );
+
+        // Serialised as snake_case, which is what the frontend receives.
+        for kind in ALL {
+            let wire = serde_json::to_value(kind)
+                .expect("a section kind serialises")
+                .as_str()
+                .expect("as a string")
+                .to_string();
+            assert!(
+                declared.contains(&wire.as_str()),
+                "the prompt can contain a `{wire}` section and the frontend union does not list \
+                 it: {declared:?}"
+            );
+        }
+
+        // And the other way, which this test did not check until a section was
+        // removed. `personality` stayed in the union after the enum lost it —
+        // a kind the frontend can draw and Rust can never send, which is dead
+        // code that reads as a feature. Neither direction is safe alone.
+        let ours: Vec<String> = ALL
+            .iter()
+            .map(|k| {
+                serde_json::to_value(k)
+                    .expect("serialises")
+                    .as_str()
+                    .expect("as a string")
+                    .to_string()
+            })
+            .collect();
+        for kind in &declared {
+            assert!(
+                ours.iter().any(|k| k == kind),
+                "the frontend lists a `{kind}` section that the prompt can never produce: {ours:?}"
+            );
+        }
+    }
+
+    /// What is on screen sits with the date, above everything the assistant
+    /// would have to go and look for. Both are facts about right now that no
+    /// tool can answer.
+    #[test]
+    fn what_is_on_screen_sits_with_the_date() {
+        let focus = crate::syn::focus::Focus {
+            app: "note".into(),
+            node: Some("Notes/pricing.md".into()),
+            node_title: None,
+            selection: Some("per-seat cho team nhỏ".into()),
+            thread: None,
+        };
+        let rendered = PromptPlan::for_chat(ChatPrompt {
+            context: "some context",
+            custom: None,
+            skills: None,
+            memory: None,
+            focus: Some(&focus), thread: None, counted: None,
+            budget_chars: DEFAULT_BUDGET_CHARS,
+        })
+        .render();
+
+        let today = rendered.find("Today's date").expect("the date is there");
+        let screen = rendered.find("ON SCREEN").expect("the screen is there");
+        let tools = rendered.find("Tool usage guidelines:").expect("tools are there");
+        assert!(today < screen, "the screen comes after the date");
+        assert!(screen < tools, "and before anything it would have to look up");
+        assert!(rendered.contains("per-seat cho team nhỏ"), "{rendered}");
+    }
+
+    /// The work sits just after the screen: same situation, one level up.
+    #[test]
+    fn the_work_sits_after_the_screen_and_before_the_tools() {
+        let focus = crate::syn::focus::Focus {
+            app: "note".into(),
+            node: Some("Notes/pricing.md".into()),
+            node_title: None,
+            selection: None,
+            thread: Some("SynThreads/Pricing.md".into()),
+        };
+        let rendered = PromptPlan::for_chat(ChatPrompt {
+            context: "",
+            custom: None,
+            skills: None,
+            memory: None,
+            focus: Some(&focus),
+            thread: Some("\n=== THE WORK THIS BELONGS TO ===\nPricing\n"), counted: None,
+            budget_chars: DEFAULT_BUDGET_CHARS,
+        })
+        .render();
+
+        let screen = rendered.find("ON SCREEN").expect("the screen is there");
+        let work = rendered.find("THE WORK THIS BELONGS TO").expect("the work is there");
+        let tools = rendered.find("Tool usage guidelines:").expect("tools are there");
+        assert!(screen < work, "the work comes after the screen");
+        assert!(work < tools, "and before the tools");
+    }
+
+    /// A question asked outside any thread renders no work section — the same
+    /// rule memory, skills and the screen all follow.
+    #[test]
+    fn no_thread_means_no_work_section() {
+        let kinds: Vec<_> = plan("ctx", None, DEFAULT_BUDGET_CHARS)
+            .breakdown()
+            .into_iter()
+            .map(|c| c.kind)
+            .collect();
+        assert!(!kinds.contains(&SectionKind::Thread), "{kinds:?}");
+    }
+
+    /// A thread id that resolved to nothing must not leave a heading behind.
+    #[test]
+    fn an_empty_thread_block_adds_no_section() {
+        for empty in [Some(""), Some("   "), None] {
+            let kinds: Vec<_> = PromptPlan::for_chat(ChatPrompt {
+                context: "",
+                custom: None,
+                skills: None,
+                memory: None,
+                focus: None,
+                thread: empty,
+                counted: None,
+                budget_chars: DEFAULT_BUDGET_CHARS,
+            })
+            .breakdown()
+            .into_iter()
+            .map(|c| c.kind)
+            .collect();
+            assert!(!kinds.contains(&SectionKind::Thread), "{empty:?} -> {kinds:?}");
+        }
+    }
+
+    /// The breakdown is the one screen that says where the window went. A
+    /// section absent from it is a section nobody can find when it misfires.
+    #[test]
+    fn the_screen_shows_up_in_the_breakdown() {
+        let focus = crate::syn::focus::Focus {
+            app: "task".into(),
+            node: None,
+            node_title: None,
+            selection: None,
+            thread: None,
+        };
+        let costs = PromptPlan::for_chat(ChatPrompt {
+            context: "",
+            custom: None,
+            skills: None,
+            memory: None,
+            focus: Some(&focus), thread: None, counted: None,
+            budget_chars: DEFAULT_BUDGET_CHARS,
+        })
+        .breakdown();
+
+        let screen = costs
+            .iter()
+            .find(|c| c.kind == SectionKind::Focus)
+            .expect("the on-screen section is accounted for");
+        assert!(screen.chars > 0);
+        assert!(!screen.dropped, "it is required, so it is never cut");
+    }
+
+    /// A request that carries no screen renders what it always rendered. This
+    /// is what let the byte-exact snapshots survive the change.
+    #[test]
+    fn no_screen_means_no_section() {
+        let kinds: Vec<_> = plan("ctx", None, DEFAULT_BUDGET_CHARS)
+            .breakdown()
+            .into_iter()
+            .map(|c| c.kind)
+            .collect();
+        assert!(!kinds.contains(&SectionKind::Focus), "{kinds:?}");
+    }
+
     /// Under pressure the sample goes before the standing fact, whatever their
     /// sizes. The model can search the vault again; it cannot re-derive
     /// something it was told once.
@@ -754,7 +1117,7 @@ mod tests {
         let big_context = "c".repeat(4000);
         let small_memory = "=== WHAT YOU REMEMBER ===\n- [preference] họp buổi sáng";
 
-        let p = plan(&big_context, Some(small_memory), 6000);
+        let p = plan(&big_context, Some(small_memory), FIXED_SECTIONS_CHARS + 300);
         let kinds: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
         assert_eq!(kinds, vec![SectionKind::VaultContext]);
         assert!(p.render().contains("họp buổi sáng"), "memory should have survived");
@@ -781,10 +1144,9 @@ mod tests {
     fn plan_with_skills(context: &str, skills: &str, memory: &str, budget: usize) -> PromptPlan {
         PromptPlan::for_chat(ChatPrompt {
             context,
-            personality: "auto",
             custom: None,
             skills: Some(skills),
-            memory: Some(memory),
+            memory: Some(memory), focus: None, thread: None, counted: None,
             budget_chars: budget,
         })
     }
@@ -826,7 +1188,10 @@ mod tests {
         let skills = format!("=== WHAT YOU KNOW HOW TO DO ===\n{}", "s".repeat(3000));
         let memory = "=== WHAT YOU REMEMBER ===\n- [fact] vợ dị ứng hải sản";
 
-        let p = plan_with_skills("", &skills, memory, 6000);
+        // Derived rather than a literal: the number means "room for the
+        // memory line and nothing else", and a hardcoded 6,000 stopped meaning
+        // that the moment the fixed sections grew.
+        let p = plan_with_skills("", &skills, memory, FIXED_SECTIONS_CHARS + 300);
         let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
 
         assert_eq!(dropped, vec![SectionKind::Skills], "only the index went");
@@ -904,7 +1269,7 @@ mod tests {
     /// Vietnamese is where a byte-counting mistake would show up first.
     #[test]
     fn costs_are_counted_in_characters_not_bytes() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", personality: "auto", custom: Some("đường"), skills: None, memory: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("đường"), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let custom = plan
             .breakdown()
             .into_iter()

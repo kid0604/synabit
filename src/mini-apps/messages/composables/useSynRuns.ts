@@ -15,6 +15,7 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import type { Run, RunSummary, PromptPreview } from '../types';
+import type { SynFocus } from '../../../shared/syn/focus';
 
 export function useSynRuns(vaultPath: () => string) {
   const runs = ref<RunSummary[]>([]);
@@ -79,14 +80,20 @@ export function useSynRuns(vaultPath: () => string) {
    * `message` is optional and worth giving: without one the preview is the
    * fixed part, and with one it includes the context that question would pull
    * in — which is the only way to see how much of the window retrieval takes.
+   *
+   * `focus` is what is on screen. Passed explicitly as `undefined` when there
+   * is none, because this panel is the one place that says what Syn is told —
+   * and a section that is invisible *here* is a section nobody can debug when
+   * it misfires.
    */
-  const loadPreview = async (message?: string) => {
+  const loadPreview = async (message?: string, focus?: SynFocus) => {
     isLoading.value = true;
     error.value = null;
     try {
       preview.value = await invoke<PromptPreview>('syn_preview_prompt', {
         vaultPath: vaultPath(),
         message: message?.trim() ? message : undefined,
+        focus,
       });
     } catch (e) {
       logger.error('[Syn] Failed to preview the prompt', e);

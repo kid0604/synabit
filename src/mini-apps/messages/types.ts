@@ -46,10 +46,25 @@ export interface SynMessage {
   tokens?: number;
   duration_ms?: number;
   sources?: SourceRef[];  // Source references from RAG
+  /**
+   * What this answer stood on. Absent on user messages, and on every assistant
+   * message written before this existed — "nobody measured it" and "it was a
+   * guess" are different claims.
+   */
+  footing?: Footing;
   tool_calls_log?: SynToolCallEvent[];
   images?: string[];  // base64 encoded
   notification?: any; // The raw chat notification
 }
+
+/**
+ * The `node_type` a web citation carries. Mirrors `syn::web::WEB_SOURCE_TYPE`.
+ *
+ * Not a real node type — nothing in the vault has it. It exists so a source
+ * chip can tell "open my note" from "open that page in your browser", which
+ * are different acts behind the same-looking control.
+ */
+export const WEB_SOURCE = 'web';
 
 export interface SourceRef {
   id: string;
@@ -78,6 +93,16 @@ export interface SynChatRequest {
   model?: string;
   temperature?: number;
   images?: string[];  // base64 encoded
+  /**
+   * The run that stopped for permission, now that it has an answer.
+   *
+   * `message` is empty then: nobody typed anything, and the question still on
+   * the table is the last one they did type. The run's **id** rather than a
+   * flag, because the run holds the call it was about to make — without it the
+   * resumed run works the turn out again, and the permission just granted for
+   * one page is spent on something else. See `syn_answer_consent`.
+   */
+  resume_run?: string;
 }
 
 export interface SynStreamToken {
@@ -106,10 +131,43 @@ export type RunState =
   /** Stopped to ask permission. The work is unfinished, nothing went wrong,
    *  and the next move belongs to the user. */
   | 'awaiting_consent'
+  /**
+   * Stopped because the model was about to pick one of several, and which one
+   * is the user's to say.
+   *
+   * Not the same as `awaiting_consent`, and the difference matters on screen:
+   * consent means a permission was never granted, this means the work is going
+   * fine and Syn refuses to guess one detail. See `syn::ambiguity`.
+   */
+  | 'awaiting_choice'
   /** Found as `working` by a process that was not driving it — the app was closed mid-run. */
   | 'interrupted';
 
 export type RunTrigger = 'user';
+
+/**
+ * How heavy a turn was judged to be, before it ran. Mirrors `syn::tempo::Tempo`.
+ *
+ * `instant` means the question was recognised as a count, the count was run
+ * before the model was asked, and the turn has no tools — one round trip rather
+ * than two. Everything else is `working`.
+ */
+export type Tempo = 'instant' | 'working';
+
+/**
+ * What an answer turned out to be standing on. Mirrors `syn::footing::Footing`.
+ *
+ * Decided by arithmetic on the run's transcript, never by asking the model:
+ *
+ * * `grounded` — a tool that only looks came back, or this app counted it from
+ *   the index. There is a source, and it can be looked at again. It does *not*
+ *   claim the answer is right, only that it was not invented. A tool that
+ *   *wrote* something does not count: saving a note is not reading one.
+ * * `inferred` — retrieval put material in front of the model and nothing was
+ *   looked up. The state where an answer sounds sourced and is not.
+ * * `guessing` — nothing from the vault held it up at all.
+ */
+export type Footing = 'grounded' | 'inferred' | 'guessing';
 
 export type StepKind = 'assistant' | 'tool_call' | 'note';
 
@@ -181,13 +239,28 @@ export interface RunSummary {
 
 // ─── What Syn is actually told ───────────────────────────────
 
+/**
+ * Every section the prompt can be made of.
+ *
+ * Kept in the order `SectionKind` declares them, which is the order they are
+ * rendered in. This list had already fallen two behind — `memory` and `skills`
+ * shipped without reaching it, so the panel that exists to say what Syn is told
+ * had no name for two of the things it was told.
+ *
+ * `the_frontend_knows_every_section_the_prompt_can_have` in `syn/prompt.rs`
+ * reads this file and fails when the two drift again.
+ */
 export type PromptSectionKind =
   | 'custom'
   | 'identity'
-  | 'personality'
   | 'rules'
   | 'today'
+  | 'focus'
+  | 'counted'
+  | 'thread'
   | 'tool_shape'
+  | 'memory'
+  | 'skills'
   | 'vault_context';
 
 export interface PromptSectionCost {
@@ -206,6 +279,21 @@ export interface PromptPreview {
   est_tokens: number;
   budget_chars: number;
   sections: PromptSectionCost[];
+  /**
+   * What the tool declarations cost — not part of the prompt text.
+   *
+   * They are the `tools` field of the request, so nothing on this screen used
+   * to mention them, while they were the single largest thing a turn spends:
+   * more than the whole fixed prompt. Mirrors `syn::prompt::ToolPayload`.
+   */
+  tools: ToolPayload;
+}
+
+export interface ToolPayload {
+  count: number;
+  chars: number;
+  est_tokens: number;
+  budget_chars: number;
 }
 
 // ─── Memory ──────────────────────────────────────────────────
@@ -250,9 +338,55 @@ export type Capability =
   | 'VaultWrite'
   | 'VaultStructural'
   | { NetRead: { domain: string } }
+  // Not a `NetRead` with an empty host, which is what it used to be and what
+  // made the card read "Syn wants to read from ." One capability for the whole
+  // tool: the host is unknown when the question is put, and already read by the
+  // time it is known.
+  | 'Browse'
   | { NetWrite: { domain: string; tool: string } }
   | { Spend: { cents_estimate: number } }
   | 'Execute';
+
+/**
+ * One tool, as somebody deciding whether to trust Syn would read it.
+ *
+ * Mirrors `syn::registry::ToolCard`. `capability` is optional because a tool
+ * the registry cannot classify is a bug the screen should show in amber rather
+ * than hide behind a default — a Rust test makes it impossible today.
+ */
+export interface ToolCard {
+  name: string;
+  /** The description the model is given, verbatim — not a kinder paraphrase. */
+  description: string;
+  capability?: Capability | null;
+  reversal?: Reversal | null;
+}
+
+/**
+ * One thing a query found and the user could have meant.
+ *
+ * Mirrors `syn::ambiguity::Candidate`.
+ */
+export interface Candidate {
+  id: string;
+  title: string;
+  node_type?: string;
+}
+
+/**
+ * *Which one?* — asked by the engine, never by the model.
+ *
+ * A query returned several and the next destructive call named one of them.
+ * Mirrors `syn::ambiguity::Choice`. `chose` is what the model was about to do,
+ * shown as the pre-selected answer: it is usually right, and a question that
+ * makes somebody redo the work from scratch is one they stop answering.
+ */
+export interface AmbiguousChoice {
+  tool: string;
+  candidates: Candidate[];
+  chose: string;
+  asked_at: string;
+}
 
 /** A question a run stopped on. */
 export interface ConsentAsk {

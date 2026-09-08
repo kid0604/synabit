@@ -90,6 +90,14 @@ pub enum Trigger {
     User,
 }
 
+/// What a run written before tempos existed reads back as.
+///
+/// `Working` and not `Instant`: every run on disk went through the full loop,
+/// which is exactly what `Working` means.
+fn working_tempo() -> crate::syn::tempo::Tempo {
+    crate::syn::tempo::Tempo::Working
+}
+
 /// Refuses to compile when a `RunState` variant is added and `RunState::ALL`
 /// is not updated.
 ///
@@ -105,6 +113,7 @@ fn _every_variant_is_listed(state: RunState) {
         | RunState::Cancelled
         | RunState::BudgetExhausted
         | RunState::AwaitingConsent
+        | RunState::AwaitingChoice
         | RunState::Interrupted => {}
     }
 }
@@ -132,6 +141,15 @@ pub enum RunState {
     /// where the work is unfinished *and* nothing went wrong *and* the next
     /// move belongs to the user. `Run::pending_consent` says what was asked.
     AwaitingConsent,
+    /// Stopped because the model was about to pick one of several, and which
+    /// one is the user's to say.
+    ///
+    /// Distinct from `AwaitingConsent` because the question is different.
+    /// Consent asks *may I*; this asks *which*. Vault writes deliberately never
+    /// ask the first — trash and version history put them back — and that is no
+    /// answer at all to the second, since restoring only helps somebody who
+    /// noticed the wrong thing went. See `syn::ambiguity`.
+    AwaitingChoice,
     /// Found on disk as `Working` by a process that is not driving it.
     ///
     /// Which is to say: the app was closed, or crashed, in the middle. Written
@@ -151,13 +169,14 @@ impl RunState {
     /// That is not hypothetical: `AwaitingConsent` was added to the enum, the
     /// agreement test went on passing, and the front end had no idea the state
     /// existed. The test was enumerating the variants it was meant to check.
-    pub const ALL: [RunState; 7] = [
+    pub const ALL: [RunState; 8] = [
         RunState::Working,
         RunState::Done,
         RunState::Failed,
         RunState::Cancelled,
         RunState::BudgetExhausted,
         RunState::AwaitingConsent,
+        RunState::AwaitingChoice,
         RunState::Interrupted,
     ];
 
@@ -347,6 +366,51 @@ pub struct Run {
     /// The conversation this belongs to, or `None` for a run nobody is watching.
     #[serde(default)]
     pub conversation_id: Option<String>,
+    /// How heavy this run was expected to be, decided before it started.
+    ///
+    /// Recorded for the same reason `thread` is: the decision is made from the
+    /// question and the vault's types, neither of which survives the turn, so
+    /// without this nothing could say how often the fast path fired — or, more
+    /// usefully, how often it fired on a question it should not have.
+    #[serde(default = "working_tempo")]
+    pub tempo: crate::syn::tempo::Tempo,
+    /// What the answer turned out to be standing on.
+    ///
+    /// Written after the work rather than before it, unlike `tempo`, because it
+    /// is a fact about what happened: which tools returned, and whether
+    /// retrieval had put anything in front of the model. See `syn::footing`.
+    ///
+    /// Recorded here as well as on the message for the reason `thread` is:
+    /// "how often was Syn guessing this week" is a question about runs, and a
+    /// message that has been deleted with its conversation takes its own copy
+    /// with it.
+    ///
+    /// `None` on every run written before this existed, and it has to be an
+    /// `Option` rather than defaulting to `Guessing`. "Nobody measured this
+    /// one" and "this one was a guess" are different claims, and only the first
+    /// is true of an old run — a tally that conflated them would open with a
+    /// screen reporting every run in the vault's history as a guess.
+    ///
+    /// `SynMessage::footing` reasoned this through and got it right; this field
+    /// was written the same day and got it wrong, and the tally is what made
+    /// the difference visible.
+    #[serde(default)]
+    pub footing: Option<crate::syn::footing::Footing>,
+    /// The thread this run served, when it was asked inside one.
+    ///
+    /// Recorded because otherwise nothing can answer whether threads do
+    /// anything. A thread reaches the model by riding in the prompt, and the
+    /// prompt is rebuilt every turn and kept nowhere — so "how many runs had a
+    /// thread in front of them" was unanswerable from what a run wrote down,
+    /// and "how many of those wrote anything back into it" was therefore
+    /// unanswerable too.
+    ///
+    /// It is also the honest shape: a run belonging to a piece of work is a
+    /// fact about the run, the same kind of fact as which conversation it
+    /// belongs to. `#[serde(default)]` so every run written before this reads
+    /// back as one that served no thread, which is what they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
     /// What the user asked for, in their words. Not a summary and not a
     /// rewrite: the point of keeping it is to be able to see, later, what was
     /// actually asked rather than what the model decided it meant.
@@ -380,6 +444,36 @@ pub struct Run {
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
+    /// The *which one* this run stopped on, when it stopped on one.
+    ///
+    /// Beside `pending_consent` rather than folded into it: two questions that
+    /// look alike on screen and mean opposite things about whether anything is
+    /// wrong. One is a permission the user has never granted; the other is work
+    /// proceeding normally, with one detail Syn refuses to guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_choice: Option<crate::syn::ambiguity::Choice>,
+    /// The call this run was about to make when it stopped for permission.
+    ///
+    /// # Why the answer is not enough on its own
+    ///
+    /// A run that stops for consent is over; answering starts a **new** run,
+    /// which begins from the user's message and works it out again. That is
+    /// harmless when the thing being asked about is the first search — the new
+    /// run searches, which is what was wanted anyway.
+    ///
+    /// It is not harmless once Syn follows a link. The transcript has the case:
+    /// permission granted at 15:58:02 to read `www.bongdanet.co`, and at
+    /// 15:58:04 the resumed run searched DuckDuckGo again instead. The intent
+    /// lived in the stopped run's in-memory message list and died with it, so
+    /// **the permission was spent on nothing** — and the user was asked a third
+    /// time.
+    ///
+    /// Kept here, the resumed run can do the thing that was actually asked
+    /// about. It stays on the run afterwards rather than being cleared: it is
+    /// the record of what the question was about, beside the note saying it was
+    /// asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_call: Option<crate::models::syn::ToolCall>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -394,6 +488,9 @@ impl Run {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             conversation_id,
+            tempo: crate::syn::tempo::Tempo::Working,
+            footing: None,
+            thread: None,
             goal: goal.into(),
             trigger: Trigger::User,
             state: RunState::Working,
@@ -405,6 +502,8 @@ impl Run {
             error: None,
             plan_only: false,
             pending_consent: None,
+            pending_call: None,
+            pending_choice: None,
             created_at: now.clone(),
             updated_at: now,
         }

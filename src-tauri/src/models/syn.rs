@@ -70,6 +70,19 @@ pub struct SynMessage {
     /// Source references from RAG retrieval (only present on assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<SourceRef>>,
+    /// What this answer was standing on, decided from the run's transcript.
+    ///
+    /// On the message rather than only on the run because it has to survive
+    /// reopening the conversation: a mark that appears while the answer streams
+    /// and is gone tomorrow is worse than no mark, since the reader learns to
+    /// disregard it. See `syn::footing`.
+    ///
+    /// `None` on user messages, and on every assistant message written before
+    /// this existed — which is why it is an `Option` rather than defaulting to
+    /// `Guessing`. "Nobody measured this one" and "this one was a guess" are
+    /// different claims, and only the first is true of an old message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footing: Option<crate::syn::footing::Footing>,
     /// Tool calls made during this message (for display in frontend)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls_log: Option<Vec<SynToolCallEvent>>,
@@ -132,6 +145,27 @@ pub struct SynChatRequest {
     /// Base64-encoded images to send with the message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
+    /// What the user was looking at when they asked.
+    ///
+    /// Part of the request rather than of the conversation, because it is true
+    /// of one message and not of the next: the screen has moved on by the time
+    /// the answer arrives. `None` from any caller that has no screen. See
+    /// `syn::focus`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<crate::syn::focus::Focus>,
+    /// The run that stopped for permission, now that it has an answer.
+    ///
+    /// Carrying on rather than asking a new question: `message` is empty,
+    /// nobody typed anything, and the thing they want answered is still the
+    /// last thing they said.
+    ///
+    /// The run's **id** rather than a flag, because the run holds the call it
+    /// was about to make. Without that the resumed run starts from the user's
+    /// message and works it out again — which searched DuckDuckGo a second time
+    /// after the user had just granted permission to read a particular site.
+    /// See `run::Run::pending_call`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_run: Option<String>,
 }
 
 /// Pull model progress event — emitted while downloading a model.
@@ -174,7 +208,6 @@ pub struct RagConfig {
     pub include_finance: bool,
     pub include_feeds: bool,
     pub graph_expansion_depth: u8,
-    pub personality: String,
 }
 
 impl Default for RagConfig {
@@ -185,7 +218,6 @@ impl Default for RagConfig {
             include_finance: true,
             include_feeds: true,
             graph_expansion_depth: 1,
-            personality: "auto".to_string(),
         }
     }
 }
@@ -204,6 +236,13 @@ fn default_max_tool_iterations() -> u8 {
     12
 }
 fn default_memory_reflection() -> bool {
+    true
+}
+
+/// On, for a fresh vault and for every vault written before the switch
+/// existed. Somebody who installed a productivity app with an assistant in
+/// it did not install it to find the assistant switched off.
+fn default_enabled() -> bool {
     true
 }
 
@@ -248,6 +287,39 @@ fn default_openai_base_url() -> String {
 /// writes to the OS keychain and stays on the one machine.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SynSettings {
+    /// The switch that turns Syn off.
+    ///
+    /// # Why there has to be one
+    ///
+    /// Syn's surface has grown: threads live inside the Syn app, the ask bar
+    /// opens over every other mini-app with a keystroke, and reflection looks
+    /// at every exchange without being asked. None of that had an off position
+    /// — the closest thing was disconnecting the model provider, which is not
+    /// the same statement and leaves the app in an error state rather than a
+    /// chosen one.
+    ///
+    /// # What it turns off, and what it deliberately does not
+    ///
+    /// Off means: no message is sent, no run is driven, no reflection looks
+    /// back at anything, no memory reaches a prompt, and the ask bar does not
+    /// open anywhere.
+    ///
+    /// It does **not** touch the app's own reminders. `chat_engine` sends
+    /// "this task is overdue" as *Synabit System*, not as Syn — those are the
+    /// calendar doing its job, and switching Syn off must not take them with
+    /// it. The whole point of the switch is that everything which is not Syn
+    /// keeps working; a switch that quietly stopped the reminders would be
+    /// proof that Syn had grown into places it does not belong.
+    ///
+    /// Threads keep existing too, because they are ordinary vault nodes and
+    /// were always readable in Things. Turning off the colleague does not
+    /// delete the work.
+    ///
+    /// Absent in settings files written before this existed, and those vaults
+    /// are ones where Syn was on.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+
     // Connection
     /// Which service to talk to. Absent in files written before providers
     /// existed, and those vaults are Ollama vaults.
@@ -328,14 +400,39 @@ pub struct SynSettings {
     #[serde(default = "default_memory_reflection")]
     pub memory_reflection: bool,
 
+    /// Where Syn searches the web, when it can.
+    ///
+    /// The user's own endpoint — a SearXNG they run, or a paid API they have a
+    /// key for. Nothing is bundled and nothing is scraped: parsing a search
+    /// engine's HTML behind its back breaks on their next redesign and is not
+    /// this app's to do.
+    ///
+    /// `None` means Syn has no search, and the tool is not offered at all —
+    /// rather than offered and failing, which would spend tokens every turn
+    /// describing something that cannot work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_url: Option<String>,
+
     // Personality
-    pub personality: String,
+    /// Kept only so an existing settings file still deserialises, and so
+    /// `instructions::migrate_personality` can carry a chosen voice into
+    /// `SYN.md` once before it goes.
+    ///
+    /// Nothing reads it into a prompt any more. It picked one of three voices,
+    /// two of which hard-coded Vietnamese and a pronoun pair on the user's
+    /// behalf; the third was the rule that makes a bilingual app work, and that
+    /// one now lives unconditionally in `prompt::IDENTITY`. How Syn talks to
+    /// somebody belongs in their own words in `SYN.md`, where they can say
+    /// anything rather than one of three things.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personality: Option<String>,
     pub custom_system_prompt: Option<String>,
 }
 
 impl Default for SynSettings {
     fn default() -> Self {
         Self {
+            enabled: default_enabled(),
             provider: SynProvider::Ollama,
             ollama_url: "http://localhost:11434".to_string(),
             openai_base_url: default_openai_base_url(),
@@ -351,7 +448,8 @@ impl Default for SynSettings {
             include_feeds: true,
             graph_expansion_depth: 1,
             memory_reflection: default_memory_reflection(),
-            personality: "auto".to_string(),
+            search_url: None,
+            personality: None,
             custom_system_prompt: None,
         }
     }

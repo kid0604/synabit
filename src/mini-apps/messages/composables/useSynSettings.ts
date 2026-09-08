@@ -12,6 +12,20 @@ import { logger } from '../../../utils/logger';
 export type SynProviderId = 'ollama' | 'open_ai_compat';
 
 export interface SynSettings {
+  /**
+   * The switch that turns Syn off.
+   *
+   * Off means no message is sent, no run is driven, nothing is reflected on,
+   * no memory reaches a prompt, and the ask bar does not open anywhere. It
+   * deliberately leaves the app's own reminders alone — those are the calendar
+   * speaking as *Synabit System*, not Syn — and it leaves threads alone,
+   * because they are ordinary vault nodes and Things still lists them.
+   *
+   * The backend refuses on its own when this is false; the screen hiding the
+   * composer is the courtesy, not the enforcement.
+   */
+  enabled: boolean;
+
   // Connection
   provider: SynProviderId;
   ollama_url: string;
@@ -43,8 +57,19 @@ export interface SynSettings {
   include_feeds: boolean;
   graph_expansion_depth: number;
 
+  /**
+   * Where Syn searches the web.
+   *
+   * The user's own endpoint — a SearXNG they run, or a paid API they have a
+   * key for. Nothing is bundled: parsing a search engine's HTML behind its
+   * back breaks on their next redesign and is not this app's to do.
+   *
+   * Empty means Syn has no search, and the tool is not offered to the model at
+   * all rather than offered and failing.
+   */
+  search_url: string | null;
+
   // Personality
-  personality: string;
   custom_system_prompt: string | null;
 
   // Context limits
@@ -69,6 +94,7 @@ export interface SynSettings {
  * configuration no fresh vault has ever had.
  */
 const DEFAULT_SETTINGS: SynSettings = {
+  enabled: true,
   provider: 'ollama',
   ollama_url: 'http://localhost:11434',
   openai_base_url: 'https://api.openai.com/v1',
@@ -81,7 +107,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   include_finance: true,
   include_feeds: true,
   graph_expansion_depth: 1,
-  personality: 'auto',
+  search_url: null,
   custom_system_prompt: null,
   num_ctx: 8192,
   max_history_messages: 50,

@@ -52,7 +52,7 @@ import NoteExportModal from '../note/NoteExportModal.vue';
 import { useNoteExport } from '../note/composables/useNoteExport';
 import type { NoteItem } from '../note/helpers';
 import { useThingsRowActions, UNDO_WINDOW_SECONDS } from './composables/useThingsRowActions';
-import { routeForNodeType } from '../../shared/nodeRoutes';
+import { routeForNodeType, nameForNodeType } from '../../shared/nodeRoutes';
 import { appName } from '../../shared/appRegistry';
 import { useRouter } from 'vue-router';
 import TableView from '../../shared/views/TableView.vue';
@@ -1200,8 +1200,13 @@ onBeforeUnmount(() => {
             that reads as English beside a Vietnamese interface; for `animal` it
             is the only name there is. Naming them from a table in the code
             would mean a type nobody coded for has no name at all.
+
+            `nameForNodeType` is the one exception and keeps that property: it
+            names only the types this app invented and whose stored name carries
+            a prefix the user never chose, and falls back to the type itself for
+            everything else. See `shared/nodeRoutes.ts`.
           -->
-          <span class="truncate">{{ entry.node_type }}</span>
+          <span class="truncate">{{ nameForNodeType(entry.node_type) }}</span>
           <span class="ml-auto text-xs text-gray-400 dark:text-gray-600 tabular-nums">{{ entry.count }}</span>
         </button>
 
