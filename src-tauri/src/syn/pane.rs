@@ -146,20 +146,24 @@ impl Layout {
 /// A window too narrow for both gets **no pane at all** rather than two
 /// unusable slivers. Refusing to open is honest; opening something nobody can
 /// read is not.
-pub fn layout(width: u32, height: u32, wanted: bool) -> Layout {
-    if !wanted {
+/// `wanted` is the share of the width asked for — `None` for no pane at all,
+/// and `Some(SHARE)` for the default. A drag passes what the pointer is asking
+/// for and gets back what the window can actually give.
+pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
+    let Some(share) = wanted else {
         return Layout::only_the_app(width, height);
-    }
-
-    let share = (width as f64 * SHARE) as u32;
-    let pane_width = share.max(NARROWEST);
+    };
 
     // The app keeps its floor first: the conversation is what the pane is
     // there to sit beside.
     if width < APP_KEEPS.saturating_add(NARROWEST) {
         return Layout::only_the_app(width, height);
     }
-    let pane_width = pane_width.min(width.saturating_sub(APP_KEEPS));
+
+    let asked = (width as f64 * share.clamp(0.0, 1.0)) as u32;
+    let pane_width = asked
+        .max(NARROWEST)
+        .min(width.saturating_sub(APP_KEEPS));
 
     let app_width = width.saturating_sub(pane_width);
     Layout {
@@ -177,7 +181,7 @@ pub fn layout(width: u32, height: u32, wanted: bool) -> Layout {
 /// Best effort on each move: a webview that has gone, or a runtime that refuses
 /// a bounds change, is a pane that looks wrong rather than an app that stops.
 #[cfg(desktop)]
-pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: bool) -> AppResult<Layout> {
+pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>) -> AppResult<Layout> {
     use tauri::Manager;
 
     let main = app
@@ -226,10 +230,10 @@ pub fn open<R: tauri::Runtime>(
     if let Some(pane) = app.get_webview(PANE) {
         pane.navigate(target)
             .map_err(|e| AppError::General(format!("Could not navigate the pane: {e}")))?;
-        return Ok(arrange(app, true)?.pane_share());
+        return Ok(arrange(app, Some(SHARE))?.pane_share());
     }
 
-    let plan = arrange(app, true)?;
+    let plan = arrange(app, Some(SHARE))?;
     let Some((x, y, w, h)) = plan.pane else {
         return Err(AppError::General(
             "The window is too narrow to show a browser beside the conversation".into(),
@@ -283,6 +287,18 @@ pub fn open<R: tauri::Runtime>(
     Ok(plan.pane_share())
 }
 
+/// Drag the edge between the conversation and the pane.
+///
+/// The clamping lives here rather than on the screen, so there is one answer to
+/// *how narrow may this get* — `layout` already holds `APP_KEEPS` and
+/// `NARROWEST`, and a second copy in CSS would be a second opinion that drifts.
+/// What comes back is what the window could actually give, which is what the
+/// app then draws itself to.
+#[cfg(desktop)]
+pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppResult<f64> {
+    Ok(arrange(app, Some(share))?.pane_share())
+}
+
 /// Put the pane away and give the app its window back.
 #[cfg(desktop)]
 pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
@@ -303,7 +319,7 @@ mod tests {
     /// the 69 overlays need no changing.
     #[test]
     fn the_two_never_overlap_and_leave_no_gap() {
-        let plan = layout(1600, 900, true);
+        let plan = layout(1600, 900, Some(SHARE));
         let (ax, _, aw, ah) = plan.app;
         let (px, _, pw, ph) = plan.pane.expect("there is room for both");
 
@@ -317,7 +333,7 @@ mod tests {
     /// Refusing to open is honest; opening something nobody can read is not.
     #[test]
     fn a_window_too_narrow_for_both_keeps_the_conversation() {
-        let plan = layout(APP_KEEPS + NARROWEST - 1, 800, true);
+        let plan = layout(APP_KEEPS + NARROWEST - 1, 800, Some(SHARE));
 
         assert!(plan.pane.is_none(), "{plan:?}");
         assert_eq!(plan.app, (0, 0, APP_KEEPS + NARROWEST - 1, 800), "the app keeps all of it");
@@ -329,7 +345,7 @@ mod tests {
     #[test]
     fn the_conversation_is_never_squeezed_past_its_floor() {
         for width in [900, 1000, 1200, 1600, 2560, 3840] {
-            let plan = layout(width, 900, true);
+            let plan = layout(width, 900, Some(SHARE));
             let (_, _, app_width, _) = plan.app;
             assert!(
                 app_width >= APP_KEEPS,
@@ -345,8 +361,8 @@ mod tests {
     /// what it must go back to when the pane closes.
     #[test]
     fn closing_it_gives_the_window_back() {
-        assert_eq!(layout(1600, 900, false), Layout::only_the_app(1600, 900));
-        assert!(layout(1600, 900, false).pane.is_none());
+        assert_eq!(layout(1600, 900, None), Layout::only_the_app(1600, 900));
+        assert!(layout(1600, 900, None).pane.is_none());
     }
 
     /// A very wide window gives the pane a share rather than everything left
@@ -354,7 +370,7 @@ mod tests {
     /// conversation is still the thing being worked in.
     #[test]
     fn a_wide_window_does_not_give_the_pane_everything() {
-        let (_, _, pane_width, _) = layout(3840, 1000, true).pane.expect("room for both");
+        let (_, _, pane_width, _) = layout(3840, 1000, Some(SHARE)).pane.expect("room for both");
         assert!(pane_width < 3840 / 2, "the pane took half a very wide window: {pane_width}");
     }
 
@@ -392,5 +408,53 @@ mod tests {
         ] {
             assert!(built.contains(guard), "the pane is built without {guard}");
         }
+    }
+
+    /// The edge can be dragged, and the same floors hold whoever is pulling.
+    ///
+    /// The clamping is here rather than in CSS so that there is one answer to
+    /// *how narrow may this get*. A copy on the screen would be a second
+    /// opinion, and the two would part company the first time one of these
+    /// constants moved.
+    #[test]
+    fn dragging_the_edge_still_obeys_both_floors() {
+        // Pulled far too wide: the conversation keeps its floor.
+        let greedy = layout(1600, 900, Some(0.95));
+        assert_eq!(greedy.app.2, APP_KEEPS);
+        assert_eq!(greedy.pane.expect("still open").2, 1600 - APP_KEEPS);
+
+        // Pulled almost shut: the pane keeps its own.
+        let squeezed = layout(1600, 900, Some(0.01));
+        assert_eq!(squeezed.pane.expect("still open").2, NARROWEST);
+
+        // And nonsense is clamped rather than believed.
+        for share in [-1.0, 0.0, 1.0, 2.0, f64::NAN] {
+            let plan = layout(1600, 900, Some(share));
+            let (_, _, pane_width, _) = plan.pane.expect("open at any asking");
+            assert!(
+                (NARROWEST..=1600 - APP_KEEPS).contains(&pane_width),
+                "share {share} produced {pane_width}"
+            );
+        }
+    }
+
+    /// What crosses to the screen is a fraction, and it has to describe the
+    /// layout it came from — the app draws itself to `1 - share`, so a share
+    /// that does not match leaves a gap or an overlap.
+    #[test]
+    fn the_share_describes_the_layout_it_came_from() {
+        for width in [900, 1280, 1600, 2560] {
+            let plan = layout(width, 900, Some(SHARE));
+            let share = plan.pane_share();
+            let drawn = (width as f64 * (1.0 - share)).round() as u32;
+
+            assert!(
+                drawn.abs_diff(plan.app.2) <= 1,
+                "at {width} the app would draw {drawn} for a layout of {}",
+                plan.app.2
+            );
+        }
+
+        assert_eq!(layout(1600, 900, None).pane_share(), 0.0, "closed is zero");
     }
 }

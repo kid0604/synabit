@@ -1,6 +1,43 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { paneShare as synPaneShare } from './shared/syn/pane';
+import { paneShare as synPaneShare, dragPaneTo } from './shared/syn/pane';
+
+/**
+ * Dragging the browser pane's edge.
+ *
+ * Listeners on `window` rather than the handle, because a pointer that leaves a
+ * six-pixel strip mid-drag is the normal case, not the exception — the same
+ * reason `useSidebarResize` does it that way for the DOM sidebars.
+ */
+const draggingPane = ref(false);
+
+const onPaneDrag = (e: MouseEvent) => {
+  if (!draggingPane.value) return;
+  // What is left of the window to the right of the pointer, as a fraction.
+  // Rust decides whether it is allowed; this only says what is being asked for.
+  dragPaneTo((window.innerWidth - e.clientX) / window.innerWidth);
+};
+
+const endPaneDrag = () => {
+  draggingPane.value = false;
+  document.body.style.cursor = '';
+};
+
+const startPaneDrag = () => {
+  draggingPane.value = true;
+  // Held for the whole drag: without it the cursor flickers back to a caret
+  // every time the pointer crosses text.
+  document.body.style.cursor = 'col-resize';
+};
+
+onMounted(() => {
+  window.addEventListener('mousemove', onPaneDrag);
+  window.addEventListener('mouseup', endPaneDrag);
+});
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onPaneDrag);
+  window.removeEventListener('mouseup', endPaneDrag);
+});
 import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -992,6 +1029,24 @@ onUnmounted(() => {
     :class="['flex h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none', { 'syn-pane-open': synPaneShare > 0 }]"
     :style="synPaneShare > 0 ? { '--syn-pane': `${(synPaneShare * 100).toFixed(4)}%` } : undefined"
   >
+    <!--
+      The edge between the conversation and the browser, draggable — the same
+      thing Notes and Things give their side panels, and the reason this one
+      needs its own handle is that the pane is not a DOM element. It is an OS
+      webview, so the handle lives here at the app's right edge and the drag is
+      sent to `set_bounds`, which *does* move a child webview.
+
+      Sits inside the transformed root, so `right-0` is the app's edge, which is
+      exactly the pane's edge. z above everything: it has to be grabbable over
+      whatever the mini-app has drawn there.
+    -->
+    <div
+      v-if="synPaneShare > 0"
+      class="fixed top-0 right-0 w-1.5 h-full z-[10000] cursor-col-resize
+             hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+      :class="{ 'bg-black/10 dark:bg-white/10': draggingPane }"
+      @mousedown.prevent="startPaneDrag"
+    ></div>
 
     <!-- ═══ Auto-Update Banner ═══ -->
     <Transition name="slide-down">

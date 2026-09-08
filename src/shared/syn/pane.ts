@@ -52,6 +52,34 @@ export async function openPane(url: string = SOMEWHERE_TO_START): Promise<void> 
   }
 }
 
+/**
+ * Drag the edge between the conversation and the pane.
+ *
+ * The clamping is Rust's — `pane::layout` holds the floors, and what comes back
+ * is what the window could actually give. Keeping a copy of those numbers here
+ * would be a second opinion, and the two would part company the first time one
+ * of them moved.
+ *
+ * Coalesced to one call a frame. A pointer produces far more events than a
+ * webview can usefully be moved, and the extra ones buy nothing but IPC.
+ */
+let dragPending: number | null = null;
+let dragWanted = 0;
+
+export function dragPaneTo(share: number): void {
+  dragWanted = share;
+  if (dragPending !== null) return;
+
+  dragPending = requestAnimationFrame(async () => {
+    dragPending = null;
+    try {
+      paneShare.value = await invoke<number>('syn_pane_resize', { share: dragWanted });
+    } catch (e) {
+      logger.error('[Syn] The pane would not move', e);
+    }
+  });
+}
+
 /** Put it away and give the app the whole window back. */
 export async function closePane(): Promise<void> {
   try {

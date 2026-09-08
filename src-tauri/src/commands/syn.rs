@@ -1428,6 +1428,24 @@ pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<f64, Ap
     }
 }
 
+/// Drag the edge between the conversation and the browsing pane.
+///
+/// Takes the share the pointer is asking for and returns what the window could
+/// actually give — the floors live in `syn::pane::layout`, so the screen never
+/// has to hold a second copy of them.
+#[tauri::command]
+pub async fn syn_pane_resize(app: tauri::AppHandle, share: f64) -> Result<f64, AppError> {
+    #[cfg(desktop)]
+    {
+        crate::syn::pane::drag_to(&app, share)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, share);
+        Ok(0.0)
+    }
+}
+
 /// Put the browsing pane away and give the app its window back.
 #[tauri::command]
 pub async fn syn_pane_close(app: tauri::AppHandle) -> Result<(), AppError> {
