@@ -2636,7 +2636,7 @@ fn tool_create_node<R: tauri::Runtime>(
 fn tool_update_node<R: tauri::Runtime>(
     ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     use crate::commands::nodes::{
-        existing_body, existing_properties, markdown_with_frontmatter, resolve_properties,
+        existing_body, existing_properties, resolve_properties,
     };
 
     let node_id = args
@@ -2724,14 +2724,7 @@ fn tool_update_node<R: tauri::Runtime>(
         .unwrap_or(&node.title)
         .to_string();
 
-    if ext == "md" {
-        let file_content =
-            markdown_with_frontmatter(&title, &node.node_type, &properties, &body);
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&full_path, &file_content)?;
-    } else {
+    if ext != "md" {
         return Ok(serde_json::json!({
             "error": format!("Cannot edit a .{} node; only markdown nodes can be updated here", ext),
             "node_id": node_id,
@@ -2739,36 +2732,59 @@ fn tool_update_node<R: tauri::Runtime>(
         .to_string());
     }
 
-    let now = chrono::Utc::now();
+    // Through the app's own writer, and this is the whole of the fix.
+    //
+    // This used to write the file with `std::fs::write` and then update the
+    // database and the search index by hand. All three of those happened. What
+    // did not was the line in the middle of `write_node_inner` marked *Phase 1:
+    // CRDT Bridge* — so every edit Syn made was invisible to the CRDT, which
+    // went on holding the state from before it.
+    //
+    // The CRDT is not a cache. It is what sync agrees on, and what gets written
+    // back to the file the next time it is re-read from a snapshot. Nine
+    // seconds after Syn added a row to a table of IP addresses, loro
+    // re-initialised from a peer snapshot and wrote the old body back. The tool
+    // had already reported `success: true`, and nothing anywhere said
+    // otherwise.
+    //
+    // Every other writer in this file already went through here —
+    // `write_tool_node` for `create_node`, `commands::trash` for trash and
+    // restore. This one function hand-rolled it, and this one function lost
+    // data.
+    // `write_node_inner` merges what it is given with what is on disk, and
+    // this function has already merged. That is not a duplicated step — it is a
+    // difference in what the two of them know.
+    //
+    // The merge here also *normalises*: an event written with `start_date`
+    // comes back with `start_at` and the dead key **dropped**. A key that is
+    // simply absent from a patch means "leave it alone", so the second merge
+    // read it off disk and put it straight back, and the event stayed broken
+    // in exactly the way the normalisation exists to repair.
+    //
+    // `resolve_properties` spells removal as an explicit `null`. So anything
+    // that was on disk and is deliberately gone says so, rather than going
+    // quiet and being taken for indifference.
+    let mut merged = properties.clone();
+    if let Some(fields) = merged.as_object_mut() {
+        for key in existing_properties(&full_path, &ext).keys() {
+            fields.entry(key.clone()).or_insert(Value::Null);
+        }
+    }
+
+    crate::commands::nodes::write_node_inner(
+        ctx.app,
+        ctx.db,
+        ctx.vault_path.to_string(),
+        node.id.clone(),
+        title.clone(),
+        node.node_type.clone(),
+        merged,
+        Some(body.clone()),
+    )?;
+
     node.title = title.clone();
     node.content = body.clone();
     node.properties = properties.clone();
-    node.updated_at = now.to_rfc3339();
-    node.timestamp = now.timestamp_millis();
-    lock(ctx)?.upsert_node(&node)?;
-
-    let tags_str = properties
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default();
-    let props_json = serde_json::to_string(&properties).unwrap_or_default();
-    lock(ctx)?.upsert_search_entry(
-        &node.id,
-        &node.node_type,
-        &title,
-        &tags_str,
-        &body,
-        &props_json,
-        properties.get("status").and_then(|v| v.as_str()),
-        &node.updated_at,
-        &node.id,
-    );
 
     let _ = ctx.app.emit(
         "node:updated",
@@ -4046,6 +4062,100 @@ mod tests {
         assert!(
             healed.get("start_date").is_none(),
             "and clears the dead key rather than leaving both: {healed}"
+        );
+    }
+
+    /// An edit by Syn has to reach the CRDT, or it is undone without a word.
+    ///
+    /// # What happened
+    ///
+    /// Asked to add a row to a table of IP addresses, Syn read the note, sent
+    /// the whole body back with the row appended, and `update_node` answered
+    /// `{"success": true}`. The file on disk had the row. Nine seconds later
+    /// loro re-initialised from a peer snapshot and wrote the old body back,
+    /// and the row was gone. Nothing reported anything: the tool had already
+    /// succeeded, the message said *"Đã cập nhật"*, and `footing` marked the
+    /// answer `grounded` — correctly, by its own rule, because a tool had run
+    /// and come back.
+    ///
+    /// The cause was that `update_node` wrote the file with `std::fs::write`
+    /// and updated the database by hand, skipping the *Phase 1: CRDT Bridge*
+    /// in `write_node_inner`. The CRDT is not a cache — it is what sync agrees
+    /// on and what the file is rebuilt from.
+    ///
+    /// So this asserts the property that was missing, not the one that held:
+    /// **the CRDT has the new text**, which is the copy that survives.
+    #[test]
+    fn an_edit_by_syn_reaches_the_crdt_and_not_only_the_file() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+
+        let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext {
+                db: &state,
+                vault_path: &vault_path,
+                app: &handle,
+                run_id: None,
+            };
+            serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs"))
+                .expect("JSON")
+        };
+
+        let made = call(
+            "create_node",
+            serde_json::json!({
+                "node_type": "note",
+                "title": "PSSv2 IP",
+                "content": "| IP | Hostname |\n| --- | --- |\n| 10.248.50.21 |  |",
+            }),
+        );
+        let id = made["id"].as_str().expect("an id").to_string();
+
+        let added = "| IP | Hostname |\n| --- | --- |\n| 10.248.50.21 |  |\n| 1.2.3.4 | new |";
+        call(
+            "update_node",
+            serde_json::json!({ "node_id": id, "content": added }),
+        );
+
+        // On disk, which was never the part that failed.
+        let on_disk = std::fs::read_to_string(vault.join(&id)).expect("the file is there");
+        assert!(on_disk.contains("1.2.3.4"), "the file lost the edit: {on_disk}");
+
+        // And in the CRDT, which is the part that did. Without this the next
+        // snapshot rebuild writes the old body straight back over it.
+        // The identity first, and *before* the lock. It reads the database
+        // itself, so asking for it with the lock in hand deadlocks — which is
+        // how this test first behaved: no failure, no output, just a run that
+        // never came back.
+        let vault_id =
+            crate::sync::core::identity::load_or_register_vault_identity(&handle, &vault_path)
+                .expect("a vault identity")
+                .vault_id
+                .to_string();
+
+        let state = handle.state::<crate::db::DbState>();
+        let db = state.lock().expect("lock");
+        let node_id = db
+            .get_node_id_by_path(&vault_id, &id)
+            .expect("looked up")
+            .expect("the write registered a path");
+
+        let doc = db.get_crdt_doc(&vault_id, &node_id).expect("a crdt document");
+        let in_crdt = crate::sync::core::crdt::node_text(&doc);
+
+        assert!(
+            in_crdt.contains("1.2.3.4"),
+            "the CRDT never saw the edit, so sync will undo it: {in_crdt}"
         );
     }
 
