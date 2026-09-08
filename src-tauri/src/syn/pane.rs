@@ -15,45 +15,65 @@
 //! pane is not something anybody maintains — the modal added next month forgets,
 //! and the browser silently covers it.
 //!
-//! That was the wrong question. The right one is *why are they overlapping at
-//! all?* `Webview::set_bounds` is not gated behind `unstable`; only `add_child`
-//! is. So:
+//! # The answer I got wrong, and what the screen said
+//!
+//! I thought the fix was *shrink the app's webview instead of overlaying it* —
+//! `Webview::set_bounds` is public and not behind `unstable`, so put the app on
+//! the left and the browser on the right and nothing intersects.
+//!
+//! It does not work, and it fails **silently**. `wry-0.54.4`,
+//! `src/wkwebview/mod.rs:1010`:
+//!
+//! ```text
+//! pub fn set_bounds(&self, bounds: Rect) -> crate::Result<()> {
+//!   #[cfg(target_os = "macos")]
+//!   if self.is_child {          // ← only a child webview moves
+//!       ... setFrame ...
+//!   }
+//!   Ok(())                       // ← the main webview: nothing, reported as success
+//! }
+//! ```
+//!
+//! On macOS the main webview cannot be moved at all. It is the window's content
+//! view, wrapped in wry's own parent view with an AppKit autoresizing mask that
+//! keeps it filling the window. `set_bounds` returns `Ok` and does nothing, so
+//! the pane painted straight over the conversation and my own error handling
+//! had nothing to report.
+//!
+//! # So the app gets out of the way in CSS, not in AppKit
+//!
+//! The main webview stays where it is — full window, untouched, resizing
+//! natively. What changes is where the app *draws*:
 //!
 //! ```text
 //! ┌──────────────────────────┬──────────────┐
-//! │  the app's own webview   │  the browser │
-//! │  set_bounds(left)        │  add_child   │
-//! │  ← all 69 overlays live  │  (right)     │
-//! │    here, untouched       │              │
+//! │  app webview: full window                │
+//! │  ┌───────────────────────┐  the browser  │
+//! │  │ what the app draws    │  paints over  │
+//! │  │ width: calc(100%-38%) │  the strip    │
+//! │  └───────────────────────┘  left empty   │
 //! └──────────────────────────┴──────────────┘
 //! ```
 //!
-//! **Shrink, do not overlay.** Nothing intersects, so nothing is occluded, so
-//! none of the 69 need changing — they simply live in a narrower viewport, and
-//! the app is already responsive. That is what Electron apps do, and Tauri can
-//! do it too.
+//! And the 69 `fixed inset-0` overlays come along for free, through one line of
+//! CSS: a `transform` on an element makes it the **containing block for
+//! `position: fixed` descendants**. So the app's root shrinks *and* becomes the
+//! frame every overlay is measured against — all 69 confined without one of
+//! them being edited.
 //!
-//! # What the gate found
+//! Which also means this no longer depends on `set_bounds` working anywhere.
+//! One mechanism on every platform, rather than a different story per runtime.
 //!
-//! Opening and closing hold: the app's webview goes to the left and **stays
-//! there**, which was the expensive question. Resizing the window did not, and
-//! the reason is worth writing down because it is the opposite of a bug in the
-//! runtime — it is the runtime already doing this job, and me fighting it.
+//! # How the pane keeps its share
 //!
 //! `auto_resize` in wry does not mean *fill the window*. It stores **rates** —
 //! `x_rate`, `y_rate`, `width_rate`, `height_rate` — and reapplies them every
 //! time the window changes size. That is exactly what a docked column is: a
-//! fraction of the width, pinned to an edge, full height.
+//! fraction of the width, pinned to an edge, full height. So the pane is given
+//! its rates once, at birth, and the runtime keeps them.
 //!
-//! And `set_bounds` does **not** recompute those rates. So the app's webview,
-//! created window-filling with rates of `1.0`, kept them after being moved to
-//! the left — and the next resize snapped it back over the pane, while a
-//! `WindowEvent::Resized` handler of mine tried to put it back. Two things
-//! moving the same view on the same event.
-//!
-//! So there is no handler now. Both webviews get `set_auto_resize(true)` after
-//! being placed, wry keeps the proportions, and the layout survives a resize
-//! because nothing is arguing with it.
+//! Which is why there is no `WindowEvent::Resized` handler here. There was one,
+//! and it was doing a job wry already does — badly, and against it.
 
 use crate::error::{AppError, AppResult};
 
@@ -95,6 +115,26 @@ impl Layout {
     /// The whole window to the app, which is also how it started.
     pub fn only_the_app(width: u32, height: u32) -> Self {
         Layout { app: (0, 0, width, height), pane: None }
+    }
+
+    /// How much of the window's width the pane takes, as a fraction.
+    ///
+    /// This is what crosses to the frontend, rather than a pixel count, and the
+    /// reason is that both sides then agree for free. `auto_resize` keeps the
+    /// pane at a **rate** of the window; a CSS width in the same fraction stays
+    /// correct through every resize with nothing to notify and nothing to drift.
+    pub fn pane_share(&self) -> f64 {
+        match self.pane {
+            Some((_, _, pane_width, _)) => {
+                let total = self.app.2.saturating_add(pane_width);
+                if total == 0 {
+                    0.0
+                } else {
+                    pane_width as f64 / total as f64
+                }
+            }
+            None => 0.0,
+        }
     }
 }
 
@@ -152,41 +192,18 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: bool) -> Ap
     let logical = |v: u32| (v as f64 / scale) as u32;
     let plan = layout(logical(size.width), logical(size.height), wanted);
 
-    let rect = |(x, y, w, h): (i32, i32, u32, u32)| tauri::Rect {
-        position: tauri::LogicalPosition::new(x, y).into(),
-        size: tauri::LogicalSize::new(w, h).into(),
-    };
-
-    place(main.as_ref(), rect(plan.app), "the app's webview");
-
-    // Only ever moves what is already there. Making the pane and taking it away
-    // belong to `open` and `close`.
-    if let (Some(bounds), Some(pane)) = (plan.pane, app.get_webview(PANE)) {
-        place(&pane, rect(bounds), "the pane");
+    // Nothing here touches the app's own webview. It cannot be moved on macOS
+    // and does not need to be anywhere: it stays full-window and the *app*
+    // draws itself narrower. See the header.
+    if let (Some((x, y, w, h)), Some(pane)) = (plan.pane, app.get_webview(PANE)) {
+        let _ = pane.set_bounds(tauri::Rect {
+            position: tauri::LogicalPosition::new(x, y).into(),
+            size: tauri::LogicalSize::new(w, h).into(),
+        });
+        let _ = pane.set_auto_resize(true);
     }
 
     Ok(plan)
-}
-
-/// Put a webview somewhere, and teach it to stay in proportion there.
-///
-/// The second half is the part that was missing. `set_bounds` moves a webview
-/// and leaves its `auto_resize` rates alone — so a webview created to fill the
-/// window keeps rates of `1.0`, and the next resize snaps it straight back over
-/// whatever was placed beside it. `set_auto_resize(true)` recomputes the rates
-/// from where it is *now*, which is what makes a docked column survive a drag.
-///
-/// Best effort on both: a runtime that refuses is a pane that looks wrong, not
-/// an app that stops.
-#[cfg(desktop)]
-fn place<R: tauri::Runtime>(webview: &tauri::webview::Webview<R>, to: tauri::Rect, what: &str) {
-    if let Err(e) = webview.set_bounds(to) {
-        log::warn!("[Syn] {what} would not move: {e}");
-        return;
-    }
-    if let Err(e) = webview.set_auto_resize(true) {
-        log::warn!("[Syn] {what} will not keep its share when the window resizes: {e}");
-    }
 }
 
 /// Open the pane on a page, making it if it is not there.
@@ -200,16 +217,16 @@ pub fn open<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     url: &str,
     nonce: &str,
-) -> AppResult<()> {
+) -> AppResult<f64> {
     use tauri::Manager;
 
     crate::syn::browser::guard(url)?;
     let target = url::Url::parse(url).map_err(|e| AppError::General(format!("Bad address: {e}")))?;
 
     if let Some(pane) = app.get_webview(PANE) {
-        return pane
-            .navigate(target)
-            .map_err(|e| AppError::General(format!("Could not navigate the pane: {e}")));
+        pane.navigate(target)
+            .map_err(|e| AppError::General(format!("Could not navigate the pane: {e}")))?;
+        return Ok(arrange(app, true)?.pane_share());
     }
 
     let plan = arrange(app, true)?;
@@ -263,7 +280,7 @@ pub fn open<R: tauri::Runtime>(
         log::warn!("[Syn] The pane will not keep its share when the window resizes: {e}");
     }
 
-    Ok(())
+    Ok(plan.pane_share())
 }
 
 /// Put the pane away and give the app its window back.
@@ -274,7 +291,6 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     if let Some(pane) = app.get_webview(PANE) {
         let _ = pane.close();
     }
-    arrange(app, false)?;
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
+import { paneShare as synPaneShare } from './shared/syn/pane';
 import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
@@ -981,7 +982,16 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none">
+  <!--
+    `syn-pane-open` is what makes room for the browsing pane. See the rule at
+    the bottom of this file, and `syn::pane` for why the app draws itself
+    narrower instead of the app's webview being moved: on macOS it cannot be
+    moved, and `set_bounds` says so by returning `Ok` and doing nothing.
+  -->
+  <div
+    :class="['flex h-screen w-full bg-base text-text dark:bg-base-dark dark:text-text-dark font-sans overflow-hidden select-none', { 'syn-pane-open': synPaneShare > 0 }]"
+    :style="synPaneShare > 0 ? { '--syn-pane': `${(synPaneShare * 100).toFixed(4)}%` } : undefined"
+  >
 
     <!-- ═══ Auto-Update Banner ═══ -->
     <Transition name="slide-down">
@@ -1309,6 +1319,29 @@ onUnmounted(() => {
       @thread="chooseThread"
     />
 </template>
+
+<style>
+/*
+  Room for the browsing pane, and the whole of the layout half of `syn::pane`.
+
+  Two declarations, and the second is the one that earns its place. `width`
+  shrinks what the app draws. `transform` makes this element the **containing
+  block for `position: fixed` descendants** — so all 69 `fixed inset-0`
+  overlays in this app are measured against *this box* rather than the viewport,
+  and stay clear of the pane without one of them being edited.
+
+  Not scoped: `position: fixed` containment is about this element, and the rule
+  has to survive whatever the child components do.
+
+  Only while the pane is open. A permanent `transform` on the app root changes
+  how every fixed overlay behaves for people who never open a browser, which is
+  a large change to make for nothing.
+*/
+.syn-pane-open {
+  width: calc(100% - var(--syn-pane, 0px));
+  transform: translateZ(0);
+}
+</style>
 
 <style scoped>
 [data-tauri-drag-region] {

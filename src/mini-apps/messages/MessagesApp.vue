@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useSidebarResize } from '../../composables/useSidebarResize';
+import { paneShare, openPane, closePane } from '../../shared/syn/pane';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
@@ -385,27 +386,12 @@ const handleSendMessage = async (text: string, images?: string[]) => {
  * Open or close the browsing pane beside the conversation.
  *
  * The way in to `syn::pane`, and for now the only one — nothing in the engine
- * reaches for it yet. It exists so the question reading the runtime source
- * could not settle can be answered by looking: does the app's own webview stay
- * where it is put when the window is resized?
- *
- * It opens on a real page rather than a blank one, because a blank pane says
- * nothing about whether text reflows sensibly at that width.
+ * reaches for it yet. The share it reports is what `App.vue` uses to make room:
+ * the app draws itself narrower, because on macOS the app's own webview cannot
+ * be moved out of the way. See `shared/syn/pane`.
  */
-const paneOpen = ref(false);
-const togglePane = async () => {
-  try {
-    if (paneOpen.value) {
-      await invoke('syn_pane_close');
-      paneOpen.value = false;
-    } else {
-      await invoke('syn_pane_open', { url: 'https://vnexpress.net/' });
-      paneOpen.value = true;
-    }
-  } catch (e) {
-    logger.error('[Syn] The browsing pane would not open', e);
-  }
-};
+const paneOpen = computed(() => paneShare.value > 0);
+const togglePane = () => (paneOpen.value ? closePane() : openPane());
 
 /**
  * A sidebar somebody can pull.

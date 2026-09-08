@@ -1398,7 +1398,7 @@ pub async fn syn_answer_consent(
 /// __TAURI_INTERNALS__.invoke('syn_pane_close')
 /// ```
 #[tauri::command]
-pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<(), AppError> {
+pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<f64, AppError> {
     #[cfg(desktop)]
     {
         // A nonce per opening, exactly as `browser::visit` does: without one an
@@ -1414,6 +1414,9 @@ pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<(), App
             pending.reply = None;
             pending.loaded = false;
         }
+        // The fraction of the window the pane takes. The app draws itself
+        // narrower by exactly that much — see `syn::pane` for why the app's own
+        // webview is not moved instead.
         crate::syn::pane::open(&app, &url, &nonce)
     }
     #[cfg(mobile)]
