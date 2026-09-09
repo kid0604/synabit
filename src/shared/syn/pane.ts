@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 
 /**
@@ -184,6 +185,55 @@ export function dragPaneTo(share: number): void {
       logger.error('[Syn] The pane would not move', e);
     }
   });
+}
+
+/**
+ * Whether following this link would take the app off its own pages.
+ *
+ * # Why this question has to be asked at all
+ *
+ * Because nothing was asking it. A link in one of Syn's answers renders as an
+ * ordinary `<a href="https://…">`, and clicking one in a Tauri webview
+ * navigates **that webview** — which is the app. The whole window becomes a
+ * news site: no sidebar, no conversation, no back button, because the app's
+ * chrome is the app and the app is gone. There is no way out except quitting.
+ *
+ * It is not only Syn's answers. A note's editor lets `synabit://` links through
+ * and falls through on everything else, so a plain link typed into a note does
+ * the same thing.
+ *
+ * Relative links and `#` anchors are the app navigating inside itself, which is
+ * what a single-page app does all day. Only an absolute http address that
+ * belongs to somebody else is a departure.
+ */
+export function leavesTheApp(href: string): boolean {
+  if (!/^https?:\/\//i.test(href.trim())) return false;
+  try {
+    return new URL(href).origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open a page beside the conversation rather than on top of it.
+ *
+ * The pane is the right home for this: it is a real browser with its own
+ * session, it is visible, and it has a way back and a way out — which is
+ * exactly what was missing when the app navigated itself away.
+ *
+ * Their own browser is the fallback, for a window too narrow to hold a pane and
+ * for a platform that has none. It is never the wrong answer, only the further
+ * one.
+ */
+export async function openBeside(url: string): Promise<void> {
+  try {
+    const share = await invoke<number>('syn_pane_open', { url });
+    if (share > 0) return;
+  } catch (e) {
+    logger.warn('[Syn] The pane would not take that page; handing it to the browser', e);
+  }
+  await openUrl(url).catch(e => logger.error('[Syn] Could not open that page anywhere', e));
 }
 
 /** Put it away and give the app the whole window back. */

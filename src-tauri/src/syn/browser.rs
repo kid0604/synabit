@@ -318,6 +318,64 @@ pub const REFUSED: &str = "A page in the browsing window may call nothing but sy
 /// The app this window belongs beside.
 pub const MAIN_WINDOW: &str = "main";
 
+/// Where the app itself lives, learnt from the app itself.
+///
+/// Not a constant, because it is `tauri://localhost` in a bundle and
+/// `http://localhost:1420` in development, and a hard-coded pair of those is
+/// two more things to keep true.
+static HOME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Remember where the app started, so it can be told apart from everywhere else.
+pub fn note_home(url: &str) {
+    if let Ok(parsed) = url::Url::parse(url) {
+        *HOME.lock().unwrap_or_else(|e| e.into_inner()) = Some(parsed.origin().ascii_serialization());
+    }
+}
+
+/// Whether a page belongs to the app rather than to the internet.
+///
+/// `None` for home means nothing has started yet, and nothing is judged: better
+/// to let a page through than to bounce the app off its own first load.
+pub fn is_the_app(url: &str) -> bool {
+    let Some(home) = HOME.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+        return true;
+    };
+    url::Url::parse(url)
+        .map(|u| u.origin().ascii_serialization() == home)
+        .unwrap_or(true)
+}
+
+/// Put the app back if something took it somewhere else.
+///
+/// # Why this exists behind a listener that already prevents it
+///
+/// `App.vue` intercepts clicks on external links, which is the fix and covers
+/// what actually happened. This covers what it cannot: a `location.href` from
+/// anywhere in the app, a form that posts away, a component that handles a
+/// click before the document sees it. The failure it prevents is total — the
+/// app's webview showing a news site, with no chrome, no back button and no
+/// route home short of quitting — so it is worth a second answer.
+///
+/// A recovery rather than a refusal, because the app's window is built from
+/// `tauri.conf.json` and `on_navigation` belongs to a builder. Reloading the app
+/// loses what was on screen, which is a bad outcome and a much better one than
+/// a window that cannot be got back.
+///
+/// The pane is not this webview and is not touched: it is exactly where a page
+/// from the internet is supposed to be.
+pub fn stay_home<R: tauri::Runtime>(webview: &tauri::Webview<R>, url: &str) {
+    if webview.label() != MAIN_WINDOW || url == "about:blank" || is_the_app(url) {
+        return;
+    }
+
+    log::error!("[Syn] The app was navigated to {url}; putting it back");
+
+    let home = HOME.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(home) = home.and_then(|h| url::Url::parse(&h).ok()) {
+        let _ = webview.navigate(home);
+    }
+}
+
 /// The app's own window, however many webviews are inside it.
 ///
 /// # Why not `get_webview_window("main")`
@@ -1111,6 +1169,36 @@ mod tests {
 
     fn at(url: &str) -> url::Url {
         url::Url::parse(url).expect("a url")
+    }
+
+    // ── the app must not be navigable away from ───────────────────
+
+    /// The window went to a news site and the app was gone: no sidebar, no
+    /// conversation, no way back, because the way back is the app.
+    ///
+    /// One test rather than three, because `HOME` is one static and three tests
+    /// would take turns rewriting it under each other.
+    #[test]
+    fn a_page_from_the_internet_is_not_the_app() {
+        // Before the app has loaded there is nothing to compare against, and
+        // bouncing the window off its own first page would be worse than
+        // anything this prevents.
+        *HOME.lock().unwrap() = None;
+        assert!(is_the_app("https://genk.vn/"));
+
+        note_home("http://localhost:1420/index.html");
+        assert!(is_the_app("http://localhost:1420/"));
+        assert!(is_the_app("http://localhost:1420/index.html#/messages"));
+        assert!(!is_the_app("https://genk.vn/poco-f9-ultra.chn"));
+        assert!(
+            !is_the_app("https://localhost:1420/"),
+            "a different scheme is a different origin"
+        );
+
+        // And the same again as the app is actually shipped.
+        note_home("tauri://localhost");
+        assert!(is_the_app("tauri://localhost/index.html"));
+        assert!(!is_the_app("https://genk.vn/"));
     }
 
     // ── clicking ──────────────────────────────────────────────────

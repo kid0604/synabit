@@ -496,9 +496,31 @@ pub fn run() {
                 let _ = (window, event);
             }
         })
+        // Nothing may take the app off its own pages.
+        //
+        // A link in one of Syn's answers is an ordinary `<a href>`, and clicking
+        // one navigated this webview: the whole window became a news site, with
+        // no sidebar, no conversation and no way back — the way back being the
+        // app, which was gone. `App.vue` now intercepts those clicks, and this
+        // is the answer for everything that never reaches a click handler.
+        //
+        // The browsing pane is a different webview and is left alone. A page
+        // from the internet is exactly what belongs in it.
+        .on_page_load(|webview, payload| {
+            crate::syn::browser::stay_home(webview, payload.url().as_str());
+        })
         .setup(|app| {
             use tauri::Manager;
             log::info!("Starting Synabit Backend...");
+
+            // Where the app lives, learnt from the app rather than written down:
+            // it is `tauri://localhost` in a bundle and `http://localhost:1420`
+            // in development.
+            if let Some(main) = app.get_webview(crate::syn::browser::MAIN_WINDOW) {
+                if let Ok(url) = main.url() {
+                    crate::syn::browser::note_home(url.as_str());
+                }
+            }
             let db = DbBridge::init(app.handle()).expect("Failed to initialize database");
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));

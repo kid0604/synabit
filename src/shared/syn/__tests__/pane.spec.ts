@@ -7,7 +7,9 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve(null)) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
-const { typedAddress, PANE_BAR } = await import('../pane');
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
+
+const { typedAddress, PANE_BAR, leavesTheApp } = await import('../pane');
 
 /**
  * What somebody typed into the browsing pane's address bar.
@@ -51,5 +53,52 @@ describe('the address bar', () => {
    */
   it('is the height Rust reserved for it', () => {
     expect(PANE_BAR).toBe(36);
+  });
+
+  /**
+   * Syn answered with a link to an article. Clicking it navigated the app's own
+   * webview to that article — the whole window became a news site, with no
+   * sidebar, no conversation and no way back, because the way back is the app
+   * and the app was gone. Quitting was the only exit.
+   */
+  it('knows a link that would take the app off its own pages', () => {
+    expect(leavesTheApp('https://genk.vn/poco-f9-ultra.chn')).toBe(true);
+    expect(leavesTheApp('http://vnexpress.net/')).toBe(true);
+    expect(leavesTheApp('  https://genk.vn/  ')).toBe(true);
+  });
+
+  /**
+   * A single-page app navigates inside itself all day. Only an absolute address
+   * belonging to somebody else is a departure.
+   */
+  it('leaves the app navigating inside itself alone', () => {
+    expect(leavesTheApp('#')).toBe(false);
+    expect(leavesTheApp('#/messages')).toBe(false);
+    expect(leavesTheApp('/notes/a.md')).toBe(false);
+    expect(leavesTheApp('synabit://note/Notes%2Fa.md')).toBe(false);
+    expect(leavesTheApp('')).toBe(false);
+    expect(leavesTheApp(window.location.origin + '/index.html')).toBe(false);
+  });
+
+  /**
+   * The listener has to be at the document, not in each component that renders
+   * markdown. There are four of those already, and the next one would arrive
+   * without this thought attached — Notes had the same hole, because its editor
+   * handles `synabit://` links and falls through on everything else.
+   */
+  it('is wired up once, at the document', async () => {
+    const app = (await import('../../../App.vue?raw')).default;
+
+    expect(app).toContain("document.addEventListener('click', followExternalLink)");
+    expect(app).toContain("document.removeEventListener('click', followExternalLink)");
+
+    const handler = app.split('const followExternalLink = (e: MouseEvent) => {')[1]
+      ?.split('\n};')[0] ?? '';
+    expect(handler, 'App.vue should still have followExternalLink').toBeTruthy();
+    // Composes with the components that stop their own clicks — `ArticleReader`
+    // and the wiki-link handler both do — rather than racing them.
+    expect(handler).toContain('e.defaultPrevented');
+    expect(handler).toContain('leavesTheApp(href)');
+    expect(handler).toContain('e.preventDefault()');
   });
 });

@@ -2,7 +2,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
 import {
   paneShare as synPaneShare, panePage, PANE_BAR, dragPaneTo, openPane, closePane,
-  panePageBack, panePageForward, typedAddress,
+  panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside,
 } from './shared/syn/pane';
 
 /**
@@ -18,6 +18,39 @@ import {
  * away and flashed as it came back, on every drag. See `shared/syn/pane` for
  * why the live version works now and did not before.
  */
+/**
+ * A link that would take the app somewhere that is not the app.
+ *
+ * # What happened without this
+ *
+ * Syn answered with a link to an article. Clicking it navigated **the app's own
+ * webview** to that article: the entire window became a news site, with no
+ * sidebar, no conversation and no way back, because the way back is the app and
+ * the app was gone. Quitting was the only exit.
+ *
+ * One listener, at the document, rather than a handler in each component that
+ * renders markdown — there are four already and the next one would arrive
+ * without this thought attached. Notes had the same hole: the editor lets
+ * `synabit://` through and falls through on everything else.
+ *
+ * On the bubble, and skipping anything already handled: `ArticleReader` and the
+ * wiki-link handler both stop their own clicks, and this must compose with them
+ * rather than race them. A bubble listener can still call `preventDefault`,
+ * because the browser follows the link only once the event has finished
+ * propagating.
+ */
+const followExternalLink = (e: MouseEvent) => {
+  if (e.defaultPrevented) return;
+  const link = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+  if (!link) return;
+
+  const href = link.getAttribute('href') ?? '';
+  if (!leavesTheApp(href)) return;
+
+  e.preventDefault();
+  openBeside(href);
+};
+
 const draggingPane = ref(false);
 
 /**
@@ -846,6 +879,10 @@ onMounted(async () => {
   }
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  // Capture-phase would fire before the components that handle their own
+  // links; `auxclick` is the middle button, which opens a link just as well.
+  document.addEventListener('click', followExternalLink);
+  document.addEventListener('auxclick', followExternalLink);
   window.addEventListener('keydown', handleKeyboardNav);
   window.addEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   document.addEventListener('visibilitychange', rescanOnResume);
@@ -1045,6 +1082,8 @@ onUnmounted(() => {
   stopCaptureListener?.();
   stopComposeListener?.();
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
+  document.removeEventListener('click', followExternalLink);
+  document.removeEventListener('auxclick', followExternalLink);
   window.removeEventListener('keydown', handleKeyboardNav);
   window.removeEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   document.removeEventListener('visibilitychange', rescanOnResume);
