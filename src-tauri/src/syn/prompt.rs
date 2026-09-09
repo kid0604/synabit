@@ -257,8 +257,26 @@ fn tool_shape() -> String {
 ///
 /// One line, always the same, is what a capability with no configuration looks
 /// like from inside a prompt.
+///
+/// # The sentence that was countermanding the tool
+///
+/// It used to end **"Never invent a URL: pass the question instead and let the
+/// search find it."** That guards against a real hazard — a made-up deep link
+/// such as `vnexpress.net/bai-moi-nhat.html`, which either 404s or, worse,
+/// lands somewhere real and wrong — and it forbade far more than that.
+///
+/// Told *"đọc bài mới nhất trên genk"*, the model has to write `genk.vn`
+/// itself, which is, in the plainest reading, inventing a URL. So the system
+/// prompt said don't, and named the alternative: search. `browse`'s own
+/// description says the opposite — pass a site's address, never its name — and
+/// a system prompt outweighs a tool description. Measured over one evening it
+/// was one-all: one turn went straight to `https://genk.vn/`, the next put
+/// *"Bài viết mới nhất trên GenK.vn hiện tại"* into a search index.
+///
+/// The guard is kept and aimed at what it was for. A site's front door is not
+/// an invention; the path to a particular page on it is.
 fn web_line() -> &'static str {
-    "- THE WEB: `browse` looks something up or reads a page — pass a question to search for, or an http address to read. It opens a window the user can watch. Never invent a URL: pass the question instead and let the search find it.\n"
+    "- THE WEB: `browse` looks something up or reads a page — pass a question to search for, or an http address to read. It opens a window the user can watch. A site's own address is not an invention: asked about genk, pass genk.vn. Do not invent a path inside a site — open the site and follow a link from it.\n"
 }
 
 /// Today, as the machine's own clock reads it.

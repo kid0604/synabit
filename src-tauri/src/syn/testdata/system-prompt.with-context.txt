@@ -54,7 +54,7 @@ Tool usage guidelines:
 - ALWAYS confirm what you created or changed, with the details from the result.
 - Do NOT reply with text alone when a tool can give a concrete answer.
 - Call tools FIRST, then summarize the results for the user.
-- THE WEB: `browse` looks something up or reads a page — pass a question to search for, or an http address to read. It opens a window the user can watch. Never invent a URL: pass the question instead and let the search find it.
+- THE WEB: `browse` looks something up or reads a page — pass a question to search for, or an http address to read. It opens a window the user can watch. A site's own address is not an invention: asked about genk, pass genk.vn. Do not invent a path inside a site — open the site and follow a link from it.
 
 
 === VAULT CONTEXT ===
