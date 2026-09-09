@@ -532,6 +532,32 @@ onMounted(async () => {
         }
     });
 
+    /*
+     * A write this editor did not make.
+     *
+     * Syn's tools run in Rust and their `node:updated` reaches the bus through
+     * the bridge in `useEventBus`. Every other app already reloads on it — this
+     * one did not, because an open tab keeps its own copy of the body and never
+     * went back for another. So Syn would add a line to the note on screen, the
+     * file on disk would have it, and the screen would not until the app was
+     * restarted.
+     *
+     * `note:updated-external` is the neighbouring event and deliberately skips
+     * the note you are looking at, because it is emitted by this editor's own
+     * saves. This one is for the writes that came from somewhere else, which is
+     * exactly the case that one steps around.
+     *
+     * The guard is a pending save, not a timer: a save in flight means the
+     * buffer is newer than the file, and re-reading would take the sentence
+     * being typed with it. Our own echo needs no guard at all — it fetches the
+     * same text back and assigns a string that is already there.
+     */
+    bus.on('node:updated', ({ id, nodeType }) => {
+        if (!id || (nodeType && nodeType !== 'note')) return;
+        if (save.saveTimeouts.has(id)) return;
+        tabs.reloadNoteFile(id, () => !save.saveTimeouts.has(id));
+    });
+
     bus.on('vault:changed', () => { scanVault(); });
 
     bus.on('vault:file-modified', () => {

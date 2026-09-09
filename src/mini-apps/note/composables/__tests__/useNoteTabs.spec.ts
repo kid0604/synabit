@@ -154,4 +154,56 @@ describe('useNoteTabs refuses what is not a note', () => {
 
     expect(h.api.tabContents.value['Notes/legacy.md']).toBe('body of Notes/legacy.md');
   });
+
+  it('re-reads an open tab when the file was written from outside', async () => {
+    const h = harness(['Notes/a.md']);
+    await h.api.loadNoteFile('Notes/a.md');
+    h.getNode.mockResolvedValueOnce({
+      id: 'Notes/a.md', node_type: 'note', title: 'Renamed by Syn',
+      content: 'a line Syn added', created_at: '2026-01-01', updated_at: '2026-01-03',
+      properties: {},
+    } as any);
+
+    await h.api.reloadNoteFile('Notes/a.md');
+
+    expect(h.api.tabContents.value['Notes/a.md']).toBe('a line Syn added');
+    // The sidebar row moves with it, or the list says one thing and the editor
+    // another.
+    expect(h.notes.value[0].title).toBe('Renamed by Syn');
+    expect(h.notes.value[0].summary).toBe('a line Syn added');
+  });
+
+  it('does not fetch for a note that is not open', async () => {
+    const h = harness(['Notes/a.md']);
+
+    await h.api.reloadNoteFile('Notes/a.md');
+
+    expect(h.getNode).not.toHaveBeenCalled();
+  });
+
+  it('drops what it read if a save started while it was reading', async () => {
+    const h = harness(['Notes/a.md']);
+    await h.api.loadNoteFile('Notes/a.md');
+    h.api.tabContents.value['Notes/a.md'] = 'what the person is typing';
+
+    // The file on disk is older than the buffer. Adopting it would delete the
+    // sentence being typed, which is the one outcome worse than a stale screen.
+    await h.api.reloadNoteFile('Notes/a.md', () => false);
+
+    expect(h.api.tabContents.value['Notes/a.md']).toBe('what the person is typing');
+  });
+
+  it('refuses to re-read a tab whose file has become another kind of node', async () => {
+    const h = harness(['Notes/a.md']);
+    await h.api.loadNoteFile('Notes/a.md');
+    h.getNode.mockResolvedValueOnce({
+      id: 'Notes/a.md', node_type: 'task', title: 't', content: 'now a task',
+      created_at: '2026-01-01', updated_at: '2026-01-03', properties: {},
+    } as any);
+
+    await h.api.reloadNoteFile('Notes/a.md');
+
+    expect(h.api.tabContents.value['Notes/a.md']).toBe('body of Notes/a.md');
+  });
+
 });

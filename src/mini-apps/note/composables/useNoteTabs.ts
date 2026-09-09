@@ -107,6 +107,52 @@ export function useNoteTabs(
     }
   };
 
+  /**
+   * Re-read an open tab's body from disk.
+   *
+   * `loadNoteFile` fetches only when the tab has no content yet, which is right
+   * for opening a note and useless here: the note is open, its body is in hand,
+   * and the file on disk has moved on without it. That happens whenever
+   * something other than this editor writes the note — Syn's tools most of all.
+   *
+   * Assigned rather than deleted-then-fetched. Deleting first hands the editor
+   * an `undefined` model value for the length of the round trip, and it answers
+   * that by blanking the document: a flash on the note you are looking at, and
+   * a `setContent(undefined)` behind it.
+   *
+   * `stillWanted` is asked again after the fetch, not before. The round trip is
+   * long enough to type a sentence in, and the one thing this must never do is
+   * put a stale file over words that are newer than it.
+   *
+   * Quiet about tabs that are not open: the caller is an event that fires for
+   * every node in the vault.
+   */
+  const reloadNoteFile = async (id: string, stillWanted?: () => boolean) => {
+    if (!id || tabContents.value[id] === undefined) return;
+    try {
+        const fetched = await ns.getNode(id);
+        if (!fetched) return;
+        // Same refusal as `loadNoteFile`, for the same reason: a file that has
+        // become a task must not be held open here as a note.
+        if (fetched.node_type && fetched.node_type !== 'note') return;
+        if (stillWanted && !stillWanted()) return;
+        if (tabContents.value[id] === undefined) return;
+        tabContents.value[id] = fetched.content;
+
+        // The row in the sidebar carries the title and the opening line, and an
+        // outside write can change both. A stale row is the same bug one pane
+        // over.
+        const row = notes.value.find(n => n.id === id);
+        if (row) {
+            row.title = fetched.title;
+            row.summary = fetched.content.substring(0, 150).trim();
+            row.date = fetched.updated_at || fetched.created_at;
+        }
+    } catch (e) {
+        console.error("Failed to re-read note body", e);
+    }
+  };
+
   return {
     activeTabs,
     tabContents,
@@ -115,5 +161,6 @@ export function useNoteTabs(
     renamedTabs,
     currentContent,
     loadNoteFile,
+    reloadNoteFile,
   };
 }
