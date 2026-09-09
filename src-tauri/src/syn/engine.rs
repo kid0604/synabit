@@ -1098,8 +1098,12 @@ async fn browse<R: tauri::Runtime>(
         ));
     }
 
+    // An address the person named counts as an address, not as a thing to look
+    // up. `address_of` is where that judgement lives and why it is narrow.
+    let address = browser::address_of(what);
+
     // ── Rung 1: not an address, so it is a question. ──────────────
-    if !browser::looks_like_a_url(what) {
+    if address.is_none() {
         // A configured endpoint still wins: somebody who set one up wants it,
         // and an API answers faster than a window.
         let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
@@ -1188,19 +1192,70 @@ async fn browse<R: tauri::Runtime>(
         return Ok((format!("{}\n\n{rest}", web::wrap(&page)), vec![web::citation(&page)]));
     }
 
+    let address = address.unwrap_or_else(|| what.to_string());
+
+    // ── Rung 0: it is already on the screen. ──────────────────────
+    //
+    // The pane survives the turn, so the page in it does too, and reading what
+    // is there costs nothing and asks the site for nothing. It is also the only
+    // way to read the page as the *person* has it — scrolled, past a consent
+    // wall, logged in — which is the entire reason there is a browser here and
+    // not a fetch.
+    //
+    // The failure this closes is in the transcript: Syn read `vnexpress.net`,
+    // said what the top headline was, and on being told *"read that article"*
+    // went to a search engine to look for the headline it had written itself,
+    // because the page holding the link had died with the run.
+    //
+    // A failure falls through to fetching rather than giving up: a pane that
+    // will not answer is a slower answer, not a lost one.
+    #[cfg(desktop)]
+    if crate::syn::pane::showing(req.app)
+        .is_some_and(|open| browser::same_place(&open.url, &address))
+    {
+        match browser::read_showing(req.app, req.browser).await {
+            Ok(read) => {
+                let page = web::reduce(&read.html, &read.url);
+                if browser::worth_keeping(&page) {
+                    return Ok((onward(&page, &read.html), vec![web::citation(&page)]));
+                }
+                log::info!("[Syn] The open page had nothing readable on it; fetching instead");
+            }
+            Err(e) => log::info!("[Syn] Could not read the open page ({e}); fetching instead"),
+        }
+    }
+
     // ── Rung 2: an address, read the cheap way. ───────────────────
-    match web::fetch(what).await {
-        Ok(page) if browser::worth_keeping(&page) => {
-            Ok((web::wrap(&page), vec![web::citation(&page)]))
+    match web::fetch_with_html(&address).await {
+        Ok((page, html)) if browser::worth_keeping(&page) => {
+            Ok((onward(&page, &html), vec![web::citation(&page)]))
         }
         // ── Rung 3: nearly nothing came back. A JavaScript shell, a
         // consent wall and a login all look the same from here, and the
         // window answers all three.
         _ => {
-            let read = browser::visit(req.app, req.browser, what).await?;
+            let read = browser::visit(req.app, req.browser, &address).await?;
             let page = web::reduce(&read.html, &read.url);
-            Ok((web::wrap(&page), vec![web::citation(&page)]))
+            Ok((onward(&page, &read.html), vec![web::citation(&page)]))
         }
+    }
+}
+
+/// A page, and where it can take you next.
+///
+/// Only for a page somebody asked for **by address**. The two results opened
+/// automatically behind a search get no link list: they are articles being read
+/// for what they say, the budget is eight thousand tokens on the smallest
+/// supported provider, and twenty links each would spend a fifth of it on
+/// navigation nobody asked about.
+fn onward(page: &crate::syn::web::Page, html: &str) -> String {
+    use crate::syn::web;
+
+    let links = web::wrap_links(&web::links_on(html, &page.url));
+    if links.is_empty() {
+        web::wrap(page)
+    } else {
+        format!("{}\n\n{}", web::wrap(page), links)
     }
 }
 
@@ -1242,6 +1297,60 @@ fn assemble(
 }
 #[cfg(test)]
 mod tests {
+
+    /// The order of the ladder, read off the source, because the expensive part
+    /// of it needs a window and a network.
+    ///
+    /// What must hold: the screen is consulted **before** the network. A pane
+    /// already showing the page is the cheapest read there is and the only one
+    /// that sees the page as the person has it — scrolled, past a consent wall,
+    /// signed in.
+    #[test]
+    fn the_page_on_screen_is_read_before_anything_is_fetched() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn onward(").next())
+            .expect("browse is there");
+
+        let screen = body.find("read_showing").expect("the open page is read");
+        let network = body.find("fetch_with_html").expect("and the cheap fetch is still there");
+        assert!(
+            screen < network,
+            "the screen must be asked before the network, or the pane is decoration"
+        );
+    }
+
+    /// A page somebody asked for by address says where it can take you next.
+    ///
+    /// The two results opened automatically behind a search deliberately do
+    /// not: they are articles being read for what they say, and twenty links
+    /// each would spend a fifth of the smallest supported context window on
+    /// navigation nobody asked about.
+    #[test]
+    fn only_a_page_that_was_asked_for_lists_its_links() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn onward(").next())
+            .expect("browse is there");
+
+        let (searching, by_address) = body
+            .split_once("// ── Rung 0:")
+            .expect("the rungs are marked");
+
+        assert!(
+            !searching.contains("onward("),
+            "the pages opened behind a search must not carry link lists"
+        );
+        assert_eq!(
+            by_address.matches("onward(").count(),
+            3,
+            "the screen, the fetch and the window all offer somewhere to go next"
+        );
+    }
     use super::*;
 
     /// How many events a streamed answer becomes.

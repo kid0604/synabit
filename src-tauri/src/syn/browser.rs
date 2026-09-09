@@ -136,6 +136,89 @@ pub fn looks_like_a_url(text: &str) -> bool {
         && url::Url::parse(text).is_ok()
 }
 
+/// The file endings that are also country codes.
+///
+/// `.md` is Moldova, `.rs` is Serbia, `.sh` is Saint Helena, `.py` is Paraguay,
+/// `.pl` is Poland. This vault is written in Markdown and this app is written
+/// in Rust and TypeScript, so `notes.md` and `engine.rs` are strings that
+/// genuinely turn up around here — and a rule that reads a bare host as an
+/// address would send a visible browser, carrying a session, to Moldova.
+///
+/// The ones that are not TLDs at all are listed too. They cost nothing and they
+/// say what the list is for.
+const NOT_SITES: &[&str] = &[
+    "md", "rs", "ts", "js", "py", "pl", "sh", "json", "toml", "yaml", "yml", "txt", "csv", "log",
+    "lock", "css", "html", "png", "jpg", "jpeg", "pdf", "svg", "vue",
+];
+
+/// The address a person named, if they named one.
+///
+/// # The question this answers, which is not the one above
+///
+/// `looks_like_a_url` asks *is this already an address*. This asks the question
+/// the transcript actually posed: somebody said **"go to vnexpress"**, the model
+/// passed `vnexpress.net`, and Syn took a domain name to a search engine and
+/// asked it to find the site whose address it was already holding. Two
+/// navigations, a page of results, and a chance to pick the wrong one — to
+/// reach a place it could have gone to directly.
+///
+/// # Why it is still narrow
+///
+/// The old comment was right that a bare `example.com` is often a company
+/// somebody is asking about rather than a site they want opened, and that
+/// guessing wrong sends a **visible** browser somewhere nobody asked for. So
+/// this fires only on a string that is nothing *but* a host — one token, no
+/// spaces, a real-looking label and ending. `mu everton kết quả` is a question;
+/// `bongdanet.co` is a place.
+///
+/// A `/path` is allowed after the host, because half the addresses anybody
+/// names have one and dropping it would land on a front page instead.
+pub fn address_of(text: &str) -> Option<String> {
+    let text = text.trim();
+    if looks_like_a_url(text) {
+        return Some(text.to_string());
+    }
+
+    // One token. Anything with a space in it is a sentence, and a sentence is a
+    // question no matter how much of it looks like a domain.
+    if text.is_empty() || text.split_whitespace().count() != 1 {
+        return None;
+    }
+    // `user@host` is an address of the other kind.
+    if text.contains('@') || text.contains("..") || text.contains("://") {
+        return None;
+    }
+
+    let (host, path) = match text.find('/') {
+        Some(at) => (&text[..at], &text[at..]),
+        None => (text, ""),
+    };
+    let host = host.to_ascii_lowercase();
+
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
+        return None;
+    }
+    if !host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return None;
+    }
+
+    let tld = labels[labels.len() - 1];
+    let looks_like_a_tld =
+        (2..=24).contains(&tld.len()) && tld.chars().all(|c| c.is_ascii_alphabetic());
+    if !looks_like_a_tld || NOT_SITES.contains(&tld) {
+        return None;
+    }
+
+    let guessed = format!("https://{host}{path}");
+    // Parsed rather than trusted: this string is about to be handed to a
+    // browser with a session in it.
+    url::Url::parse(&guessed).ok().map(|_| guessed)
+}
+
 /// Whether the cheap path got anything worth having.
 ///
 /// The ladder in `browse` tries `web::fetch` first — no JavaScript, no session,
@@ -441,15 +524,7 @@ async fn open_and_read<R: tauri::Runtime>(
 
     guard(url)?;
 
-    // A nonce per navigation, checked on arrival. Without it an advert in an
-    // iframe could answer first and hand Syn a page it never asked for.
-    let nonce = uuid::Uuid::new_v4().to_string();
-    {
-        let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
-        pending.nonce = nonce.clone();
-        pending.reply = None;
-        pending.loaded = false;
-    }
+    let nonce = arm(waiting);
 
     // Whose it is, before it exists. A pane already on screen is the person's
     // and Syn is only borrowing it; one Syn opens for itself goes away with the
@@ -479,6 +554,62 @@ async fn open_and_read<R: tauri::Runtime>(
     // And then let its JavaScript run, which is the part that mattered.
     tokio::time::sleep(std::time::Duration::from_millis(AFTER_LOAD_MS)).await;
 
+    harvest(app, waiting, &nonce, url).await
+}
+
+/// Arm the window to answer, and say with which nonce.
+///
+/// A nonce per read, checked on arrival. Without it an advert in an iframe
+/// could answer first and hand Syn a page it never asked for.
+fn arm(waiting: &Waiting) -> String {
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.nonce = nonce.clone();
+    pending.reply = None;
+    pending.loaded = false;
+    nonce
+}
+
+/// Read the page the pane is **already showing**, without navigating.
+///
+/// # Why not just navigate to the same address
+///
+/// Because the page on screen is not the page at that address. It has been
+/// scrolled, it has run its scripts, it may be behind a login the person did
+/// themselves — that is the whole reason a browser is here rather than a fetch.
+/// Sending it to its own URL again throws all of that away and asks the site
+/// for it a second time.
+///
+/// And it is what a browser being *live state* means. The page survived the
+/// turn; reading it should not cost a round trip to the internet.
+#[cfg(desktop)]
+pub async fn read_showing<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    waiting: &Waiting,
+) -> AppResult<Read> {
+    let showing = crate::syn::pane::showing(app)
+        .ok_or_else(|| AppError::General("There is no page open to read".into()))?;
+
+    // No navigation, so nothing to wait for: it loaded before this run started.
+    // `opened_at` is deliberately left alone — this run opened nothing, and
+    // `close_when_done` must not tidy away a pane it did not put there.
+    let nonce = arm(waiting);
+    harvest(app, waiting, &nonce, &showing.url).await
+}
+
+/// Ask the pane for its document until it answers, or until patience runs out.
+///
+/// Split from the navigating path so reading what is already open is the same
+/// code rather than a second copy of it that drifts.
+#[cfg(desktop)]
+async fn harvest<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    waiting: &Waiting,
+    nonce: &str,
+    url: &str,
+) -> AppResult<Read> {
+    use tauri::Manager;
+
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(PATIENCE_MS);
     while std::time::Instant::now() < deadline {
         // Gone means somebody shut it, which is the stop button. Giving up here
@@ -492,7 +623,7 @@ async fn open_and_read<R: tauri::Runtime>(
         // carries the previous nonce.
         let _ = pane.eval(format!(
             "{}\nwindow.__synRead && window.__synRead();",
-            reader_script(&nonce)
+            reader_script(nonce)
         ));
 
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -514,6 +645,32 @@ async fn open_and_read<R: tauri::Runtime>(
         "The page at {url} did not finish loading within {}s.",
         PATIENCE_MS / 1000
     )))
+}
+
+/// Whether two addresses name the same page.
+///
+/// Used to decide whether the pane is already showing what `browse` was asked
+/// for, and so whether to read the screen instead of the internet.
+///
+/// Fragments are dropped because `#section` is a place *within* a page, and a
+/// trailing slash because `https://vnexpress.net` and `https://vnexpress.net/`
+/// are the same front page written by two different hands — the model's and the
+/// webview's, which is exactly the pair being compared here.
+///
+/// Query strings are **kept**: `?q=one` and `?q=two` are two different pages
+/// however similar they look.
+pub fn same_place(a: &str, b: &str) -> bool {
+    fn tidy(raw: &str) -> Option<String> {
+        let mut url = url::Url::parse(raw).ok()?;
+        url.set_fragment(None);
+        let text = url.to_string();
+        Some(text.strip_suffix('/').unwrap_or(&text).to_string())
+    }
+
+    match (tidy(a), tidy(b)) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(&b),
+        _ => false,
+    }
 }
 
 /// The least time the pane is on screen before anything closes it.
@@ -903,6 +1060,108 @@ mod tests {
 
     fn at(url: &str) -> url::Url {
         url::Url::parse(url).expect("a url")
+    }
+
+    // ── a place, or a question ────────────────────────────────────
+
+    /// The failure this fixes, in one line.
+    ///
+    /// The person said *"go to vnexpress"*, the model passed the domain, and
+    /// Syn took a domain name to a search engine to ask where that site was.
+    #[test]
+    fn a_domain_somebody_named_is_a_place_to_go() {
+        assert_eq!(
+            address_of("vnexpress.net").as_deref(),
+            Some("https://vnexpress.net")
+        );
+        assert_eq!(
+            address_of("www.bongdanet.co").as_deref(),
+            Some("https://www.bongdanet.co")
+        );
+        // The path survives, or every named address lands on a front page.
+        assert_eq!(
+            address_of("vnexpress.net/kinh-doanh").as_deref(),
+            Some("https://vnexpress.net/kinh-doanh")
+        );
+        // Already an address, and unchanged — not re-guessed.
+        assert_eq!(
+            address_of("http://example.org/a").as_deref(),
+            Some("http://example.org/a")
+        );
+    }
+
+    /// And the other half, which is the half that keeps a visible browser from
+    /// being sent somewhere nobody asked for.
+    #[test]
+    fn a_question_is_still_a_question() {
+        for text in [
+            "kết quả mu everton",
+            "what is apple.com's revenue",
+            "tin tức hôm nay",
+            "syn.rs",
+            "notes.md",
+            "config.toml",
+            "anh@example.com",
+            "1.5",
+            "",
+            "   ",
+        ] {
+            assert!(
+                address_of(text).is_none(),
+                "took a question to a browser: {text:?}"
+            );
+        }
+    }
+
+    /// `.md` is Moldova and this vault is written in Markdown.
+    ///
+    /// A rule that reads a bare host as an address would send a visible
+    /// browser, carrying whatever the person has logged into, to a country-code
+    /// domain because somebody named a file.
+    #[test]
+    fn a_filename_is_not_a_country() {
+        for name in ["plan.md", "engine.rs", "app.vue", "main.py", "build.sh"] {
+            assert!(address_of(name).is_none(), "{name} is a file");
+        }
+    }
+
+    // ── is it already on the screen ───────────────────────────────
+
+    #[test]
+    fn the_same_page_written_two_ways_is_the_same_page() {
+        assert!(same_place("https://vnexpress.net", "https://vnexpress.net/"));
+        assert!(same_place(
+            "https://vnexpress.net/a#top",
+            "https://vnexpress.net/a"
+        ));
+        assert!(same_place("https://VnExpress.net", "https://vnexpress.net"));
+    }
+
+    #[test]
+    fn a_different_query_is_a_different_page() {
+        assert!(!same_place(
+            "https://duckduckgo.com/?q=one",
+            "https://duckduckgo.com/?q=two"
+        ));
+        assert!(!same_place("https://a.com/one", "https://a.com/two"));
+        assert!(!same_place("not a url", "https://a.com"));
+    }
+
+    /// Reading the screen must not navigate, or the page stops being the one
+    /// the person had — scrolled, past a consent wall, logged in.
+    #[test]
+    fn reading_what_is_open_goes_nowhere() {
+        let source = include_str!("browser.rs");
+        let body = source
+            .split("pub async fn read_showing")
+            .nth(1)
+            .and_then(|rest| rest.split("async fn harvest").next())
+            .expect("read_showing is there");
+
+        assert!(
+            !body.contains("pane::open") && !body.contains("navigate"),
+            "reading the open page must not send it anywhere: {body}"
+        );
     }
 
     /// The hole `on_navigation` closes.
