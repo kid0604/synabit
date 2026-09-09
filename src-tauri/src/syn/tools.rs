@@ -723,7 +723,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "type": "object",
                     "required": ["what"],
                     "properties": {
-                        "what": { "type": "string", "description": "Words to search for, or an address." }
+                        "what": { "type": "string", "description": "Words to search for, an address, or the number of a link the last page offered." }
                     }
                 }),
             },

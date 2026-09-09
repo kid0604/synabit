@@ -1098,6 +1098,21 @@ async fn browse<R: tauri::Runtime>(
         ));
     }
 
+    // ── A number means one of the links the last page offered. ────
+    //
+    // Which is what clicking is. The page handed over a numbered list; the
+    // answer to a numbered list is a number, and asking the model to copy a
+    // ninety-character Vietnamese slug back out of its own context instead is
+    // asking for a slug that is eventually one character wrong.
+    let followed = browser::offered_link(req.browser, what);
+    let what = match &followed {
+        Some(link) => {
+            log::info!("[Syn] Following \"{}\" to {}", link.text, link.url);
+            link.url.as_str()
+        }
+        None => what,
+    };
+
     // An address the person named counts as an address, not as a thing to look
     // up. `address_of` is where that judgement lives and why it is narrow.
     let address = browser::address_of(what);
@@ -1217,7 +1232,7 @@ async fn browse<R: tauri::Runtime>(
             Ok(read) => {
                 let page = web::reduce(&read.html, &read.url);
                 if browser::worth_keeping(&page) {
-                    return Ok((onward(&page, &read.html), vec![web::citation(&page)]));
+                    return Ok((onward(req.browser, &page, &read.html), vec![web::citation(&page)]));
                 }
                 log::info!("[Syn] The open page had nothing readable on it; fetching instead");
             }
@@ -1228,7 +1243,7 @@ async fn browse<R: tauri::Runtime>(
     // ── Rung 2: an address, read the cheap way. ───────────────────
     match web::fetch_with_html(&address).await {
         Ok((page, html)) if browser::worth_keeping(&page) => {
-            Ok((onward(&page, &html), vec![web::citation(&page)]))
+            Ok((onward(req.browser, &page, &html), vec![web::citation(&page)]))
         }
         // ── Rung 3: nearly nothing came back. A JavaScript shell, a
         // consent wall and a login all look the same from here, and the
@@ -1236,7 +1251,7 @@ async fn browse<R: tauri::Runtime>(
         _ => {
             let read = browser::visit(req.app, req.browser, &address).await?;
             let page = web::reduce(&read.html, &read.url);
-            Ok((onward(&page, &read.html), vec![web::citation(&page)]))
+            Ok((onward(req.browser, &page, &read.html), vec![web::citation(&page)]))
         }
     }
 }
@@ -1248,10 +1263,19 @@ async fn browse<R: tauri::Runtime>(
 /// for what they say, the budget is eight thousand tokens on the smallest
 /// supported provider, and twenty links each would spend a fifth of it on
 /// navigation nobody asked about.
-fn onward(page: &crate::syn::web::Page, html: &str) -> String {
+fn onward(
+    waiting: &crate::syn::browser::Waiting,
+    page: &crate::syn::web::Page,
+    html: &str,
+) -> String {
     use crate::syn::web;
 
-    let links = web::wrap_links(&web::links_on(html, &page.url));
+    let offered = web::worth_offering(&web::links_on(html, &page.url));
+    // Remembered before it is rendered, so the numbers the model reads are the
+    // numbers this will answer to.
+    crate::syn::browser::note_offered(waiting, &page.url, &offered);
+
+    let links = web::wrap_links(&offered);
     if links.is_empty() {
         web::wrap(page)
     } else {

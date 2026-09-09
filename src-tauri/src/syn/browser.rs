@@ -231,6 +231,16 @@ pub fn address_of(text: &str) -> Option<String> {
 pub const ENOUGH_TEXT: usize = 150;
 
 pub fn worth_keeping(page: &crate::syn::web::Page) -> bool {
+    // A front page is not an empty page. It came back with forty stories and
+    // little prose, which is what a front page *is* — and calling that "nothing
+    // readable" is what sent a run to the browsing window to read the same
+    // fifty characters again, and then to a search engine for a headline it had
+    // already been handed.
+    if let crate::syn::web::Shape::Index { stories, .. } = page.shape {
+        if stories >= crate::syn::web::ENOUGH_TO_BE_A_LIST {
+            return true;
+        }
+    }
     page.text.chars().count() >= ENOUGH_TEXT
 }
 
@@ -426,6 +436,24 @@ pub struct Pending {
     ///
     /// `None` when no window is open. See `AT_LEAST_MS`.
     pub opened_at: Option<std::time::Instant>,
+    /// The links offered by the last page read, so that opening one is a move.
+    ///
+    /// # Why a number is worth having at all
+    ///
+    /// Not to save characters in the call — the addresses are already in the
+    /// model's context, so `browse("3")` and `browse("https://…")` cost the same
+    /// round trip. It is worth having because it is what **clicking** is: the
+    /// page offered a list, and the answer to a list is an index into it.
+    ///
+    /// A model that has to copy a ninety-character Vietnamese slug back out of
+    /// its own context is a model that will eventually copy it slightly wrong,
+    /// and a slightly wrong address is a 404 that looks like a dead site.
+    ///
+    /// One page at a time, like everything else here: one window, one page, one
+    /// person watching. `offered_by` is which page they came from, so a stale
+    /// number cannot be answered with somebody else's link.
+    pub offered: Vec<crate::syn::web::Link>,
+    pub offered_by: String,
 }
 
 pub type Waiting = std::sync::Mutex<Pending>;
@@ -451,6 +479,27 @@ pub fn accept(waiting: &Waiting, nonce: &str, url: String, html: String) {
         return;
     }
     pending.reply = Some(Read { url, html });
+}
+
+/// Remember what a page offered, so a number can mean one of them.
+pub fn note_offered(waiting: &Waiting, from: &str, links: &[crate::syn::web::Link]) {
+    let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.offered = links.to_vec();
+    pending.offered_by = from.to_string();
+}
+
+/// The link a number means, if it means one.
+///
+/// `None` for anything that is not a number, and for a number outside the list
+/// — a model that says "7" when six were offered has miscounted, and opening
+/// the sixth instead would be answering a question nobody asked.
+pub fn offered_link(waiting: &Waiting, what: &str) -> Option<crate::syn::web::Link> {
+    let n: usize = what.trim().parse().ok()?;
+    if n == 0 {
+        return None;
+    }
+    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.offered.get(n - 1).cloned()
 }
 
 /// How long to wait for the page to answer before giving up.
@@ -784,6 +833,7 @@ mod tests {
             title: "t".into(),
             text: "n".repeat(ENOUGH_TEXT),
             truncated: false,
+            shape: crate::syn::web::Shape::default(),
         };
         assert!(worth_keeping(&good));
     }
@@ -798,6 +848,7 @@ mod tests {
             title: "Loading…".into(),
             text: "Please enable JavaScript".into(),
             truncated: false,
+            shape: crate::syn::web::Shape::default(),
         };
         assert!(!worth_keeping(&shell));
     }
@@ -1060,6 +1111,53 @@ mod tests {
 
     fn at(url: &str) -> url::Url {
         url::Url::parse(url).expect("a url")
+    }
+
+    // ── clicking ──────────────────────────────────────────────────
+
+    fn offering(urls: &[&str]) -> Waiting {
+        let waiting = Waiting::default();
+        let links: Vec<crate::syn::web::Link> = urls
+            .iter()
+            .map(|u| crate::syn::web::Link {
+                text: format!("story at {u}"),
+                url: (*u).to_string(),
+                region: crate::syn::web::Region::Content,
+                heading: Some(3),
+            })
+            .collect();
+        note_offered(&waiting, "https://genk.vn/", &links);
+        waiting
+    }
+
+    /// The page handed over a numbered list; the answer to a numbered list is a
+    /// number. Asking the model to copy a ninety-character Vietnamese slug back
+    /// out of its own context instead is asking for one that is eventually a
+    /// character wrong.
+    #[test]
+    fn a_number_means_the_link_with_that_number() {
+        let waiting = offering(&["https://genk.vn/a", "https://genk.vn/b"]);
+
+        assert_eq!(offered_link(&waiting, "1").unwrap().url, "https://genk.vn/a");
+        assert_eq!(offered_link(&waiting, " 2 ").unwrap().url, "https://genk.vn/b");
+    }
+
+    /// A model that says "7" when two were offered has miscounted, and opening
+    /// the second instead would answer a question nobody asked.
+    #[test]
+    fn a_number_nobody_offered_means_nothing() {
+        let waiting = offering(&["https://genk.vn/a", "https://genk.vn/b"]);
+
+        for what in ["0", "3", "-1", "1.5", "2026", "one"] {
+            assert!(offered_link(&waiting, what).is_none(), "took {what} as a link");
+        }
+    }
+
+    /// And a question that happens to be about a year is still a question.
+    #[test]
+    fn nothing_is_offered_before_a_page_has_been_read() {
+        let waiting = Waiting::default();
+        assert!(offered_link(&waiting, "1").is_none());
     }
 
     // ── a place, or a question ────────────────────────────────────
