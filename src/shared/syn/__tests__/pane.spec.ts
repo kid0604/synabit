@@ -101,4 +101,25 @@ describe('the address bar', () => {
     expect(handler).toContain('leavesTheApp(href)');
     expect(handler).toContain('e.preventDefault()');
   });
+
+  /**
+   * A phone has no `add_child` at all, and a window too narrow to hold a
+   * conversation *and* a browser gets no pane by design. Both end in the
+   * person's own browser — and a **refused** address must not, which is why
+   * neither decision is made on this side. Only Rust can tell those apart.
+   */
+  it('asks Rust for the page and does not second-guess the answer', async () => {
+    const pane = await import('../pane');
+    const source = (await import('../pane?raw')).default;
+
+    const body = source.split('export async function openBeside')[1]?.split('\n}')[0] ?? '';
+    expect(body, 'openBeside should still be there').toBeTruthy();
+    expect(body).toContain("invoke<number>('syn_open_page'");
+    expect(
+      body,
+      'a fallback here could not tell "no room" from "refused", and would open the second',
+    ).not.toContain('openUrl');
+
+    expect(typeof pane.openBeside).toBe('function');
+  });
 });

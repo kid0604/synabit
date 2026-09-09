@@ -1171,6 +1171,34 @@ mod tests {
         url::Url::parse(url).expect("a url")
     }
 
+    // ── one door for following a link ─────────────────────────────
+
+    /// A refusal must not become an opening.
+    ///
+    /// `syn_open_page` falls back to the person's own browser when there is no
+    /// pane — a phone, or a window too narrow for both. It must not do that
+    /// when the *address* was refused: handing `127.0.0.1` to the browser
+    /// holding every cookie they own is worse than the thing `guard` was
+    /// written to stop.
+    ///
+    /// Read off the source, because the alternative is a phone and a router.
+    #[test]
+    fn the_guard_runs_before_anything_can_fall_back_to_the_browser() {
+        let source = include_str!("../commands/syn.rs");
+        let body = source
+            .split("pub async fn syn_open_page")
+            .nth(1)
+            .and_then(|rest| rest.split("\n/// Open the browsing pane").next())
+            .expect("syn_open_page is there");
+
+        let guarded = body.find("browser::guard(&url)?").expect("the address is guarded");
+        let opener = body.find("open_url").expect("and there is a fallback to guard");
+        assert!(
+            guarded < opener,
+            "the guard must run first, or a refused address reaches the person's browser"
+        );
+    }
+
     // ── the app must not be navigable away from ───────────────────
 
     /// The window went to a news site and the app was gone: no sidebar, no

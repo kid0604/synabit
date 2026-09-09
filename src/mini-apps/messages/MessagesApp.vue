@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useSidebarResize } from '../../composables/useSidebarResize';
-import { paneShare, openPane, closePane } from '../../shared/syn/pane';
+import { paneShare, openBeside, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { WEB_SOURCE } from './types';
 import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
@@ -114,15 +113,24 @@ const { t } = useI18n();
 const ns = useNodeService();
 
 const handleOpenSource = (source: { id: string; title: string; node_type: string }) => {
-  // A page Syn read, not a node. It opens in the user's own browser — the
-  // point of a citation is that they can go and check it, and checking it
-  // inside the app would be reading Syn's copy rather than the source.
+  // A page Syn read, not a node.
+  //
+  // It used to go to the user's own browser, on the reasoning that checking a
+  // source inside the app would be reading Syn's copy of it rather than the
+  // source. That reasoning was right and the premise has changed: the pane is
+  // not Syn's copy. It is a live browser with its own session, fetching the
+  // page as the person, showing them the address it is on.
+  //
+  // And it is the same door as every other link now — the chip and a link in
+  // the answer above it look identical to whoever clicks them. `openBeside`
+  // hands the page to their own browser when there is no pane to put it in,
+  // which is what a phone always is.
   //
   // `web` is not a real node type: nothing in the vault carries it and no
   // scanner will ever see one. It exists so this chip can tell "open my note"
   // from "open that page", which are different acts behind the same control.
   if (source.node_type === WEB_SOURCE) {
-    openUrl(source.id).catch(e => logger.error('[Syn] Could not open that page', e));
+    openBeside(source.id);
     return;
   }
 
@@ -391,7 +399,9 @@ const handleSendMessage = async (text: string, images?: string[]) => {
  * be moved out of the way. See `shared/syn/pane`.
  */
 const paneOpen = computed(() => paneShare.value > 0);
-const togglePane = () => (paneOpen.value ? closePane() : openPane());
+// The same door as every link: a pane where there is room for one, the
+// person's own browser where there is not — which on a phone is always.
+const togglePane = () => (paneOpen.value ? closePane() : openBeside(SOMEWHERE_TO_START));
 
 /**
  * A sidebar somebody can pull.

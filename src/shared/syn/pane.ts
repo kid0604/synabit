@@ -1,7 +1,6 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 
 /**
@@ -216,24 +215,32 @@ export function leavesTheApp(href: string): boolean {
 }
 
 /**
- * Open a page beside the conversation rather than on top of it.
+ * Open a page for the person — beside the conversation, or in their browser.
  *
- * The pane is the right home for this: it is a real browser with its own
- * session, it is visible, and it has a way back and a way out — which is
- * exactly what was missing when the app navigated itself away.
+ * The one door for following a link, wherever the link was: a source chip under
+ * an answer, a link inside the answer, a link in a note. They look the same to
+ * whoever clicks them, so they behave the same.
  *
- * Their own browser is the fallback, for a window too narrow to hold a pane and
- * for a platform that has none. It is never the wrong answer, only the further
- * one.
+ * The pane is the right home when there is one: a real browser with its own
+ * session, visible, with a way back and a way out — which is exactly what was
+ * missing when the app navigated itself away.
+ *
+ * **The fallback is not decided here.** A phone has no pane at all and a narrow
+ * window has no room for one, and both of those end in the person's own
+ * browser — but a *refused* address must not, and only Rust knows which of the
+ * two happened. `syn_open_page` holds that rule; see its doc comment for why
+ * splitting it would have quietly turned a refusal into an opening.
+ *
+ * What comes back is the share of the window the pane took, which is zero when
+ * the page went to the browser instead.
  */
-export async function openBeside(url: string): Promise<void> {
+export async function openBeside(url: string): Promise<number> {
   try {
-    const share = await invoke<number>('syn_pane_open', { url });
-    if (share > 0) return;
+    return await invoke<number>('syn_open_page', { url });
   } catch (e) {
-    logger.warn('[Syn] The pane would not take that page; handing it to the browser', e);
+    logger.error('[Syn] Could not open that page', e);
+    return 0;
   }
-  await openUrl(url).catch(e => logger.error('[Syn] Could not open that page anywhere', e));
 }
 
 /** Put it away and give the app the whole window back. */

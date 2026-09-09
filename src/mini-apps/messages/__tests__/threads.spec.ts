@@ -1043,17 +1043,29 @@ describe('setting up the web', () => {
  * this codebase's recurring failure.
  */
 describe('citing a page', () => {
-  it('opens in the real browser, not in the note editor', () => {
+  it('opens in a browser, not in the note editor', () => {
     expect(app).toContain('source.node_type === WEB_SOURCE');
-    expect(app).toContain('openUrl(source.id)');
+    expect(app).toContain('openBeside(source.id)');
     expect(types).toContain("export const WEB_SOURCE = 'web'");
   });
 
   /**
-   * Checking a citation inside the app would be reading Syn's copy rather than
-   * the source, which is not checking it.
+   * It used to go to the user's own browser, because checking a citation
+   * inside the app would be reading Syn's copy rather than the source.
+   *
+   * That reasoning was right and its premise has changed. The pane is not
+   * Syn's copy: it is a live browser with its own cookie jar, fetching the
+   * page as the person and showing them the address it is on. And it is the
+   * same door as a link in the answer above the chip, which look identical to
+   * whoever clicks them.
+   *
+   * `openBeside` still reaches their own browser wherever there is no pane to
+   * put a page in — a narrow window, and a phone always. That decision is made
+   * in Rust, because only Rust can tell "there is no room" from "that address
+   * is refused", and those two deserve opposite answers.
    */
-  it('says why it leaves the app', () => {
-    expect(app).toContain('reading Syn’s copy'.replace('’', "'"));
+  it('says why the pane is not Syn’s copy'.replace('’', "'"), () => {
+    expect(app).toContain('It is a live browser with its own session');
+    expect(app).toContain('which is what a phone always is');
   });
 });

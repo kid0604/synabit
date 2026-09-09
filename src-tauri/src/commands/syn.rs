@@ -1391,6 +1391,64 @@ pub async fn syn_answer_consent(
     Ok(true)
 }
 
+/// Open a page for the person — beside the conversation, or in their browser.
+///
+/// The one door for *following a link*: a source chip under an answer, a link
+/// inside an answer, a link in a note. They all look the same to whoever clicks
+/// them, so they had better behave the same.
+///
+/// # Why the fallback lives here and not on the screen
+///
+/// Because there are two reasons the pane can say no and they deserve opposite
+/// answers, and only this side knows which one happened.
+///
+/// **There is no room, or no pane on this platform.** A phone has no
+/// `add_child` at all, and a window narrower than a conversation plus a browser
+/// gets no pane by design. Neither is a decision about the *address*, so the
+/// page goes to the browser the person already has. That is a layout answer.
+///
+/// **The address is refused.** `guard` is what keeps this app from being talked
+/// into fetching `127.0.0.1` and the rest of the local network, and a link in
+/// an answer is written by a model reading pages off the internet. Handing a
+/// refused address to the browser holding every cookie the person owns would be
+/// worse than the thing the guard was written to stop — so a refusal is a
+/// refusal, and it is not quietly redirected.
+///
+/// A screen with its own fallback could not tell those apart, and would have
+/// turned the second into the first.
+#[tauri::command]
+pub async fn syn_open_page(app: tauri::AppHandle, url: String) -> Result<f64, AppError> {
+    crate::syn::browser::guard(&url)?;
+
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        {
+            let waiting = app.state::<crate::syn::browser::Waiting>();
+            let mut pending: std::sync::MutexGuard<'_, crate::syn::browser::Pending> =
+                waiting.lock().unwrap_or_else(|e| e.into_inner());
+            pending.nonce = nonce.clone();
+            pending.reply = None;
+            pending.loaded = false;
+        }
+        // They clicked it, so the pane is theirs: it stays until they close it,
+        // and the end of a run does not take it away.
+        crate::syn::pane::opened_by_the_person(true);
+
+        match crate::syn::pane::open(&app, &url, &nonce) {
+            Ok(share) => return Ok(share),
+            Err(e) => log::info!("[Syn] No pane for {url} ({e}); handing it to the browser"),
+        }
+    }
+
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| AppError::General(format!("Could not open {url}: {e}")))?;
+    Ok(0.0)
+}
+
 /// Open the browsing pane on a page, inside the main window.
 ///
 /// Called from the globe in the left rail and from the address bar above the

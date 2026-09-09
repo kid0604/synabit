@@ -2,7 +2,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
 import {
   paneShare as synPaneShare, panePage, PANE_BAR, dragPaneTo, openPane, closePane,
-  panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside,
+  panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside, SOMEWHERE_TO_START,
 } from './shared/syn/pane';
 
 /**
@@ -1321,7 +1321,7 @@ onUnmounted(() => {
                   where you went next.
                 -->
                 <button
-                  @click="synPaneShare > 0 ? closePane() : openPane()"
+                  @click="synPaneShare > 0 ? closePane() : openBeside(SOMEWHERE_TO_START)"
                   :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer',
                            synPaneShare > 0 ? 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']"
                 >

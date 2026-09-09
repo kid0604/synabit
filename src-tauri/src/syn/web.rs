@@ -1287,10 +1287,13 @@ mod tests {
                 .is_none(),
             "it is not a tool name either"
         );
-        // And the frontend opens it externally rather than routing it.
+        // And the frontend opens it as a page rather than routing it to a
+        // mini-app. `openBeside` is the one door every link goes through — the
+        // pane where there is room for one, the person's own browser where
+        // there is not, which on a phone is always.
         let source = include_str!("../../../src/mini-apps/messages/MessagesApp.vue");
         assert!(source.contains("source.node_type === WEB_SOURCE"), "the branch exists");
-        assert!(source.contains("openUrl(source.id)"), "and it opens the real browser");
+        assert!(source.contains("openBeside(source.id)"), "and it opens it as a page");
     }
 
     // ── search ────────────────────────────────────────────────────
