@@ -56,17 +56,56 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// same reason it was written.
 const MAX_BYTES: usize = 2_000_000;
 
-/// How much of a page reaches the model.
+/// How much of a page reaches a small local model.
 ///
-/// Eight thousand characters — about 2,000 estimated tokens, which is already
-/// the largest single thing a turn can carry after the tool declarations. A
-/// whole page would routinely be four times that and would push the
-/// conversation out of a small model's window to deliver text nobody asked to
-/// have read aloud.
+/// Eight thousand characters — about 2,000 estimated tokens. This was the only
+/// number for every provider, and its reasoning was written entirely against
+/// **Ollama's default 8,192-token window**, which is the right worry for a
+/// model running on somebody's laptop.
+pub const PAGE_CHARS_LOCAL: usize = 8_000;
+
+/// And how much reaches a hosted one.
 ///
-/// Cut with a note saying it was cut. A page silently truncated is one the
-/// model answers from while believing it has the whole thing.
-const MAX_TEXT: usize = 8_000;
+/// # Why three times as much, and why it is still not "enough"
+///
+/// The old cap was being enforced against a constraint most of its users are
+/// not under: a hosted model's window is a property of the model, `num_ctx` is
+/// deliberately never sent to an OpenAI-compatible endpoint, and the whole
+/// eight-thousand argument was about a laptop.
+///
+/// What it cost, measured: a GenK review is 14,082 readable characters, so the
+/// model saw 57% of it — and then wrote *"the article's conclusion"* for a
+/// conclusion that was in the other 43%, missing the one number the piece was
+/// about. That is not a model being careless. There was no mechanism by which
+/// it could have read on.
+///
+/// Twenty-four thousand covers that article whole. It does **not** cover a
+/// research page: Wikipedia's *Transformer* article is 96,575 readable
+/// characters, about 24,000 estimated tokens on its own — and the estimate is
+/// four characters a token, which this codebase already records as optimistic
+/// for Vietnamese.
+///
+/// So this is a **slice**, not a limit. No single number can be right for both
+/// a phone review and an encyclopaedia, which is why the cut now carries an
+/// outline of what is past it and a way to read on. A cap you can page past is
+/// a budget; a cap you cannot is a silent lie, and it was telling one.
+pub const PAGE_CHARS_REMOTE: usize = 24_000;
+
+/// How much of a page to send, for the provider this vault is set to.
+///
+/// A setting when the user has one, because they are the only person who knows
+/// what they are paying for and what their model can hold. Otherwise the
+/// provider decides, and the two answers are genuinely different rather than
+/// one being a timid version of the other.
+pub fn page_chars(settings: &crate::models::syn::SynSettings) -> usize {
+    if let Some(asked) = settings.max_page_chars {
+        return (asked as usize).max(crate::syn::browser::ENOUGH_TEXT);
+    }
+    match settings.provider {
+        crate::models::syn::SynProvider::Ollama => PAGE_CHARS_LOCAL,
+        crate::models::syn::SynProvider::OpenAiCompat => PAGE_CHARS_REMOTE,
+    }
+}
 
 /// How much of each page is kept when two are read for the same question.
 ///
@@ -138,6 +177,46 @@ pub struct Page {
     pub truncated: bool,
     /// What kind of page this is, which a person knows at a glance.
     pub shape: Shape,
+    /// When the page says it was published, and who it says wrote it.
+    ///
+    /// # Why these were missing for so long
+    ///
+    /// `readability::extract_content` has always returned both, and `reduce`
+    /// read the title and the body and dropped the rest on the floor. So
+    /// `DATE_RULE` — a paragraph on **every** page, telling the model to find
+    /// the date and compare it with today — was asking for something the code
+    /// had already deleted.
+    ///
+    /// That is the shape of the first wrong answer this project ever produced:
+    /// a snippet dated 23 August read as last week's result. `DATE_RULE` was
+    /// the repair, and it was repairing a page with the date cut out of it.
+    pub published_at: String,
+    pub author: String,
+    /// The page's own headings, in order, with where each one starts.
+    ///
+    /// About one per cent of a page's characters — 1,226 of 96,575 on
+    /// Wikipedia's *Transformer* article, 138 of 14,082 on a GenK review — and
+    /// it is what turns "I read 24,000 characters" into "I read three of these
+    /// twelve parts". On that GenK review the fourth heading is *Một thương
+    /// hiệu cũng hết đường lùi*, and the section under it holds the price the
+    /// whole article is about. It was past the cut, and 138 characters would
+    /// have said so.
+    pub outline: Vec<Heading>,
+    /// How long the whole readable text is, before any cut.
+    pub whole: usize,
+    /// Where this slice starts in that whole.
+    pub from: usize,
+}
+
+/// A heading on the page, and where it starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heading {
+    /// 1 to 6. The page's own idea of how much this part matters.
+    pub level: u8,
+    pub text: String,
+    /// Its offset in the whole readable text, which is what makes it a place
+    /// that can be jumped to.
+    pub at: usize,
 }
 
 /// What kind of page arrived.
@@ -191,6 +270,19 @@ impl Page {
             self.text = self.text.chars().take(cap).collect();
             self.truncated = true;
         }
+        self
+    }
+
+    /// The same page, read on from where the last slice stopped.
+    ///
+    /// `whole`, `outline` and the rest belong to the page and do not move; only
+    /// the window onto it does. That is what makes "read on" cheap — the page
+    /// was fetched once and is being looked at again, not asked for again.
+    pub fn slice(mut self, from: usize, cap: usize) -> Self {
+        let from = from.min(self.whole);
+        self.text = self.text.chars().skip(from).take(cap).collect();
+        self.from = from;
+        self.truncated = from + self.text.chars().count() < self.whole;
         self
     }
 }
@@ -342,17 +434,7 @@ pub fn looks_like_a_list(prose: usize, stories: usize, listed: usize) -> bool {
 /// are the answer instead.
 pub fn reduce(html: &str, url: &str) -> Page {
     let article = crate::feed_engine::readability::extract_content(html, url);
-
-    let text = scraper::Html::parse_fragment(&article.content)
-        .root_element()
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // Whitespace collapsed rather than kept: HTML indentation is a large part
-    // of a page's characters and none of its meaning, and the budget below is
-    // spent on one or the other.
-    let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (text, outline) = read_out(&scraper::Html::parse_fragment(&article.content));
 
     // What kind of page this is. See `looks_like_a_list`.
     let links = links_on(html, url);
@@ -360,21 +442,76 @@ pub fn reduce(html: &str, url: &str) -> Page {
     let listed: usize = stories.iter().map(|l| l.text.chars().count()).sum();
 
     let shape = if looks_like_a_list(text.chars().count(), stories.len(), listed) {
-        Shape::Index {
-            stories: stories.len(),
-            others: links.len() - stories.len(),
-        }
+        Shape::Index { stories: stories.len(), others: links.len() - stories.len() }
     } else {
         Shape::Article { words: text.split_whitespace().count() }
     };
 
-    let truncated = text.chars().count() > MAX_TEXT;
-    Page {
-        url: url.to_string(),
-        title: article.title,
-        text: text.chars().take(MAX_TEXT).collect(),
-        truncated,
-        shape,
+    // Whole, and cut nowhere. `trimmed_to` is the only thing that cuts, because
+    // how much of a page to send is a question about the model at the other end
+    // — a small local one and a hosted one deserve different answers, and this
+    // function knows about neither. See `page_chars`.
+    let whole = text.chars().count();
+    Page { url: url.to_string(), title: article.title, text, truncated: false, shape,
+           published_at: article.published_at, author: article.author,
+           outline, whole, from: 0 }
+}
+
+/// Read a document out as text, noting where each heading falls.
+///
+/// # Why one pass and not two
+///
+/// Because a heading is only useful if you know *where* it is. The text is
+/// built by walking the document and collapsing whitespace as it goes, so the
+/// running length at the moment a heading is met is that heading's offset in
+/// the finished string — and an offset is what makes a part of a page somewhere
+/// you can be sent.
+///
+/// Extracting the headings separately and then searching the text for them
+/// would find the wrong one whenever a page repeats a phrase, which pages do.
+fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
+    let mut text = String::new();
+    let mut chars = 0usize;
+    let mut outline = Vec::new();
+
+    for node in fragment.root_element().descendants() {
+        if let Some(element) = node.value().as_element() {
+            let Some(level) = heading_level(element.name()) else { continue };
+            let Some(el) = scraper::ElementRef::wrap(node) else { continue };
+
+            let words: String = el.text().collect::<Vec<_>>().join(" ");
+            let words: String = words.split_whitespace().collect::<Vec<_>>().join(" ");
+            // A heading with nothing in it is a spacer, and a one-word one is
+            // usually furniture. Neither is a place worth being sent to.
+            if words.chars().count() >= 3 {
+                // Recorded before its own text is appended, which happens next
+                // in document order — so this is where the part begins.
+                outline.push(Heading { level, text: words, at: chars });
+            }
+        } else if let Some(raw) = node.value().as_text() {
+            for word in raw.split_whitespace() {
+                if !text.is_empty() {
+                    text.push(' ');
+                    chars += 1;
+                }
+                text.push_str(word);
+                chars += word.chars().count();
+            }
+        }
+    }
+
+    (text, outline)
+}
+
+fn heading_level(tag: &str) -> Option<u8> {
+    match tag {
+        "h1" => Some(1),
+        "h2" => Some(2),
+        "h3" => Some(3),
+        "h4" => Some(4),
+        "h5" => Some(5),
+        "h6" => Some(6),
+        _ => None,
     }
 }
 
@@ -420,13 +557,32 @@ pub const DATE_RULE: &str =
 /// the model is already looking instead of competing with eleven other sections
 /// for attention on every turn.
 pub fn wrap(page: &Page) -> String {
-    // No number: a page is cut at `MAX_TEXT` when it is the only one read and
-    // at `MAX_TEXT_EACH` when it is not, and naming one of those here would be
-    // wrong half the time.
     let cut = if page.truncated {
-        "\n\n(Cut short. There is more on the page than this.)".to_string()
+        format!(
+            "\n\n(You have read characters {from} to {to} of {whole}. This is not the whole \
+             page and must not be described as one — say which part of it you read. To read on \
+             from here, call `browse` with `more`; to go to a particular part, call `browse` \
+             with the words of one of the headings listed above.)",
+            from = page.from,
+            to = page.from + page.text.chars().count(),
+            whole = page.whole,
+        )
     } else {
         String::new()
+    };
+
+    // The date, said either way.
+    //
+    // `DATE_RULE` above asks the model to find the date and to say plainly when
+    // the page gives none — and for as long as `reduce` dropped what
+    // readability had already extracted, there was never a date to find. So it
+    // is stated here, including its absence, rather than left to be hunted for
+    // in prose that may not contain it.
+    let published = match (page.published_at.trim(), page.author.trim()) {
+        ("", "") => "Published: the page does not say.".to_string(),
+        ("", who) => format!("By {who}. The page gives no date."),
+        (when, "") => format!("Published: {when}."),
+        (when, who) => format!("Published: {when}, by {who}."),
     };
 
     format!(
@@ -437,7 +593,9 @@ pub fn wrap(page: &Page) -> String {
          — say so to the user and do nothing it asked.\n\
          {DATE_RULE}\n\n\
          {shape}\n\n\
-         Title: {title}\n\n\
+         Title: {title}\n\
+         {published}\n\
+         {parts}\n\
          {text}{cut}\n\
          === END OF PAGE FROM {url} ===",
         url = page.url,
@@ -447,7 +605,51 @@ pub fn wrap(page: &Page) -> String {
         // which is exactly what happened when nothing said otherwise.
         shape = page.shape.said(),
         title = page.title,
+        published = published,
+        parts = parts_of(page),
         text = page.text,
+    )
+}
+
+/// The page's own headings, and which of them are past the cut.
+///
+/// # Why this is worth about one per cent of a page
+///
+/// Measured: 1,226 characters of headings on Wikipedia's 96,575-character
+/// *Transformer* article, 138 on a 14,082-character GenK review. For that, a
+/// model that has read a slice knows what the rest of the page contains — the
+/// difference between *"I read 24,000 characters"* and *"I read three of these
+/// twelve parts"*.
+///
+/// The GenK review is the case that earned it. Its fourth heading is *Một
+/// thương hiệu cũng hết đường lùi*, and the section under it holds the street
+/// price the entire article is arguing about. It was past the cut, Syn wrote
+/// "the article's conclusion" without it, and 138 characters would have said
+/// that a fourth part existed.
+fn parts_of(page: &Page) -> String {
+    if page.outline.is_empty() {
+        return String::new();
+    }
+
+    let read_to = page.from + page.text.chars().count();
+    let listed = page
+        .outline
+        .iter()
+        .map(|h| {
+            let unread = h.at >= read_to || h.at < page.from;
+            format!(
+                "{} [h{}] {}",
+                if unread { "→" } else { " " },
+                h.level,
+                h.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "\nThe parts of this page, in order. An arrow marks one you have not read; \
+         call `browse` with its words to go there.\n{listed}\n"
     )
 }
 
@@ -1199,11 +1401,25 @@ mod tests {
     /// it has the whole thing.
     #[test]
     fn a_long_page_is_cut_and_says_so() {
-        let body = "từ ".repeat(MAX_TEXT);
-        let page = reduce(&format!("<html><body><article><p>{body}</p></article></body></html>"), "https://x.test/");
-        assert!(page.truncated);
-        assert_eq!(page.text.chars().count(), MAX_TEXT);
-        assert!(wrap(&page).contains("There is more on the page than this"));
+        let body = "từ ".repeat(PAGE_CHARS_LOCAL);
+        let whole = reduce(
+            &format!("<html><body><article><p>{body}</p></article></body></html>"),
+            "https://x.test/",
+        );
+
+        // `reduce` no longer cuts. How much of a page to send is a question
+        // about the model at the other end, and this function knows about
+        // neither — so it reads the page and `trimmed_to` decides the slice.
+        assert!(!whole.truncated);
+        assert!(whole.whole > PAGE_CHARS_LOCAL);
+
+        let sent = whole.trimmed_to(PAGE_CHARS_LOCAL);
+        assert!(sent.truncated);
+        assert_eq!(sent.text.chars().count(), PAGE_CHARS_LOCAL);
+
+        let said = wrap(&sent);
+        assert!(said.contains("This is not the whole page"), "{said}");
+        assert!(said.contains("`more`"), "and it says how to read on: {said}");
     }
 
     // ── the boundary ──────────────────────────────────────────────
@@ -1216,6 +1432,11 @@ mod tests {
             text: "some words".into(),
             truncated: false,
             shape: Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
         let wrapped = wrap(&page);
 
@@ -1258,6 +1479,11 @@ mod tests {
             text: "…".into(),
             truncated: false,
             shape: Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
         let cite = citation(&page);
         assert_eq!(cite.id, "https://espn.example/match");
@@ -1269,7 +1495,7 @@ mod tests {
     /// is a chip nobody presses.
     #[test]
     fn a_page_with_no_title_is_named_by_its_address() {
-        let page = Page { url: "https://x.test/a".into(), title: "   ".into(), text: String::new(), truncated: false, shape: Shape::default() };
+        let page = Page { url: "https://x.test/a".into(), title: "   ".into(), text: String::new(), truncated: false, shape: Shape::default(), published_at: String::new(), author: String::new(), outline: Vec::new(), whole: 0, from: 0 };
         assert_eq!(citation(&page).title, "https://x.test/a");
 
         let hit = Hit { title: String::new(), url: "https://y.test/b".into(), snippet: String::new() };
@@ -1625,6 +1851,11 @@ mod tests {
             text: "chữ ".repeat(4_000),
             truncated: false,
             shape: Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 4_000 * "chữ ".chars().count(),
+            from: 0,
         }
     }
 
@@ -1651,7 +1882,7 @@ mod tests {
         assert_eq!(both.text.chars().count(), MAX_TEXT_EACH);
         assert!(both.truncated, "and it says there is more");
 
-        assert!(both.text.chars().count() < MAX_TEXT, "and shorter than one page alone");
+        assert!(both.text.chars().count() < PAGE_CHARS_LOCAL, "and shorter than one page alone");
     }
 
     /// Two pages must cost no more than one used to, so a second round of
@@ -1659,7 +1890,7 @@ mod tests {
     /// snippet again. Both are relations between constants, so the compiler
     /// checks them: a runtime assertion about those is a test that can only
     /// fail after somebody has shipped it.
-    const _: () = assert!(MAX_TEXT_EACH * 2 <= MAX_TEXT);
+    const _: () = assert!(MAX_TEXT_EACH * 2 <= PAGE_CHARS_LOCAL);
     const _: () = assert!(MAX_TEXT_EACH > crate::syn::browser::ENOUGH_TEXT * 10);
 
     /// A page short enough is left alone, and one already cut stays cut.
@@ -1671,6 +1902,11 @@ mod tests {
             text: "ngắn".into(),
             truncated: false,
             shape: Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
         let same = short.clone().trimmed_to(MAX_TEXT_EACH);
         assert_eq!(same.text, short.text);
@@ -1684,12 +1920,22 @@ mod tests {
     /// The cut notice must not name a number, because there are two of them and
     /// which one applied depends on how many pages were read.
     #[test]
-    fn the_cut_notice_does_not_claim_a_length_it_may_not_have_used() {
-        let said = wrap(&long_page("https://a.example").trimmed_to(MAX_TEXT_EACH));
+    fn the_cut_notice_names_what_happened_and_not_a_constant() {
+        let page = long_page("https://a.example");
+        let whole = page.whole;
+        let said = wrap(&page.trimmed_to(MAX_TEXT_EACH));
 
-        assert!(said.contains("Cut short"), "{said}");
-        assert!(!said.contains(&MAX_TEXT.to_string()), "it names 8000 and may have cut at 5000");
-        assert!(!said.contains(&MAX_TEXT_EACH.to_string()));
+        // It used to name no number at all, because a page was cut at one of
+        // two constants and naming either would be wrong half the time. That
+        // reasoning holds against **constants** and it was solving the wrong
+        // problem: what the model needs is not the setting, it is how much of
+        // this page it is holding.
+        assert!(said.contains(&format!("of {whole}")), "{said}");
+        assert!(said.contains(&MAX_TEXT_EACH.to_string()), "which is where this one stopped");
+        assert!(
+            !said.contains(&PAGE_CHARS_LOCAL.to_string()),
+            "but never a cap it did not use: {said}"
+        );
     }
 
     // ── dates ─────────────────────────────────────────────────────
@@ -1706,6 +1952,11 @@ mod tests {
             text: "23 Aug 2026 — Tottenham thua 0-3".into(),
             truncated: false,
             shape: Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
 
         for said in [wrap(&page), wrap_hits("tottenham", &[])] {
@@ -1877,6 +2128,11 @@ mod tests {
             text: "POCO F9 Ultra và phép thử lớn nhất trong 8 năm qua".into(),
             truncated: false,
             shape: Shape::Index { stories: 52, others: 31 },
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
 
         assert!(page.text.chars().count() < crate::syn::browser::ENOUGH_TEXT);
@@ -1941,5 +2197,153 @@ mod tests {
         );
     }
 
+
+    // ── a long page, read in parts ────────────────────────────────
+
+    /// A page shaped like an article with sections, small enough to read.
+    const A_LONG_ARTICLE: &str = r#"
+        <article>
+          <h1>Đánh giá POCO F9 Ultra</h1>
+          <p>MỞ ĐẦU. </p>
+          <h2>Không còn Pro để chọn</h2>
+          <p>PHẦN MỘT. </p>
+          <h2>Một thương hiệu cũng hết đường lùi</h2>
+          <p>GIÁ THỰC TẾ LÀ 23,49 TRIỆU. </p>
+        </article>
+    "#;
+
+    /// Every heading, with where it starts — which is what makes a part of a
+    /// page somewhere you can be sent.
+    #[test]
+    fn a_page_carries_its_own_table_of_contents() {
+        let page = reduce(A_LONG_ARTICLE, "https://genk.vn/poco.chn");
+
+        let names: Vec<&str> = page.outline.iter().map(|h| h.text.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Đánh giá POCO F9 Ultra", "Không còn Pro để chọn", "Một thương hiệu cũng hết đường lùi"]
+        );
+        assert_eq!(page.outline[0].level, 1);
+        assert_eq!(page.outline[1].level, 2);
+
+        // Offsets into the text, in order, and each one lands on its heading.
+        for h in &page.outline {
+            let there: String = page.text.chars().skip(h.at).take(h.text.chars().count()).collect();
+            assert!(there.contains(h.text.split(' ').next().unwrap()), "{h:?} lands on {there:?}");
+        }
+    }
+
+    /// The failure this was built for: the section holding the number the
+    /// article is about was past the cut, and nothing said a fourth part
+    /// existed.
+    #[test]
+    fn a_cut_page_says_which_parts_are_past_the_cut() {
+        let whole = reduce(A_LONG_ARTICLE, "https://genk.vn/poco.chn");
+        let last = whole.outline.last().expect("there are headings").at;
+
+        let said = wrap(&whole.clone().trimmed_to(last - 1));
+
+        assert!(said.contains("→ [h2] Một thương hiệu cũng hết đường lùi"), "{said}");
+        assert!(said.contains("  [h2] Không còn Pro để chọn"), "and the read ones are unmarked");
+        assert!(!said.contains("23,49"), "the part itself is genuinely not there");
+    }
+
+    /// `reduce` dropped the date readability had already extracted, so
+    /// `DATE_RULE` — a paragraph on every single page — was asking the model to
+    /// find something the code had deleted.
+    #[test]
+    fn a_page_says_when_it_was_published_or_says_it_does_not_know() {
+        let dated = reduce(
+            r#"<html><head><meta property="article:published_time" content="2026-09-09T17:46:00+07:00">
+               <meta name="author" content="VCCorp.vn"></head><body><article><p>Nội dung.</p></article></body></html>"#,
+            "https://genk.vn/a.chn",
+        );
+        assert_eq!(dated.published_at, "2026-09-09T17:46:00+07:00");
+        assert!(wrap(&dated).contains("Published: 2026-09-09T17:46:00+07:00, by VCCorp.vn."));
+
+        let undated = reduce("<article><p>Nội dung.</p></article>", "https://x.test/a");
+        assert!(
+            wrap(&undated).contains("Published: the page does not say."),
+            "DATE_RULE asks it to say so plainly, so the page has to"
+        );
+    }
+
+    /// Slicing reads on rather than re-reading: the second slice must not
+    /// repeat the first.
+    #[test]
+    fn reading_on_starts_where_the_last_slice_stopped() {
+        // Numbered, because `"chữ ".repeat(n)` makes every slice look like
+        // every other one and a test on it cannot fail.
+        let body: String = (0..500).map(|i| format!("đoạn{i:04} ")).collect();
+        let mut whole = long_page("https://a.example");
+        whole.whole = body.chars().count();
+        whole.text = body;
+
+        let first = whole.clone().trimmed_to(100);
+        let next = whole.clone().slice(100, 100);
+
+        assert_eq!(first.text.chars().count(), 100);
+        assert_eq!(next.from, 100);
+        assert!(next.truncated, "there is more after it");
+        assert_ne!(first.text, next.text, "reading on must not re-read");
+
+        let all: String = whole.text.chars().take(200).collect();
+        assert_eq!(format!("{}{}", first.text, next.text), all, "and must not skip anything");
+    }
+
+    /// The end of a page is the end, and a slice past it is not a page with
+    /// nothing on it.
+    #[test]
+    fn the_last_slice_is_not_marked_as_having_more() {
+        let whole = long_page("https://a.example");
+        let end = whole.whole;
+        let last = whole.slice(end - 50, 1_000);
+
+        assert_eq!(last.text.chars().count(), 50);
+        assert!(!last.truncated);
+        assert!(!wrap(&last).contains("This is not the whole page"));
+    }
+
+    // ── how much of a page to send ────────────────────────────────
+
+    /// The old cap was justified entirely against Ollama's 8,192-token window,
+    /// and was being applied to hosted models whose window is a property of the
+    /// model and to which `num_ctx` is deliberately never sent.
+    #[test]
+    fn the_provider_decides_how_much_of_a_page_to_send() {
+        use crate::models::syn::{SynProvider, SynSettings};
+
+        let local = SynSettings { provider: SynProvider::Ollama, ..SynSettings::default() };
+        let hosted = SynSettings { provider: SynProvider::OpenAiCompat, ..SynSettings::default() };
+
+        assert_eq!(page_chars(&local), PAGE_CHARS_LOCAL);
+        assert_eq!(page_chars(&hosted), PAGE_CHARS_REMOTE);
+    }
+
+    /// The two are genuinely different answers, not one being a timid version
+    /// of the other. Checked at compile time, because it is a relationship
+    /// between two constants rather than a fact about a run.
+    const _: () = assert!(PAGE_CHARS_REMOTE > PAGE_CHARS_LOCAL);
+
+    /// And the person outranks the provider, because they are the only one who
+    /// knows what they are paying for.
+    #[test]
+    fn a_setting_wins_over_the_provider_but_not_over_sense() {
+        use crate::models::syn::{SynProvider, SynSettings};
+
+        let asked = SynSettings {
+            provider: SynProvider::Ollama,
+            max_page_chars: Some(60_000),
+            ..SynSettings::default()
+        };
+        assert_eq!(page_chars(&asked), 60_000);
+
+        // A cap below what counts as a readable page at all would make every
+        // read look like an empty page and send every one to the window.
+        let silly = SynSettings { max_page_chars: Some(1), ..SynSettings::default() };
+        assert!(page_chars(&silly) >= crate::syn::browser::ENOUGH_TEXT);
+    }
+
 }
+
 

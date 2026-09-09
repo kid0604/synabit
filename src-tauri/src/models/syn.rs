@@ -379,6 +379,16 @@ pub struct SynSettings {
     /// Maximum conversation history messages sent to LLM.
     #[serde(default = "default_max_history")]
     pub max_history_messages: usize,
+    /// How much of a web page reaches the model at once, in characters.
+    ///
+    /// `None` means "let the provider decide", which is not the same as any
+    /// particular number: a model on somebody's laptop and a hosted one want
+    /// genuinely different answers. See `syn::web::page_chars`.
+    ///
+    /// It is a slice rather than a ceiling — a page longer than this arrives
+    /// with an outline of what is past the cut and a way to read on.
+    #[serde(default)]
+    pub max_page_chars: Option<u32>,
 
     // RAG
     pub rag_enabled: bool,
@@ -441,6 +451,7 @@ impl Default for SynSettings {
             temperature: 0.7,
             max_tool_iterations: default_max_tool_iterations(),
             num_ctx: 8192,
+            max_page_chars: None,
             max_history_messages: 50,
             rag_enabled: true,
             max_context_chars: 12000,

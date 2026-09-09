@@ -163,6 +163,11 @@ mod tests {
         assert_eq!(declared("num_ctx"), d.num_ctx.to_string());
         assert_eq!(declared("max_history_messages"), d.max_history_messages.to_string());
         assert_eq!(declared("max_context_chars"), d.max_context_chars.to_string());
+        // `null`, and it has to be: it means "let the provider decide", which
+        // is a different answer from any number and the reason a laptop and a
+        // hosted model are not given the same slice of a page.
+        assert_eq!(declared("max_page_chars"), "null");
+        assert!(d.max_page_chars.is_none());
         assert_eq!(declared("max_tool_iterations"), d.max_tool_iterations.to_string());
         assert_eq!(declared("temperature"), d.temperature.to_string());
         assert_eq!(declared("memory_reflection"), d.memory_reflection.to_string());

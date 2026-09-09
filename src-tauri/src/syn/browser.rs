@@ -512,6 +512,20 @@ pub struct Pending {
     /// number cannot be answered with somebody else's link.
     pub offered: Vec<crate::syn::web::Link>,
     pub offered_by: String,
+    /// The page last read, whole, so that reading on is not fetching again.
+    ///
+    /// A long page arrives in slices — see `web::page_chars` — and the slices
+    /// come out of this rather than off the network. The page was fetched once;
+    /// reading further into it is looking again at what is already in hand,
+    /// which is what a person does with a long article and what Syn had no way
+    /// of doing at all.
+    pub reading: Option<crate::syn::web::Page>,
+    /// How far into it has been sent so far.
+    ///
+    /// Separate from the page, because the page kept here is the **whole** one
+    /// and the model has seen a window onto it. Slicing the slice was the first
+    /// version of this and it read the same paragraphs twice.
+    pub read_to: usize,
 }
 
 pub type Waiting = std::sync::Mutex<Pending>;
@@ -558,6 +572,104 @@ pub fn offered_link(waiting: &Waiting, what: &str) -> Option<crate::syn::web::Li
     }
     let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
     pending.offered.get(n - 1).cloned()
+}
+
+/// Keep the page just read, whole, and say how much of it went out.
+///
+/// `whole` is the page before any cut; `sent` is the slice the model was given.
+/// Both are needed and neither can be derived from the other: the first is what
+/// reading on reads, the second is where reading on starts.
+pub fn note_reading(waiting: &Waiting, whole: &crate::syn::web::Page, sent: &crate::syn::web::Page) {
+    let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.read_to = sent.from + sent.text.chars().count();
+    pending.reading = Some(whole.clone());
+}
+
+/// Move the mark, the page in hand being unchanged.
+///
+/// Reading on does not re-read the page, so there is nothing new to keep — only
+/// a new answer to *how far have we got*.
+pub fn note_read_to(waiting: &Waiting, sent: &crate::syn::web::Page) {
+    let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.read_to = sent.from + sent.text.chars().count();
+}
+
+/// Forget the page in hand.
+///
+/// Called when a search happens: "more" has to mean the last page somebody
+/// asked for by address, and a search reads two pages that were chosen for the
+/// model rather than by it. Continuing one of those on the word "more" would be
+/// a guess, and a silent one.
+pub fn nothing_in_hand(waiting: &Waiting) {
+    let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    pending.reading = None;
+    pending.read_to = 0;
+}
+
+/// What `browse` was asked to do with the page already in hand, if anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Onwards {
+    /// Read on from where the last slice stopped.
+    More,
+    /// Go to the part with this heading, at this offset.
+    Part(usize),
+}
+
+/// The word a model uses to turn a page.
+pub const READ_ON: &str = "more";
+
+/// Whether this is an instruction about the page in hand rather than a new one.
+///
+/// # Why a heading is matched by its words and not by a number
+///
+/// Because the words are what the model has just been shown, and a number
+/// would be one more thing to keep in step between what was printed and what
+/// this answers to. Matched loosely — case-folded, and a prefix counts —
+/// because a model quoting a heading back will often quote the first half of
+/// it, and refusing that would be pedantry dressed as safety. Nothing
+/// dangerous is on the other side of this: it is an offset into a string that
+/// has already been fetched.
+pub fn onwards(waiting: &Waiting, what: &str) -> Option<Onwards> {
+    let asked = what.trim().to_lowercase();
+    if asked.is_empty() {
+        return None;
+    }
+
+    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    let reading = pending.reading.as_ref()?;
+
+    if asked == READ_ON {
+        return Some(Onwards::More);
+    }
+
+    reading
+        .outline
+        .iter()
+        .find(|h| {
+            let heading = h.text.to_lowercase();
+            heading == asked || heading.starts_with(&asked) || asked.starts_with(&heading)
+        })
+        .map(|h| Onwards::Part(h.at))
+}
+
+/// The page in hand, sliced as asked.
+pub fn read_on(waiting: &Waiting, how: &Onwards, cap: usize) -> Option<crate::syn::web::Page> {
+    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    let reading = pending.reading.as_ref()?.clone();
+
+    let from = match how {
+        // Where the last slice stopped, which is the only thing "more" can
+        // sensibly mean and the only thing a reader means by it.
+        Onwards::More => pending.read_to,
+        Onwards::Part(at) => *at,
+    };
+
+    // Past the end is not a slice, it is the end. Saying so beats handing back
+    // an empty page that looks like a page with nothing on it.
+    if from >= reading.whole {
+        return None;
+    }
+    Some(reading.slice(from, cap))
 }
 
 /// How long to wait for the page to answer before giving up.
@@ -892,6 +1004,11 @@ mod tests {
             text: "n".repeat(ENOUGH_TEXT),
             truncated: false,
             shape: crate::syn::web::Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
         assert!(worth_keeping(&good));
     }
@@ -907,6 +1024,11 @@ mod tests {
             text: "Please enable JavaScript".into(),
             truncated: false,
             shape: crate::syn::web::Shape::default(),
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 0,
+            from: 0,
         };
         assert!(!worth_keeping(&shell));
     }
@@ -1197,6 +1319,97 @@ mod tests {
             guarded < opener,
             "the guard must run first, or a refused address reaches the person's browser"
         );
+    }
+
+    // ── turning the page ──────────────────────────────────────────
+
+    fn a_page_in_hand() -> Waiting {
+        let page = crate::syn::web::reduce(
+            // Long enough for readability to accept it as content: a few
+            // words is a candidate it discards.
+            &format!(
+                r#"<html><body><article><h1>Mở đầu</h1><p>{a}</p>
+                   <h2>Phần giữa</h2><p>{b}</p>
+                   <h2>Kết luận</h2><p>{c}</p></article></body></html>"#,
+                a = "AAAA ".repeat(60),
+                b = "BBBB ".repeat(60),
+                c = "CCCC ".repeat(60),
+            ),
+            "https://genk.vn/a.chn",
+        );
+        let sent = page.clone().trimmed_to(20);
+        let waiting = Waiting::default();
+        note_reading(&waiting, &page, &sent);
+        waiting
+    }
+
+    /// A long page used to have an unreachable second half: `browse` on the
+    /// same address returned the same opening, so Syn summarised what it had
+    /// and called it the article.
+    #[test]
+    fn more_reads_on_from_where_the_last_slice_stopped() {
+        let waiting = a_page_in_hand();
+
+        assert_eq!(onwards(&waiting, "more"), Some(Onwards::More));
+        assert_eq!(onwards(&waiting, "  MORE "), Some(Onwards::More));
+
+        let next = read_on(&waiting, &Onwards::More, 20).expect("there is more");
+        assert_eq!(next.from, 20);
+        assert!(!next.text.is_empty());
+    }
+
+    /// Jumping, which for a long page beats four slices: a research article is
+    /// read by going to the part that matters, not by starting at the top.
+    #[test]
+    fn a_heading_is_somewhere_to_be_sent() {
+        let waiting = a_page_in_hand();
+
+        let Some(Onwards::Part(at)) = onwards(&waiting, "Kết luận") else {
+            panic!("a heading names a place");
+        };
+        let part = read_on(&waiting, &Onwards::Part(at), 200).expect("it is in the page");
+        assert!(part.text.contains("CCCC"), "{:?}", part.text);
+
+        // Quoted back in a different case, or only half quoted, still lands.
+        assert!(matches!(onwards(&waiting, "kết luận"), Some(Onwards::Part(_))));
+        assert!(matches!(onwards(&waiting, "Phần"), Some(Onwards::Part(_))));
+    }
+
+    /// And everything else is a new question, not an instruction about this
+    /// page. A heading nobody wrote must not be answered with the nearest one.
+    #[test]
+    fn anything_that_is_not_a_part_of_this_page_is_left_alone() {
+        let waiting = a_page_in_hand();
+
+        for what in ["https://genk.vn/other", "kết quả mu everton", "1", ""] {
+            assert!(onwards(&waiting, what).is_none(), "took {what:?} as a page turn");
+        }
+    }
+
+    /// With nothing read, `more` means nothing — and a search puts it back to
+    /// nothing, because `more` has to mean the last page asked for by address.
+    #[test]
+    fn there_is_no_more_of_a_page_nobody_is_reading() {
+        let waiting = Waiting::default();
+        assert!(onwards(&waiting, "more").is_none());
+
+        let held = a_page_in_hand();
+        assert!(onwards(&held, "more").is_some());
+        nothing_in_hand(&held);
+        assert!(onwards(&held, "more").is_none());
+    }
+
+    /// Past the end is the end, not a page with nothing on it.
+    #[test]
+    fn the_end_of_a_page_says_so_rather_than_coming_back_empty() {
+        let waiting = a_page_in_hand();
+        let whole = {
+            let p = waiting.lock().unwrap();
+            p.reading.as_ref().unwrap().whole
+        };
+
+        assert!(read_on(&waiting, &Onwards::Part(whole), 100).is_none());
+        assert!(read_on(&waiting, &Onwards::Part(whole + 500), 100).is_none());
     }
 
     // ── the app must not be navigable away from ───────────────────

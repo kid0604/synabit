@@ -440,6 +440,37 @@ watch(() => props.vaultPath, () => {
                 </button>
               </div>
 
+              <!--
+                How much of a web page reaches the model.
+
+                Empty means "let the provider decide", which is a real answer
+                and not a missing one: eight thousand characters was written
+                against Ollama's 8,192-token window, and a hosted model's window
+                is a property of the model. It is a slice, not a ceiling — a
+                longer page arrives with an outline of what is past the cut and
+                a way to read on.
+              -->
+              <div>
+                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
+                  {{ t('syn.page_budget') }}
+                </label>
+                <input
+                  v-model.number="settings.max_page_chars"
+                  type="number"
+                  min="1000"
+                  max="200000"
+                  step="1000"
+                  :placeholder="t('syn.page_budget_hint')"
+                  class="w-32 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
+                         text-sm text-text dark:text-text-dark outline-none text-center
+                         focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                         transition-all"
+                />
+                <p class="mt-1.5 text-xs text-text/50 dark:text-text-dark/50 max-w-md">
+                  {{ t('syn.page_budget_hint') }}
+                </p>
+              </div>
+
               <!-- Context budget -->
               <div>
                 <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">

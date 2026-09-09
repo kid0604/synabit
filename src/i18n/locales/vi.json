@@ -1767,6 +1767,8 @@
     "include_finance": "Bao gồm dữ liệu tài chính",
     "include_feeds": "Bao gồm bài viết RSS",
     "context_budget": "Ngân sách ngữ cảnh (tokens)",
+    "page_budget": "Ngân sách trang web (ký tự)",
+    "page_budget_hint": "Để trống: theo provider — 8.000 cho model chạy máy, 24.000 cho còn lại. Trang dài hơn sẽ được đọc thành nhiều phần.",
     "graph_depth": "Độ sâu đồ thị",
     "advanced_customization": "Nâng cao",
     "preset_templates": "Mẫu nhanh",

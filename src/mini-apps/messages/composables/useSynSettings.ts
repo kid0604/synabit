@@ -53,6 +53,14 @@ export interface SynSettings {
   // RAG
   rag_enabled: boolean;
   max_context_chars: number;
+  /**
+   * How much of a web page reaches the model at once, in characters.
+   *
+   * `null` means "let the provider decide", which is not the same as any
+   * particular number — a model on somebody's laptop and a hosted one want
+   * genuinely different answers. See `syn::web::page_chars`.
+   */
+  max_page_chars: number | null;
   include_finance: boolean;
   include_feeds: boolean;
   graph_expansion_depth: number;
@@ -104,6 +112,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   max_tool_iterations: 12,
   rag_enabled: true,
   max_context_chars: 12000,
+  max_page_chars: null,
   include_finance: true,
   include_feeds: true,
   graph_expansion_depth: 1,

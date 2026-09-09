@@ -1767,6 +1767,8 @@
     "include_finance": "Include finance data",
     "include_feeds": "Include feed articles",
     "context_budget": "Context budget (tokens)",
+    "page_budget": "Web page budget (characters)",
+    "page_budget_hint": "Empty: your provider decides — 8,000 for a local model, 24,000 otherwise. A longer page arrives in parts.",
     "graph_depth": "Graph depth",
     "advanced_customization": "Advanced",
     "preset_templates": "Quick Templates",

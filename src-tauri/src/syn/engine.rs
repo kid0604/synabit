@@ -1098,6 +1098,29 @@ async fn browse<R: tauri::Runtime>(
         ));
     }
 
+    let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
+    let cap = web::page_chars(&settings);
+
+    // ── Reading on, in a page already in hand. ────────────────────
+    //
+    // A long page arrives in slices, and until now there was no second slice:
+    // `browse` on the same address returned the same opening, so the far half
+    // of every long article was unreachable. Syn summarised what it had and
+    // called it the article — on a GenK review that meant "the article's
+    // conclusion" written without the section the article was about.
+    //
+    // Answered from the page in hand rather than the network: it was fetched
+    // once, and reading further into it is looking again, not asking again.
+    if let Some(how) = browser::onwards(req.browser, what) {
+        if let Some(page) = browser::read_on(req.browser, &how, cap) {
+            browser::note_read_to(req.browser, &page);
+            return Ok((web::wrap(&page), vec![web::citation(&page)]));
+        }
+        return Err(crate::error::AppError::General(
+            "You have reached the end of that page. There is no more of it to read.".into(),
+        ));
+    }
+
     // ── A number means one of the links the last page offered. ────
     //
     // Which is what clicking is. The page handed over a numbered list; the
@@ -1121,8 +1144,7 @@ async fn browse<R: tauri::Runtime>(
     if address.is_none() {
         // A configured endpoint still wins: somebody who set one up wants it,
         // and an API answers faster than a window.
-        let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
-        let endpoint = settings.search_url.unwrap_or_default();
+        let endpoint = settings.search_url.clone().unwrap_or_default();
         if !endpoint.trim().is_empty() {
             let key = crate::secrets::SecretManager::get_syn_api_key(None, web::SEARCH_KEY_SLOT);
             if let Ok(hits) = web::search(&endpoint, key.as_deref(), what).await {
@@ -1134,6 +1156,10 @@ async fn browse<R: tauri::Runtime>(
             // the answer.
             log::warn!("[Syn] The configured search endpoint failed; using the window");
         }
+
+        // A search replaces whatever page was in hand: `more` means the last
+        // page asked for by address, and these two were chosen for the model.
+        browser::nothing_in_hand(req.browser);
 
         let read = browser::visit(req.app, req.browser, &browser::search_url(what)).await?;
         let page = web::reduce(&read.html, &read.url);
@@ -1232,7 +1258,7 @@ async fn browse<R: tauri::Runtime>(
             Ok(read) => {
                 let page = web::reduce(&read.html, &read.url);
                 if browser::worth_keeping(&page) {
-                    return Ok((onward(req.browser, &page, &read.html), vec![web::citation(&page)]));
+                    return Ok((onward(req.browser, &page, &read.html, cap), vec![web::citation(&page)]));
                 }
                 log::info!("[Syn] The open page had nothing readable on it; fetching instead");
             }
@@ -1243,7 +1269,7 @@ async fn browse<R: tauri::Runtime>(
     // ── Rung 2: an address, read the cheap way. ───────────────────
     match web::fetch_with_html(&address).await {
         Ok((page, html)) if browser::worth_keeping(&page) => {
-            Ok((onward(req.browser, &page, &html), vec![web::citation(&page)]))
+            Ok((onward(req.browser, &page, &html, cap), vec![web::citation(&page)]))
         }
         // ── Rung 3: nearly nothing came back. A JavaScript shell, a
         // consent wall and a login all look the same from here, and the
@@ -1251,7 +1277,7 @@ async fn browse<R: tauri::Runtime>(
         _ => {
             let read = browser::visit(req.app, req.browser, &address).await?;
             let page = web::reduce(&read.html, &read.url);
-            Ok((onward(req.browser, &page, &read.html), vec![web::citation(&page)]))
+            Ok((onward(req.browser, &page, &read.html, cap), vec![web::citation(&page)]))
         }
     }
 }
@@ -1267,8 +1293,15 @@ fn onward(
     waiting: &crate::syn::browser::Waiting,
     page: &crate::syn::web::Page,
     html: &str,
+    cap: usize,
 ) -> String {
     use crate::syn::web;
+
+    // The whole page is kept and a slice of it is sent. `browse` with `more`
+    // reads the next slice out of what was kept, which is why a long article
+    // is no longer a page with an unreachable second half.
+    let sent = page.clone().trimmed_to(cap);
+    crate::syn::browser::note_reading(waiting, page, &sent);
 
     let offered = web::worth_offering(&web::links_on(html, &page.url));
     // Remembered before it is rendered, so the numbers the model reads are the
@@ -1277,9 +1310,9 @@ fn onward(
 
     let links = web::wrap_links(&offered);
     if links.is_empty() {
-        web::wrap(page)
+        web::wrap(&sent)
     } else {
-        format!("{}\n\n{}", web::wrap(page), links)
+        format!("{}\n\n{}", web::wrap(&sent), links)
     }
 }
 
@@ -1321,6 +1354,44 @@ fn assemble(
 }
 #[cfg(test)]
 mod tests {
+
+    /// Reading on happens before anything is fetched, and before a number is
+    /// taken as a link: `more` is an instruction about the page in hand, not a
+    /// new address and not a search.
+    #[test]
+    fn turning_the_page_comes_before_going_anywhere() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn onward(").next())
+            .expect("browse is there");
+
+        let turn = body.find("browser::onwards").expect("reading on is offered");
+        let link = body.find("offered_link").expect("a number still means a link");
+        let screen = body.find("read_showing").expect("the open page is still read");
+        let network = body.find("fetch_with_html").expect("and the cheap fetch is still there");
+
+        assert!(turn < link, "the page in hand is asked about first");
+        assert!(link < screen && screen < network, "then a link, the screen, the network");
+    }
+
+    /// How much of a page to send is the provider's answer, not a constant.
+    ///
+    /// The old one was justified entirely against Ollama's 8,192-token window
+    /// and was being applied to hosted models, which cost a GenK review 43% of
+    /// itself — including the section the article was about.
+    #[test]
+    fn the_slice_comes_from_the_settings_and_not_from_a_constant() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn onward(").next())
+            .expect("browse is there");
+
+        assert!(body.contains("web::page_chars(&settings)"), "the provider decides");
+    }
 
     /// The order of the ladder, read off the source, because the expensive part
     /// of it needs a window and a network.
