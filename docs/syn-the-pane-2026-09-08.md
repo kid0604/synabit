@@ -190,3 +190,97 @@ Nên khi dock, cửa vẫn đóng. Không phải sửa gì, và quan trọng hơ
 - **Không click, không gõ.** Vẫn nguyên như Nhát 8. Một cái pane đọc được đã là một cấp năng lực mới; thêm chuột và bàn phím là một cuộc bàn khác.
 - **Syn không bao giờ gõ thông tin đăng nhập.** Không ngoại lệ, không "luôn cho phép". Việc dock làm cho chuyện *người dùng* đăng nhập trong đó dễ chịu hơn — và đó là đúng người đang gõ.
 - **Không headless.** Cả thiết kế này tồn tại vì cái cửa sổ **được nhìn**. Một pane có thể thu lại được thì được; một pane vô hình thì không.
+
+---
+
+## 9. Đã làm xong, 09-09-2026
+
+Tài liệu trên là nghiên cứu. Đây là cái đã dựng, theo đúng thứ tự ở mục 6.
+
+**1. Siết cửa sổ.** `on_navigation` → `may_go_to`, `on_download` → từ chối,
+`on_new_window` → `Deny`, `browser_extensions_enabled(false)`. Hai lỗ ở mục 4 đã
+vá. Test ghim đúng ba hook đó trong builder.
+
+**2. `on_page_load` thay vòng poll.** `SETTLE_MS` giờ là **trần chờ**, không phải
+khoản phí cứng ba giây mỗi lần đọc. Có test bắt lỗi nếu ai đó trả lại
+`sleep(SETTLE_MS)`.
+
+**3. Android — đã trả lời, và câu trả lời là không.**
+`wry-0.54.4/src/android/mod.rs` tiêm initialization script bằng cách **viết lại
+HTML đi qua custom protocol của chính app**, vì `addDocumentStartJavaScript`
+không có ở đó. Một trang tại `https://vnexpress.net` không đi qua protocol ấy,
+nên `reader_script` không bao giờ được tiêm, nên `syn_browser_content` không bao
+giờ được gọi, nên `visit` chờ hết `PATIENCE_MS` rồi báo timeout — **đổ lỗi cho
+trang web về một chuyện mà nền tảng gây ra**. Giờ nó nói thẳng, ngay ở nhánh
+`#[cfg(mobile)]`, và `web::fetch` với một địa chỉ có sẵn vẫn chạy.
+
+**4. Cái cổng — qua, nhưng câu trả lời khác câu hỏi.** `set_bounds` trên macOS là
+**no-op** với webview không phải con: `wry/src/wkwebview/mod.rs:1010` trả `Ok`
+rồi không làm gì. Nên webview của app không bị di chuyển. **App tự vẽ mình hẹp
+lại** bằng CSS (`.syn-pane-open`), pane thì được `set_bounds` thật. Kéo giãn ổn.
+
+**5. Cái pane thật.** Mở/đóng/kéo, quả địa cầu, có mặt ở mọi mini-app, `may_call`
+không phải sửa một dòng — đúng như mục 7.
+
+### Ba thứ ở mục 0b, là lý do tài liệu này tồn tại
+
+**Trang đang mở là trạng thái sống.** `pane::showing()` hỏi `Webview::url()` —
+địa chỉ không bao giờ lệch được vì không có bản sao nào để lệch — cộng tiêu đề
+từ `on_document_title_changed`. Nó đi vào **`Focus`**, tức mục "trên màn hình"
+của prompt, cùng chỗ với "người dùng đang ở Notes, mở file này". Nên mỗi lượt
+Syn đều biết cái gì đang mở, và biết rằng gọi `browse` với địa chỉ đó sẽ **đọc
+màn hình chứ không tải lại trang** — `read_showing` không điều hướng đi đâu cả,
+có test đọc chính source để giữ điều đó. Đọc màn hình là cách duy nhất thấy trang
+**như người dùng đang có nó**: đã cuộn, đã qua tường consent, đã đăng nhập.
+
+**Một tên miền được gọi tên thì đi thẳng tới.** `address_of` nâng `vnexpress.net`
+thành `https://vnexpress.net`. Hẹp có chủ đích: đúng một token, không khoảng
+trắng, không `@`. Và một danh sách từ chối — `.md` là Moldova, `.rs` là Serbia,
+`.sh` là Saint Helena. Vault này viết bằng Markdown và app này viết bằng Rust,
+nên `notes.md` là chuỗi có thật quanh đây, và một luật đọc host trần thành địa
+chỉ sẽ gửi một trình duyệt **đang mang session** sang Moldova.
+
+**Chỗ nào đi tiếp được thì nói ra.** `links_on` lấy 20 link đầu **theo đúng thứ
+tự trang xếp** — "bài đầu tiên trên trang chủ" là câu hỏi về thứ tự của trang,
+sắp xếp lại là trả lời câu khác. Chỉ trang **được hỏi bằng địa chỉ** mới có danh
+sách này; hai trang mở tự động sau một lần tìm thì không, vì chúng là bài báo
+đang được đọc và 20 link mỗi bài là một phần năm cửa sổ 8.192 token dành cho thứ
+không ai hỏi. Đây là chỗ *"đọc bài đó đi"* tan hẳn: cái link nằm ngay trong trang
+đang mở.
+
+### Và (b), thứ mục 0b nói là độc lập
+
+Lời khuyên đặt truy vấn không bao giờ với tới **lần tìm số một** — `keep_looking`
+và `TWO_SOURCES` đều nằm trong *kết quả* của tool, tức là đến sau khi truy vấn đã
+gửi đi. Kênh duy nhất tới được là **mô tả tool**, và ngân sách đang 15.800/16.000.
+Nó vào đó: hai câu, trả bằng cách cắt ngắn mô tả tham số `what` vốn đang lặp lại
+câu ngay trên nó. Giờ là **15.905**, còn khoảng 95 ký tự. Thứ tiếp theo muốn thêm
+vào đây nên chuẩn bị lý lẽ để nâng trần, đừng mong còn chỗ.
+
+### Cái pane có mặt của nó
+
+36 pixel cắt ra từ **đỉnh pane**, không phải phủ lên: pane là webview của hệ điều
+hành, nó vẽ đè lên bất cứ thứ gì app đặt cùng chỗ — đó chính là sự thật mà cả
+thiết kế cạnh-nhau được dựng quanh, và một thanh nổi sẽ phát hiện lại nó theo
+cách đau đớn. Trong dải đó app vẽ: lùi, tới, **ô địa chỉ gõ được**, và nút đóng.
+
+Ô địa chỉ gõ được vì một trình duyệt không gõ được địa chỉ là một cái máy xem, và
+cái jar rỗng chỉ có nghĩa nếu người dùng được kỳ vọng tự vào đăng nhập trong đó.
+Luật về nơi được đến vẫn là `may_go_to`, một luật cho cả Syn lẫn người.
+
+Nút đóng chuyển từ chỗ hover trên mép sang thanh này. Một điều khiển phải rê chuột
+mới thấy là điều khiển mà người đang vội không có.
+
+Và `BAR` là số cố định chứ không phải tỉ lệ, nên `auto_resize` — vốn giữ mọi cạnh
+theo **rate** — không giữ được nó. `keep_arranged` chạy trên `WindowEvent::Resized`
+để đặt lại cho đúng. Hai con số phải khớp nhau ở hai ngôn ngữ, nên có một test đọc
+thẳng `pane.ts` từ Rust.
+
+### Cái vẫn chưa làm
+
+- **Không click, không gõ trong trang.** Nguyên như Nhát 8.
+- **Syn không bao giờ gõ thông tin đăng nhập.** Không ngoại lệ.
+- **Không headless.**
+- **Kéo giãn cửa sổ với thanh địa chỉ mới là thứ tao không tự nhìn được.**
+  `keep_arranged` đúng về số học; có giật hay không thì người chạy `tauri dev`
+  mới trả lời được. Đó vẫn là giới hạn tao đã nói ở mục 6, và nó chưa mất đi.
