@@ -97,6 +97,35 @@ pub struct Focus {
     /// already arrive. See `syn/thread.rs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
+    /// The page in the browsing pane, when one is open.
+    ///
+    /// The only field the front end does not send. The pane is a webview of the
+    /// operating system's, sitting beside the app rather than inside it — the
+    /// app cannot see what is in it, and Rust can.
+    ///
+    /// It belongs here all the same, because it is the same kind of fact as
+    /// every other field: a thing on the user's screen, true right now,
+    /// unknowable from any tool. Without it the browser has no memory across a
+    /// turn, and the transcript shows what that costs — Syn read a front page,
+    /// named the top headline, and on being asked to read that article went to
+    /// a search engine to look for the headline it had just written itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browsing: Option<crate::syn::pane::Showing>,
+}
+
+/// Put the browsing pane into what is on screen.
+///
+/// A free function rather than a field the caller sets, because there are two
+/// cases and only one of them is obvious: a question asked with no focus at all
+/// — from a background run, or a build of the front end that predates focus —
+/// still has a pane on screen if there is one, and dropping it because the rest
+/// of the struct is empty would lose exactly the state this exists to keep.
+pub fn with_the_pane(focus: Option<Focus>, showing: Option<crate::syn::pane::Showing>) -> Option<Focus> {
+    match (focus, showing) {
+        (focus, None) => focus,
+        (Some(focus), browsing) => Some(Focus { browsing, ..focus }),
+        (None, browsing) => Some(Focus { browsing, ..Focus::default() }),
+    }
 }
 
 /// The human-facing name of a mini-app id.
@@ -143,7 +172,13 @@ impl Focus {
         // `thread` is deliberately not counted. It is rendered as its own
         // section, so a focus carrying nothing but a thread has nothing to say
         // about the screen, and a heading over that says something false.
-        self.app.trim().is_empty() && self.node.is_none() && self.selection.is_none()
+        //
+        // `browsing` *is* counted: an open browser is a thing on the screen,
+        // and it is the one thing here the model can act on directly.
+        self.app.trim().is_empty()
+            && self.node.is_none()
+            && self.selection.is_none()
+            && self.browsing.is_none()
     }
 
     /// The prompt section, or `None` when there is nothing on screen.
@@ -208,6 +243,23 @@ impl Focus {
             );
         }
 
+        // The browser, if there is one. Last, because it is the only thing here
+        // that is also somewhere to go: the sentence ends with what to do about
+        // it, next to the tool name it needs.
+        if let Some(browsing) = &self.browsing {
+            let named = match name(&browsing.title) {
+                Some(title) => format!("`{}` (\"{title}\")", browsing.url),
+                None => format!("`{}`", browsing.url),
+            };
+            out.push_str(&format!(
+                "The browsing pane is open beside the app, showing {named}. Call `browse` with \
+                 that address to read the page that is already there — it reads the screen \
+                 rather than fetching the page again, and it lists the links on it so you can \
+                 follow one. The page stays open between messages, so \"that article\" and \
+                 \"the site\" mean this one.\n"
+            ));
+        }
+
         out.push_str(
             "When their message says \"this\", \"here\", \"the above\" or \"đoạn này\", it \
              almost always means what is on screen.\n=== END ON SCREEN ===\n\n",
@@ -234,6 +286,7 @@ mod tests {
             node_title: None,
             selection: selection.map(str::to_string),
             thread: None,
+            browsing: None,
         }
     }
 
@@ -271,6 +324,7 @@ mod tests {
             node_title: Some("Lỗi kênh truyền 2025-05-26".into()),
             selection: None,
             thread: None,
+            browsing: None,
         };
         let block = f.block().expect("a block");
 
@@ -288,6 +342,7 @@ mod tests {
             node_title: Some("Some note".into()),
             selection: None,
             thread: None,
+            browsing: None,
         };
         let block = f.block().expect("a block");
         assert!(!block.contains("Some note"), "{block}");
@@ -380,4 +435,58 @@ mod tests {
         let block = focus("timeline", None, None).block().expect("a block");
         assert!(block.contains("timeline"), "{block}");
     }
+
+    /// The browser is on screen, so it belongs in what is on screen.
+    ///
+    /// Without this the pane has no memory across a turn: Syn reads a front
+    /// page, names the top headline, and on being asked to read that article
+    /// goes to a search engine to look for the headline it wrote itself.
+    #[test]
+    fn an_open_browser_is_part_of_what_is_on_screen() {
+        let focus = Focus {
+            app: "messages".to_string(),
+            browsing: Some(crate::syn::pane::Showing {
+                url: "https://vnexpress.net/".to_string(),
+                title: "Báo VnExpress".to_string(),
+            }),
+            ..Focus::default()
+        };
+
+        let block = focus.block().expect("there is something on screen");
+        assert!(block.contains("https://vnexpress.net/"), "{block}");
+        assert!(block.contains("Báo VnExpress"), "{block}");
+        assert!(
+            block.contains("stays open between messages"),
+            "the point is that it survives the turn: {block}"
+        );
+    }
+
+    /// A pane with nothing else on screen still counts.
+    ///
+    /// `is_empty` decides whether the section is rendered at all, and a
+    /// question asked from a background run — or from a build of the front end
+    /// that sends no focus — would otherwise drop the one thing here the model
+    /// can act on.
+    #[test]
+    fn a_browser_alone_is_enough_to_be_worth_saying() {
+        let showing = crate::syn::pane::Showing {
+            url: "https://x.test/".to_string(),
+            title: String::new(),
+        };
+
+        let focus = with_the_pane(None, Some(showing)).expect("a pane is on screen");
+        assert!(!focus.is_empty());
+        assert!(focus.block().is_some());
+    }
+
+    /// And no pane changes nothing, byte for byte.
+    #[test]
+    fn no_pane_leaves_the_screen_exactly_as_it_was() {
+        let plain = Focus { app: "note".to_string(), ..Focus::default() };
+        let same = with_the_pane(Some(plain.clone()), None).expect("the focus survives");
+        assert_eq!(same, plain);
+        assert_eq!(same.block(), plain.block());
+        assert!(with_the_pane(None, None).is_none());
+    }
+
 }

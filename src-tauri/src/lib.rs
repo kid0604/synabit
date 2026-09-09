@@ -441,6 +441,17 @@ pub fn run() {
         .manage(syn::browser::Waiting::default())
         .manage(feeds::FeedSchedulerState::default())
         .on_window_event(|window, event| {
+            // The browsing pane's top edge is a fixed number of pixels, not a
+            // fraction of the window, because the app draws its address bar in
+            // that strip. `auto_resize` keeps every edge as a fraction, so
+            // without this the gap grows with the window and the bar stops
+            // meeting the page it belongs to. See `syn::pane::keep_arranged`.
+            #[cfg(desktop)]
+            if matches!(event, tauri::WindowEvent::Resized(_)) {
+                use tauri::Manager;
+                crate::syn::pane::keep_arranged(window.app_handle());
+            }
+
             // Closing hides. The app has to outlive its window for the global
             // hotkey to mean anything — otherwise the shortcut stops working
             // at exactly the moment it starts being useful, which is when the
@@ -863,6 +874,9 @@ pub fn run() {
             syn_commands::syn_browser_content,
             syn_commands::syn_pane_open,
             syn_commands::syn_pane_close,
+            syn_commands::syn_pane_page,
+            syn_commands::syn_pane_back,
+            syn_commands::syn_pane_forward,
             syn_commands::syn_pane_resize,
             syn_commands::syn_set_search_key,
             syn_commands::syn_has_search_key,

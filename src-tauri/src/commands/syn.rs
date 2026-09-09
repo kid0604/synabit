@@ -434,12 +434,19 @@ pub async fn syn_send_message(
     // there is one place that knows what the prompt is made of — and one place
     // that can report on it, which is what `syn_preview_prompt` reads.
     let standing = standing_instructions(&vault_path, &settings);
+    // What is on screen includes the browsing pane, and the front end cannot
+    // see it — it is a webview of the operating system's, beside the app rather
+    // than inside it. Filled in here, where the app handle is.
+    let focus = crate::syn::focus::with_the_pane(
+        request.focus.clone(),
+        crate::syn::pane::showing(&app),
+    );
     let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
         context: &context_str,
         custom: standing.as_deref(),
         skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
-        focus: request.focus.as_ref(),
+        focus: focus.as_ref(),
         thread: thread_block.as_deref(), counted: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
@@ -1386,17 +1393,18 @@ pub async fn syn_answer_consent(
 
 /// Open the browsing pane on a page, inside the main window.
 ///
-/// The gate for `docs/syn-the-pane-2026-09-08.md`. Nothing calls this yet —
-/// it is here so the one question reading the source could not answer can be
-/// answered by looking at a screen: does the app's own webview stay where it is
-/// put when the window is resized, and does it get there without flickering?
+/// Called from the globe in the left rail and from the address bar above the
+/// pane. Syn does not come through here — `browser::visit` calls `pane::open`
+/// directly, because the two openings differ in exactly one thing and it
+/// matters: **whose the pane is**. Pressed the globe and it is the person's, so
+/// it stays until they close it; opened to look something up and it belongs to
+/// the run. See `pane::syn_may_close_it`.
 ///
-/// From the app's devtools:
-///
-/// ```js
-/// __TAURI_INTERNALS__.invoke('syn_pane_open', { url: 'https://vnexpress.net' })
-/// __TAURI_INTERNALS__.invoke('syn_pane_close')
-/// ```
+/// The question this was originally written to answer — does the layout hold
+/// when the window is resized — was answered, and not the way it was asked.
+/// The app's own webview cannot be moved on macOS at all: `set_bounds` returns
+/// `Ok` and does nothing. The app draws itself narrower instead, and only the
+/// pane is placed. See `syn::pane`.
 #[tauri::command]
 pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<f64, AppError> {
     #[cfg(desktop)]
@@ -1446,6 +1454,58 @@ pub async fn syn_pane_resize(app: tauri::AppHandle, share: f64) -> Result<f64, A
     {
         let _ = (app, share);
         Ok(0.0)
+    }
+}
+
+/// What the browsing pane is showing, for the address bar to draw.
+///
+/// Asked once when the app starts, because the pane outlives a reload of the
+/// front end: everything after that arrives as `syn-pane-page`. Without this
+/// the bar would come back blank beside a pane still showing a page.
+#[tauri::command]
+pub async fn syn_pane_page(
+    app: tauri::AppHandle,
+) -> Result<Option<crate::syn::pane::Showing>, AppError> {
+    Ok(crate::syn::pane::showing(&app))
+}
+
+/// The way back, and the way forward again.
+///
+/// `history.back()` in the page rather than a runtime call, because there is no
+/// runtime call: neither Tauri nor wry exposes a webview's history. It is the
+/// same thing a browser's own button does, and the navigation it causes goes
+/// through `may_go_to` like every other.
+#[tauri::command]
+pub async fn syn_pane_back(app: tauri::AppHandle) -> Result<(), AppError> {
+    step_history(&app, "back")
+}
+
+/// Forward again, having gone back.
+#[tauri::command]
+pub async fn syn_pane_forward(app: tauri::AppHandle) -> Result<(), AppError> {
+    step_history(&app, "forward")
+}
+
+/// One step through the pane's history, in either direction.
+///
+/// `direction` is never user text — the two commands above pass a literal — so
+/// there is nothing here for a page to steer. Written as one function anyway,
+/// because two copies of an `eval` differing by one word is how the wrong word
+/// gets into one of them.
+fn step_history(app: &tauri::AppHandle, direction: &str) -> Result<(), AppError> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let pane = app
+            .get_webview(crate::syn::pane::PANE)
+            .ok_or_else(|| AppError::General("There is no browsing pane".into()))?;
+        pane.eval(format!("history.{direction}()"))
+            .map_err(|e| AppError::General(format!("Could not go {direction}: {e}")))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, direction);
+        Ok(())
     }
 }
 

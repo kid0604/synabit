@@ -160,6 +160,21 @@ impl Layout {
 /// `wanted` is the share of the width asked for — `None` for no pane at all,
 /// and `Some(SHARE)` for the default. A drag passes what the pointer is asking
 /// for and gets back what the window can actually give.
+/// The strip across the top of the pane that belongs to the app.
+///
+/// Thirty-six logical pixels, and the app draws an address bar in it: where
+/// this page is, the way back, and the way out. A browser without those is a
+/// place you can be taken and cannot leave.
+///
+/// It is **reserved from the pane, not overlaid on it**. The pane is a webview
+/// of the operating system's and it draws over anything this app puts in the
+/// same rectangle — that is the fact the whole side-by-side design was built
+/// around, and a floating toolbar would rediscover it the hard way.
+///
+/// The frontend has to agree on this number to draw a bar that fits, and
+/// `the_bar_is_the_same_height_on_both_sides` is what makes it agree.
+pub const BAR: u32 = 36;
+
 pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
     let Some(share) = wanted else {
         return Layout::only_the_app(width, height);
@@ -177,9 +192,55 @@ pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
         .min(width.saturating_sub(APP_KEEPS));
 
     let app_width = width.saturating_sub(pane_width);
+    // The bar comes off the top of the pane, and never off so much that the
+    // pane has no height left — a window shorter than the bar is absurd, and
+    // `saturating_sub` answering it with zero beats an underflow.
+    let bar = BAR.min(height);
     Layout {
         app: (0, 0, app_width, height),
-        pane: Some((app_width as i32, 0, pane_width, height)),
+        pane: Some((app_width as i32, bar as i32, pane_width, height.saturating_sub(bar))),
+    }
+}
+
+/// The share the pane has right now.
+///
+/// # Why this has to be remembered rather than worked out
+///
+/// A window resize must not change how the window is divided, so re-laying-out
+/// after one needs the share that is in force — and `layout` takes the share as
+/// an argument precisely so it holds no state. Reading it back off the pane's
+/// own bounds would work and would be a measurement of the thing being
+/// corrected, which is the wrong direction to take a number from.
+///
+/// Zero means no pane, which is also the state before the first one opens.
+static SHARE_NOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn remember_share(share: f64) {
+    SHARE_NOW.store(share.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn share_now() -> Option<f64> {
+    let share = f64::from_bits(SHARE_NOW.load(std::sync::atomic::Ordering::Relaxed));
+    (share > 0.0).then_some(share)
+}
+
+/// Put the pane back where it belongs, the window having changed size.
+///
+/// # Why `auto_resize` is not enough on its own
+///
+/// It keeps every edge as a **rate** of the window — `tauri-runtime-wry`'s
+/// `WebviewBounds` is four fractions — so the pane's *top* is kept at a
+/// fraction of the height rather than at `BAR` pixels. Grow the window and the
+/// gap grows with it, and a strip of app background opens under a bar that no
+/// longer meets the page it belongs to.
+///
+/// Width is a fraction and is right to be one. Only the bar is a fixed number,
+/// and this is what keeps it fixed.
+#[cfg(desktop)]
+pub fn keep_arranged<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(share) = share_now() else { return };
+    if let Err(e) = arrange(app, Some(share)) {
+        log::warn!("[Syn] The pane did not follow the window: {e}");
     }
 }
 
@@ -257,6 +318,7 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>
         }
     }
 
+    remember_share(plan.pane_share());
     announce(app, plan.pane_share());
     Ok(plan)
 }
@@ -279,9 +341,15 @@ pub fn open<R: tauri::Runtime>(
     let target = url::Url::parse(url).map_err(|e| AppError::General(format!("Bad address: {e}")))?;
 
     if let Some(pane) = app.get_webview(PANE) {
+        // The title on screen belongs to the page being left. Cleared before
+        // the navigation rather than after it, so there is no moment where the
+        // bar reads the old title beside the new address.
+        set_title(String::new());
         pane.navigate(target)
             .map_err(|e| AppError::General(format!("Could not navigate the pane: {e}")))?;
-        return Ok(arrange(app, Some(SHARE))?.pane_share());
+        let share = arrange(app, Some(SHARE))?.pane_share();
+        announce_page(app);
+        return Ok(share);
     }
 
     let plan = arrange(app, Some(SHARE))?;
@@ -310,11 +378,34 @@ pub fn open<R: tauri::Runtime>(
             tauri::webview::NewWindowResponse::Deny
         })
         .browser_extensions_enabled(false)
+        // The title, which is the only part of `Showing` that has nowhere else
+        // to be read from. It is also what the address bar shows: an address is
+        // what a page *is*, a title is what it is *about*.
+        .on_document_title_changed(|webview, title| {
+            set_title(title);
+            announce_page(webview.app_handle());
+        })
         .on_page_load(|webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                if let Some(waiting) = webview.app_handle().try_state::<crate::syn::browser::Waiting>()
-                {
-                    crate::syn::browser::note_loaded(&waiting);
+            match payload.event() {
+                // A new document, so the old document's title is a lie until
+                // the new one says otherwise. Cleared here rather than in
+                // `on_navigation`, which also fires for navigations that are
+                // refused and for ones that never arrive.
+                tauri::webview::PageLoadEvent::Started => {
+                    set_title(String::new());
+                    announce_page(webview.app_handle());
+                }
+                tauri::webview::PageLoadEvent::Finished => {
+                    if let Some(waiting) =
+                        webview.app_handle().try_state::<crate::syn::browser::Waiting>()
+                    {
+                        crate::syn::browser::note_loaded(&waiting);
+                    }
+                    // The address is asked of the webview, so this says nothing
+                    // new about *where* — but a redirect lands here and nowhere
+                    // else, and the bar would otherwise still show what was
+                    // typed rather than what arrived.
+                    announce_page(webview.app_handle());
                 }
             }
         });
@@ -335,6 +426,7 @@ pub fn open<R: tauri::Runtime>(
     // Now that it exists. The `arrange` above ran before `add_child` and so
     // announced a pane that was not there yet.
     announce(app, plan.pane_share());
+    announce_page(app);
     Ok(plan.pane_share())
 }
 
@@ -365,6 +457,84 @@ pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppR
     Ok(arrange(app, Some(share))?.pane_share())
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+//  WHAT IS ON IT
+// ═══════════════════════════════════════════════════════════════
+
+/// The page the pane is showing.
+///
+/// # Why this type exists at all
+///
+/// Because without it the browser had no memory, and the transcript shows what
+/// that costs. Syn opened `vnexpress.net`, read it, and told the person the
+/// headline. The next message was *"read that article"* — the most ordinary
+/// follow-up there is — and Syn went to **DuckDuckGo to search for the headline
+/// it had just written itself**, because the page holding that link had died
+/// with the previous run.
+///
+/// A browser whose page does not survive a turn is not a browser. It is a
+/// fetch with a window around it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Showing {
+    pub url: String,
+    /// The document's own title, empty until the page says what it is.
+    pub title: String,
+}
+
+/// The title of the page in the pane.
+///
+/// Only the title is kept here. The **address is asked of the webview** every
+/// time — `Webview::url()` is authoritative and cannot drift, and a copy of it
+/// in a static is one more thing that can be wrong after a redirect that
+/// nothing told us about.
+///
+/// A title has no such source: it arrives once, in a callback, and there is
+/// nowhere else to read it from.
+static TITLE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// The page changed — a new address, or a title for the one already there.
+pub const PAGE_CHANGED: &str = "syn-pane-page";
+
+fn set_title(title: String) {
+    *TITLE.lock().unwrap_or_else(|e| e.into_inner()) = title;
+}
+
+fn the_title() -> String {
+    TITLE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// What the pane is showing, or `None` if there is no pane.
+///
+/// The one question `browse` could not ask, and the reason it had to rebuild
+/// from a search box every single turn.
+#[cfg(desktop)]
+pub fn showing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<Showing> {
+    use tauri::Manager;
+
+    let url = app.get_webview(PANE)?.url().ok()?.to_string();
+    // A pane parked on `about:blank` is a pane showing nothing. Saying it is
+    // showing a page would send Syn to read a blank document.
+    if url == "about:blank" || url.is_empty() {
+        return None;
+    }
+    Some(Showing { url, title: the_title() })
+}
+
+/// No pane on a platform that cannot have one.
+#[cfg(mobile)]
+pub fn showing<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) -> Option<Showing> {
+    None
+}
+
+/// Tell the screen what the pane is on now.
+#[cfg(desktop)]
+fn announce_page<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit(PAGE_CHANGED, showing(app)) {
+        log::warn!("[Syn] Could not say what the pane is showing: {e}");
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  WHOSE PANE IT IS
@@ -420,7 +590,10 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     }
     // Closed, so it is nobody's until somebody opens one again.
     opened_by_the_person(false);
+    set_title(String::new());
+    remember_share(0.0);
     announce(app, 0.0);
+    announce_page(app);
     Ok(())
 }
 
@@ -435,12 +608,43 @@ mod tests {
     fn the_two_never_overlap_and_leave_no_gap() {
         let plan = layout(1600, 900, Some(SHARE));
         let (ax, _, aw, ah) = plan.app;
-        let (px, _, pw, ph) = plan.pane.expect("there is room for both");
+        let (px, py, pw, ph) = plan.pane.expect("there is room for both");
 
         assert_eq!(ax, 0);
         assert_eq!(px, aw as i32, "the pane starts exactly where the app ends");
         assert_eq!(aw + pw, 1600, "and together they are the window");
-        assert_eq!((ah, ph), (900, 900), "both full height");
+        assert_eq!(ah, 900, "the app's webview is the whole window; it draws itself narrower");
+
+        // The one place they do not touch, and it is deliberate: the app draws
+        // the pane's address bar in that strip. Everything below it is the
+        // browser's, and the browser's webview would draw over anything this
+        // app put there.
+        assert_eq!(py, BAR as i32, "the bar's worth of room, and no more");
+        assert_eq!(py as u32 + ph, 900, "and the pane reaches the bottom");
+    }
+
+    /// A window with no room for a bar has no room for a browser either, but
+    /// the arithmetic still has to produce a rectangle rather than an underflow.
+    #[test]
+    fn a_window_shorter_than_the_bar_still_produces_a_rectangle() {
+        let plan = layout(1600, 10, Some(SHARE));
+        let (_, py, _, ph) = plan.pane.expect("width is what decides, not height");
+        assert_eq!((py, ph), (10, 0));
+    }
+
+    /// Two numbers that have to agree, in two languages.
+    ///
+    /// Rust reserves the strip; the front end draws in it. A change to one and
+    /// not the other is a bar that floats above the page or overlaps it, and
+    /// neither shows up in a type check.
+    #[test]
+    fn the_bar_is_the_same_height_on_both_sides() {
+        let ts = include_str!("../../../src/shared/syn/pane.ts");
+        let wanted = format!("export const PANE_BAR = {BAR};");
+        assert!(
+            ts.contains(&wanted),
+            "`pane::BAR` is {BAR}, so `pane.ts` must say `{wanted}`"
+        );
     }
 
     /// A window too narrow for both gets no pane rather than two slivers.
