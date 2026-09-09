@@ -2795,10 +2795,20 @@ fn tool_update_node<R: tauri::Runtime>(
         }),
     );
 
-    let changed: Vec<&String> = patch
+    // What actually changed, body included.
+    //
+    // This listed the patch's property keys and nothing else, so a write that
+    // replaced the whole body of a note came back as `"changed": []` — an
+    // answer that reads as *nothing happened*. It misled me for a full round
+    // while hunting a real data-loss bug in this very function; a model reading
+    // it has less to go on than I did.
+    let mut changed: Vec<String> = patch
         .as_object()
-        .map(|o| o.keys().collect())
+        .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
+    if args.get("content").is_some() {
+        changed.push("content".to_string());
+    }
 
     Ok(serde_json::json!({
         "success": true,
