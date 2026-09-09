@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
-import { paneShare as synPaneShare, dragPaneTo, openPane, closePane } from './shared/syn/pane';
+import {
+  paneShare as synPaneShare, panePage, PANE_BAR, dragPaneTo, openPane, closePane,
+  panePageBack, panePageForward, typedAddress,
+} from './shared/syn/pane';
 
 /**
  * Dragging the browser pane's edge.
@@ -16,6 +19,31 @@ import { paneShare as synPaneShare, dragPaneTo, openPane, closePane } from './sh
  * why the live version works now and did not before.
  */
 const draggingPane = ref(false);
+
+/**
+ * What the address bar is showing, which is not always what the pane is on.
+ *
+ * A separate ref because the moment somebody starts typing, the bar stops being
+ * a report and becomes a draft. Overwriting it from `syn-pane-page` while they
+ * type — and that event fires on every title change — would delete the address
+ * halfway through being entered.
+ */
+const paneAddress = ref('');
+const paneAddressFocused = ref(false);
+
+watch(panePage, page => {
+  if (paneAddressFocused.value) return;
+  paneAddress.value = page?.url ?? '';
+}, { immediate: true });
+
+const goToTypedAddress = () => {
+  const url = typedAddress(paneAddress.value);
+  if (!url) return;
+  // Their own browser, so their own address. The backend's `may_go_to` is the
+  // rule about where it may go, and it is the same rule for Syn and for them.
+  openPane(url);
+  paneAddressFocused.value = false;
+};
 
 const onPaneDrag = (e: MouseEvent) => {
   if (!draggingPane.value) return;
@@ -45,7 +73,7 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
   window.removeEventListener('mouseup', endPaneDrag);
 });
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, X } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -1054,24 +1082,11 @@ onUnmounted(() => {
       @mousedown.prevent="startPaneDrag"
     >
       <!--
-        The way out, and it lives on the pane's own edge rather than in Syn.
-        A pane opened in Syn and left open followed you into Notes with its
-        only off switch on a screen you had left — forty per cent of the window
-        with no way to dismiss it.
-
-        Drawn to the *left* of the edge, because everything right of it belongs
-        to a webview this app cannot draw on.
+        The way out used to live here, as a button that appeared on hovering the
+        edge. It is in the address bar now, where it is always visible and where
+        every browser keeps it. A control you have to find by hovering is a
+        control somebody in a hurry does not have.
       -->
-      <button
-        class="absolute top-3 right-2 w-6 h-6 rounded-full flex items-center justify-center
-               bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity
-               cursor-pointer hover:bg-black/70"
-        title="Close the browser"
-        @mousedown.stop
-        @click.stop="closePane()"
-      >
-        <X class="w-3.5 h-3.5" />
-      </button>
     </div>
 
 
@@ -1407,6 +1422,75 @@ onUnmounted(() => {
       chosen there is nothing for Syn to read and nothing to save an exchange
       into.
     -->
+    <!--
+      The browsing pane's address bar.
+
+      Outside the app's root element, and that is not tidiness: the root carries
+      a `transform`, which makes it the containing block for every `position:
+      fixed` descendant — the same property the 69 overlays rely on to stay
+      inside the app's half of the window. A bar written in there would be
+      confined to the app's half, which is exactly where the pane is not.
+
+      Its height is `PANE_BAR`, which Rust reserves out of the pane's rectangle.
+      Nothing overlaps: the pane is an OS webview and draws over anything this
+      app puts in the same place.
+    -->
+    <div
+      v-if="synPaneShare > 0"
+      class="fixed top-0 right-0 z-[10001] flex items-center gap-1 px-1.5
+             bg-base dark:bg-base-dark border-b border-l border-[#e6e6e6] dark:border-[#2c2c2c]"
+      :style="{ width: `${(synPaneShare * 100).toFixed(4)}%`, height: `${PANE_BAR}px` }"
+    >
+      <button
+        class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
+               text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
+        title="Back"
+        @click="panePageBack()"
+      >
+        <ArrowLeft class="w-4 h-4" />
+      </button>
+      <button
+        class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
+               text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
+        title="Forward"
+        @click="panePageForward()"
+      >
+        <ArrowRight class="w-4 h-4" />
+      </button>
+      <!--
+        The address, and it is editable. A browser you cannot type an address
+        into is a viewer, and the whole reason the jar starts empty is that the
+        person is expected to go and log into things in here themselves.
+
+        `title` carries the page's own title: at three hundred pixels the bar
+        has room for one line, and an address is the line that can be acted on.
+      -->
+      <input
+        v-model="paneAddress"
+        :title="panePage?.title || panePage?.url || ''"
+        spellcheck="false"
+        class="flex-1 min-w-0 h-7 px-2 rounded text-xs bg-black/5 dark:bg-white/10
+               text-text dark:text-text-dark outline-none select-text
+               focus:ring-1 focus:ring-indigo-500"
+        @focus="paneAddressFocused = true"
+        @blur="paneAddressFocused = false; paneAddress = panePage?.url ?? ''"
+        @keydown.enter="goToTypedAddress()"
+        @keydown.esc="paneAddress = panePage?.url ?? ''; ($event.target as HTMLInputElement).blur()"
+      />
+      <!--
+        The stop button, and it is the one every person already reaches for.
+        `browser::CLOSED_ON_IT` is what Syn is told when a read ends this way.
+      -->
+      <button
+        class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
+               text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
+        title="Close the browser"
+        @click="closePane()"
+      >
+        <X class="w-4 h-4" />
+      </button>
+    </div>
+
     <AskBar
       v-if="askBarAllowed"
       :open="askBarOpen"

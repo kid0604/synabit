@@ -44,6 +44,76 @@ listen<number>('syn-pane-share', event => {
 }).catch(e => logger.error('[Syn] Could not listen for the pane', e));
 
 /**
+ * How tall the strip above the pane is, in CSS pixels.
+ *
+ * The app draws the address bar there and Rust reserves it out of the pane's
+ * rectangle — `pane::BAR`, which this must equal. Two numbers that have to
+ * agree are two numbers that drift, so a test in `pane.rs` reads this file and
+ * fails if they stop matching.
+ */
+export const PANE_BAR = 36;
+
+/** The page in the pane, or nothing when there is no pane. */
+export interface PanePage {
+  url: string;
+  title: string;
+}
+
+/**
+ * What the pane is showing.
+ *
+ * Rust is the only thing that can know: the pane is an operating-system webview
+ * beside the app, not an element in it, so nothing here can read its address.
+ */
+export const panePage = ref<PanePage | null>(null);
+
+listen<PanePage | null>('syn-pane-page', event => {
+  panePage.value = event.payload;
+}).catch(e => logger.error('[Syn] Could not listen for the page', e));
+
+/**
+ * Ask once, at load, what is already open.
+ *
+ * The pane outlives a reload of the front end — it belongs to the window, and
+ * a hot reload replaces only the app's own webview. Without this the bar comes
+ * back blank beside a pane that is still showing a page.
+ */
+invoke<PanePage | null>('syn_pane_page')
+  .then(page => { panePage.value = page; })
+  .catch(() => { /* No pane, or a platform without one. Blank is correct. */ });
+
+/** Back, and forward again — the pane's own history, one step at a time. */
+export async function panePageBack(): Promise<void> {
+  try {
+    await invoke('syn_pane_back');
+  } catch (e) {
+    logger.error('[Syn] The pane would not go back', e);
+  }
+}
+
+export async function panePageForward(): Promise<void> {
+  try {
+    await invoke('syn_pane_forward');
+  } catch (e) {
+    logger.error('[Syn] The pane would not go forward', e);
+  }
+}
+
+/**
+ * What somebody typed in the address bar, as an address.
+ *
+ * A bare host becomes `https://`, because that is what everybody types and
+ * refusing it would make the bar worse than every other address bar. Anything
+ * with a space in it is left alone and will be refused by the backend's guard,
+ * which is the right place for that answer — this is not a search box.
+ */
+export function typedAddress(raw: string): string {
+  const text = raw.trim();
+  if (!text) return '';
+  return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+}
+
+/**
  * Where the pane opens when nothing else is said.
  *
  * A real page rather than a blank one: a blank pane says nothing about whether
