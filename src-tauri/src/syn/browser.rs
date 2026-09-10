@@ -1235,15 +1235,28 @@ mod tests {
         assert!(said.contains("do not open it again"), "{CLOSED_ON_IT}");
     }
 
-    /// And nothing steals the keyboard.
+    /// And **a run** never steals the keyboard.
     ///
     /// This used to also require `.focused(false)`, which was about a *second
     /// window* appearing in front of whatever somebody was typing into. There
     /// is no second window now; a pane inside the app has nothing to come in
-    /// front of. What survives is the half that still means something: nothing
-    /// here takes focus away.
+    /// front of. What survives is the half that still means something.
+    ///
+    /// # Why this no longer says "nothing here takes focus"
+    ///
+    /// It said that when nothing did, and the cost of nothing doing turned up
+    /// later: on macOS a window sends mouse-moved events to its **first
+    /// responder**, not to the view under the pointer, and wry only makes a
+    /// non-child webview one. So the pane never held it, the app answered for
+    /// the cursor over the pane's pixels too, and a link in a browser showed an
+    /// arrow. Arrow keys did not scroll it either. See `pane::focus_it`.
+    ///
+    /// The rule that mattered was never "nothing takes focus" — it was **a run
+    /// must not take the caret out of what somebody is typing**. That is what
+    /// this asserts now, and the person's own openings are free to focus a
+    /// browser they just asked for, which is what every browser does.
     #[test]
-    fn it_is_visible_without_taking_the_keyboard() {
+    fn a_run_is_visible_without_taking_the_keyboard() {
         let source = include_str!("browser.rs");
         let body = source
             .split("async fn open_and_read")
@@ -1254,9 +1267,19 @@ mod tests {
             .unwrap_or_default();
 
         assert!(!body.contains("set_focus()"), "reading a page must not take focus");
+
+        // And the shared route stays neutral: `browser::visit` reaches the pane
+        // through `pane::open`, so if *that* focused, a run would focus too and
+        // no amount of care in the commands above would matter.
+        let pane = include_str!("pane.rs");
+        let opening = pane
+            .split("pub fn open<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\npub fn ").next())
+            .expect("pane::open is still there");
         assert!(
-            !include_str!("pane.rs").contains("set_focus()"),
-            "and neither must opening the pane"
+            !opening.contains("set_focus"),
+            "opening the pane is Syn's route as well; focus belongs to the caller"
         );
     }
 

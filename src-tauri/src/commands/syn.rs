@@ -1477,7 +1477,14 @@ pub async fn syn_open_page(app: tauri::AppHandle, url: String) -> Result<f64, Ap
         crate::syn::pane::opened_by_the_person(true);
 
         match crate::syn::pane::open(&app, &url, &nonce) {
-            Ok(share) => return Ok(share),
+            Ok(share) => {
+                // Theirs, so it takes the keyboard and the pointer — see
+                // `pane::focus_it` for what a window does with mouse-moved
+                // events, and why a browser that never has the focus shows an
+                // arrow over every link in it.
+                crate::syn::pane::focus_it(&app);
+                return Ok(share);
+            }
             Err(e) => log::info!("[Syn] No pane for {url} ({e}); handing it to the browser"),
         }
     }
@@ -1526,7 +1533,11 @@ pub async fn syn_pane_open(app: tauri::AppHandle, url: String) -> Result<f64, Ap
         // Pressed the globe, so it is theirs: it stays until they close it, and
         // the end of a run does not take it away. See `pane::syn_may_close_it`.
         crate::syn::pane::opened_by_the_person(true);
-        crate::syn::pane::open(&app, &url, &nonce)
+        let share = crate::syn::pane::open(&app, &url, &nonce)?;
+        // As above: opened by hand, so it gets the focus a browser expects to
+        // have. `pane::focus_it` says what that costs and what it buys.
+        crate::syn::pane::focus_it(&app);
+        Ok(share)
     }
     #[cfg(mobile)]
     {

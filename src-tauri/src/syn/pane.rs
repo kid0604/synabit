@@ -647,6 +647,46 @@ pub fn opened_by_the_person(theirs: bool) {
     THE_PERSONS.store(theirs, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Put the keyboard and the pointer in the pane.
+///
+/// # Why a browser needs this said out loud
+///
+/// On macOS a window sends **mouse-moved events to its first responder**, not
+/// to the view under the pointer. Clicks and scrolls are hit-tested and reach
+/// whichever view is on top; moving the mouse is not.
+///
+/// wry makes a window's main webview the first responder when it builds it —
+/// `ns_window.makeFirstResponder` in `wkwebview/mod.rs`, on the branch that is
+/// *not* a child. The pane is a child, so that line never runs for it, and the
+/// app's own webview stays first responder from launch. It is also full-window,
+/// because on macOS it cannot be moved (see the header). So it is the app that
+/// is asked what the cursor should be over every pixel of the window — the
+/// pane's pixels included — and over there it has nothing but page background
+/// to answer with. Hence an arrow over a link, in a browser.
+///
+/// The same gap is why arrow keys did not scroll the page and why ⌘F did
+/// nothing until the page was clicked.
+///
+/// # Why only when the person asked
+///
+/// Because Syn opens this pane mid-run, while somebody may be typing a message.
+/// Moving the caret out of what they are writing because a tool went to look
+/// something up would be a far worse bug than the one this fixes. Every caller
+/// here is a person's own action — the globe, the address bar, a link they
+/// clicked — and `browser::visit` deliberately does not call it.
+///
+/// After this, first responder follows clicks, which is what it does in every
+/// browser: click the page and it is the page's, click the conversation and it
+/// is the conversation's.
+#[cfg(desktop)]
+pub fn focus_it<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    let Some(pane) = app.get_webview(PANE) else { return };
+    if let Err(e) = pane.set_focus() {
+        log::warn!("[Syn] The pane would not take focus: {e}");
+    }
+}
+
 /// Whether Syn may close the pane when a run finishes.
 ///
 /// No, if the person opened it. Their browser is not Syn's to tidy away at the
@@ -663,6 +703,21 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     if let Some(pane) = app.get_webview(PANE) {
         let _ = pane.close();
     }
+
+    // Hand the focus back, or the app loses its own cursors.
+    //
+    // First responder is what a macOS window sends mouse-moved events to, and
+    // the pane may well have been holding it — see `focus_it`. A view that goes
+    // away hands the responder chain back to the window's content view, which
+    // is `WryWebViewParent`: a plain `NSView` that draws nothing and answers
+    // nothing. Text would stop showing an I-beam *in the app*, which is the
+    // same bug this pair of functions exists to fix, pointed the other way.
+    if let Some(main) = app.get_webview(crate::syn::browser::MAIN_WINDOW) {
+        if let Err(e) = main.set_focus() {
+            log::warn!("[Syn] The app would not take its focus back: {e}");
+        }
+    }
+
     // Closed, so it is nobody's until somebody opens one again.
     opened_by_the_person(false);
     set_title(String::new());
@@ -838,6 +893,74 @@ mod tests {
     fn a_wide_window_does_not_give_the_pane_everything() {
         let (_, _, pane_width, _) = layout(3840, 1000, Some(SHARE), APP_KEEPS).pane.expect("room for both");
         assert!(pane_width < 3840 / 2, "the pane took half a very wide window: {pane_width}");
+    }
+
+    /// Whose action moves the focus, and whose does not.
+    ///
+    /// A browser that never holds the first responder shows an arrow over every
+    /// link in it, because on macOS mouse-moved events go to the first
+    /// responder rather than to the view under the pointer — and wry only makes
+    /// a *non-child* webview one. See `focus_it`.
+    ///
+    /// The other half matters more: Syn opens this pane mid-run, while somebody
+    /// may be halfway through a sentence. Taking the caret out of what they are
+    /// writing because a tool went to look something up is a worse bug than the
+    /// cursor. So the person's own openings focus it and Syn's do not, and this
+    /// is the assertion that keeps the two apart.
+    #[test]
+    fn the_pane_takes_focus_when_a_person_opened_it_and_never_when_syn_did() {
+        let commands = include_str!("../commands/syn.rs");
+
+        for (command, ends_at) in [
+            ("pub async fn syn_open_page", "\npub async fn "),
+            ("pub async fn syn_pane_open", "\npub async fn "),
+        ] {
+            let body = commands
+                .split(command)
+                .nth(1)
+                .and_then(|rest| rest.split(ends_at).next())
+                .unwrap_or_else(|| panic!("{command} is still there"));
+            assert!(
+                body.contains("pane::focus_it"),
+                "{command} is a person's own action and should hand over the focus"
+            );
+        }
+
+        // And Syn's route does not. `browser::visit` calls `pane::open`
+        // directly, which is the whole reason the two are separate paths.
+        //
+        // Comment lines are skipped: that module explains this rule at length,
+        // and a rule that fails because somebody wrote it down is not a rule.
+        let syn = include_str!("browser.rs");
+        assert!(syn.contains("crate::syn::pane::open"), "Syn still opens it directly");
+        for line in syn.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            assert!(
+                !line.contains("focus_it("),
+                "a run must not move the caret out of what somebody is typing: {line}"
+            );
+        }
+    }
+
+    /// And closing it gives the focus back, or the app loses its own cursors.
+    ///
+    /// A view that goes away hands the responder chain to the window's content
+    /// view — `WryWebViewParent`, a plain `NSView` that draws nothing and
+    /// answers nothing. Mouse-moved events would arrive there and no cursor
+    /// would ever be set, so text in the *app* would stop showing an I-beam.
+    /// The same bug, pointed the other way.
+    #[test]
+    fn closing_the_pane_hands_the_focus_back_to_the_app() {
+        let source = include_str!("pane.rs");
+        let body = source
+            .split("pub fn close<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}").next())
+            .expect("close is still there");
+
+        assert!(
+            body.contains("set_focus"),
+            "the app has to take the first responder back when the pane goes"
+        );
     }
 
     /// The pane is the same webview label the separate window used, and that is

@@ -347,3 +347,61 @@ theo toạ độ cửa sổ — đúng. Nhưng những chỗ hỏi *"tôi có ba
 sổ, mà app không còn sở hữu cả cửa sổ nữa. Lần này chỉ sửa cái sàn, tức là chặn
 không cho chồng lấn; chưa sửa việc các breakpoint đó không tự co lại. Mini-app
 nào chưa báo `sidebarRoom` thì vẫn dùng sàn cũ.
+
+## 11. Con trỏ không đổi thành bàn tay, 10-09-2026
+
+Trỏ vào link trong pane, không hiện bàn tay. Nhưng bấm thì vẫn ra, cuộn vẫn
+được. Chỉ mỗi con trỏ sai.
+
+### Cơ chế
+
+Trên macOS, `NSWindow` gửi sự kiện **mouse-moved cho first responder**, không
+phải cho view nằm dưới con trỏ. Click và scroll thì đi qua hit-test nên tới
+đúng view trên cùng; *di chuột* thì không.
+
+wry chỉ gọi `makeFirstResponder` cho webview **không phải con** —
+`wkwebview/mod.rs`, nhánh `if is_child { ns_view.addSubview(&webview) } else { … makeFirstResponder … }`.
+Pane là webview con, nên dòng đó không bao giờ chạy cho nó.
+
+Cộng với một sự thật đã biết từ mục 0 của tài liệu này: webview của app **phủ
+kín cửa sổ** và không di chuyển được trên macOS. Vậy nên app là thứ được hỏi
+"con trỏ nên là gì" trên **mọi pixel của cửa sổ**, kể cả phần pane — và ở đó nó
+chẳng có gì ngoài nền trang để trả lời. Ra mũi tên.
+
+Cùng một lỗ hổng giải thích luôn: phím mũi tên không cuộn được trang, ⌘F không
+làm gì, cho tới khi bấm chuột vào trang một cái.
+
+### Sửa
+
+Người tự mở thì pane nhận focus: globe, thanh địa chỉ, bấm link trong chat —
+`pane::focus_it`. Sau đó first responder đi theo cú click, đúng như mọi trình
+duyệt: bấm vào trang thì của trang, bấm vào khung chat thì của khung chat.
+
+**Syn mở thì không.** Syn mở pane giữa chừng một run, trong lúc người ta có thể
+đang gõ dở một câu. Lấy con trỏ nhập ra khỏi thứ họ đang viết là lỗi tệ hơn hẳn
+cái lỗi đang sửa. `browser::visit` gọi thẳng `pane::open`, và `pane::open`
+không focus — có test canh cả hai chiều.
+
+**Đóng pane thì trả focus lại cho app.** Một view biến mất sẽ trả responder
+chain về content view của cửa sổ — `WryWebViewParent`, một `NSView` trần không
+vẽ gì và không trả lời gì. Không trả focus thì chữ trong *app* sẽ mất luôn con
+trỏ chữ I. Cùng một lỗi, quay ngược lại.
+
+### Một luật cũ đã phải sửa lại
+
+`it_is_visible_without_taking_the_keyboard` viết: *"nothing here takes focus
+away"*, và đòi `pane.rs` không được chứa `set_focus()`.
+
+Luật đó viết ra khi **chưa có gì** focus cả, và cái giá của việc chưa có gì
+focus chính là mục này. Điều thật sự cần giữ chưa bao giờ là "không ai lấy
+focus" — mà là **một run không được lấy con trỏ nhập ra khỏi thứ người ta đang
+gõ**. Test giờ nói đúng câu đó, và đổi tên thành
+`a_run_is_visible_without_taking_the_keyboard`.
+
+### Chưa sửa
+
+Trong lúc app đang giữ focus, trỏ vào link trong pane vẫn ra mũi tên cho tới khi
+bấm vào pane một cái. Trình duyệt thật thì cửa sổ nền vẫn hiện bàn tay, vì cửa
+sổ nào cũng có first responder riêng; ở đây hai webview dùng chung một cửa sổ và
+một first responder. Sửa triệt để cần focus chạy theo chuột — mà focus chạy theo
+chuột là thứ không ai mong đợi ở một app.
