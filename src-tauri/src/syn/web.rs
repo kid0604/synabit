@@ -440,6 +440,22 @@ pub fn reduce(html: &str, url: &str) -> Page {
     // heap of them. See `ReadabilityResult::raw_content`.
     let (text, outline) = read_out(&scraper::Html::parse_fragment(&article.raw_content));
 
+    // Readability is an *article* extractor, and it wants two hundred
+    // characters of prose before it will call anything content. A page that is
+    // one infographic has forty, so nothing scores and it hands back an empty
+    // string — and an empty string is indistinguishable from a page with
+    // nothing on it.
+    //
+    // Failing to find an article is information, not a reason to return
+    // nothing. So the whole document is read instead: menus and a footer and
+    // all, which on a page like that is most of what there is, and `[image]`
+    // marks the thing the page is actually made of.
+    let (text, outline) = if text.trim().is_empty() {
+        read_out(&scraper::Html::parse_document(html))
+    } else {
+        (text, outline)
+    };
+
     // What kind of page this is. See `looks_like_a_list`.
     let links = links_on(html, url);
     let stories: Vec<&Link> = links.iter().filter(|l| l.is_a_story()).collect();
@@ -488,6 +504,23 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
                 chars += 1;
             }
 
+            // A picture leaves a mark, or a page that is one picture reads as
+            // a page with nothing on it. See `SAYS_IT_IS_DECORATION`.
+            if element.name() == "img" {
+                if let Some(mark) = a_picture_was_here(element) {
+                    push_words(&mut text, &mut chars, &mark);
+                }
+                continue;
+            }
+
+            // A caption is not a sentence of the article, and read as one it
+            // silently becomes a claim the article never made. `figcaption`
+            // already begins a line; this says what kind of line it is.
+            if element.name() == "figcaption" {
+                push_words(&mut text, &mut chars, CAPTION);
+                continue;
+            }
+
             let Some(level) = heading_level(element.name()) else { continue };
             let Some(el) = scraper::ElementRef::wrap(node) else { continue };
 
@@ -509,18 +542,78 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
             }) {
                 continue;
             }
-            for word in raw.split_whitespace() {
-                if !text.is_empty() && !text.ends_with('\n') {
-                    text.push(' ');
-                    chars += 1;
-                }
-                text.push_str(word);
-                chars += word.chars().count();
-            }
+            push_words(&mut text, &mut chars, raw);
         }
     }
 
     (text, outline)
+}
+
+/// Append words, collapsing whitespace and keeping the running length.
+///
+/// The count is kept as it goes because a heading's offset is *where it starts*
+/// — see `read_out` — and an offset counted afterwards would be wrong the
+/// moment anything was inserted between.
+fn push_words(text: &mut String, chars: &mut usize, raw: &str) {
+    for word in raw.split_whitespace() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push(' ');
+            *chars += 1;
+        }
+        text.push_str(word);
+        *chars += word.chars().count();
+    }
+}
+
+/// What marks a caption as a caption.
+const CAPTION: &str = "[caption]";
+
+/// How much of an `alt` to carry.
+///
+/// A hundred characters. Alt text is written to be read aloud in place of a
+/// picture, so it is a phrase; anything longer than this is a page using the
+/// attribute for something else.
+pub const MAX_ALT: usize = 100;
+
+/// What a page says about a picture nobody needs to know about.
+///
+/// `alt=""` is HTML's own way of saying *this image carries no information* —
+/// a spacer, a rounded corner, a logo already named in the text beside it — and
+/// `aria-hidden` and `role="presentation"` say the same thing louder. A page
+/// that has taken the trouble to say so is a page to believe.
+fn says_it_is_decoration(element: &scraper::node::Element) -> bool {
+    element.attr("alt").is_some_and(|a| a.trim().is_empty())
+        || element.attr("aria-hidden") == Some("true")
+        || element.attr("role") == Some("presentation")
+        || element.attr("role") == Some("none")
+}
+
+/// The mark a picture leaves behind, if it leaves one.
+///
+/// # Why a picture has to leave a mark
+///
+/// Because without one it leaves nothing, and nothing is indistinguishable from
+/// a page with nothing on it. An infographic — a whole argument drawn as one
+/// image — reduced to **zero characters**, and what reached the model was an
+/// empty page. It could say it had found nothing. It could not say *this page
+/// is a picture and I cannot read pictures*, which is a different sentence and
+/// the one the person needed.
+///
+/// The `alt` comes along when there is one. On a Vietnamese news article it is
+/// usually boilerplate — forty images captioned "… - Ảnh 1.", "… - Ảnh 2." —
+/// and that costs a little and says a little. On a chart or a diagram it is
+/// often the only description of the thing that exists in text at all.
+fn a_picture_was_here(element: &scraper::node::Element) -> Option<String> {
+    if says_it_is_decoration(element) {
+        return None;
+    }
+    match element.attr("alt").map(str::trim).filter(|a| !a.is_empty()) {
+        Some(alt) => {
+            let alt: String = alt.chars().take(MAX_ALT).collect();
+            Some(format!("[image: {alt}]"))
+        }
+        None => Some("[image]".to_string()),
+    }
 }
 
 /// What is in the markup and is not on the page.
@@ -2133,6 +2226,102 @@ mod tests {
         assert!(said.contains(crate::syn::tools::BROWSE_TOOL), "{said}");
     }
 
+    // ── pictures, and the words beside them ───────────────────────
+
+    /// A picture that leaves no trace is indistinguishable from no picture.
+    #[test]
+    fn a_picture_leaves_a_mark_and_says_what_the_page_says_it_shows() {
+        let prose = "Một câu về chiếc điện thoại và giá của nó trên thị trường. ".repeat(6);
+        let html = format!(
+            r#"<article><p>{prose}</p>
+               <img src="/a.png" alt="Biểu đồ giá FPT một năm">
+               <p>{prose}</p></article>"#
+        );
+
+        let page = reduce(&html, "https://x.test/a");
+
+        assert!(page.text.contains("[image: Biểu đồ giá FPT một năm]"), "{}", page.text);
+        // In its place, not gathered at the end: the order of a page is part of
+        // what it says.
+        let at = page.text.find("[image:").expect("the mark is there");
+        assert!(at > 0 && at < page.text.len() - 20, "the picture sits between the paragraphs");
+    }
+
+    /// `alt=""` is HTML's own way of saying *this carries no information*, and
+    /// a page that took the trouble to say so is a page to believe. Otherwise a
+    /// news article's forty spacers and rounded corners each cost a line.
+    #[test]
+    fn a_picture_the_page_calls_decoration_leaves_nothing() {
+        let prose = "Một câu đủ dài để readability chịu nhận đây là nội dung. ".repeat(6);
+        let html = format!(
+            r#"<article><p>{prose}</p>
+               <img src="/spacer.gif" alt="">
+               <img src="/corner.png" aria-hidden="true">
+               <img src="/logo.svg" role="presentation">
+               <p>{prose}</p></article>"#
+        );
+
+        let page = reduce(&html, "https://x.test/a");
+        assert_eq!(page.text.matches("[image").count(), 0, "{}", page.text);
+    }
+
+    /// A caption read as a sentence of the article silently becomes a claim the
+    /// article never made.
+    #[test]
+    fn a_caption_says_it_is_a_caption() {
+        let prose = "Một câu đủ dài để readability chịu nhận đây là nội dung. ".repeat(6);
+        let html = format!(
+            r#"<article><p>{prose}</p>
+               <figure><img src="/a.png" alt="POCO F9 Ultra">
+               <figcaption>POCO F9 Ultra hai màu Đỏ Cherry và Đen</figcaption></figure>
+               </article>"#
+        );
+
+        let page = reduce(&html, "https://x.test/a");
+        assert!(
+            page.text.contains("[caption] POCO F9 Ultra hai màu Đỏ Cherry và Đen"),
+            "{}",
+            page.text
+        );
+    }
+
+    /// The case this was built for.
+    ///
+    /// Readability wants two hundred characters of prose before it will call
+    /// anything content. A page that is one infographic has forty, so nothing
+    /// scored and it handed back an empty string — and an empty string is
+    /// indistinguishable from a page with nothing on it. Syn could say it had
+    /// found nothing. It could not say *this page is a picture*, which is a
+    /// different sentence and the one the person needed.
+    #[test]
+    fn a_page_that_is_one_picture_is_not_an_empty_page() {
+        let page = reduce(
+            r#"<html><body><article><h1>Infographic: Toàn cảnh thị trường 2026</h1>
+               <img src="/i.png" alt="Toàn cảnh thị trường chứng khoán Việt Nam 2026">
+               </article></body></html>"#,
+            "https://x.test/infographic",
+        );
+
+        assert!(page.whole > 0, "it used to come back empty");
+        assert!(page.text.contains("Infographic: Toàn cảnh thị trường 2026"));
+        assert!(page.text.contains("[image: Toàn cảnh thị trường chứng khoán Việt Nam 2026]"));
+    }
+
+    /// Alt text is written to be read aloud in place of a picture, so it is a
+    /// phrase. A page using the attribute for something else does not get to
+    /// spend the whole budget on it.
+    #[test]
+    fn a_very_long_alt_is_cut() {
+        let html = format!(
+            r#"<article><img src="/a.png" alt="{}"></article>"#,
+            "chữ ".repeat(200)
+        );
+        let page = reduce(&html, "https://x.test/a");
+
+        let mark = page.text.split("[image: ").nth(1).expect("there is a mark");
+        assert!(mark.chars().take_while(|c| *c != ']').count() <= MAX_ALT);
+    }
+
     // ── a page whose meaning is in its layout ─────────────────────
 
     /// A share-price panel, shaped the way simplize.vn shapes one: labels in
@@ -2751,5 +2940,3 @@ mod real_pages {
         assert!(wrap(&page).contains("Published: "), "and so does what the model reads");
     }
 }
-
-
