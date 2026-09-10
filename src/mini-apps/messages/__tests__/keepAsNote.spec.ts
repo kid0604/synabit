@@ -110,6 +110,33 @@ describe('the button on the block', () => {
     expect(bubble, 'no navigation behind the reader’s back').not.toContain("router.push");
   });
 
+  /**
+   * A note kept from here can be deleted anywhere — the vault is one thing and
+   * this panel is a view of it.
+   *
+   * Left alone, the button went on claiming a note that was gone, and pressing
+   * it handed the reader to an editor opening a file that is not there. That
+   * does not fail; it waits. The reader gets a spinner that never stops.
+   */
+  it('forgets a note that has been deleted, and offers to keep it again', () => {
+    expect(bubble).toContain("bus.on('node:deleted'");
+    expect(bubble).toContain('forgetKept');
+    expect(bubble, 'and back to what it can still do').toContain("t('syn.keep_as_note')");
+  });
+
+  /**
+   * The bus only knows about deletions this window saw. A note trashed on
+   * another device and synced in, or in a session before this one, is gone
+   * without any event — so the note is asked for before the reader is sent to
+   * it.
+   */
+  it('checks the note is still there before going to it', () => {
+    const open = bubble.slice(bubble.indexOf("if (button.dataset.act === 'open')"));
+    const body = open.slice(0, open.indexOf('\n  }'));
+    expect(body).toContain('nodes.getNode(kept.id)');
+    expect(body).toContain('forgetKept(id)');
+  });
+
   /** There is no toast system here, and a control that silently does nothing
    *  is worse than one that admits it. */
   it('says on itself when it could not', () => {

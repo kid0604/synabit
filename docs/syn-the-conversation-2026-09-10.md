@@ -185,6 +185,32 @@ bấm không ai đoán được và là thứ không trình đọc màn hình n�
 Và đúng theo §2: **nút là của app**, quyết định bởi *khối đó là cái gì*. Không có
 gì trong câu trả lời xin được một cái nút.
 
+### Nút phải quên được
+
+Lưu note xong rồi **xoá note**, quay lại đoạn chat: nút vẫn nói *"Đã lưu X — mở
+ra"*, bấm vào thì trình soạn note **quay mãi không dừng**.
+
+Hai lỗi, và cái thứ hai lớn hơn nhiều.
+
+**(a) Nút bám vào một note không còn.** Nay nó quên theo hai đường: nghe
+`node:deleted` trên bus (bắt được lần xoá mà cửa sổ này nhìn thấy), và **hỏi lại
+trước khi đi** (bắt phần còn lại — xoá ở thiết bị khác rồi sync về, hoặc ở một
+phiên trước). Quên xong thì nút quay về *"Lưu thành note"*, vì việc đó vẫn làm
+được — sơ đồ có đi đâu đâu.
+
+**(b) `NoteApp.openNoteById` mở trình soạn thảo lên một node không tồn tại.**
+Đây mới là lỗi thật, và nó **không** thuộc riêng tính năng này. Nhánh chuyển
+hướng ở đầu hàm chỉ chạy khi node **có tồn tại** mà thuộc app khác; id không tồn
+tại thì rơi thẳng xuống và mở editor. `loadNoteFile` trên một file không có
+**không lỗi — nó đợi**. Người dùng nhận một spinner không bao giờ dừng.
+
+Mọi đường vào đều dính: source chip của Syn, `[[wikilink]]`, nhắc việc, một dòng
+trong Nexus. Tìm ra bằng đường mới nhất, nhưng nó có sẵn ở đó từ trước.
+
+Giờ: không có gì mang id đó thì **không mở editor**, và hiện danh sách note —
+trạng thái duy nhất app này luôn nói thật được, và cũng là chỗ người vừa xoá một
+note mong thấy mình đang ở.
+
 ### Một chỗ suýt sai
 
 Bản đầu `clean()` lọc bỏ `/`, `:`, `?` với lý do "tiêu đề sẽ thành tên file".

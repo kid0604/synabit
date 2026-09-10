@@ -28,6 +28,7 @@ import FootingMark from './FootingMark.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { useNodeService } from '../../../composables/useNodeService';
+import { useEventBus } from '../../../composables/useEventBus';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
 hljs.registerLanguage('javascript', javascript);
@@ -232,6 +233,7 @@ const openDiagram = ref<string | null>(null);
 // from script, so it needs the composable.
 const { t } = useI18n();
 const nodes = useNodeService();
+const bus = useEventBus();
 
 const renderMermaid = async () => {
   await nextTick();
@@ -366,7 +368,22 @@ const runBlockAction = async (button: HTMLElement) => {
 
   if (button.dataset.act === 'open') {
     const kept = keptNotes.get(id);
-    if (kept) emit('open-source', kept);
+    if (!kept) return;
+
+    // Asked for before going there, because the note can be gone by a route
+    // this window never saw: deleted on another device and synced in, or in a
+    // session before this one. The bus below catches the case where it
+    // happened here; this catches the rest.
+    //
+    // Without it the reader is handed to an editor opening a file that is not
+    // there, which does not fail — it waits, forever, on a spinner.
+    const still = await nodes.getNode(kept.id).catch(() => null);
+    if (!still) {
+      forgetKept(id);
+      return;
+    }
+
+    emit('open-source', kept);
     return;
   }
 
@@ -400,6 +417,33 @@ const runBlockAction = async (button: HTMLElement) => {
     button.removeAttribute('disabled');
   }
 };
+
+/**
+ * Put the button back to offering to keep it.
+ *
+ * A control that claims a note exists when it does not is worse than no
+ * control: it is an invitation into a dead end. Keeping is still possible —
+ * the diagram has not gone anywhere — so the button goes back to saying so.
+ */
+const forgetKept = (id: string) => {
+  keptNotes.delete(id);
+  const button = messageEl.value?.querySelector(`[data-act][data-for="${id}"]`);
+  if (!(button instanceof HTMLElement)) return;
+  button.dataset.act = 'keep';
+  button.textContent = t('syn.keep_as_note');
+};
+
+/**
+ * A note kept from here, deleted anywhere.
+ *
+ * The vault is one thing and this panel is a view of it; a note trashed from
+ * the Notes sidebar is the same note this button is pointing at.
+ */
+bus.on('node:deleted', ({ id }) => {
+  for (const [diagram, kept] of keptNotes) {
+    if (kept.id === id) forgetKept(diagram);
+  }
+});
 
 /** Open the diagram this element sits in, if it sits in one. */
 const showDiagramUnder = (target: HTMLElement): boolean => {

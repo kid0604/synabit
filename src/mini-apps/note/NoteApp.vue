@@ -508,6 +508,24 @@ const openNoteById = async (id: string, _skipNavPush = false) => {
             emit('open-node', id, route);
             return;
         }
+
+        // Nothing of that id anywhere, so there is nothing to open.
+        //
+        // This used to fall through and open the editor on it. That does not
+        // fail — `loadNoteFile` waits on a file that is not there — so the
+        // reader gets a spinner that never stops, which is what a note deleted
+        // after somebody linked to it looked like from every direction: a Syn
+        // source chip, a `[[wikilink]]`, a reminder, or the button on a
+        // diagram this app has just started offering.
+        //
+        // The manager — the list of notes — is where somebody who has just
+        // deleted one expects to be, and it is the one state this app can
+        // always show honestly.
+        if (!node) {
+            logger.warn(`NoteApp: nothing in the vault has the id ${id}`);
+            manager.viewMode.value = 'manager';
+            return;
+        }
     }
 
     if (!_skipNavPush && currentNoteId.value && currentNoteId.value !== id && !skipNavPush) {
