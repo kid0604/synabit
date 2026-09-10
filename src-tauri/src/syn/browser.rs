@@ -241,7 +241,41 @@ pub fn worth_keeping(page: &crate::syn::web::Page) -> bool {
             return true;
         }
     }
-    page.text.chars().count() >= ENOUGH_TEXT
+    page.text.chars().count() >= ENOUGH_TEXT && has_a_sentence(&page.text)
+}
+
+/// How many words make a line a sentence rather than a label.
+///
+/// Eight. Measured on three real pages, and the gap is not close:
+///
+/// | page | characters | longest line |
+/// |------|-----------:|-------------:|
+/// | `liveboard.cafef.vn`, a share-price board | 507 | **4 words** |
+/// | GenK's front page | 50 | 12 words |
+/// | *This Week in Rust* #667 | 13,709 | 63 words |
+///
+/// A page built by JavaScript arrives as its own furniture: column headings,
+/// menu items, nothing longer than a label. `Mã · Trần · Sàn · T.C · Bên mua ·
+/// Khớp lệnh` and eighty more lines like it, and not one row of prices — those
+/// are put there by a script this rung never runs.
+pub const A_SENTENCE: usize = 8;
+
+/// Whether anything on this page is written rather than labelled.
+///
+/// # The read this exists to reject
+///
+/// Asked the price of a share, Syn fetched Vietnam's live price board and got
+/// five hundred characters of empty table: every column heading, no rows.
+/// Five hundred is comfortably past `ENOUGH_TEXT`, so the cheap rung called it
+/// a good read and **the browsing window was never opened** — the one rung that
+/// runs the page's scripts and would have had the number. Syn told the person
+/// it could not get the price and handed them a link. They clicked it, and the
+/// pane showed them the table, filled in, one rung away.
+///
+/// A character count cannot tell a page from its own scaffolding. A line of
+/// eight words can: scaffolding does not have sentences in it.
+fn has_a_sentence(text: &str) -> bool {
+    text.lines().any(|line| line.split_whitespace().count() >= A_SENTENCE)
 }
 
 /// The script the window carries, which is how anything gets back out.
@@ -1001,7 +1035,10 @@ mod tests {
         let good = crate::syn::web::Page {
             url: "https://x.test/".into(),
             title: "t".into(),
-            text: "n".repeat(ENOUGH_TEXT),
+            // Prose, not a hundred and fifty of the same character: a page is
+            // kept for having something written on it, and `nnnn…` is not
+            // something anybody wrote.
+            text: "Một câu về giá cổ phiếu và thị trường trong phiên hôm nay. ".repeat(4),
             truncated: false,
             shape: crate::syn::web::Shape::default(),
             published_at: String::new(),
@@ -1589,6 +1626,59 @@ mod tests {
             !body.contains("pane::open") && !body.contains("navigate"),
             "reading the open page must not send it anywhere: {body}"
         );
+    }
+
+    /// A page whose scripts have not run is its own furniture.
+    ///
+    /// Vietnam's live price board, fetched the cheap way: every column heading
+    /// and not one row of prices. Five hundred characters — comfortably past
+    /// `ENOUGH_TEXT` — so this used to call it a good read, and the one rung
+    /// that runs the page's scripts was never reached. Syn told the person it
+    /// could not get the price and handed them a link; they clicked it and the
+    /// pane showed them the table, filled in.
+    #[test]
+    fn an_empty_table_is_not_a_page_that_was_read() {
+        let shell = crate::syn::web::Page {
+            url: "https://liveboard.cafef.vn/".into(),
+            title: "Bảng giá chứng khoán trực tuyến".into(),
+            // The real thing, as it arrived: headings, one per line, nothing else.
+            text: "Mã\nTrần\nSàn\nT.C\nBên mua\nKhớp lệnh\nBên bán\nCao\nThấp\nĐTNN\n\
+                   Giá 3\nKL 3\nGiá 2\nKL 2\nGiá 1\nKL 1\n+/-\n%\nGiá\nKL\nTổng KL\n\
+                   Tùy chỉnh hiển thị\nĐồ thị kỹ thuật\nHồ sơ\nThanh khoản\nLàm lại Lưu"
+                .into(),
+            truncated: false,
+            shape: crate::syn::web::Shape::Article { words: 60 },
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 507,
+            from: 0,
+        };
+
+        assert!(
+            shell.text.chars().count() >= ENOUGH_TEXT,
+            "it is long enough to have fooled a character count"
+        );
+        assert!(!worth_keeping(&shell), "and it is still nothing but column headings");
+    }
+
+    /// And a front page still passes, on its stories rather than its prose —
+    /// fifty characters and fifty-two things to read is a successful read.
+    #[test]
+    fn a_front_page_still_passes_on_its_stories() {
+        let front = crate::syn::web::Page {
+            url: "https://genk.vn/".into(),
+            title: "GenK".into(),
+            text: "POCO F9 Ultra và phép thử lớn nhất trong 8 năm qua".into(),
+            truncated: false,
+            shape: crate::syn::web::Shape::Index { stories: 52, others: 31 },
+            published_at: String::new(),
+            author: String::new(),
+            outline: Vec::new(),
+            whole: 50,
+            from: 0,
+        };
+        assert!(worth_keeping(&front));
     }
 
     /// The hole `on_navigation` closes.
