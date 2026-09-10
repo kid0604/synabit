@@ -157,9 +157,42 @@ xám.
 `DiagramViewer` đã nối vào note editor: cột note có đúng vấn đề mà bong bóng chat
 từng có, và câu trả lời đã nằm sẵn ở `shared/components`.
 
-## 7. Tiếp theo
+## 7. Đã làm: cánh cửa đầu tiên ra khỏi cuộc trò chuyện
 
-1. **Hành động trên một khối** — bắt đầu bằng đúng một cái: *"lưu sơ đồ này
-   thành note"*. Nó dựng khung cho bảng, ảnh, sketch dùng lại.
-2. **Whiteboard qua giao-đi**, khi khung ở (1) đã đứng.
-3. **Bản đồ** — cuối, vì phải mua chỗ trong prompt mỗi lượt.
+§1(b) nói câu trả lời là ngõ cụt. Đây là cánh cửa đầu tiên, và cố ý chọn cái hẹp
+nhất: **một sơ đồ trở thành một note**.
+
+Hình dạng nó dựng lên — tìm một cái tên, ghi markdown, trả về một thứ mở được —
+là thứ mà bảng, ảnh, sketch sẽ dùng lại. Đó mới là điểm của bước này, không phải
+bản thân cái nút.
+
+**Tên lấy từ thứ ai đó thật sự đã viết**, theo thứ tự: tiêu đề của chính sơ đồ
+(Mermaid nhận hai kiểu — dòng `title:` trong frontmatter, và `title` trần của
+`pie`/`xychart`) → heading ngay trên nó trong câu trả lời → câu hỏi. **Không bao
+giờ** là một chuỗi sinh ra như "Sơ đồ 3": một note không tìm được bằng tên là
+một note chưa thật sự được lưu.
+
+**Thân note là sơ đồ, không thêm gì.** Không có dòng "lưu từ cuộc trò chuyện
+ngày…". Người ta xin cái sơ đồ, không xin cái biên lai — và một note mở ra thấy
+xuất xứ trước nội dung là một note phải cuộn qua mới đọc được.
+
+**Nút đổi, màn hình không đổi.** Lưu xong thì nút thành *"mở ra"*. Lưu một thứ
+và đi xem nó là **hai** quyết định, mà mới có quyết định thứ nhất được đưa ra.
+
+**Nút nằm ngoài vùng bấm mở viewer.** Một cái nút bên trong một cái nút là cú
+bấm không ai đoán được và là thứ không trình đọc màn hình nào mô tả nổi.
+
+Và đúng theo §2: **nút là của app**, quyết định bởi *khối đó là cái gì*. Không có
+gì trong câu trả lời xin được một cái nút.
+
+### Một chỗ suýt sai
+
+Bản đầu `clean()` lọc bỏ `/`, `:`, `?` với lý do "tiêu đề sẽ thành tên file".
+**Không phải**: `create_node_file` đặt tên file theo UUID, tiêu đề nằm trong
+frontmatter. Luật đó sẽ lấy mất dấu hai chấm của *Kiến trúc: Splunk* để bảo vệ
+một thứ không tồn tại. Đã bỏ, và lý do ghi lại ngay tại chỗ.
+
+## 8. Tiếp theo
+
+1. **Whiteboard qua giao-đi**, dùng lại khung ở §7.
+2. **Bản đồ** — cuối, vì phải mua chỗ trong prompt mỗi lượt.

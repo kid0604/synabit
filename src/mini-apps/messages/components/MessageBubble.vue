@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { logger } from '../../../utils/logger';
 import { useDebounceFn } from '@vueuse/core';
 import { marked, Renderer, type Tokens } from 'marked';
 import { renderDiagram, diagramTheme } from '../../../shared/mermaid';
@@ -25,6 +26,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
+import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
+import { useNodeService } from '../../../composables/useNodeService';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
 hljs.registerLanguage('javascript', javascript);
@@ -221,11 +224,14 @@ const messageEl = ref<HTMLElement | null>(null);
 const diagrams = new Map<string, string>();
 /** And what each was drawn from, so a theme change can draw it again. */
 const sources = new Map<string, string>();
+/** And where one has been kept, so the button can offer to open it. */
+const keptNotes = new Map<string, SourceRef>();
 const openDiagram = ref<string | null>(null);
 
 // The template uses the global `$t`; the label below is written into markup
 // from script, so it needs the composable.
 const { t } = useI18n();
+const nodes = useNodeService();
 
 const renderMermaid = async () => {
   await nextTick();
@@ -253,9 +259,17 @@ const renderMermaid = async () => {
       // `data-diagram` is what `handleContentClick` looks for, and the button
       // role plus the label are what make a picture that does something say so
       // to somebody who cannot see the cursor change.
+      // The diagram, and beneath it what can be done with it.
+      //
+      // The actions sit *outside* the `role="button"` that opens the viewer:
+      // a button inside a button is a click nobody can predict and a thing no
+      // screen reader can describe. And they are the app's own — never
+      // something the model asked for. See `keepAsNote`.
       const opened =
         `<div class="mermaid-rendered" data-diagram="${id}" role="button" tabindex="0"` +
-        ` title="${t('syn.diagram_open')}">${svg}</div>`;
+        ` title="${t('syn.diagram_open')}">${svg}</div>` +
+        `<div class="mermaid-actions"><button type="button" data-act="keep"` +
+        ` data-for="${id}">${t('syn.keep_as_note')}</button></div>`;
       const container = el.parentElement;
       if (container && container.classList.contains('mermaid-container')) {
         container.innerHTML = opened;
@@ -335,6 +349,58 @@ onMounted(() => {
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
 
+/**
+ * Do what a block's own button says.
+ *
+ * Two states, one button. **Keep** writes the note and the button becomes
+ * **open it** — rather than a toast that fades, or a jump to Notes that takes
+ * the reader out of the conversation they are in. Keeping something and going
+ * to look at it are two decisions, and only the first one was made.
+ *
+ * A failure leaves the button as it was and says so on it. There is no toast
+ * system here to say it in, and a control that silently does nothing is worse
+ * than one that admits it.
+ */
+const runBlockAction = async (button: HTMLElement) => {
+  const id = button.dataset.for ?? '';
+
+  if (button.dataset.act === 'open') {
+    const kept = keptNotes.get(id);
+    if (kept) emit('open-source', kept);
+    return;
+  }
+
+  if (button.dataset.act !== 'keep') return;
+  const code = sources.get(id);
+  if (!code) return;
+
+  button.setAttribute('disabled', 'true');
+  try {
+    const title = titleFor(code, props.message.content ?? '', t('syn.keep_untitled'));
+    const relPath = await nodes.createNode({ directory: KEPT_IN, nodeType: 'note', silent: true });
+    await nodes.writeNode({
+      relPath,
+      nodeType: 'note',
+      title,
+      // Nothing to say about any field. Named keys are set and unnamed ones
+      // are left as they are, so an empty object keeps whatever
+      // `create_node_file` just wrote into the frontmatter.
+      properties: {},
+      content: bodyFor(code),
+      eventType: 'created',
+    });
+
+    keptNotes.set(id, { id: relPath, title, node_type: 'note' });
+    button.dataset.act = 'open';
+    button.textContent = t('syn.keep_open_it', { title });
+  } catch (e) {
+    logger.error('[Syn] Could not keep the diagram', e);
+    button.textContent = t('syn.keep_failed');
+  } finally {
+    button.removeAttribute('disabled');
+  }
+};
+
 /** Open the diagram this element sits in, if it sits in one. */
 const showDiagramUnder = (target: HTMLElement): boolean => {
   const diagram = target.closest('[data-diagram]') as HTMLElement | null;
@@ -358,6 +424,15 @@ const handleContentKey = (e: KeyboardEvent) => {
 /** Handle clicks on wiki-links [[Title]] in rendered content */
 const handleContentClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement;
+
+  // An action on a block comes first: it sits inside the same container as the
+  // diagram, and a diagram that opened as well would open behind the answer.
+  const act = target.closest('[data-act]') as HTMLElement | null;
+  if (act) {
+    e.preventDefault();
+    void runBlockAction(act);
+    return;
+  }
 
   // A diagram fitted into a four-hundred-pixel bubble is a picture of a
   // diagram. Clicking it opens the one you can read.
@@ -838,8 +913,9 @@ const copyContent = async () => {
 /* Mermaid chart containers */
 :deep(.mermaid-container) {
   margin: 0.75rem 0;
+  /* Column, because the diagram now has a row of its own controls under it. */
   display: flex;
-  justify-content: center;
+  flex-direction: column;
 }
 
 :deep(.mermaid-rendered) {
@@ -863,6 +939,51 @@ const copyContent = async () => {
   */
   cursor: zoom-in;
   transition: border-color 0.15s ease;
+}
+
+/*
+  What can be done with the block, under the block.
+
+  Quiet until the diagram is hovered: twenty-nine answers each carrying a
+  visible button is a wall of controls, and the one that matters is the one
+  under the thing you are already looking at. It stays visible once focused, or
+  it could not be reached from a keyboard at all.
+*/
+:deep(.mermaid-actions) {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+:deep(.mermaid-container:hover .mermaid-actions),
+:deep(.mermaid-actions:focus-within) {
+  opacity: 1;
+}
+
+:deep(.mermaid-actions button) {
+  font-size: 11px;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.4rem;
+  color: rgb(109 40 217);
+  background: rgba(124, 58, 237, 0.08);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+:deep(.mermaid-actions button:hover) {
+  background: rgba(124, 58, 237, 0.16);
+}
+
+:deep(.mermaid-actions button[disabled]) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dark :deep(.mermaid-actions button) {
+  color: rgb(196 181 253);
+  background: rgba(124, 58, 237, 0.18);
 }
 
 :deep(.mermaid-rendered:hover) {
