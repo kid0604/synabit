@@ -218,7 +218,38 @@ Bản đầu `clean()` lọc bỏ `/`, `:`, `?` với lý do "tiêu đề sẽ t
 frontmatter. Luật đó sẽ lấy mất dấu hai chấm của *Kiến trúc: Splunk* để bảo vệ
 một thứ không tồn tại. Đã bỏ, và lý do ghi lại ngay tại chỗ.
 
-## 8. Tiếp theo
+## 8. Chiều rộng: cho cột rộng ra, giữ nguyên độ dài dòng chữ
+
+Bảng bốn cột hay flowchart Mermaid nhét vào 48rem không phải là *hẹp*, mà là
+**không đọc được** — trong khi mấy trăm pixel bỏ trống ngay bên cạnh.
+
+Nhưng nới cột ra mà không làm gì thêm thì đổi một cái xấu lấy một cái xấu khác:
+dòng chữ dài ra, prose khó đọc hơn. Mọi giao diện chat đều giữ ~48rem đúng vì lý
+do này.
+
+Nên tách hai thứ ra:
+
+- **Cột** rộng thành `max-w-5xl` (64rem), cả khung tin nhắn lẫn ô nhập — lệch
+  nhau thì trông cẩu thả.
+- **Câu trả lời** dùng cả cột (`flex-1`), vì đó là chỗ có bảng và sơ đồ. Giữ ở
+  80% của một cột rộng hơn là trả chiều rộng về chỗ cũ và để nguyên khoảng trống
+  cũ.
+- **Câu hỏi** vẫn 80% và vẫn nằm bên phải.
+- **Prose bên trong** giới hạn `76ch`. Đây **không phải** thu hẹp: ở cỡ chữ này
+  76ch ≈ 590px, còn một đoạn văn trong khung trước đây là 582px — 80% của cột
+  48rem trừ padding. Chữ đọc y như cũ, chỉ có chỗ quanh nó rộng ra.
+- **Bảng** `display:block; width:fit-content; overflow-x:auto` — cột rộng rồi,
+  đây là lưới đỡ cho những cái bảng còn rộng hơn nữa.
+
+Quy tắc là cái đã dùng suốt tài liệu này: **khung thích ứng theo *khối đó là cái
+gì***. Bảng, sơ đồ, code block, ảnh là **lý do** cột rộng ra; giới hạn chúng lại
+là xoá luôn thay đổi này.
+
+Lần này có nhìn tận mắt: dựng một trang tĩnh với chính CSS đã build, bày ở
+1450px rồi thu nhỏ để chụp. Bảng bốn cột gần như không phải xuống dòng, còn đoạn
+văn dừng đúng ở 76ch.
+
+## 9. Tiếp theo
 
 1. **Whiteboard qua giao-đi**, dùng lại khung ở §7.
 2. **Bản đồ** — cuối, vì phải mua chỗ trong prompt mỗi lượt.

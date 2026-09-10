@@ -324,7 +324,17 @@ const handleStop = () => {
       ref="messagesContainer"
       class="flex-1 overflow-y-auto px-4 md:px-8 py-6"
     >
-      <div class="max-w-3xl mx-auto flex flex-col gap-5">
+      <!--
+        The reading column.
+
+        Wider than the 48rem it was, because a four-column table or a Mermaid
+        flowchart squeezed into 48rem is not narrow, it is unreadable — while
+        several hundred pixels sat empty beside it. Prose keeps its own measure
+        inside the bubble; see `MessageBubble`'s `.prose > *` rule. The column
+        widens so that the things which need width can have it, not so that
+        sentences get longer.
+      -->
+      <div class="max-w-5xl mx-auto flex flex-col gap-5">
         <!-- Empty state -->
         <div
           v-if="messages.length === 0 && !isStreaming"
@@ -410,7 +420,9 @@ const handleStop = () => {
 
     <!-- Input area -->
     <div class="flex-shrink-0 px-4 md:px-8 pb-4">
-      <div class="max-w-3xl mx-auto">
+      <!-- The same column as the messages, or the composer sits off-centre
+           under them. -->
+      <div class="max-w-5xl mx-auto">
         <div class="relative flex flex-col bg-white dark:bg-[#1e1f25] border border-gray-200 dark:border-gray-700/60 rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20 transition-all focus-within:border-violet-400 dark:focus-within:border-violet-500/50 focus-within:shadow-violet-500/10">
 
           <!-- Pending images preview -->

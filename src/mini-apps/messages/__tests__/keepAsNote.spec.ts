@@ -167,3 +167,55 @@ describe('the button on the block', () => {
     ).not.toMatch(/data-act="\$\{[^}]*token/);
   });
 });
+
+/**
+ * How wide an answer is allowed to be.
+ *
+ * A four-column table or a Mermaid flowchart squeezed into 48rem is not narrow,
+ * it is unreadable — and several hundred pixels sat empty beside it. So the
+ * column widens and the *prose* keeps the measure it already had: the width
+ * goes to the things that need it, not to the sentences.
+ */
+describe('the room an answer gets', () => {
+  it('gives the column more than the measure of a sentence', async () => {
+    const panel = (await import('../components/ChatPanel.vue?raw')).default;
+    expect(panel, 'the messages').toContain('max-w-5xl mx-auto flex flex-col gap-5');
+    expect(panel, 'and the composer under them, or the two sit off-centre')
+      .toContain('max-w-5xl mx-auto');
+    expect(panel, 'nothing is still pinned to the old column').not.toContain('max-w-3xl');
+  });
+
+  /**
+   * An answer takes the column; a question keeps to its own side. Capping the
+   * answer at 80% of a wider column would put the width back where it was and
+   * leave the gap where it was too.
+   */
+  it('lets an answer use it, and leaves a question where it was', () => {
+    const content = bubble.slice(bubble.indexOf('<!--\n      Content.'), bubble.indexOf('<!-- Bubble -->'));
+    expect(content).toContain("'flex flex-col items-end max-w-[80%]' : 'flex-1'");
+  });
+
+  /**
+   * 76ch is about 590 pixels at this font size, and a paragraph here was 582 —
+   * 80% of a 48rem column less the card's padding. Prose reads as it did; only
+   * the room around it changed.
+   */
+  it('keeps prose to a measure, and only prose', () => {
+    expect(bubble).toContain('max-width: 76ch');
+
+    const measure = bubble.slice(bubble.indexOf(':deep(.prose > p)'), bubble.indexOf('max-width: 76ch'));
+    for (const tag of ['p', 'ul', 'ol', 'blockquote', 'h2']) {
+      expect(measure, `${tag} is text and keeps the measure`).toContain(`:deep(.prose > ${tag})`);
+    }
+    for (const wide of ['table', 'pre', 'img', '.mermaid-container']) {
+      expect(measure, `${wide} is why the column is wide`).not.toContain(`> ${wide})`);
+    }
+  });
+
+  /** The column is wide now; this is the backstop for the tables that are
+   *  wider still. */
+  it('scrolls a table rather than crushing its columns', () => {
+    const rule = bubble.slice(bubble.indexOf(':deep(.prose table)'));
+    expect(rule.slice(0, 160)).toContain('overflow-x: auto');
+  });
+});

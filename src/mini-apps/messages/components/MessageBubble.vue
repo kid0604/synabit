@@ -650,10 +650,19 @@ const copyContent = async () => {
       <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
     </div>
 
-    <!-- Content -->
+    <!--
+      Content.
+
+      A question keeps to 80% and stays on its side of the column. An answer
+      takes the column, because an answer is where the tables and the diagrams
+      are — and capping it at 80% of a wider column would put the width back
+      where it was and leave the gap where it was too. What keeps an answer
+      *readable* at that width is the measure on prose inside it, not a cap on
+      the card.
+    -->
     <div
-      class="group relative max-w-[80%] min-w-0"
-      :class="message.role === 'user' ? 'flex flex-col items-end' : ''"
+      class="group relative min-w-0"
+      :class="message.role === 'user' ? 'flex flex-col items-end max-w-[80%]' : 'flex-1'"
     >
       <!-- Bubble -->
       <div
@@ -952,6 +961,46 @@ const copyContent = async () => {
 .dark :deep(.mermaid-rendered),
 .dark :deep(pre.mermaid) {
   background: rgba(30, 31, 37, 0.5);
+}
+
+/*
+  The measure.
+
+  A line of prose stops being comfortable somewhere around seventy-five
+  characters, and the column an answer now gets is wider than that on purpose —
+  so the width goes to the things that need it and the sentences keep the limit
+  they already had.
+
+  **76ch is not a narrowing.** At this font size it is about 590 pixels, and a
+  paragraph in this panel was 582: 80% of a 48rem column, less the card's
+  padding. Prose reads exactly as it did; only the room around it changed.
+
+  Applied to the text-level children only. A table, a diagram, a code block or
+  an image is *why* the column is wide, and capping those would undo the whole
+  change. In `ch` rather than pixels because the limit is about characters per
+  line, which is the thing `ch` measures.
+*/
+:deep(.prose > p),
+:deep(.prose > ul),
+:deep(.prose > ol),
+:deep(.prose > blockquote),
+:deep(.prose > h1),
+:deep(.prose > h2),
+:deep(.prose > h3),
+:deep(.prose > h4) {
+  max-width: 76ch;
+}
+
+/*
+  And a table that is wider than the column scrolls rather than crushing its
+  columns into one word each. The column is wide now; this is the backstop for
+  the tables that are wider still.
+*/
+:deep(.prose table) {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* Mermaid chart containers */
