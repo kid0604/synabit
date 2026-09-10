@@ -17,6 +17,8 @@ import xml from 'highlight.js/lib/languages/xml';
 import sql from 'highlight.js/lib/languages/sql';
 import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
+import { mathExtension, MATH_ATTRS, renderMathIn } from '../markdownMath';
+import 'katex/dist/katex.min.css';
 import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard } from 'lucide-vue-next';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
@@ -149,6 +151,11 @@ marked.use(markedHighlight({
 
 marked.use({ renderer });
 
+// Mathematics. Registered after the renderer so its own `renderer` entries are
+// the ones that answer for these tokens. See `markdownMath` for why all four
+// delimiters are inline-level and why the TeX waits in an attribute.
+marked.use(mathExtension);
+
 const props = defineProps<{
   message: SynMessage;
   isStreaming?: boolean;
@@ -218,7 +225,7 @@ const renderedContent = computed(() => {
   const rawHtml = marked.parse(debouncedContent.value) as string;
   let sanitized = DOMPurify.sanitize(rawHtml, {
     ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject', 'style'],
-    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'style', 'dx', 'dy', 'alignment-baseline', 'data-wikilink'],
+    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'style', 'dx', 'dy', 'alignment-baseline', 'data-wikilink', ...MATH_ATTRS],
   });
 
   // Convert [[Title]] wiki-links to clickable links
@@ -282,21 +289,50 @@ const renderMermaid = async () => {
   }
 };
 
+/**
+ * Turn the parked formulas into mathematics.
+ *
+ * # Why this one runs while the answer is still arriving and Mermaid does not
+ *
+ * Because a half-written formula is not a formula at all — the tokenizer needs
+ * both delimiters, so an unfinished one stays as the text it already is and
+ * becomes mathematics the moment it closes. A half-written *diagram* is a
+ * syntax error, and re-rendering one on every chunk is a stream of red boxes.
+ *
+ * It is not free, and the figure is measured rather than assumed —
+ * `streamRenderCost` prints it. On an answer that is almost nothing but
+ * mathematics, eighteen formulas in 933 characters cost KaTeX **6.9ms a pass**
+ * against 0.04ms for the markdown around them. At the 100ms debounce that is
+ * roughly 7% of one core while such an answer streams, and it is a ceiling
+ * rather than a typical message: an answer with no mathematics in it pays one
+ * `querySelectorAll` that finds nothing.
+ *
+ * The alternative was showing `$$\int u\,dv$$` for the whole of a stream and
+ * then snapping to mathematics at the end, which is the thing being fixed,
+ * arriving late.
+ */
+const renderMath = async () => {
+  await nextTick();
+  if (messageEl.value) renderMathIn(messageEl.value);
+};
+
 watch(renderedContent, () => {
-  if (props.message.role === 'assistant' && !props.isStreaming) {
-    renderMermaid();
-  }
+  if (props.message.role !== 'assistant') return;
+  renderMath();
+  if (!props.isStreaming) renderMermaid();
 });
 
 // Also render when streaming finishes
 watch(() => props.isStreaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming) {
+    renderMath();
     renderMermaid();
   }
 });
 
 onMounted(() => {
   if (props.message.role === 'assistant' && !props.isStreaming) {
+    renderMath();
     renderMermaid();
   }
 });
@@ -834,6 +870,28 @@ const copyContent = async () => {
 :deep(.mermaid-rendered svg) {
   max-width: 100%;
   height: auto;
+}
+
+/*
+  Mathematics.
+
+  A display formula gets room around it and scrolls rather than overflowing:
+  a long derivation is wider than a chat bubble, and a bubble that grows to fit
+  one pushes every other message sideways.
+*/
+:deep(.syn-math-display) {
+  display: block;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.25rem;
+}
+
+/* KaTeX draws its own errors in red when it cannot parse. Left visible on
+   purpose — it tells the reader, and whoever wrote the prompt, something. */
+:deep(.katex-error) {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
 }
 
 :deep(pre.mermaid) {

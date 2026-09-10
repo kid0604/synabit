@@ -1,5 +1,6 @@
 import { describe, it } from 'vitest';
-import { marked } from 'marked';
+import { marked, Marked } from 'marked';
+import { mathExtension, MATH_ATTRS, renderMathIn } from '../../markdownMath';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -86,6 +87,59 @@ describe('drawing a streamed answer', () => {
         `${String(slice.length).padEnd(10)} ${both.toFixed(2).padStart(11)}ms ${parseOnly
           .toFixed(2)
           .padStart(11)}ms ${sanitizeOnly.toFixed(2).padStart(12)}ms`,
+      );
+    }
+  });
+
+  /**
+   * What accepting mathematics added to that.
+   *
+   * Measured because it is the one thing in this pipeline that runs on every
+   * pass of a stream and does real work — KaTeX turns each formula into a small
+   * forest of spans, and unlike Mermaid it cannot wait for the answer to finish
+   * (a half-written formula is still text; a half-written diagram is an error).
+   *
+   * The answer here is deliberately almost nothing but formulas, so this is a
+   * ceiling and not a typical message. An answer with no mathematics in it pays
+   * one `querySelectorAll` that finds nothing.
+   */
+  it('costs this much more when the answer is mathematics', () => {
+    const withMath = new Marked();
+    withMath.use(mathExtension);
+
+    const maths = `Đạo hàm hàm hợp là $f'(g(x))g'(x)$, và tích phân từng phần cho
+
+$$\\int u\\,dv = uv - \\int v\\,du$$
+
+Chuỗi Fourier: $c_n = \\frac{1}{T}\\int_0^T f(t)e^{-i\\omega_n t}dt$ với
+$\\omega_n = 2\\pi n / T$, và tổng riêng phần
+
+$$S_N(t) = \\sum_{n=-N}^{N} c_n e^{i\\omega_n t}$$
+
+hội tụ theo $O(1/N)$ với hàm khả vi từng khúc.
+
+`.repeat(3);
+
+    console.log('\n── mathematics, per pass ───────────────────────');
+    console.log('chars      markdown      katex   formulas');
+
+    for (const fraction of [0.25, 0.5, 1]) {
+      const slice = maths.slice(0, Math.floor(maths.length * fraction));
+      const markdown = timed(20, () => withMath.parse(slice));
+
+      const html = DOMPurify.sanitize(withMath.parse(slice) as string, {
+        ADD_ATTR: [...MATH_ATTRS],
+      });
+      const host = document.createElement('div');
+      let formulas = 0;
+      const katexMs = timed(20, () => {
+        host.innerHTML = html;
+        formulas = renderMathIn(host);
+      });
+
+      console.log(
+        `${String(slice.length).padEnd(10)} ${markdown.toFixed(2).padStart(7)}ms ` +
+          `${katexMs.toFixed(2).padStart(9)}ms ${String(formulas).padStart(9)}`,
       );
     }
   });
