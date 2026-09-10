@@ -515,6 +515,47 @@ fn heading_level(tag: &str) -> Option<u8> {
     }
 }
 
+/// Whether a question is about what is newest.
+///
+/// # Why this is asked at all
+///
+/// Because a search index cannot answer it, and that is not a matter of asking
+/// better. It is ordered by relevance and by whatever the engine decides, never
+/// by time — so *"the newest article on GenK"* put through a search box comes
+/// back with an article, and nothing about that article says it is the newest.
+///
+/// Twenty-four questions were read off this vault's own run transcripts. Seven
+/// of them are this shape, and Syn searched for six of the seven. Every one of
+/// those six was wrong: an article from two weeks earlier reported as today's,
+/// a section page mistaken for a story, an issue of a newsletter one behind the
+/// one on its own front page.
+///
+/// The one that was right is the one where it opened the site.
+///
+/// Vietnamese and English together, because the question is asked in both and a
+/// rule that only fires in one is a rule that fires half the time.
+pub fn asked_for_the_newest(question: &str) -> bool {
+    const RECENCY: &[&str] = &[
+        "mới nhất", "mới ra", "gần nhất", "gần đây", "hôm nay", "vừa rồi", "đầu tiên trên trang",
+        "latest", "newest", "most recent", "today", "this week", "just published", "top story",
+    ];
+    let asked = question.to_lowercase();
+    RECENCY.iter().any(|w| asked.contains(w))
+}
+
+/// What a search cannot do, said where the search result is.
+///
+/// In the result rather than the tool description, because the description is
+/// read before a query is written and this is the moment the query came back
+/// unable to answer. The same reason `keep_looking` lives here.
+pub const NOT_ORDERED_BY_TIME: &str =
+    "You asked which is newest, and searched for it. **A search index is not ordered by time** — \
+     nothing above is the newest of anything, whatever its date says, and no rewording of the \
+     query changes that. If the question is about a particular site, call `browse` again with \
+     that site in `site`: its front page is ordered, and the first story on it is the answer. \
+     If it is about no site in particular, say which dates you actually found rather than \
+     calling any of them the latest.";
+
 /// What to say about *when* a page was written.
 ///
 /// One sentence, on every page and every set of results, because it is cheap
@@ -2023,6 +2064,48 @@ mod tests {
 
         assert!(!said.contains("fetch_url"), "{said}");
         assert!(said.contains(crate::syn::tools::BROWSE_TOOL), "{said}");
+    }
+
+    // ── what a search cannot do ───────────────────────────────────
+
+    /// Read off this vault's own transcripts: seven of twenty-four questions
+    /// were this shape, six were searched for, and all six were wrong.
+    #[test]
+    fn a_question_about_what_is_newest_is_recognised_in_both_languages() {
+        for asked in [
+            "đọc bài mới nhất trên genk",
+            "tóm tắt nội dung số mới nhất của This week in Rust",
+            "thử vào vnexpress xem bài viết đầu tiên trên trang chủ là gì",
+            "có tin gì hôm nay không",
+            "the latest issue of This Week in Rust",
+            "what is the newest article",
+            "top story on the BBC",
+        ] {
+            assert!(asked_for_the_newest(asked), "missed: {asked}");
+        }
+    }
+
+    /// And an ordinary question is not, or the warning appears on every search
+    /// and stops being read.
+    #[test]
+    fn an_ordinary_question_gets_no_warning() {
+        for asked in [
+            "tuần rồi kết quả Chelsea arsenal thế nào",
+            "Tottenham Hotspur fixtures September 2026",
+            "giá điện thoại POCO F9 Ultra",
+            "how does prompt caching work",
+        ] {
+            assert!(!asked_for_the_newest(asked), "false alarm: {asked}");
+        }
+    }
+
+    #[test]
+    fn the_warning_names_the_way_out_and_not_just_the_problem() {
+        assert!(NOT_ORDERED_BY_TIME.contains("`site`"), "it says what to do instead");
+        assert!(
+            NOT_ORDERED_BY_TIME.contains("no rewording of the query changes that"),
+            "and that searching again is not the answer"
+        );
     }
 
     // ── where a page can take you ─────────────────────────────────

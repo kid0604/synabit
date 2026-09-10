@@ -645,7 +645,16 @@ impl SynEngine {
                         .trim()
                         .to_string();
 
-                    match browse(req, &what).await {
+                    let site = tc
+                        .function
+                        .arguments
+                        .get("site")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+
+                    match browse(req, &what, &site).await {
                         Ok((content, sources)) => {
                             read_the_web = true;
                             cited.extend(sources);
@@ -1092,10 +1101,11 @@ fn worth_reading(fetched: AppResult<crate::syn::web::Page>) -> Option<crate::syn
 async fn browse<R: tauri::Runtime>(
     req: &DriveRequest<'_, R>,
     what: &str,
+    site: &str,
 ) -> AppResult<(String, Vec<crate::models::syn::SourceRef>)> {
     use crate::syn::{browser, web};
 
-    if what.is_empty() {
+    if what.is_empty() && site.is_empty() {
         return Err(crate::error::AppError::General(
             "Nothing to look up. Pass a question or an http address.".into(),
         ));
@@ -1103,6 +1113,35 @@ async fn browse<R: tauri::Runtime>(
 
     let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
     let cap = web::page_chars(&settings);
+
+    // ── A site named is a place to go, not a thing to look up. ────
+    //
+    // Read off this vault's own transcripts: of twenty-four questions that
+    // reached `browse`, seven asked what was newest on a named site, and six of
+    // those seven were searched for. All six were wrong — an article two weeks
+    // old reported as today's, a section page taken for a story, a newsletter
+    // issue one behind the one on its own front page. The seventh went to the
+    // site, and was right.
+    //
+    // The site is a parameter now rather than something to be recovered from a
+    // sentence, because turning "GenK" into `genk.vn` is a thing the model
+    // knows and this code cannot — and going to a front page and reading it in
+    // order is a thing this code does exactly and a model keeps not doing.
+    //
+    // An address in `what` still wins: it is the more specific of the two.
+    if !site.is_empty() && !browser::looks_like_a_url(what) {
+        match browser::address_of(site) {
+            Some(front_door) => {
+                log::info!("[Syn] Going to {front_door} rather than searching for {what:?}");
+                return look_at(req, &front_door, cap).await;
+            }
+            // A name rather than a domain — "GenK", not `genk.vn`. Nothing here
+            // can turn one into the other without a list of sites that would be
+            // wrong the week after it was written, so it falls through to the
+            // search it would have done anyway.
+            None => log::info!("[Syn] {site:?} is not an address, so it cannot be opened"),
+        }
+    }
 
     // ── Reading on, in a page already in hand. ────────────────────
     //
@@ -1219,7 +1258,7 @@ async fn browse<R: tauri::Runtime>(
             );
 
             let unread: Vec<String> = links.iter().skip(attempted).cloned().collect();
-            let rest = web::keep_looking(what, &unread);
+            let rest = format!("{}{}", ordering_warning(what), web::keep_looking(what, &unread));
 
             // The pages first: they are what the answer stands on, and a chip
             // that opens the search Syn ran is not somewhere a person can check
@@ -1232,11 +1271,38 @@ async fn browse<R: tauri::Runtime>(
 
         // Nothing opened. The results page, with the real addresses under it,
         // so going on is possible at all.
-        let rest = web::keep_looking(what, &links);
+        let rest = format!("{}{}", ordering_warning(what), web::keep_looking(what, &links));
         return Ok((format!("{}\n\n{rest}", web::wrap(&page)), vec![web::citation(&page)]));
     }
 
     let address = address.unwrap_or_else(|| what.to_string());
+    look_at(req, &address, cap).await
+}
+
+/// Said when a question about what is newest has been answered by a search.
+///
+/// Empty otherwise, so it costs nothing on the ordinary search — and the
+/// ordinary search is most of them.
+///
+/// In the result rather than the tool description because this is the moment
+/// the query came back unable to answer, and a rule read before the query was
+/// written is a rule that competes with everything else in the prompt.
+fn ordering_warning(question: &str) -> String {
+    if crate::syn::web::asked_for_the_newest(question) {
+        format!("{}\n\n", crate::syn::web::NOT_ORDERED_BY_TIME)
+    } else {
+        String::new()
+    }
+}
+
+/// Read a page at an address: the screen first, then the cheap fetch, then the
+/// window.
+async fn look_at<R: tauri::Runtime>(
+    req: &DriveRequest<'_, R>,
+    address: &str,
+    cap: usize,
+) -> AppResult<(String, Vec<crate::models::syn::SourceRef>)> {
+    use crate::syn::{browser, web};
 
     // ── Rung 0: it is already on the screen. ──────────────────────
     //
@@ -1255,7 +1321,7 @@ async fn browse<R: tauri::Runtime>(
     // will not answer is a slower answer, not a lost one.
     #[cfg(desktop)]
     if crate::syn::pane::showing(req.app)
-        .is_some_and(|open| browser::same_place(&open.url, &address))
+        .is_some_and(|open| browser::same_place(&open.url, address))
     {
         match browser::read_showing(req.app, req.browser).await {
             Ok(read) => {
@@ -1270,7 +1336,7 @@ async fn browse<R: tauri::Runtime>(
     }
 
     // ── Rung 2: an address, read the cheap way. ───────────────────
-    match web::fetch_with_html(&address).await {
+    match web::fetch_with_html(address).await {
         Ok((page, html)) if browser::worth_keeping(&page) => {
             Ok((onward(req.browser, &page, &html, cap), vec![web::citation(&page)]))
         }
@@ -1278,7 +1344,7 @@ async fn browse<R: tauri::Runtime>(
         // consent wall and a login all look the same from here, and the
         // window answers all three.
         _ => {
-            let read = browser::visit(req.app, req.browser, &address).await?;
+            let read = browser::visit(req.app, req.browser, address).await?;
             let page = web::reduce(&read.html, &read.url);
             Ok((onward(req.browser, &page, &read.html, cap), vec![web::citation(&page)]))
         }
@@ -1388,6 +1454,57 @@ fn assemble(
 }
 #[cfg(test)]
 mod tests {
+
+    /// A named site is a place to go, and it is decided before anything is
+    /// searched for.
+    ///
+    /// The order is the design: of twenty-four questions in this vault's own
+    /// transcripts, seven asked what was newest on a named site and six were
+    /// searched for. All six were wrong. Turning "GenK" into `genk.vn` is
+    /// something the model knows and this code cannot; going to a front page
+    /// and reading it in order is something this code does exactly and a model
+    /// keeps not doing. So the model says which site and the code does the
+    /// going.
+    #[test]
+    fn a_named_site_is_visited_before_anything_is_searched_for() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn ordering_warning(").next())
+            .expect("browse is there");
+
+        let site = body.find("if !site.is_empty()").expect("a named site is handled");
+        let search = body.find("Rung 1:").expect("and searching still exists");
+        assert!(site < search, "the site has to be tried before the search box");
+
+        // An address in `what` is more specific than a site, and still wins.
+        assert!(
+            body.contains("!browser::looks_like_a_url(what)"),
+            "a URL in `what` outranks a site"
+        );
+    }
+
+    /// A site given as a name rather than a domain falls through to the search
+    /// it would have done anyway.
+    ///
+    /// Nothing here can turn "GenK" into `genk.vn` without a bundled list of
+    /// sites, which would be wrong the week after it was written and is a thing
+    /// this project has refused before.
+    #[test]
+    fn a_site_that_is_not_an_address_does_not_stop_the_search() {
+        let source = include_str!("engine.rs");
+        let body = source
+            .split("async fn browse<R: tauri::Runtime>")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn ordering_warning(").next())
+            .expect("browse is there");
+
+        assert!(
+            body.contains("None => log::info!"),
+            "an unusable site is a note in the log, not a refusal"
+        );
+    }
 
     /// Reading on happens before anything is fetched, and before a number is
     /// taken as a link: `more` is an instruction about the page in hand, not a
