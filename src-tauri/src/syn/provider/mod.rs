@@ -72,13 +72,78 @@ pub struct ChatRequest<'a> {
     pub tools: Option<&'a [ToolDefinition]>,
 }
 
+/// What a turn cost, as the provider counted it.
+///
+/// # Why four numbers and not one
+///
+/// It was one — "tokens generated" — and that was already the wrong shape
+/// before a second provider arrived.
+///
+/// **Input was never counted at all.** Every turn re-sends the system prompt,
+/// nearly sixteen thousand characters of tool declarations, the conversation so
+/// far and every page read into it; the reply is a few hundred words. The token
+/// budget was therefore measuring the small half, and on a streamed
+/// OpenAI-compatible request it was measuring nothing, because usage is not
+/// sent unless it is asked for. Every run on disk says `tokens: 0`.
+///
+/// **And input is no longer one number.** Anthropic splits it into cache writes
+/// and cache reads, Gemini reports `cachedContentTokenCount`, OpenAI reports
+/// `prompt_tokens_details.cached_tokens` — and cached input is priced at a
+/// fraction of fresh input. For an app that sends the same tool declarations on
+/// every single turn, that distinction is most of the bill. One number would
+/// say the prompt is enormous and hide that nearly all of it is cheap.
+///
+/// **Output has the same problem in reverse.** Reasoning tokens are charged and
+/// never shown — `reasoning_tokens` on OpenAI, `thoughtsTokenCount` on Gemini.
+/// Counting only what was written makes a reasoning model look cheap.
+///
+/// `None` everywhere a provider says nothing, which is different from zero and
+/// has to stay different: zero is a measurement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Usage {
+    /// Everything sent: prompt, tools, conversation, tool results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    /// How much of `input` the provider served from its own cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_cached: Option<u64>,
+    /// What the model wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+    /// Reasoning that was charged for and nobody was shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_hidden: Option<u64>,
+}
+
+impl Usage {
+    /// What the turn is charged, as far as anything here can tell.
+    ///
+    /// `None` when the provider said nothing at all, because a budget that
+    /// treats silence as zero is a budget that never stops anything — which is
+    /// exactly what happened for as long as this was one field nobody filled.
+    pub fn charged(&self) -> Option<u64> {
+        match (self.input, self.output) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+        }
+    }
+
+    /// Whether the provider reported anything.
+    pub fn is_silent(&self) -> bool {
+        self.input.is_none()
+            && self.input_cached.is_none()
+            && self.output.is_none()
+            && self.output_hidden.is_none()
+    }
+}
+
 /// What came back, whether it was streamed or not.
 #[derive(Debug, Default)]
 pub struct ChatReply {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
-    /// Tokens generated, when the provider reports it.
-    pub tokens: Option<u64>,
+    /// What it cost, as the provider counted it.
+    pub usage: Usage,
     /// Generation time as the provider measured it. `None` means the caller
     /// should fall back to its own wall clock.
     pub duration_ms: Option<u64>,
@@ -187,3 +252,64 @@ pub(crate) fn probe_client() -> reqwest::Client {
         .build()
         .unwrap_or_default()
 }
+#[cfg(test)]
+mod usage_tests {
+    use super::Usage;
+
+    /// Silence is not zero. A provider that reports nothing must not be read as
+    /// a turn that cost nothing — which is exactly what happened for as long as
+    /// this was one unfilled field: every run on disk says `tokens: 0`, and the
+    /// token ceiling has never stopped anything.
+    #[test]
+    fn a_provider_that_says_nothing_is_not_a_turn_that_cost_nothing() {
+        let silent = Usage::default();
+        assert!(silent.is_silent());
+        assert_eq!(silent.charged(), None);
+
+        let measured = Usage { input: Some(0), output: Some(0), ..Default::default() };
+        assert!(!measured.is_silent());
+        assert_eq!(measured.charged(), Some(0), "zero is a measurement");
+    }
+
+    /// The whole turn, not the reply. Input is most of what a turn costs here —
+    /// the prompt, sixteen thousand characters of tool declarations, the
+    /// conversation and every page read into it, re-sent on every iteration.
+    #[test]
+    fn what_a_turn_is_charged_is_both_halves() {
+        let u = Usage { input: Some(9_000), output: Some(300), ..Default::default() };
+        assert_eq!(u.charged(), Some(9_300));
+
+        // Half a measurement still beats none: a provider that reports only one
+        // side is counted for the side it reported.
+        assert_eq!(Usage { output: Some(300), ..Default::default() }.charged(), Some(300));
+        assert_eq!(Usage { input: Some(9_000), ..Default::default() }.charged(), Some(9_000));
+    }
+
+    /// Cached input is charged at a fraction of fresh input, and this app sends
+    /// the same tool declarations every single turn — so the split is most of
+    /// the bill, and a single number would hide it.
+    #[test]
+    fn the_cached_share_is_kept_apart_from_the_rest() {
+        let u = Usage {
+            input: Some(10_000),
+            input_cached: Some(9_400),
+            output: Some(200),
+            output_hidden: Some(1_500),
+        };
+
+        // `charged` stays the total the provider counts: cached input is inside
+        // `input`, not beside it, and adding it again would double-count.
+        assert_eq!(u.charged(), Some(10_200));
+        assert_eq!(u.input_cached, Some(9_400));
+        assert_eq!(u.output_hidden, Some(1_500), "reasoning is billed and never shown");
+    }
+
+    /// A run written before any of this still reads.
+    #[test]
+    fn an_old_run_without_a_breakdown_still_parses() {
+        let u: Usage = serde_json::from_str("{}").expect("an absent breakdown is silence");
+        assert!(u.is_silent());
+        assert_eq!(serde_json::to_string(&u).unwrap(), "{}", "and writes nothing back");
+    }
+}
+

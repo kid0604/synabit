@@ -1834,6 +1834,7 @@
     "runs_pick_one": "Chọn một lượt chạy để xem nó đã làm gì.",
     "runs_tool_calls": "{n} lần gọi công cụ",
     "run_rounds": "Số vòng",
+    "run_tokens": "Token",
     "run_tools": "Gọi công cụ",
     "run_round_n": "vòng {n}",
     "run_arguments": "Tham số",

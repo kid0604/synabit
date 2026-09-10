@@ -72,7 +72,12 @@ struct OllamaChatChunk {
     message: Option<OllamaChatMessage>,
     done: bool,
     total_duration: Option<u64>,
+    /// Tokens the model wrote.
     eval_count: Option<u64>,
+    /// Tokens it was given. Ollama has always reported this and nothing here
+    /// ever read it, so the token budget was watching the smaller half of every
+    /// turn — and on a turn that reads a page, a very small half indeed.
+    prompt_eval_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -376,7 +381,13 @@ impl ChatProvider for OllamaProvider {
         Ok(ChatReply {
             content: msg.as_ref().map(|m| m.content.clone()).unwrap_or_default(),
             tool_calls: msg.and_then(|m| m.tool_calls).unwrap_or_default(),
-            tokens: chunk.eval_count,
+            usage: crate::syn::provider::Usage {
+                input: chunk.prompt_eval_count,
+                output: chunk.eval_count,
+                // Ollama reuses a prompt prefix but does not say how much, and
+                // it has no hidden reasoning to report. Absent, not zero.
+                ..Default::default()
+            },
             // Filtered rather than mapped: Ollama sometimes reports a
             // `total_duration` of zero, and `Some(0)` would be shown to the
             // user as a reply that took no time. `None` lets the caller fall
@@ -444,7 +455,8 @@ impl ChatProvider for OllamaProvider {
                         }
 
                         if chat_chunk.done {
-                            reply.tokens = chat_chunk.eval_count;
+                            reply.usage.input = chat_chunk.prompt_eval_count;
+                            reply.usage.output = chat_chunk.eval_count;
                             reply.duration_ms = chat_chunk
                                 .total_duration
                                 .filter(|ns| *ns > 0)
@@ -462,5 +474,44 @@ impl ChatProvider for OllamaProvider {
         }
 
         Ok(reply)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ollama has always reported both halves and this only ever read one, so
+    /// the token budget was watching the reply — the small half of every turn.
+    #[test]
+    fn both_halves_of_an_ollama_turn_are_counted() {
+        let chunk: OllamaChatChunk =
+            serde_json::from_str(r#"{"done":true,"prompt_eval_count":9000,"eval_count":250}"#)
+                .expect("parses");
+
+        let usage = crate::syn::provider::Usage {
+            input: chunk.prompt_eval_count,
+            output: chunk.eval_count,
+            ..Default::default()
+        };
+
+        assert_eq!(usage.charged(), Some(9_250));
+        assert_eq!(usage.input_cached, None, "absent, not zero");
+        assert_eq!(usage.output_hidden, None);
+    }
+
+    /// A server that reports neither is silence, and silence must not read as a
+    /// turn that cost nothing.
+    #[test]
+    fn a_chunk_that_counts_nothing_is_silence() {
+        let chunk: OllamaChatChunk = serde_json::from_str(r#"{"done":true}"#).expect("parses");
+        let usage = crate::syn::provider::Usage {
+            input: chunk.prompt_eval_count,
+            output: chunk.eval_count,
+            ..Default::default()
+        };
+
+        assert!(usage.is_silent());
+        assert_eq!(usage.charged(), None);
     }
 }

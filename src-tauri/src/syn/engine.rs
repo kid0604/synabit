@@ -389,7 +389,8 @@ impl SynEngine {
                 ChatReply {
                     content: String::new(),
                     tool_calls: vec![call],
-                    tokens: None,
+                    // Nothing was asked of a provider, so nothing was spent.
+                    usage: Default::default(),
                     duration_ms: None,
                 }
             } else if self.provider.streams_tool_calls() {
@@ -413,7 +414,7 @@ impl SynEngine {
             // twelve rounds, that is a stop button which does not stop.
             if stop_check() {
                 if !reply.content.is_empty() {
-                    run.record_assistant(iteration, &reply.content, reply.tokens, turn_ms);
+                    run.record_assistant(iteration, &reply.content, reply.usage, turn_ms);
                 }
                 run.note(iteration, "Stopped by the user.");
                 run.finish(RunState::Cancelled);
@@ -434,7 +435,7 @@ impl SynEngine {
                     break 'drive LoopEnd::DeadEnd;
                 }
 
-                run.record_assistant(iteration, &reply.content, reply.tokens, turn_ms);
+                run.record_assistant(iteration, &reply.content, reply.usage, turn_ms);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
 
                 // Only replay when nothing was streamed. A provider that
@@ -452,7 +453,7 @@ impl SynEngine {
             // Words said on the way to reaching for a tool are part of the
             // record even though they are not the answer.
             if !reply.content.is_empty() {
-                run.record_assistant(iteration, &reply.content, reply.tokens, turn_ms);
+                run.record_assistant(iteration, &reply.content, reply.usage, turn_ms);
             }
 
             // The assistant turn that asked for the tools has to go back into
@@ -890,7 +891,7 @@ impl SynEngine {
         run.record_assistant(
             run.spent.iterations,
             &reply.content,
-            reply.tokens,
+            reply.usage,
             turn_started.elapsed().as_millis() as u64,
         );
         crate::syn::run::save_run_best_effort(req.vault_path, run);
@@ -1340,7 +1341,11 @@ fn assemble(
         content: reply.content,
         model: Some(model.to_string()),
         timestamp: chrono::Utc::now().to_rfc3339(),
-        tokens: reply.tokens.filter(|n| *n > 0),
+        // What the whole turn was charged, not what it wrote. Input is most of
+        // it — the prompt, the tool declarations, the conversation and every
+        // page read into it, all re-sent on every iteration — and until now the
+        // number under an answer counted only the reply.
+        tokens: reply.usage.charged().filter(|n| *n > 0),
         duration_ms: Some(
             reply
                 .duration_ms
@@ -2006,7 +2011,7 @@ mod driving {
         ChatReply {
             content: content.to_string(),
             tool_calls: Vec::new(),
-            tokens: Some(7),
+            usage: Default::default(),
             duration_ms: None,
         }
     }
@@ -2021,7 +2026,7 @@ mod driving {
                     arguments: args,
                 },
             }],
-            tokens: None,
+            usage: Default::default(),
             duration_ms: None,
         }
     }
@@ -2114,7 +2119,7 @@ mod driving {
                 // stays false — which is the *first* thing this asserts.
                 calls("browse", serde_json::json!({ "what": "http://127.0.0.1/evil" })),
                 calls("trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
-                ChatReply { content: "xong".into(), tool_calls: vec![], tokens: None, duration_ms: None },
+                ChatReply { content: "xong".into(), tool_calls: vec![], usage: Default::default(), duration_ms: None },
             ],
         )));
 
@@ -2326,7 +2331,7 @@ mod driving {
                 ChatReply {
                     content: "Đã xoá.".into(),
                     tool_calls: vec![],
-                    tokens: None,
+                    usage: Default::default(),
                     duration_ms: None,
                 },
             ],
@@ -3215,7 +3220,7 @@ mod driving {
                     },
                 })
                 .collect(),
-            tokens: None,
+            usage: Default::default(),
             duration_ms: None,
         };
 

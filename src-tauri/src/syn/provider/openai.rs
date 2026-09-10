@@ -53,6 +53,20 @@ use crate::syn::provider::{
 /// field, and the pair is remembered for the rest of the session. The user is
 /// never asked, because the only honest way to phrase the question needs them
 /// to have read the same error.
+/// Endpoints that reject `stream_options`.
+///
+/// The same shape of problem as `NEEDS_EFFORT_NONE`, and the same answer. The
+/// field is standard in OpenAI's API and unknown to some servers that
+/// implement it — llama.cpp, LM Studio and vLLM all shipped this endpoint
+/// before `stream_options` existed — so neither default is safe and no list of
+/// server names stays correct.
+///
+/// So it is learned: ask on the first streamed request, and if the answer is a
+/// 400 naming the field, remember the endpoint and stop asking. What is lost by
+/// stopping is the token count, not the answer.
+static WILL_NOT_COUNT: std::sync::LazyLock<RwLock<HashSet<String>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
+
 static NEEDS_EFFORT_NONE: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
 
@@ -73,6 +87,22 @@ struct OpenAiChatRequest {
     /// the field reject a request that carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+    /// Ask a streamed response to report what it cost.
+    ///
+    /// Without this a stream carries no `usage` at all — which is why every run
+    /// on disk says `tokens: 0` and the token budget has never stopped
+    /// anything. Alone among the four APIs this app will speak, OpenAI's makes
+    /// you ask: Ollama, Anthropic and Gemini all report usage unprompted.
+    ///
+    /// And, like `reasoning_effort` above, it is a field some servers speaking
+    /// this API do not know. See `WILL_NOT_COUNT`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Deserialize)]
@@ -118,7 +148,40 @@ struct OpenAiToolCallFunction {
 
 #[derive(Deserialize)]
 struct OpenAiUsage {
+    prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    /// Where the cached share of the prompt is reported.
+    ///
+    /// This app sends the same sixteen thousand characters of tool
+    /// declarations on every single turn, which is exactly what prompt caching
+    /// is for — and cached input is billed at a fraction of fresh input. Read
+    /// as one number, a large prompt looks expensive when nearly all of it is
+    /// cheap, and the wrong thing gets optimised.
+    prompt_tokens_details: Option<OpenAiPromptDetails>,
+    completion_tokens_details: Option<OpenAiCompletionDetails>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiPromptDetails {
+    cached_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiCompletionDetails {
+    /// Charged as output and never shown to anybody. Counting only what was
+    /// written makes a reasoning model look cheap when it is not.
+    reasoning_tokens: Option<u64>,
+}
+
+impl From<OpenAiUsage> for crate::syn::provider::Usage {
+    fn from(u: OpenAiUsage) -> Self {
+        crate::syn::provider::Usage {
+            input: u.prompt_tokens,
+            input_cached: u.prompt_tokens_details.and_then(|d| d.cached_tokens),
+            output: u.completion_tokens,
+            output_hidden: u.completion_tokens_details.and_then(|d| d.reasoning_tokens),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -346,6 +409,7 @@ impl OpenAiCompatProvider {
         req: &ChatRequest<'_>,
         stream: bool,
         reasoning_effort: Option<String>,
+        count: bool,
     ) -> OpenAiChatRequest {
         OpenAiChatRequest {
             model: req.model.to_string(),
@@ -354,10 +418,34 @@ impl OpenAiCompatProvider {
             temperature: req.temperature,
             tools: req.tools.map(|t| t.to_vec()),
             reasoning_effort,
+            // Only on a stream, because a plain response reports usage without
+            // being asked and the field would be one more thing for a server to
+            // reject for nothing.
+            stream_options: (stream && count).then_some(StreamOptions { include_usage: true }),
             // `num_ctx` is deliberately absent. The context window here is a
             // property of the model, not something the client asks for, and
             // an unknown field is rejected by some of these servers.
         }
+    }
+
+    /// Whether to ask this endpoint what a streamed turn cost.
+    ///
+    /// Yes, until it says no once.
+    fn will_count(&self) -> bool {
+        WILL_NOT_COUNT
+            .read()
+            .ok()
+            .is_none_or(|known| !known.contains(&self.base_url))
+    }
+
+    fn remember_will_not_count(&self) {
+        if let Ok(mut known) = WILL_NOT_COUNT.write() {
+            known.insert(self.base_url.clone());
+        }
+        log::info!(
+            "[Syn] {} does not accept stream_options; streamed turns from it will not be counted",
+            self.base_url
+        );
     }
 
     fn memo_key(&self, model: &str) -> String {
@@ -405,42 +493,47 @@ impl OpenAiCompatProvider {
             self.authorize(self.client.post(&url).json(&body)).send()
         };
 
-        let resp = post(self.body(req, stream, effort.clone()))
-            .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to connect to {}: {}", self.base_url, e))
-            })?;
+        let mut effort = effort;
+        let mut count = self.will_count();
 
-        if resp.status().is_success() {
-            return Ok(resp);
-        }
+        // Two things this endpoint may refuse, each learned once and remembered
+        // for the session. At most one retry per refusal, and both are safe to
+        // retry because a non-2xx arrives before any of the body is read, so
+        // nothing has been streamed to anybody yet.
+        for attempt in 0..3 {
+            let resp = post(self.body(req, stream, effort.clone(), count))
+                .await
+                .map_err(|e| {
+                    AppError::General(format!("Failed to connect to {}: {}", self.base_url, e))
+                })?;
 
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+            if resp.status().is_success() {
+                return Ok(resp);
+            }
 
-        let fixable = status == reqwest::StatusCode::BAD_REQUEST
-            && body.contains("reasoning_effort")
-            && effort.is_none();
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let refused = status == reqwest::StatusCode::BAD_REQUEST;
 
-        if !fixable {
+            if refused && body.contains("stream_options") && count {
+                self.remember_will_not_count();
+                count = false;
+                continue;
+            }
+            if refused && body.contains("reasoning_effort") && effort.is_none() {
+                self.remember_needs_none(req.model);
+                effort = Some("none".to_string());
+                continue;
+            }
+
+            let _ = attempt;
             return Err(self.explain(status, &body, what));
         }
 
-        self.remember_needs_none(req.model);
-
-        let retried = post(self.body(req, stream, Some("none".to_string())))
-            .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to connect to {}: {}", self.base_url, e))
-            })?;
-
-        if retried.status().is_success() {
-            return Ok(retried);
-        }
-
-        let status = retried.status();
-        let body = retried.text().await.unwrap_or_default();
-        Err(self.explain(status, &body, what))
+        Err(AppError::General(format!(
+            "{} at {} refused every request this could adapt",
+            what, self.base_url
+        )))
     }
 
     /// Turn a non-2xx into a message worth reading.
@@ -583,7 +676,7 @@ impl ChatProvider for OpenAiCompatProvider {
                 .and_then(|m| m.tool_calls)
                 .map(from_wire_tool_calls)
                 .unwrap_or_default(),
-            tokens: body.usage.and_then(|u| u.completion_tokens),
+            usage: body.usage.map(Into::into).unwrap_or_default(),
             duration_ms: Some(started.elapsed().as_millis() as u64),
         })
     }
@@ -631,10 +724,11 @@ impl ChatProvider for OpenAiCompatProvider {
 
                     match serde_json::from_str::<OpenAiChatResponse>(payload) {
                         Ok(parsed) => {
+                            // The final record of a stream carries usage and
+                            // no choices — but only when `stream_options` asked
+                            // for it. See `WILL_NOT_COUNT`.
                             if let Some(usage) = parsed.usage {
-                                if let Some(n) = usage.completion_tokens {
-                                    reply.tokens = Some(n);
-                                }
+                                reply.usage = usage.into();
                             }
                             for choice in parsed.choices {
                                 // `delta` while streaming; a few servers send
@@ -904,7 +998,7 @@ mod tests {
             num_ctx: 8192,
             tools: None,
         };
-        serde_json::to_value(provider.body(&req, false, provider.effort_for(model)))
+        serde_json::to_value(provider.body(&req, false, provider.effort_for(model), true))
             .expect("serialises")
     }
 
@@ -995,4 +1089,83 @@ mod tests {
             .to_string();
         assert!(msg.contains("check the API key"), "{msg}");
     }
+
+    // ── counting what a turn cost ─────────────────────────────────
+
+    /// A streamed request carries no usage unless it asks. Alone among the four
+    /// APIs this app will speak — Ollama, Anthropic and Gemini all report it
+    /// unprompted — and it is why every run on disk says `tokens: 0`.
+    #[test]
+    fn a_stream_asks_to_be_told_what_it_cost() {
+        let p = OpenAiCompatProvider::new("https://api.example/v1", None, None);
+        let messages = [ChatMessage::new("user", "hi")];
+        let req = ChatRequest {
+            model: "m",
+            messages: &messages,
+            temperature: None,
+            num_ctx: 8192,
+            tools: None,
+        };
+
+        let streamed = serde_json::to_value(p.body(&req, true, None, true)).expect("serialises");
+        assert_eq!(streamed["stream_options"]["include_usage"], serde_json::json!(true));
+
+        // Not on a plain response, which reports usage without being asked. One
+        // more field is one more thing for a server to reject for nothing.
+        let plain = serde_json::to_value(p.body(&req, false, None, true)).expect("serialises");
+        assert!(plain.get("stream_options").is_none());
+
+        // And not once the endpoint has said it will not have it.
+        let refused = serde_json::to_value(p.body(&req, true, None, false)).expect("serialises");
+        assert!(refused.get("stream_options").is_none());
+    }
+
+    /// Both halves, the cached share, and the reasoning nobody sees.
+    #[test]
+    fn usage_comes_back_split_the_way_it_is_billed() {
+        let body: OpenAiChatResponse = serde_json::from_str(
+            r#"{"choices":[],"usage":{
+                 "prompt_tokens":10000,"completion_tokens":200,
+                 "prompt_tokens_details":{"cached_tokens":9400},
+                 "completion_tokens_details":{"reasoning_tokens":1500}}}"#,
+        )
+        .expect("parses");
+
+        let usage: crate::syn::provider::Usage = body.usage.expect("there is usage").into();
+        assert_eq!(usage.input, Some(10_000));
+        assert_eq!(usage.input_cached, Some(9_400));
+        assert_eq!(usage.output, Some(200));
+        assert_eq!(usage.output_hidden, Some(1_500));
+    }
+
+    /// A server that reports the old two fields and nothing else still counts.
+    #[test]
+    fn an_endpoint_that_reports_only_the_totals_is_still_counted() {
+        let body: OpenAiChatResponse = serde_json::from_str(
+            r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#,
+        )
+        .expect("parses");
+
+        let usage: crate::syn::provider::Usage = body.usage.expect("there is usage").into();
+        assert_eq!(usage.charged(), Some(10));
+        assert_eq!(usage.input_cached, None, "absent is not zero");
+    }
+
+    /// `stream_options` is standard in OpenAI's API and unknown to some servers
+    /// that implement it — llama.cpp, LM Studio and vLLM all shipped this
+    /// endpoint before the field existed. So it is learned, not assumed, in the
+    /// same shape as `reasoning_effort` above.
+    #[test]
+    fn an_endpoint_that_refuses_to_count_is_not_asked_twice() {
+        let p = OpenAiCompatProvider::new("https://old-server.example/v1", None, None);
+        assert!(p.will_count(), "asked, until it says no");
+
+        p.remember_will_not_count();
+        assert!(!p.will_count());
+
+        // And the memory is that endpoint's, not everybody's.
+        let other = OpenAiCompatProvider::new("https://api.example/v1", None, None);
+        assert!(other.will_count());
+    }
+
 }

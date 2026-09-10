@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn the_model_talking_to_itself_is_not_evidence() {
         let mut run = run_with(Tempo::Working);
-        run.record_assistant(1, "để tôi xem…", None, 5);
+        run.record_assistant(1, "để tôi xem…", Default::default(), 5);
         assert_eq!(of(&run, &nothing()), Footing::Guessing);
     }
 

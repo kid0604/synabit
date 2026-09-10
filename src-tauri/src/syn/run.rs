@@ -231,8 +231,19 @@ pub struct Step {
     pub reversal: Option<crate::syn::registry::Reversal>,
     /// The opening of what came back, capped at `MAX_STEP_PREVIEW`.
     pub preview: String,
+    /// What this step was charged, in total.
+    ///
+    /// Kept as one number so a run written before the breakdown existed still
+    /// reads, and because a ceiling needs one number to compare against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
+    /// And the breakdown, for the inspector.
+    ///
+    /// Where the money actually goes is not visible in the total: on a turn
+    /// that reads a page, input dwarfs output, and how much of that input was
+    /// served from the provider's cache decides what it cost.
+    #[serde(default, skip_serializing_if = "crate::syn::provider::Usage::is_silent")]
+    pub usage: crate::syn::provider::Usage,
     pub ms: u64,
     pub at: String,
 }
@@ -247,6 +258,7 @@ struct NewStep<'a> {
     reversal: Option<crate::syn::registry::Reversal>,
     preview: &'a str,
     tokens: Option<u64>,
+    usage: crate::syn::provider::Usage,
     ms: u64,
 }
 
@@ -263,6 +275,7 @@ impl NewStep<'_> {
             reversal: None,
             preview: "",
             tokens: None,
+            usage: Default::default(),
             ms: 0,
         }
     }
@@ -519,6 +532,10 @@ impl Run {
         if matches!(step.kind, StepKind::ToolCall) {
             self.spent.tool_calls += 1;
         }
+        // The whole turn, not the reply. Every iteration re-sends the prompt,
+        // the tool declarations, the conversation and every page read into it —
+        // so input is most of what a run costs, and it was the half nobody was
+        // counting. A budget watching the reply alone never stopped anything.
         self.spent.tokens += step.tokens.unwrap_or(0);
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -532,6 +549,7 @@ impl Run {
             reversal: step.reversal,
             preview: step.preview.chars().take(MAX_STEP_PREVIEW).collect(),
             tokens: step.tokens,
+            usage: step.usage,
             ms: step.ms,
             at: now.clone(),
         });
@@ -539,12 +557,19 @@ impl Run {
     }
 
     /// The model said something — the answer, or the words before a tool call.
-    pub fn record_assistant(&mut self, iteration: u8, text: &str, tokens: Option<u64>, ms: u64) {
+    pub fn record_assistant(
+        &mut self,
+        iteration: u8,
+        text: &str,
+        usage: crate::syn::provider::Usage,
+        ms: u64,
+    ) {
         self.push(NewStep {
             kind: StepKind::Assistant,
             iteration,
             preview: text,
-            tokens,
+            tokens: usage.charged(),
+            usage,
             ms,
             ..NewStep::blank()
         });
@@ -582,6 +607,7 @@ impl Run {
             reversal: Some(reversal),
             preview,
             tokens: None,
+            usage: Default::default(),
             ms,
         });
     }
@@ -856,7 +882,12 @@ mod tests {
     #[test]
     fn only_tool_calls_are_charged_to_the_tool_budget() {
         let mut run = Run::new("g", None, budget());
-        run.record_assistant(0, "hi", Some(10), 5);
+        run.record_assistant(
+            0,
+            "hi",
+            crate::syn::provider::Usage { input: Some(7), output: Some(3), ..Default::default() },
+            5,
+        );
         run.note(0, "note");
         assert_eq!(run.spent.tool_calls, 0);
 
@@ -999,7 +1030,7 @@ mod tests {
     fn a_long_result_is_kept_only_as_far_as_the_preview_cap() {
         let mut run = Run::new("g", None, budget());
         let huge = "x".repeat(MAX_STEP_PREVIEW * 2);
-        run.record_assistant(0, &huge, None, 0);
+        run.record_assistant(0, &huge, Default::default(), 0);
         assert_eq!(run.steps[0].preview.chars().count(), MAX_STEP_PREVIEW);
     }
 
@@ -1009,7 +1040,7 @@ mod tests {
     fn the_preview_cap_counts_characters_not_bytes() {
         let mut run = Run::new("g", None, budget());
         let vietnamese = "đường".repeat(MAX_STEP_PREVIEW);
-        run.record_assistant(0, &vietnamese, None, 0);
+        run.record_assistant(0, &vietnamese, Default::default(), 0);
         assert_eq!(run.steps[0].preview.chars().count(), MAX_STEP_PREVIEW);
     }
 }

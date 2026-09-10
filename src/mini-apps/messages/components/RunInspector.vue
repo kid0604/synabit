@@ -24,7 +24,7 @@ import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemor
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
 import { captureFocus } from '../../../shared/syn/focus';
-import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard } from '../types';
+import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard, Run } from '../types';
 import { capabilityLabel } from '../composables/useSynConsent';
 
 const props = defineProps<{
@@ -274,6 +274,30 @@ const when = (iso: string) => {
 
 const duration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
 
+/**
+ * Where a run's tokens went, for the tooltip on the total.
+ *
+ * Summed across steps rather than stored: the run keeps one total, because a
+ * ceiling needs one number to compare against, and the breakdown belongs to the
+ * steps that were charged. Silent on a run recorded before any of it was
+ * counted — an empty tooltip is honest, a row of zeros is not.
+ */
+const tokenBreakdown = (run: Run): string => {
+  const sum = (pick: (u: NonNullable<RunStep['usage']>) => number | undefined) =>
+    run.steps.reduce((n, s) => n + (s.usage ? pick(s.usage) ?? 0 : 0), 0);
+
+  const input = sum(u => u.input);
+  const output = sum(u => u.output);
+  const cached = sum(u => u.input_cached);
+  const hidden = sum(u => u.output_hidden);
+  if (input + output === 0) return '';
+
+  const parts = [`${input} in`, `${output} out`];
+  if (cached > 0) parts.splice(1, 0, `${cached} of it cached`);
+  if (hidden > 0) parts.push(`${hidden} reasoning`);
+  return parts.join(' · ');
+};
+
 /** `12 / 50` — spent against the ceiling, or just spent when there is none. */
 const against = (spent: number, cap: number | null) =>
   cap === null ? String(spent) : `${spent} / ${cap}`;
@@ -444,6 +468,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <span v-if="selected.model">{{ selected.model }}</span>
               <span>{{ t('syn.run_rounds') }}: {{ against(selected.spent.iterations, selected.budget.iterations) }}</span>
               <span>{{ t('syn.run_tools') }}: {{ against(selected.spent.tool_calls, selected.budget.tool_calls) }}</span>
+              <!--
+                Tokens, which were never shown because they were never counted:
+                the reply's tokens alone, and on a streamed OpenAI-compatible
+                request not even those, so every run said zero. The number is
+                the whole turn now — input is most of what a run costs, being
+                the prompt, the tool declarations, the conversation and every
+                page read into them, re-sent on every round.
+              -->
+              <span v-if="selected.spent.tokens > 0" :title="tokenBreakdown(selected)">
+                {{ t('syn.run_tokens') }}: {{ against(selected.spent.tokens, selected.budget.tokens) }}
+              </span>
               <span>{{ duration(selected.spent.wall_ms) }}</span>
             </div>
 

@@ -187,7 +187,23 @@ export interface RunStep {
   ok?: boolean;
   reversal?: Reversal;
   preview: string;
+  /** What this step was charged, in total. */
   tokens?: number;
+  /**
+   * And the breakdown, which is where the money actually goes.
+   *
+   * On a turn that reads a page, input dwarfs output — the prompt, the tool
+   * declarations, the conversation and the page itself, re-sent every round —
+   * and how much of that input the provider served from its own cache decides
+   * what it cost. Absent on runs written before any of this was counted, which
+   * is not the same as zero. Mirrors `syn::provider::Usage`.
+   */
+  usage?: {
+    input?: number;
+    input_cached?: number;
+    output?: number;
+    output_hidden?: number;
+  };
   ms: number;
   at: string;
 }

@@ -3597,7 +3597,7 @@ mod tests {
         let vault = dir.path().to_str().expect("utf8");
 
         let mut run = finished_run(vault, "cái hoá đơn FPT thế nào rồi");
-        run.record_assistant(1, "Hoá đơn FPT đã thanh toán hôm 12/8.", None, 5);
+        run.record_assistant(1, "Hoá đơn FPT đã thanh toán hôm 12/8.", Default::default(), 5);
         crate::syn::run::save_run(vault, &run).expect("saved");
 
         let found = look_back_for_test(vault, serde_json::json!({ "query": "hoá đơn" }));
@@ -3616,7 +3616,7 @@ mod tests {
         let vault = dir.path().to_str().expect("utf8");
 
         let mut run = finished_run(vault, "check lại giúp tao");
-        run.record_assistant(1, "Con NexSafe đang down từ 9h sáng.", None, 5);
+        run.record_assistant(1, "Con NexSafe đang down từ 9h sáng.", Default::default(), 5);
         crate::syn::run::save_run(vault, &run).expect("saved");
 
         let found = look_back_for_test(vault, serde_json::json!({ "query": "nexsafe" }));
@@ -3631,7 +3631,7 @@ mod tests {
         let vault = dir.path().to_str().expect("utf8");
 
         let mut run = Run::new("bỏ giữa chừng", None, Budget::from_settings(&SynSettings::default()));
-        run.record_assistant(1, "đang làm thì...", None, 5);
+        run.record_assistant(1, "đang làm thì...", Default::default(), 5);
         run.state = crate::syn::run::RunState::Cancelled;
         crate::syn::run::save_run(vault, &run).expect("saved");
 
@@ -3647,7 +3647,7 @@ mod tests {
         let vault = dir.path().to_str().expect("utf8");
 
         let mut run = finished_run(vault, "đoán thử xem");
-        run.record_assistant(1, "Chắc là khoảng ba tuần.", None, 5);
+        run.record_assistant(1, "Chắc là khoảng ba tuần.", Default::default(), 5);
         run.footing = Some(crate::syn::footing::Footing::Guessing);
         crate::syn::run::save_run(vault, &run).expect("saved");
 
