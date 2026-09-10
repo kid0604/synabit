@@ -1617,6 +1617,27 @@ pub async fn syn_get_run(vault_path: String, run_id: String) -> Result<Run, AppE
     crate::syn::run::get_run(&vault_path, &run_id)
 }
 
+/// What a step actually returned, when its preview was not the whole of it.
+///
+/// `None` for the ordinary step, whose preview *is* the whole of it — the panel
+/// then shows what it already has and offers nothing to expand.
+///
+/// # Why this is a command and not a bigger run file
+///
+/// `list_runs` parses every run in the directory, which is why there is a
+/// retention cap at all. A page read of twenty-four thousand characters in each
+/// of five steps would make opening the list slow, always, for the sake of
+/// something almost nobody opens — so the whole results live in
+/// `runs/results/{id}.json` and are fetched one at a time.
+#[tauri::command]
+pub async fn syn_run_result(
+    vault_path: String,
+    run_id: String,
+    step: u32,
+) -> Result<Option<String>, AppError> {
+    crate::syn::run::load_result(&vault_path, &run_id, step)
+}
+
 #[tauri::command]
 pub async fn syn_delete_run(vault_path: String, run_id: String) -> Result<(), AppError> {
     crate::syn::run::delete_run(&vault_path, &run_id)

@@ -1835,6 +1835,7 @@
     "runs_tool_calls": "{n} lần gọi công cụ",
     "run_rounds": "Số vòng",
     "run_tokens": "Token",
+    "run_show_whole": "Xem toàn bộ kết quả",
     "run_tools": "Gọi công cụ",
     "run_round_n": "vòng {n}",
     "run_arguments": "Tham số",

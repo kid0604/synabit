@@ -420,7 +420,7 @@ impl SynEngine {
                 run.finish(RunState::Cancelled);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
                 stream.done();
-                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited));
+                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited, run));
             }
 
             if reply.tool_calls.is_empty() {
@@ -447,7 +447,7 @@ impl SynEngine {
                 }
                 stream.done();
 
-                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited));
+                return Ok(assemble(req.message_id, req.model, reply, started, tool_log, cited, run));
             }
 
             // Words said on the way to reaching for a tool are part of the
@@ -753,6 +753,7 @@ impl SynEngine {
                     started,
                     tool_log,
                     cited,
+                    run,
                 ));
             }
             LoopEnd::Ceiling(which) => {
@@ -822,6 +823,7 @@ impl SynEngine {
                     started,
                     tool_log,
                     cited,
+                    run,
                 ));
             }
             LoopEnd::DeadEnd => {}
@@ -896,7 +898,7 @@ impl SynEngine {
         );
         crate::syn::run::save_run_best_effort(req.vault_path, run);
 
-        Ok(assemble(req.message_id, req.model, reply, started, Vec::new(), Vec::new()))
+        Ok(assemble(req.message_id, req.model, reply, started, Vec::new(), Vec::new(), run))
     }
 
 }
@@ -1331,11 +1333,37 @@ fn onward(
 fn assemble(
     message_id: &str,
     model: &str,
-    reply: ChatReply,
+    mut reply: ChatReply,
     started: std::time::Instant,
     tool_log: Vec<SynToolCallEvent>,
     cited: Vec<crate::models::syn::SourceRef>,
+    run: &mut Run,
 ) -> SynMessage {
+    // Every address in the answer has to have been on something this run read.
+    //
+    // `footing` marks an answer `Grounded` when a reading tool came back, which
+    // is a claim about whether a source was opened and never about whether the
+    // answer stands on it. Asked for the links in a newsletter it had genuinely
+    // read, Syn wrote nineteen addresses assembled from the titles and a guess
+    // at who publishes such things; seven of the ten checked were 404, and the
+    // answer was marked grounded.
+    //
+    // Decidable, so decided here rather than asked of the model.
+    let read = run.everything_read();
+    let invented = crate::syn::answer::invented(&reply.content, &read);
+    if !invented.is_empty() {
+        log::warn!("[Syn] {} address(es) in the answer were never read", invented.len());
+        run.note(
+            run.spent.iterations,
+            format!(
+                "{} address(es) in the answer were on no page this run read: {}",
+                invented.len(),
+                invented.join(", ")
+            ),
+        );
+        reply.content.push_str(&crate::syn::answer::warning(&invented));
+    }
+
     SynMessage {
         id: message_id.to_string(),
         role: "assistant".to_string(),
@@ -2362,6 +2390,153 @@ mod driving {
         assert_eq!(run.state, RunState::Done, "no question, no interruption");
         assert!(run.pending_choice.is_none());
         assert_eq!(run.spent.tool_calls, 2, "both the search and the removal ran");
+    }
+
+    /// An address in an answer must have been on something the run read.
+    ///
+    /// The whole of the 10 September failure, driven end to end: a real tool
+    /// call that returns a real page, and an answer carrying an address that is
+    /// not on it. `footing` calls this grounded — a reading tool came back —
+    /// and it is grounded, and nineteen of its addresses were invented.
+    #[tokio::test]
+    async fn an_answer_cannot_hand_over_an_address_nobody_read() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut run = Run::new("tìm note", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("query_nodes", serde_json::json!({ "query": "type:note" })),
+                ChatReply {
+                    content: "Bài đó ở [đây](https://wasmi-labs.github.io/blog/wasmi-2.0/)."
+                        .into(),
+                    tool_calls: vec![],
+                    usage: Default::default(),
+                    duration_ms: None,
+                },
+            ],
+        )));
+
+        let answer = engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("tìm note"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+
+        assert!(
+            answer.content.contains("not on any page I read"),
+            "the invention has to be visible to whoever is reading: {}",
+            answer.content
+        );
+        assert!(
+            answer.content.contains("Bài đó ở"),
+            "and the answer itself is not edited away: {}",
+            answer.content
+        );
+        assert!(
+            run.steps.iter().any(|s| s.preview.contains("on no page this run read")),
+            "and the run says it happened, so it can be counted later"
+        );
+    }
+
+    /// And an address that *was* read passes through untouched, or the check is
+    /// a warning on every answer and nobody reads it.
+    #[tokio::test]
+    async fn an_address_that_was_read_is_left_alone() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        // The note's own body carries the address, and `get_node` reads it back
+        // — so the answer is quoting something this run actually saw.
+        const BODY: &str = "xem https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/";
+        {
+            let bridge = db.lock().expect("db");
+            bridge
+                .upsert_node(&crate::models::node::NodeMetadata {
+                    id: "Notes/link.md".to_string(),
+                    node_type: "note".to_string(),
+                    title: "link".to_string(),
+                    content: BODY.to_string(),
+                    properties: serde_json::json!({}),
+                    created_at: "2026-01-01 00:00:00".to_string(),
+                    updated_at: "2026-01-01 00:00:00".to_string(),
+                    timestamp: 0,
+                    blocks: None,
+                })
+                .expect("seed");
+        }
+        let note = std::path::Path::new(&vault).join("Notes");
+        std::fs::create_dir_all(&note).expect("Notes");
+        std::fs::write(note.join("link.md"), BODY).expect("written");
+
+        let mut run = Run::new("đọc note", Some("conv-1".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("get_node", serde_json::json!({ "node_id": "Notes/link.md" })),
+                ChatReply {
+                    content: "Link: https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/".into(),
+                    tool_calls: vec![],
+                    usage: Default::default(),
+                    duration_ms: None,
+                },
+            ],
+        )));
+
+        let answer = engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("đọc note"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+
+        assert!(
+            !answer.content.contains("not on any page I read"),
+            "quoting what was read is the ordinary case: {}",
+            answer.content
+        );
     }
 
     /// The gate P4 was given, run against a tool that reaches outside and does

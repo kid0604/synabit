@@ -2431,5 +2431,114 @@ mod tests {
 
 }
 
+/// Two real pages, kept as they were served.
+///
+/// # Why fixtures written by hand were not enough
+///
+/// Every rule in this module was derived from one page and then applied to
+/// every page, and each one died the first time it met a second real one. The
+/// tests could not catch that, because the fixture and the rule had the same
+/// author and the same example: `A_FRONT_PAGE` was written to look like GenK,
+/// so it confirmed the rule taken from GenK. It was incapable of failing on
+/// *This Week in Rust*, and This Week in Rust is where the rule broke — five
+/// links offered out of two hundred and twenty-nine, and nineteen addresses
+/// invented to fill the gap.
+///
+/// So these are not written here. They were fetched, and the only thing removed
+/// is `<script>`, `<style>` and comments — which cuts GenK from 443 KB to
+/// 159 KB and changes none of the numbers below. That was checked before they
+/// were committed, and it is why the assertions carry exact counts: if a change
+/// to extraction moves them, somebody should have to look at why.
+#[cfg(test)]
+mod real_pages {
+    use super::*;
 
+    const GENK: &str = include_str!("testdata/pages/genk-front-page.html");
+    const GENK_URL: &str = "https://genk.vn/";
 
+    const TWIR: &str = include_str!("testdata/pages/this-week-in-rust-667.html");
+    const TWIR_URL: &str = "https://this-week-in-rust.org/blog/2026/09/02/this-week-in-rust-667/";
+
+    /// A news front page: readability finds almost nothing, and the page is
+    /// still full of things to read.
+    #[test]
+    fn a_real_front_page_is_a_list_and_not_an_empty_page() {
+        let page = reduce(GENK, GENK_URL);
+
+        assert_eq!(page.whole, 50, "readability keeps one headline out of 149 links");
+        assert_eq!(page.shape, Shape::Index { stories: 52, others: 31 });
+        assert!(
+            crate::syn::browser::worth_keeping(&page),
+            "fifty characters and fifty-two stories is a successful read, not an empty one"
+        );
+    }
+
+    /// And it leads with what the page leads with.
+    #[test]
+    fn a_real_front_page_offers_its_lead_story_first() {
+        let offered = worth_offering(&links_on(GENK, GENK_URL));
+
+        assert_eq!(offered.len(), MAX_LINKS);
+        assert!(
+            offered[0].url.contains("poco-f9-ultra-va-phep-thu-lon-nhat"),
+            "the lead story, not the first link: {}",
+            offered[0].url
+        );
+        assert_eq!(offered[0].heading, Some(2), "and the page said it was the biggest");
+
+        // The old rule took the first twenty in document order, which on this
+        // page is thirty-five links of menu and partner sites.
+        assert!(
+            !offered[..5].iter().any(|l| l.url.contains("gamek.vn") || l.url.contains("kenh14")),
+            "partner sites are not the lead"
+        );
+    }
+
+    /// The page that broke the rule.
+    ///
+    /// 229 links, 221 of them inside `<main>`, and five under a heading — all
+    /// five GitHub housekeeping. "Three or more stories, so show only stories"
+    /// matched those five and hid every article.
+    #[test]
+    fn a_page_that_is_nothing_but_links_still_hands_them_over() {
+        let all = links_on(TWIR, TWIR_URL);
+
+        assert_eq!(all.len(), 229);
+        assert_eq!(
+            all.iter().filter(|l| l.is_a_story()).count(),
+            5,
+            "a heading is the wrong test on a page whose links live in lists"
+        );
+
+        let offered = worth_offering(&all);
+        assert_eq!(offered.len(), MAX_LINKS, "not five");
+
+        // The exact article Syn invented an address for: it wrote
+        // `wasmi-labs.github.io/blog/wasmi-2.0/`, and this is the real one.
+        assert!(
+            offered.iter().any(|l| l.url == "https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/"),
+            "a real article has to be reachable: {:?}",
+            offered.iter().map(|l| &l.url).collect::<Vec<_>>()
+        );
+    }
+
+    /// And it says it is showing a fraction, because a model that cannot tell
+    /// it holds a fifth of the links is a model that writes the rest.
+    #[test]
+    fn a_page_with_more_links_than_fit_says_how_many_it_has() {
+        let all = links_on(TWIR, TWIR_URL);
+        let said = wrap_links(&worth_offering(&all), all.len());
+
+        assert!(said.contains("These are 20 of the 229 links on the page."), "{said}");
+        assert!(said.contains("must be one that is written here"));
+    }
+
+    /// The date was extracted all along and thrown away, while `DATE_RULE` — a
+    /// paragraph on every page — asked the model to go and find it.
+    #[test]
+    fn a_real_article_page_carries_its_date() {
+        let page = reduce(TWIR, TWIR_URL);
+        assert!(!page.published_at.is_empty(), "the page says when it was published");
+        assert!(wrap(&page).contains("Published: "), "and so does what the model reads");
+    }
+}

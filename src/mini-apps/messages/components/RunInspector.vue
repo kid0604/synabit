@@ -19,6 +19,7 @@ import {
   Info, AlertTriangle, ChevronRight, Pin, PinOff, Check, Sparkles, X as XIcon,
 } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../../../utils/logger';
 import { useSynRuns } from '../composables/useSynRuns';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
@@ -273,6 +274,38 @@ const when = (iso: string) => {
 };
 
 const duration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
+
+/**
+ * How much of a result the run file keeps. Mirrors `run::MAX_STEP_PREVIEW`.
+ *
+ * Only used to decide whether there is more to fetch — a preview at exactly the
+ * cap is one that was cut.
+ */
+const PREVIEW_CAP = 4000;
+
+/** The whole results fetched so far, by step index. */
+const whole = ref<Record<number, string>>({});
+
+/**
+ * Fetch what a step actually returned.
+ *
+ * One at a time and only when asked: the whole results live beside the run
+ * rather than inside it, because `list_runs` parses every run file and a page
+ * read in every step would make opening the list slow for everybody.
+ */
+const showWhole = async (step: number) => {
+  if (!selected.value) return;
+  try {
+    const text = await invoke<string | null>('syn_run_result', {
+      vaultPath: props.vaultPath,
+      runId: selected.value.id,
+      step,
+    });
+    if (text) whole.value[step] = text;
+  } catch (e) {
+    logger.error('[Syn] Could not read what that step returned', e);
+  }
+};
 
 /**
  * Where a run's tokens went, for the tooltip on the total.
@@ -533,11 +566,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                               text-gray-600 dark:text-gray-300 overflow-x-auto">{{ prettyArgs(step.args) }}</pre>
                 </details>
 
+                <!--
+                  What the model was actually given.
+
+                  The preview stops at four thousand characters and a page slice
+                  is twenty-four thousand, so most of the largest thing in a turn
+                  was not written down anywhere. Every extraction bug found on
+                  9 and 10 September was invisible until somebody fetched the
+                  page by hand and re-ran the extraction on it.
+                -->
                 <pre
                   v-if="step.preview"
                   class="mt-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/60 text-[11px]
                          text-gray-600 dark:text-gray-300 max-h-56 overflow-auto whitespace-pre-wrap"
-                >{{ step.preview }}</pre>
+                >{{ whole[step.index] ?? step.preview }}</pre>
+                <button
+                  v-if="step.preview.length >= PREVIEW_CAP && whole[step.index] === undefined"
+                  class="mt-1 text-[11px] text-violet-500 hover:underline cursor-pointer"
+                  @click="showWhole(step.index)"
+                >
+                  {{ t('syn.run_show_whole') }}
+                </button>
 
                 <p v-if="reversalText(step.reversal)" class="mt-2 text-[11px] text-gray-400">
                   {{ t('syn.run_undo') }}: {{ reversalText(step.reversal) }}

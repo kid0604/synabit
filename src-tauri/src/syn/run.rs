@@ -231,6 +231,33 @@ pub struct Step {
     pub reversal: Option<crate::syn::registry::Reversal>,
     /// The opening of what came back, capped at `MAX_STEP_PREVIEW`.
     pub preview: String,
+    /// The whole of it, when it did not fit in the preview.
+    ///
+    /// # Why this is not in the run file
+    ///
+    /// `list_runs` parses every file in the directory, which is why there is a
+    /// retention cap at all — so a page read of twenty-four thousand characters
+    /// in each of five steps would make opening the list slow, on every run,
+    /// for the sake of something almost nobody opens.
+    ///
+    /// It goes to `runs/results/{id}.json` instead, written beside the run and
+    /// read only when somebody asks. Skipped here so a run file is unchanged
+    /// and every one already on disk still parses.
+    ///
+    /// # Why it is kept at all
+    ///
+    /// Because nothing has ever been able to see what actually reaches the
+    /// model. The preview is four thousand characters against a page slice of
+    /// twenty-four thousand: **five sixths of the largest thing in a turn
+    /// existed nowhere.** Every extraction bug found on 9 and 10 September was
+    /// invisible until somebody fetched the page by hand and re-ran `reduce` on
+    /// it, and none of them showed up in a log, a test or the inspector.
+    ///
+    /// It is also what `answer::grounded_in` reads: an address in an answer has
+    /// to have been in something the run actually read, and that cannot be
+    /// checked against a preview of it.
+    #[serde(skip)]
+    pub full: Option<String>,
     /// What this step was charged, in total.
     ///
     /// Kept as one number so a run written before the breakdown existed still
@@ -548,6 +575,11 @@ impl Run {
             ok: step.ok,
             reversal: step.reversal,
             preview: step.preview.chars().take(MAX_STEP_PREVIEW).collect(),
+            // Only when there is more than the preview holds: for the great
+            // majority of steps the preview *is* the whole thing, and a second
+            // copy of it would be waste in memory and on disk.
+            full: (step.preview.chars().count() > MAX_STEP_PREVIEW)
+                .then(|| step.preview.to_string()),
             tokens: step.tokens,
             usage: step.usage,
             ms: step.ms,
@@ -573,6 +605,24 @@ impl Run {
             ms,
             ..NewStep::blank()
         });
+    }
+
+    /// Everything this run actually read, whole.
+    ///
+    /// The haystack for `answer::invented`: an address in an answer has to have
+    /// appeared in one of these. Tool calls only — an assistant step is the
+    /// model's own words, and checking its addresses against its own earlier
+    /// words would let a fabrication vouch for itself.
+    ///
+    /// `full` where the preview was not the whole of it, because an address on
+    /// line four hundred of a page is exactly the sort that gets invented and
+    /// exactly the sort a four-thousand-character preview loses.
+    pub fn everything_read(&self) -> Vec<String> {
+        self.steps
+            .iter()
+            .filter(|s| matches!(s.kind, StepKind::ToolCall))
+            .map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone()))
+            .collect()
     }
 
     /// How many times this run has successfully called one tool.
@@ -709,7 +759,48 @@ fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
 pub fn save_run(vault_path: &str, run: &Run) -> AppResult<()> {
     let dir = runs_dir(vault_path)?;
     let json = serde_json::to_string_pretty(run)?;
-    atomic_write(&run_path(&dir, &run.id), &json)
+    atomic_write(&run_path(&dir, &run.id), &json)?;
+    save_results(&dir, run)
+}
+
+/// The directory for what would not fit in a run file.
+///
+/// A directory rather than a `{id}.results.json` beside the run, because
+/// `list_runs` walks this directory looking for `.json` files and would try to
+/// parse each one as a run. A directory has no extension and is skipped.
+fn results_dir(dir: &Path) -> AppResult<PathBuf> {
+    let path = dir.join("results");
+    std::fs::create_dir_all(&path)
+        .map_err(|e| AppError::General(format!("Failed to create Syn/runs/results: {e}")))?;
+    Ok(path)
+}
+
+/// Write the full results, if this run has any that outgrew their preview.
+fn save_results(dir: &Path, run: &Run) -> AppResult<()> {
+    let whole: std::collections::BTreeMap<u32, &String> = run
+        .steps
+        .iter()
+        .filter_map(|s| s.full.as_ref().map(|f| (s.index, f)))
+        .collect();
+
+    if whole.is_empty() {
+        return Ok(());
+    }
+    let path = results_dir(dir)?.join(format!("{}.json", run.id));
+    atomic_write(&path, &serde_json::to_string(&whole)?)
+}
+
+/// What a step actually returned, for a run already on disk.
+///
+/// `None` when the step's preview was the whole of it, which is the ordinary
+/// case — the caller shows the preview it already has.
+pub fn load_result(vault_path: &str, run_id: &str, step: u32) -> AppResult<Option<String>> {
+    let path = results_dir(&runs_dir(vault_path)?)?.join(format!("{run_id}.json"));
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let whole: std::collections::BTreeMap<u32, String> = serde_json::from_str(&raw)?;
+    Ok(whole.get(&step).cloned())
 }
 
 /// The same, but a failure is logged rather than propagated.
@@ -832,14 +923,31 @@ pub fn prune_runs(vault_path: &str) {
     // Oldest first, so the tail past the cap is what goes.
     files.sort_by_key(|(modified, _)| *modified);
     for (_, path) in files.iter().take(files.len() - KEEP_RUNS) {
+        // The results go with the run. They are much the larger of the two, so
+        // a pruner that forgot them would keep the whole history of everything
+        // Syn ever read while claiming to keep two hundred transcripts.
+        if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+            forget_results(&dir, id);
+        }
         if let Err(e) = std::fs::remove_file(path) {
             log::warn!("[Syn] Could not prune old run {:?}: {}", path.file_name(), e);
         }
     }
 }
 
+/// Remove what a run read, the run itself being gone.
+fn forget_results(dir: &Path, id: &str) {
+    let path = dir.join("results").join(format!("{id}.json"));
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::warn!("[Syn] Could not remove results for run {id}: {e}");
+        }
+    }
+}
+
 pub fn delete_run(vault_path: &str, id: &str) -> AppResult<()> {
     let dir = runs_dir(vault_path)?;
+    forget_results(&dir, id);
     let path = run_path(&dir, id);
     if path.exists() {
         std::fs::remove_file(&path)?;
@@ -1043,6 +1151,107 @@ mod tests {
         run.record_assistant(0, &vietnamese, Default::default(), 0);
         assert_eq!(run.steps[0].preview.chars().count(), MAX_STEP_PREVIEW);
     }
+
+    // ── what actually reached the model ───────────────────────────
+
+    fn a_run_that_read(text: &str) -> Run {
+        let mut run = Run::new("g", None, budget());
+        run.record_tool(
+            0,
+            "browse",
+            serde_json::json!({ "what": "https://x.test/" }),
+            true,
+            crate::syn::registry::Reversal::Nothing,
+            text,
+            5,
+        );
+        run
+    }
+
+    /// The preview is four thousand characters and a page slice is
+    /// twenty-four thousand, so five sixths of the largest thing in a turn
+    /// existed nowhere at all. Every extraction bug found on 9 and 10 September
+    /// was invisible until somebody fetched the page by hand.
+    #[test]
+    fn a_result_bigger_than_its_preview_is_kept_whole() {
+        let huge = "đường".repeat(MAX_STEP_PREVIEW);
+        let run = a_run_that_read(&huge);
+
+        assert_eq!(run.steps[0].preview.chars().count(), MAX_STEP_PREVIEW);
+        assert_eq!(
+            run.steps[0].full.as_ref().map(|f| f.chars().count()),
+            Some(huge.chars().count()),
+        );
+    }
+
+    /// And a result that fits is not stored twice.
+    #[test]
+    fn a_result_that_fits_in_its_preview_is_not_copied() {
+        let run = a_run_that_read("ngắn thôi");
+        assert!(run.steps[0].full.is_none());
+        assert_eq!(run.steps[0].preview, "ngắn thôi");
+    }
+
+    /// The haystack for `answer::invented`: whole where there is a whole, and
+    /// tool calls only — an assistant step is the model's own words, and
+    /// letting those vouch for an address would let a fabrication cite itself.
+    #[test]
+    fn what_a_run_read_is_the_tool_results_and_not_its_own_answers() {
+        let mut run = a_run_that_read("https://x.test/real");
+        run.record_assistant(0, "https://x.test/invented", Default::default(), 1);
+        run.note(0, "https://x.test/noted");
+
+        let read = run.everything_read();
+        assert_eq!(read.len(), 1);
+        assert!(read[0].contains("https://x.test/real"));
+    }
+
+    /// Written beside the run rather than inside it, because `list_runs`
+    /// parses every file in the directory and a page read in each step would
+    /// make opening the list slow for everybody, always.
+    #[test]
+    fn the_whole_result_is_kept_out_of_the_run_file() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let huge = "đường".repeat(MAX_STEP_PREVIEW);
+        let run = a_run_that_read(&huge);
+
+        save_run(vault, &run).expect("saved");
+
+        let on_disk = std::fs::read_to_string(
+            dir.path().join("Syn/runs").join(format!("{}.json", run.id)),
+        )
+        .expect("the run is there");
+        assert!(
+            on_disk.chars().count() < MAX_STEP_PREVIEW * 3,
+            "the run file stays small: {} chars",
+            on_disk.chars().count()
+        );
+
+        let whole = load_result(vault, &run.id, 0).expect("readable").expect("kept");
+        assert_eq!(whole.chars().count(), huge.chars().count());
+
+        // And a run that read nothing large writes no results file at all.
+        let small = a_run_that_read("ngắn");
+        save_run(vault, &small).expect("saved");
+        assert!(load_result(vault, &small.id, 0).expect("readable").is_none());
+    }
+
+    /// The results are much the larger of the two, so a pruner that forgot
+    /// them would keep everything Syn ever read while claiming to keep two
+    /// hundred transcripts.
+    #[test]
+    fn deleting_a_run_takes_what_it_read_with_it() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let run = a_run_that_read(&"đường".repeat(MAX_STEP_PREVIEW));
+
+        save_run(vault, &run).expect("saved");
+        assert!(load_result(vault, &run.id, 0).expect("readable").is_some());
+
+        delete_run(vault, &run.id).expect("deleted");
+        assert!(load_result(vault, &run.id, 0).expect("readable").is_none());
+    }
 }
 
 /// The two sides of the wire have to agree about what a run is.
@@ -1161,4 +1370,5 @@ mod agreement {
             );
         }
     }
+
 }

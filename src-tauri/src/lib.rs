@@ -876,6 +876,7 @@ pub fn run() {
             syn_commands::syn_list_runs,
             syn_commands::syn_get_run,
             syn_commands::syn_cancel_run,
+            syn_commands::syn_run_result,
             syn_commands::syn_delete_run,
             syn_commands::syn_preview_prompt,
             syn_commands::syn_list_threads,

@@ -1835,6 +1835,7 @@
     "runs_tool_calls": "{n} tool calls",
     "run_rounds": "Rounds",
     "run_tokens": "Tokens",
+    "run_show_whole": "Show the whole result",
     "run_tools": "Tool calls",
     "run_round_n": "round {n}",
     "run_arguments": "Arguments",

@@ -450,6 +450,7 @@ mod tests {
             ok: Some(ok),
             reversal: None,
             preview: String::new(),
+            full: None,
             tokens: None,
             usage: Default::default(),
             ms: 0,
