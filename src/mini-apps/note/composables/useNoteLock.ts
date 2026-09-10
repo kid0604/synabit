@@ -3,10 +3,11 @@ import { ref } from 'vue';
 export function useNoteLock(
   appLockStore: any,
   handleNoteSelect: (id: string) => void,
+  openHistory?: (id: string) => void,
 ) {
   const showNoteLockScreen = ref(false);
   const pendingNoteId = ref<string | null>(null);
-  const pendingNoteAction = ref<'view' | 'unprotect'>('view');
+  const pendingNoteAction = ref<'view' | 'unprotect' | 'history'>('view');
   const noteLockTitle = ref('Enter PIN to view this note');
 
   const handleNoteLockUnlocked = () => {
@@ -17,6 +18,9 @@ export function useNoteLock(
       if (pendingNoteAction.value === 'view') {
         appLockStore.unlockNote(id);
         handleNoteSelect(id);
+      } else if (pendingNoteAction.value === 'history') {
+        appLockStore.unlockNote(id);
+        openHistory?.(id);
       } else if (pendingNoteAction.value === 'unprotect') {
         appLockStore.toggleProtectedNote(id);
       }

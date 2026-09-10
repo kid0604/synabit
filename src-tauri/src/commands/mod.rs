@@ -13,6 +13,7 @@ pub mod feeds;
 pub mod license_cmds;
 pub mod migration;
 pub mod nodes;
+pub mod paste;
 pub mod people;
 pub mod syn;
 pub mod sync;

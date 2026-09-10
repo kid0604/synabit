@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createTestingPinia } from '@pinia/testing';
 import NoteApp from '../NoteApp.vue';
+import NoteHistoryModal from '../NoteHistoryModal.vue';
+import { useAppLockStore } from '../../../stores/useAppLockStore';
 import * as core from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 
@@ -248,5 +250,88 @@ describe('NoteApp.vue', () => {
     // been moved on disk yet; the undo window is still open.
     expect((wrapper.vm as any).notes.length).toBe(0);
     expect(core.invoke).not.toHaveBeenCalledWith('trash_node_file', expect.anything());
+  });
+});
+
+describe('NoteApp.vue version history', () => {
+  const ID = 'Notes/secret.md';
+  const summary = {
+    id: ID, node_type: 'note', title: 'Secret', preview: 'hello',
+    properties: { tags: [], pinned: false, full_width: false },
+    created_at: '2026-05-01 00:00:00', updated_at: '2026-05-01 00:00:00',
+    timestamp: 1746057600000,
+  };
+
+  const mountApp = async (locked: boolean) => {
+    vi.mocked(core.invoke).mockImplementation((cmd) => {
+      if (cmd === 'get_node_summaries') return Promise.resolve([summary]);
+      if (cmd === 'get_linked_nodes') return Promise.resolve([]);
+      if (cmd === 'list_node_versions') return Promise.resolve([]);
+      // What the restored file reads back as: frontmatter parsed out, body alone.
+      if (cmd === 'get_node') return Promise.resolve({
+        id: ID, node_type: 'note', title: 'Secret', content: 'the first draft\n', properties: {},
+      });
+      return Promise.resolve();
+    });
+    const wrapper = mount(NoteApp, {
+      props: { vaultPath: '/mock/vault' },
+      global: {
+        plugins: [createTestingPinia({
+          createSpy: vi.fn,
+          initialState: { app: { vaultPath: '/mock/vault' }, appLock: { isEnabled: true } },
+        })],
+        stubs: { TiptapEditor: true, NoteGraph: true, 'lucide-vue-next': true },
+        mocks: { $t: (key: string) => key },
+      },
+    });
+    const appLock = useAppLockStore();
+    vi.mocked(appLock.isNoteProtected).mockReturnValue(locked);
+    vi.mocked(appLock.isNoteAccessible).mockReturnValue(!locked);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return wrapper;
+  };
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // Every version of a note is the note. Right-click, History used to show
+  // all of them for a note that asks for a PIN to open.
+  it('asks for the PIN before showing the history of a locked note', async () => {
+    const wrapper = await mountApp(true);
+
+    (wrapper.vm as any).openHistory(ID);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(wrapper.findComponent(NoteHistoryModal).exists()).toBe(false);
+    expect(core.invoke).not.toHaveBeenCalledWith('list_node_versions', expect.anything());
+  });
+
+  it('opens the history of a note with no PIN straight away', async () => {
+    const wrapper = await mountApp(false);
+
+    (wrapper.vm as any).openHistory(ID);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(wrapper.findComponent(NoteHistoryModal).exists()).toBe(true);
+    expect(core.invoke).toHaveBeenCalledWith('list_node_versions', expect.objectContaining({ relPath: ID }));
+  });
+
+  // The restore wrote a whole file. The tab holds a body, so it reads the note
+  // back the way any note is read rather than taking the file into the editor,
+  // which is how a restored note came to have two frontmatter blocks.
+  it('reads a restored note back from disk as a body', async () => {
+    const wrapper = await mountApp(false);
+    const exposed = wrapper.vm as any;
+    exposed.tabContents[ID] = 'written a minute ago';
+
+    exposed.openHistory(ID);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const modal = wrapper.findComponent(NoteHistoryModal);
+    expect(typeof modal.props('beforeRestore')).toBe('function');
+
+    modal.vm.$emit('restored');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(core.invoke).toHaveBeenCalledWith('get_node', { id: ID });
+    expect(exposed.tabContents[ID]).toBe('the first draft\n');
   });
 });

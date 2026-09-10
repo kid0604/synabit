@@ -101,6 +101,12 @@ tauri-plugin-global-shortcut = "2"
 # user having launched anything first.
 tauri-plugin-autostart = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# For sending the WKWebView an editing command Tauri has no API for — see
+# `commands::paste`. Already in the tree through wry, so this is a name for it
+# rather than a new crate.
+objc2 = "0.6"
+
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1.1"
 ctor = "0.2"

@@ -126,4 +126,45 @@ describe('useNoteSave', () => {
       expect(h.notes.value[0].summary).toBe('a new opening line');
     });
   });
+
+  describe('flushSave', () => {
+    // A restore keeps the version it replaces, and a version is what reached
+    // disk. What the autosave was still waiting on has to get there first.
+    it('writes a pending save now rather than when its timer runs', async () => {
+      const h = harness();
+      h.api.onEditorUpdate('typed just now', 'Notes/a.md');
+      expect(h.writeNode).not.toHaveBeenCalled();
+
+      await h.api.flushSave('Notes/a.md');
+
+      expect(h.writeNode).toHaveBeenCalledTimes(1);
+      expect(h.writeNode.mock.calls[0][0].content).toBe('typed just now');
+      expect(h.api.saveTimeouts.has('Notes/a.md')).toBe(false);
+
+      // And the timer it replaced does not write the same thing again.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.writeNode).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks the editor for what it has not handed over yet', async () => {
+      const h = harness();
+      // Serialisation that has not happened yet has not scheduled a save
+      // either; flushing it is what schedules one.
+      const flushSerialize = vi.fn(() => h.api.onEditorUpdate('still in the editor', 'Notes/a.md'));
+      h.api.editorRefs.value['Notes/a.md'] = { flushSerialize };
+
+      await h.api.flushSave('Notes/a.md');
+
+      expect(flushSerialize).toHaveBeenCalled();
+      expect(h.writeNode.mock.calls[0][0].content).toBe('still in the editor');
+    });
+
+    it('writes nothing when nothing is waiting', async () => {
+      const h = harness();
+
+      await h.api.flushSave('Notes/a.md');
+
+      expect(h.writeNode).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -3148,7 +3148,26 @@ pub(crate) fn crdt_apply_safe(
     node_id: &str,
     content: &str,
 ) -> AppResult<()> {
+    crdt_apply_safe_as(db, vault_id, node_id, content, None)
+}
+
+/// `crdt_apply_safe`, writing under a peer other than the device's own.
+///
+/// For restores, which need a change Loro will not fold into the edits before
+/// them — see `db::crdt::restore_peer_of`.
+pub(crate) fn crdt_apply_safe_as(
+    db: &crate::db::DbBridge,
+    vault_id: &str,
+    node_id: &str,
+    content: &str,
+    peer: Option<u64>,
+) -> AppResult<()> {
     let doc = db.get_crdt_doc(vault_id, node_id)?;
+    if let Some(peer) = peer {
+        doc.set_peer_id(peer).map_err(|e| {
+            crate::error::AppError::General(format!("set_peer_id error: {:?}", e))
+        })?;
+    }
     let doc_ref = &doc;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::sync::core::crdt::apply_node_update(doc_ref, content)

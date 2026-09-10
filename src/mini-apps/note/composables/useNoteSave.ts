@@ -45,35 +45,59 @@ export function useNoteSave(
     return tabId;
   };
 
+  const writeTab = async (tabId: string, note: NoteItem) => {
+    suppressWatcherUntil = Date.now() + 3000;
+
+    // The editor turns the document into markdown on a short delay of its
+    // own, so ask it to finish first. A no-op on the usual path — this
+    // save was scheduled *by* that serialisation — but a save triggered
+    // from anywhere else, a rename most of all, would otherwise write the
+    // note as it stood a fifth of a second ago.
+    (editorRefs.value?.[tabId] as { flushSerialize?: () => void } | undefined)?.flushSerialize?.();
+
+    const content = tabContents.value[tabId] || '';
+    const fullRaw = content;
+    try {
+        await ns.writeNode(buildNotePayload(note, fullRaw));
+        note.summary = content.substring(0, 150).trim();
+        bus.emit('note:updated-external', { id: note.id, content });
+        // Notify transclusion nodes that this note's blocks may have changed
+        window.dispatchEvent(new CustomEvent('synabit-block-refresh', {
+          detail: { nodeId: note.id }
+        }));
+    } catch(e) { logger.error("Failed to save note:", String(e)); }
+  };
+
   const saveNoteForTab = (rawTabId: string) => {
     const tabId = resolveTabId(rawTabId);
     const note = notes.value.find(n => n.id === tabId);
     if (!note) { logger.warn('[NoteApp] saveNoteForTab: note not found for', tabId); return; }
     const existing = saveTimeouts.get(tabId);
     if (existing) clearTimeout(existing);
-    saveTimeouts.set(tabId, setTimeout(async () => {
+    saveTimeouts.set(tabId, setTimeout(() => {
         saveTimeouts.delete(tabId);
-        suppressWatcherUntil = Date.now() + 3000;
-
-        // The editor turns the document into markdown on a short delay of its
-        // own, so ask it to finish first. A no-op on the usual path — this
-        // save was scheduled *by* that serialisation — but a save triggered
-        // from anywhere else, a rename most of all, would otherwise write the
-        // note as it stood a fifth of a second ago.
-        (editorRefs.value?.[tabId] as { flushSerialize?: () => void } | undefined)?.flushSerialize?.();
-
-        const content = tabContents.value[tabId] || '';
-        const fullRaw = content;
-        try {
-            await ns.writeNode(buildNotePayload(note, fullRaw));
-            note.summary = content.substring(0, 150).trim();
-            bus.emit('note:updated-external', { id: note.id, content });
-            // Notify transclusion nodes that this note's blocks may have changed
-            window.dispatchEvent(new CustomEvent('synabit-block-refresh', {
-              detail: { nodeId: note.id }
-            }));
-        } catch(e) { logger.error("Failed to save note:", String(e)); }
+        void writeTab(tabId, note);
     }, 600));
+  };
+
+  /**
+   * Write a tab now if anything in it is still waiting to be written.
+   *
+   * For what must see the note as it is on screen rather than as it was last
+   * saved: a restore, above all, which keeps only versions that reached disk.
+   * The editor's own serialisation is asked first, since what it has not
+   * handed over yet has not even scheduled a save.
+   */
+  const flushSave = async (rawTabId: string) => {
+    const tabId = resolveTabId(rawTabId);
+    (editorRefs.value?.[tabId] as { flushSerialize?: () => void } | undefined)?.flushSerialize?.();
+    const pending = saveTimeouts.get(tabId);
+    if (!pending) return;
+    clearTimeout(pending);
+    saveTimeouts.delete(tabId);
+    const note = notes.value.find(n => n.id === tabId);
+    if (!note) { logger.warn('[NoteApp] flushSave: note not found for', tabId); return; }
+    await writeTab(tabId, note);
   };
 
   const onEditorUpdate = (val: string, rawTabId: string) => {
@@ -90,6 +114,7 @@ export function useNoteSave(
     editorRefs,
     resolveTabId,
     saveNoteForTab,
+    flushSave,
     onEditorUpdate,
     getSuppressWatcherUntil,
     setSuppressWatcherUntil,

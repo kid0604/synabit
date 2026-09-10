@@ -356,6 +356,8 @@
     "icon_default": "Dùng icon mặc định",
     "linked_mentions": "Được nhắc đến",
     "no_linked_mentions": "Chưa có gì trỏ tới đây.",
+    "content_protected": "Nội dung được bảo vệ",
+    "pin_to_open": "Nhập PIN để mở ghi chú này",
     "in_your_vault": "Trong vault",
     "internal": "Nội bộ",
     "refresh": "Đọc lại vault",

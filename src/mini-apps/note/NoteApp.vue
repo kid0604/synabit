@@ -109,7 +109,7 @@ const tabs = useNoteTabs(notes, currentNoteId, ns, appLockStore);
 
 const save = useNoteSave(notes, currentNoteId, tabs.tabContents, tabs.renamedTabs, ns, bus);
 
-const lock = useNoteLock(appLockStore, handleNoteSelect);
+const lock = useNoteLock(appLockStore, handleNoteSelect, (id) => openHistory(id));
 
 const tags = useNoteTags(notes, currentNoteId, tabs.currentContent, ns, scanVault, () => flushActiveEditor());
 
@@ -254,29 +254,59 @@ const duplicatesModalVisible = ref(false);
 const historyNoteId = ref<string | null>(null);
 
 const openHistory = (id: string) => {
-    historyNoteId.value = id;
     activeContextMenu.value = null;
+    // Every version of a note is the note, so a protected one asks for the PIN
+    // here exactly as it does to open it. Without this the history was a way
+    // round the lock: right-click, History, and every version was readable.
+    if (appLockStore.isEnabled && appLockStore.isNoteProtected(id) && !appLockStore.isNoteAccessible(id)) {
+        lock.pendingNoteId.value = id;
+        lock.pendingNoteAction.value = 'history';
+        lock.noteLockTitle.value = "Enter PIN to view this note's history";
+        lock.showNoteLockScreen.value = true;
+        return;
+    }
+    historyNoteId.value = id;
 };
 
 const historyNote = computed(() => notes.value.find(n => n.id === historyNoteId.value) || null);
 
 /**
- * Take the restored text back into the open tab.
+ * Save what the open tab is holding before a restore replaces it.
+ *
+ * The restore keeps the version it replaces, but a version is what reached
+ * disk. Anything still waiting on the autosave would be in none of them.
+ */
+const saveBeforeRestore = async () => {
+    const id = historyNoteId.value;
+    if (id && tabs.tabContents.value[id] !== undefined) await save.flushSave(id);
+};
+
+/**
+ * Read the restored note back into the open tab.
  *
  * The restore has already written the file and brought the database in line,
  * so this is only about the copy the editor is holding. Without it the editor
  * would still show the old text and the next autosave — 600ms after the next
  * keystroke — would write it straight back over the restore.
+ *
+ * Read from disk rather than from anything the restore handed back. The
+ * restore has a whole file, frontmatter included, and the editor holds only a
+ * body; putting one in the other wrote the frontmatter into the note, and the
+ * next save gave it a second. Read back the way any note is read, the
+ * frontmatter lands in the row's properties where it belongs.
+ *
+ * The rows go first, so a save the reload sets off carries the restored title
+ * and tags rather than the ones the restore replaced.
  */
-const onVersionRestored = (content: string) => {
+const onVersionRestored = async () => {
     const id = historyNoteId.value;
+    await scanVault();
     // Only the tab actually holding this note needs telling. Restoring from a
     // context menu can target a note that is not open, and the file plus the
     // database are already in line by the time this runs.
-    if (!id || tabs.tabContents.value[id] === undefined) { scanVault(); return; }
-    tabs.tabContents.value[id] = content;
-    bus.emit('note:updated-external', { id, content });
-    scanVault();
+    if (!id || tabs.tabContents.value[id] === undefined) return;
+    await tabs.reloadNoteFile(id);
+    bus.emit('note:updated-external', { id, content: tabs.tabContents.value[id] });
 };
 
 // ── Zen Mode ────────────────────────────────────────────────
@@ -488,7 +518,7 @@ const openNoteById = async (id: string, _skipNavPush = false) => {
     manager.viewMode.value = 'editor';
     await tabs.loadNoteFile(finalId);
 };
-defineExpose({ openNoteById, scanVault, notes, tabContents: tabs.tabContents, loadNoteFile: tabs.loadNoteFile, currentNoteId, deleteNote });
+defineExpose({ openNoteById, scanVault, notes, tabContents: tabs.tabContents, loadNoteFile: tabs.loadNoteFile, currentNoteId, deleteNote, openHistory });
 
 // ── Lifecycle ───────────────────────────────────────────────
 const onClickOutside = () => { activeContextMenu.value = null; };
@@ -1012,6 +1042,7 @@ onMounted(async () => {
       :vault-path="vaultPath"
       :note-id="historyNoteId"
       :note-title="historyNote?.title || $t('note.untitled_note')"
+      :before-restore="saveBeforeRestore"
       @close="historyNoteId = null"
       @restored="onVersionRestored"
     />

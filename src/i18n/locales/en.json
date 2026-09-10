@@ -356,6 +356,8 @@
     "icon_default": "Use the default",
     "linked_mentions": "Linked mentions",
     "no_linked_mentions": "Nothing points here yet.",
+    "content_protected": "Content protected",
+    "pin_to_open": "Enter PIN to open this note",
     "in_your_vault": "In your vault",
     "internal": "Internal",
     "refresh": "Re-read the vault",

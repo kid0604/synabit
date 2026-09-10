@@ -24,6 +24,10 @@
 //! between a history and a version of that history with pieces missing. Moving
 //! forward to an old state is a thing every peer can agree on. Going back is
 //! not.
+//!
+//! It is written under the device's restore peer, not its own, so it can never
+//! be folded into the sitting it replaces. See
+//! [`crate::db::crdt::restore_peer_of`] for what that folding used to cost.
 
 use std::path::Path;
 
@@ -137,6 +141,7 @@ pub fn list_node_versions<R: tauri::Runtime>(
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let doc = db.get_crdt_doc(&vault_id, &doc_id)?;
     let this_peer = db.get_or_create_peer_id()?;
+    let this_restore_peer = crate::db::crdt::restore_peer_of(this_peer);
 
     // (lamport, last op's id, timestamp) for every change in the log.
     let mut marks: Vec<(u32, loro::ID, i64)> = doc.with_oplog(|oplog| {
@@ -181,7 +186,7 @@ pub fn list_node_versions<R: tauri::Runtime>(
             size,
             delta: size as i64 - previous_size,
             is_current: false,
-            is_local: id.peer == this_peer,
+            is_local: id.peer == this_peer || id.peer == this_restore_peer,
         });
         previous_size = size as i64;
     }
@@ -377,8 +382,13 @@ fn diff_texts(older: &str, newer: &str) -> VersionDiff {
 
 /// Put an old version back, as a new edit on top of the current one.
 ///
-/// Returns the restored text, so the editor can show it without a round trip
-/// and without waiting for the file watcher to notice.
+/// Returns nothing, on purpose. It used to return the restored text "so the
+/// editor can show it without a round trip", and both editors took it: but the
+/// text is the whole file, frontmatter included, and an editor holds only the
+/// body. The frontmatter went into the body, and the next save wrapped the
+/// file in a second one. The file on disk is right once this returns, so
+/// callers read the note back from there, as they do after any other write
+/// they did not make.
 #[tauri::command]
 pub fn restore_node_version<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
@@ -386,8 +396,15 @@ pub fn restore_node_version<R: tauri::Runtime>(
     vault_path: String,
     rel_path: String,
     version_id: String,
-) -> AppResult<String> {
+) -> AppResult<()> {
     let abs_path = path_utils::resolve_safe_path(&vault_path, &rel_path)?;
+    // Identity before the lock, never inside it: see `document_for`.
+    let Some((vault_id, doc_id)) = document_for(&app_handle, &state, &vault_path, &rel_path)?
+    else {
+        return Err(AppError::General(format!(
+            "'{rel_path}' has no saved history"
+        )));
+    };
     let text = read_node_version(
         app_handle.clone(),
         state.clone(),
@@ -405,18 +422,29 @@ pub fn restore_node_version<R: tauri::Runtime>(
         ));
     }
 
-    // Identity before the lock, never inside it: see `document_for`.
-    let identity =
-        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?;
-    let vault_id = identity.vault_id.to_string();
-
     std::fs::write(&abs_path, &text)?;
 
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
 
-    // The same path an edit made outside the app takes: the file changed, so
-    // the document, the row, the search index and the graph all follow it.
+    // The restore's own operations, under the restore peer, so it stands as a
+    // version by itself and the one it replaces stays in the list. Only for
+    // the kinds with a character history: JSON is replaced whole, and has no
+    // earlier version to lose.
     let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext != "json" && ext != "canvas" {
+        let restore_peer = crate::db::crdt::restore_peer_of(db.get_or_create_peer_id()?);
+        crate::commands::nodes::crdt_apply_safe_as(
+            &db,
+            &vault_id,
+            &doc_id,
+            &text,
+            Some(restore_peer),
+        )?;
+    }
+
+    // Then the same path an edit made outside the app takes: the file changed,
+    // so the row, the search index and the graph all follow it. The document
+    // is already in line, so this adds nothing to the history.
     crate::commands::nodes::bridge_external_edits(
         &db,
         Path::new(&vault_path),
@@ -427,7 +455,7 @@ pub fn restore_node_version<R: tauri::Runtime>(
     )?;
     crate::commands::nodes::reindex_node_at(&db, &vault_path, &abs_path);
 
-    Ok(text)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -720,7 +748,7 @@ mod tests {
         .expect("read version");
         assert_eq!(read_back, first);
 
-        let restored = restore_node_version(
+        restore_node_version(
             handle.clone(),
             state.clone(),
             vault_path.clone(),
@@ -729,7 +757,6 @@ mod tests {
         )
         .expect("restore version");
 
-        assert_eq!(restored, first);
         assert_eq!(
             std::fs::read_to_string(&abs_path).expect("read note"),
             first,
@@ -749,6 +776,221 @@ mod tests {
             after.len() > versions.len(),
             "restoring should add a version, not remove one: {after:?}"
         );
+    }
+
+    /// A vault holding one note with a history, written at the given times.
+    ///
+    /// Each entry is `(milliseconds ago, file text)`. Committed with explicit
+    /// timestamps for the reason `a_note_can_be_listed_read_and_put_back_the_way_it_was`
+    /// gives: the grouping under test is decided by time, and a test cannot wait.
+    struct Vault {
+        _holder: tempfile::TempDir,
+        handle: tauri::AppHandle<tauri::test::MockRuntime>,
+        path: String,
+        vault_id: String,
+        doc_id: String,
+    }
+
+    const REL: &str = "Notes/history.md";
+
+    fn vault_with_history(saves: &[(i64, &str)]) -> Vault {
+        use tauri::Manager;
+
+        let holder = tempfile::tempdir().expect("tempdir");
+        let vault = holder.path().join("vault");
+        std::fs::create_dir_all(vault.join("Notes")).expect("vault dir");
+        let path = vault.to_string_lossy().to_string();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+        let identity = crate::sync::core::identity::load_or_register_vault_identity(&handle, &path)
+            .expect("vault identity");
+        let vault_id = identity.vault_id.to_string();
+
+        let abs = vault.join(REL);
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut doc_id = String::new();
+        for (ago, text) in saves {
+            std::fs::write(&abs, text).expect("write note");
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().unwrap_or_else(|e| e.into_inner());
+            doc_id = crate::sync::core::identity::get_or_assign_node_id(&vault, &abs).expect("id");
+            db.upsert_document_path(&vault_id, &doc_id, REL)
+                .expect("path");
+            let doc = db.get_crdt_doc(&vault_id, &doc_id).expect("load doc");
+            let before = doc.oplog_vv();
+            let handler = doc.get_text("content");
+            handler.delete(0, handler.len_unicode()).expect("clear");
+            handler.insert(0, text).expect("insert");
+            doc.commit_with(loro::CommitOptions::new().timestamp(now - ago));
+            db.save_crdt_delta(&vault_id, &doc_id, doc.export_from(&before))
+                .expect("save delta");
+        }
+        Vault {
+            _holder: holder,
+            handle,
+            path,
+            vault_id,
+            doc_id,
+        }
+    }
+
+    impl Vault {
+        fn versions(&self) -> Vec<NodeVersion> {
+            use tauri::Manager;
+            list_node_versions(
+                self.handle.clone(),
+                self.handle.state::<crate::db::DbState>(),
+                self.path.clone(),
+                REL.to_string(),
+            )
+            .expect("list versions")
+        }
+
+        fn text_of(&self, version: &NodeVersion) -> String {
+            use tauri::Manager;
+            read_node_version(
+                self.handle.clone(),
+                self.handle.state::<crate::db::DbState>(),
+                self.path.clone(),
+                REL.to_string(),
+                version.id.clone(),
+            )
+            .expect("read version")
+        }
+
+        fn texts(&self) -> Vec<String> {
+            self.versions().iter().map(|v| self.text_of(v)).collect()
+        }
+
+        fn restore(&self, version: &NodeVersion) {
+            use tauri::Manager;
+            restore_node_version(
+                self.handle.clone(),
+                self.handle.state::<crate::db::DbState>(),
+                self.path.clone(),
+                REL.to_string(),
+                version.id.clone(),
+            )
+            .expect("restore version");
+        }
+    }
+
+    const HOUR: i64 = 60 * 60 * 1000;
+    const MINUTE: i64 = 60 * 1000;
+    const OLD: &str =
+        "---\ntitle: History\ntype: note\nnode_id: fixed-id-1\n---\nthe first draft\n";
+    const JUST_TYPED: &str =
+        "---\ntitle: History\ntype: note\nnode_id: fixed-id-1\n---\nwritten a minute ago\n";
+
+    /// The case a restore is most often reached for: something was just typed,
+    /// it was a mistake, go back. Loro folded the restore into that typing, and
+    /// the text it replaced was in no version anyone could open — while the
+    /// dialog said it would be.
+    #[test]
+    fn restoring_right_after_typing_keeps_what_was_typed() {
+        let vault = vault_with_history(&[(2 * HOUR, OLD), (MINUTE, JUST_TYPED)]);
+        let before = vault.versions();
+        assert_eq!(before.len(), 2);
+
+        vault.restore(before.last().expect("oldest"));
+
+        let after = vault.versions();
+        let texts = vault.texts();
+        assert_eq!(
+            texts,
+            vec![OLD.to_string(), JUST_TYPED.to_string(), OLD.to_string()],
+            "the restore on top, and what it replaced still under it"
+        );
+        assert!(after[0].is_current);
+        assert!(
+            after[0].is_local,
+            "a restore made here was made by this device"
+        );
+    }
+
+    /// The other side of the same boundary. Carrying on after a restore is new
+    /// work, and folded into the restore it would leave no version that is
+    /// simply the old text put back.
+    #[test]
+    fn typing_after_a_restore_is_a_version_of_its_own() {
+        use tauri::Manager;
+        let vault = vault_with_history(&[(2 * HOUR, OLD), (MINUTE, JUST_TYPED)]);
+        vault.restore(vault.versions().last().expect("oldest"));
+
+        let carried_on = "---\ntitle: History\ntype: note\nnode_id: fixed-id-1\n---\nthe first draft, then more\n";
+        {
+            let state = vault.handle.state::<crate::db::DbState>();
+            let db = state.lock().unwrap_or_else(|e| e.into_inner());
+            crate::commands::nodes::crdt_apply_safe(
+                &db,
+                &vault.vault_id,
+                &vault.doc_id,
+                carried_on,
+            )
+            .expect("save after restore");
+        }
+
+        assert_eq!(
+            vault.texts(),
+            vec![
+                carried_on.to_string(),
+                OLD.to_string(),
+                JUST_TYPED.to_string(),
+                OLD.to_string(),
+            ]
+        );
+    }
+
+    /// The restore peer is reused, restore after restore, so its operations
+    /// have to carry on from where the last one left off. Loro refuses a peer
+    /// whose counters skip or repeat, and `crdt_apply_safe_as` would turn that
+    /// refusal into a restore that fails.
+    #[test]
+    fn a_note_can_be_restored_more_than_once() {
+        let vault = vault_with_history(&[(2 * HOUR, OLD), (MINUTE, JUST_TYPED)]);
+        let versions = vault.versions();
+        vault.restore(versions.last().expect("oldest"));
+        vault.restore(
+            vault
+                .versions()
+                .iter()
+                .find(|v| vault.text_of(v) == JUST_TYPED)
+                .expect("typed"),
+        );
+
+        let texts = vault.texts();
+        assert_eq!(
+            texts.first().map(String::as_str),
+            Some(JUST_TYPED),
+            "the second restore is current"
+        );
+        assert!(texts.iter().filter(|t| t.as_str() == OLD).count() >= 1);
+    }
+
+    #[test]
+    fn a_restore_peer_is_nobody_else() {
+        for peer in [
+            0,
+            1,
+            42,
+            u64::MAX - 1,
+            0x5245_5354_4F52_4521,
+            !0x5245_5354_4F52_4521,
+        ] {
+            let restore = crate::db::crdt::restore_peer_of(peer);
+            assert_ne!(restore, peer, "a restore must not share the device's peer");
+            assert_ne!(restore, u64::MAX, "Loro reserves u64::MAX");
+            assert_eq!(
+                restore,
+                crate::db::crdt::restore_peer_of(peer),
+                "and it must not drift"
+            );
+        }
     }
 
     fn kinds(diff: &VersionDiff) -> Vec<(&str, String)> {

@@ -55,6 +55,7 @@ import { CustomTableCell, CustomTableHeader } from './editor/extensions/customTa
 import { SlashCommands } from './editor/extensions/slashCommands';
 import { EmojiSuggestion } from './editor/extensions/emojiSuggestion';
 import { TabIndentExtension } from './editor/extensions/tabIndent';
+import { PlainTextPaste } from './editor/extensions/plainTextPaste';
 import { ArrowExtension, CustomBlockquote } from './editor/extensions/arrowTypography';
 
 // --- Extracted Composables ---
@@ -65,6 +66,7 @@ import { createSlashCommandItems } from './editor/config/slashCommandItems';
 import { splitMentionQuery } from './editor/mentionQuery';
 import { createDeferredSerializer } from './editor/deferredSerializer';
 import { contextTargetFor } from './editor/contextTarget';
+import { replaceFromOutside } from './editor/replaceFromOutside';
 
 // --- Extracted Components ---
 import EditorBubbleMenu from './editor/components/EditorBubbleMenu.vue';
@@ -312,6 +314,7 @@ const editor = useEditor({
     }),
     CustomBlockquote,
     TabIndentExtension,
+    PlainTextPaste,
     Markdown.configure({ html: true }),
     ArrowExtension,
     CustomImage,
@@ -902,12 +905,18 @@ onMounted(() => {
   }
 });
 
-// --- Public API ---
-const loadContent = (markdown: string) => {
-  if (editor.value) {
-    editor.value.commands.setContent(injectLocalAssets(markdown));
-  }
+/**
+ * Show markdown that did not come from typing, without making it undoable.
+ * See `replaceFromOutside` for what undoing it used to do.
+ */
+const showFromOutside = (markdown: string) => {
+  if (!editor.value) return;
+  const html = (editor.value.storage as any).markdown.parser.parse(injectLocalAssets(markdown));
+  replaceFromOutside(editor.value, html);
 };
+
+// --- Public API ---
+const loadContent = (markdown: string) => showFromOutside(markdown);
 
 const focus = () => {
   if (editor.value) {
@@ -927,7 +936,7 @@ watch(() => props.modelValue, (newVal) => {
 
   const currentMd = (editor.value.storage as any).markdown.getMarkdown();
   if (stripLocalAssets(currentMd) !== newVal) {
-     editor.value.commands.setContent(injectLocalAssets(newVal));
+     showFromOutside(newVal);
      serializer.adopt(newVal);
   }
 });

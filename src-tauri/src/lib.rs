@@ -799,6 +799,8 @@ pub fn run() {
             commands::diagnostics::diagnostics_info,
             commands::diagnostics::suggested_diagnostics_name,
             commands::diagnostics::export_diagnostics,
+            // Editor
+            commands::paste::paste_as_plain_text,
             // Watcher
             watcher::start_vault_watcher,
             // Whiteboards

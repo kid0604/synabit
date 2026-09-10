@@ -18,11 +18,24 @@ const props = defineProps<{
   vaultPath: string;
   noteId: string;
   noteTitle: string;
+  /**
+   * Get what the editor is holding onto disk, before the restore lands on it.
+   *
+   * A restore keeps the version it replaces, but only the version that was
+   * saved. Words still waiting on the autosave are in no version at all, and
+   * the note read back afterwards would take them off the screen too.
+   */
+  beforeRestore?: () => Promise<void> | void;
 }>();
 
+/**
+ * `restored` carries nothing. The file on disk is the restored note once it
+ * fires, and the caller reads it back from there — frontmatter parsed out into
+ * properties — the way it does after any write it did not make.
+ */
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'restored', content: string): void;
+  (e: 'restored'): void;
 }>();
 
 const { t, locale } = useI18n();
@@ -180,12 +193,13 @@ const restore = async () => {
 
   restoring.value = true;
   try {
-    const content = await invoke<string>('restore_node_version', {
+    await props.beforeRestore?.();
+    await invoke('restore_node_version', {
       vaultPath: props.vaultPath,
       relPath: props.noteId,
       versionId: selected.value.id,
     });
-    emit('restored', content);
+    emit('restored');
     emit('close');
   } catch (e) {
     logger.error('Could not restore that version', e);

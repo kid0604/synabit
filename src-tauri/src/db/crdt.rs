@@ -15,6 +15,33 @@ use rusqlite::params;
 /// Read by `commands::versions` too, which describes the list this produces.
 pub const VERSION_MERGE_INTERVAL_MS: i64 = 5 * 60 * 1000;
 
+/// The peer a device writes its restores under.
+///
+/// Loro folds a device's consecutive changes into one when they start within
+/// [`VERSION_MERGE_INTERVAL_MS`] of each other, and a restore made a minute
+/// after typing was folded into that typing the same way. The version list
+/// shows one entry per change, so what had just been typed — the very text a
+/// restore replaces — stopped being a version anyone could go back to.
+///
+/// Loro never folds changes from different peers, so a restore written under
+/// a peer of its own always stands as its own change, and the one before it
+/// stays whole. That boundary lives in the log itself, so it reaches every
+/// device and survives compaction, which a note kept beside the log would not.
+/// Loro 0.16 accepts a commit message but stores nothing, so there is no
+/// label to split on instead.
+///
+/// Derived rather than stored so it cannot drift from the device peer, and so
+/// the version list can tell this device's restores are this device's. Only
+/// this device writes under it, which is the one thing Loro asks of a peer.
+pub fn restore_peer_of(device_peer: u64) -> u64 {
+    // `u64::MAX` is reserved by Loro. Landing on it takes a device peer of one
+    // exact value, and flipping a bit steps off it.
+    match device_peer ^ 0x5245_5354_4F52_4521 {
+        u64::MAX => u64::MAX ^ 1,
+        peer => peer,
+    }
+}
+
 impl DbBridge {
     /// Get or create a stable device peer ID for CRDT operations.
     pub fn get_or_create_peer_id(&self) -> AppResult<u64> {

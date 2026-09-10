@@ -11,10 +11,10 @@
  * anything, and the question this stage answers — does a generic list over an
  * arbitrary type work, and is it fast enough — does not need writes to answer.
  */
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import type { Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Circle, Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes } from 'lucide-vue-next';
+import { Circle, Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes, Lock } from 'lucide-vue-next';
 import { useObservedTypes, isInternalType } from './composables/useObservedTypes';
 import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useEventBus } from '../../composables/useEventBus';
@@ -42,6 +42,7 @@ import RenameKindDialog from '../../shared/views/RenameKindDialog.vue';
 import SchemaManager from '../../shared/views/SchemaManager.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import LockScreen from '../../shared/components/LockScreen.vue';
 // Both come from the Notes app rather than being copied. The history modal is
 // already node-generic underneath — `list_node_versions` and friends take a
 // `relPath`, not a note — and the export modal is a format picker that has
@@ -52,6 +53,7 @@ import NoteExportModal from '../note/NoteExportModal.vue';
 import { useNoteExport } from '../note/composables/useNoteExport';
 import type { NoteItem } from '../note/helpers';
 import { useThingsRowActions, UNDO_WINDOW_SECONDS } from './composables/useThingsRowActions';
+import { useThingsLock } from './composables/useThingsLock';
 import { routeForNodeType, nameForNodeType } from '../../shared/nodeRoutes';
 import { appName } from '../../shared/appRegistry';
 import { useRouter } from 'vue-router';
@@ -100,16 +102,24 @@ const openInOwner = (row: QueryRow) => {
 
 const renameRow = async (row: QueryRow) => {
   closeMenu();
-  await openRow(row);
-  await nextTick();
-  detailRef.value?.focusTitle();
+  // Behind the PIN as a whole. Asking for it inside `openRow` would leave this
+  // focusing the title of whatever node was already open.
+  await nodeLock.whenUnlocked(row.id, async () => {
+    await showRow(row);
+    await nextTick();
+    detailRef.value?.focusTitle();
+  });
 };
 
+/** A copy carries the whole body, so making one takes the PIN reading it does. */
 const duplicateRow = async (row: QueryRow) => {
   closeMenu();
-  const made = await rowActions.duplicate(row.id);
-  await rerun();
-  if (made) await openRow({ ...row, id: made, title: '' });
+  await nodeLock.whenUnlocked(row.id, async () => {
+    const made = await rowActions.duplicate(row.id);
+    if (made) await nodeLock.protectCopy(row.id, made);
+    await rerun();
+    if (made) await showRow({ ...row, id: made, title: '' });
+  });
 };
 
 /**
@@ -207,6 +217,7 @@ const undoRemove = async () => {
 const { query, result, loading, error, run, showType, more, loadingMore } = useThingsQuery();
 const detail = useThingsNode();
 const links = useThingsLinks();
+const nodeLock = useThingsLock();
 
 const activeType = ref<string | null>(null);
 const showInternal = ref(false);
@@ -303,14 +314,20 @@ const nodeExport = useNoteExport({
 });
 
 /**
- * A restored version replaces the body in place.
+ * Read the restored node back into the pane.
  *
- * Written straight back rather than left in the editor, because a restore that
- * only changes what is on screen is one navigation away from being lost.
+ * The restore has already written the file, so there is nothing to save, only
+ * something to read. This used to take the text the restore handed back and
+ * save it as the body — but that text is the whole file, frontmatter included,
+ * so the save put the old frontmatter inside the body and wrapped the file in a
+ * second one, over properties it then overwrote with the ones on screen.
+ * Opening the node again reads title, fields and body apart, from disk.
  */
-const onVersionRestored = async (content: string) => {
-  detail.body.value = content;
-  await detail.save();
+const onVersionRestored = async () => {
+  const id = selectedId.value;
+  if (!id) return;
+  await detail.open(id, shapeOf);
+  await links.load(id, detail.title.value);
 };
 
 /**
@@ -424,12 +441,26 @@ const refresh = async () => {
  * app owns which type — the thing Things exists to do without. Every kind of
  * node opens in the same pane.
  */
-const openRow = async (row: QueryRow) => {
+const openRow = (row: QueryRow) => nodeLock.whenUnlocked(row.id, () => showRow(row));
+
+/** `openRow` without the PIN. For a node already let through it, or one just made. */
+const showRow = async (row: QueryRow) => {
   viewMode.value = 'things';
-  selectedId.value = row.id;
+  await showNode(row.id, row.title);
+};
+
+/**
+ * Put a node in the pane, unchecked.
+ *
+ * Every way in goes through `nodeLock.whenUnlocked` first — the rows, links in
+ * a body, backlinks, the graph — so a protected note is not even fetched until
+ * its PIN has been given.
+ */
+const showNode = async (id: string, title: string) => {
+  selectedId.value = id;
   // The kind's shape travels with the open, so an empty field is drawn the
   // way it was declared rather than as the text box `kindOf('')` implies.
-  await Promise.all([detail.open(row.id, shapeOf), links.load(row.id, row.title)]);
+  await Promise.all([detail.open(id, shapeOf), links.load(id, title)]);
 };
 
 /** A backlink is a node like any other, so it opens the same way. */
@@ -453,15 +484,26 @@ const closeNode = () => {
  * `book` looked like a link, took a click, and did nothing. Everything the
  * editor can point at is a node, so it opens the way a backlink does.
  */
-const openFromBody = async (id: string, _type: string) => {
-  selectedId.value = id;
-  await Promise.all([detail.open(id, shapeOf), links.load(id, '')]);
+const openFromBody = (id: string, _type: string) =>
+  nodeLock.whenUnlocked(id, () => showNode(id, ''));
+
+const openLinked = (id: string, title: string) =>
+  nodeLock.whenUnlocked(id, () => showNode(id, title));
+
+/**
+ * The history of the open node.
+ *
+ * Asked again rather than assumed: the node was unlocked when it was opened,
+ * and the session may have run out since. Every version of a note is the note.
+ */
+const openHistory = () => {
+  const id = selectedId.value;
+  if (!id) return;
+  return nodeLock.whenUnlocked(id, () => { historyNodeId.value = id; });
 };
 
-const openLinked = async (id: string, title: string) => {
-  selectedId.value = id;
-  await Promise.all([detail.open(id, shapeOf), links.load(id, title)]);
-};
+// Working on a protected note keeps it unlocked, as typing in Notes does.
+watch([() => detail.body.value, () => detail.title.value], () => nodeLock.touch(selectedId.value));
 
 const total = computed(() => result.value?.total ?? 0);
 
@@ -1820,7 +1862,7 @@ onBeforeUnmount(() => {
 
           <button
             type="button"
-            @click="historyNodeId = selectedId"
+            @click="openHistory"
             class="p-1.5 rounded-md text-gray-400 transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
             :title="t('things.history')"
@@ -1965,7 +2007,14 @@ onBeforeUnmount(() => {
             <component :is="iconForNodeType(bl.node_type)" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
             <span class="truncate text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5]">{{ bl.title || bl.id }}</span>
           </span>
-          <span v-if="bl.preview" class="block mt-1 truncate text-[11px] text-gray-400">{{ bl.preview }}</span>
+          <span
+            v-if="bl.preview && nodeLock.hidesBody(bl.id)"
+            class="flex items-center gap-1 mt-1 text-[11px] italic text-gray-400"
+          >
+            <Lock class="w-3 h-3 text-amber-500 shrink-0" />
+            {{ t('things.content_protected') }}
+          </span>
+          <span v-else-if="bl.preview" class="block mt-1 truncate text-[11px] text-gray-400">{{ bl.preview }}</span>
         </button>
       </div>
     </aside>
@@ -2045,11 +2094,20 @@ onBeforeUnmount(() => {
       @close="pickingFieldAt = null"
     />
 
+    <!-- The PIN a protected note asks for, whichever way it was reached. -->
+    <LockScreen
+      v-if="nodeLock.pending.value"
+      :title="t('things.pin_to_open')"
+      @unlocked="nodeLock.unlocked"
+      @cancelled="nodeLock.cancel"
+    />
+
     <NoteHistoryModal
       v-if="historyNodeId"
       :vault-path="props.vaultPath"
       :note-id="historyNodeId"
       :note-title="detail.title.value || t('things.untitled')"
+      :before-restore="() => detail.save()"
       @close="historyNodeId = null"
       @restored="onVersionRestored"
     />
