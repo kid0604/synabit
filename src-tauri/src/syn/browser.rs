@@ -115,8 +115,9 @@ pub struct Read {
 /// type it. Not an API, not a scrape of somebody's JSON behind their back: the
 /// window navigates there and the user watches it happen.
 ///
-/// A configured `search_url` still wins — see `SynSettings::search_url`. This is
-/// what the promise "install it and it works" is made of.
+/// The only way a search happens now: the endpoint setting that used to take
+/// precedence is gone. This is what the promise "install it and it works" is
+/// made of.
 pub const DEFAULT_SEARCH: &str = "https://duckduckgo.com/?q=";
 
 /// The address a query becomes.

@@ -981,58 +981,6 @@ describe('answering a consent card', () => {
 });
 
 /**
- * Searching needs somewhere to search, and the key needs somewhere safe.
- *
- * Nothing is bundled and no engine is scraped: an HTML endpoint parsed behind
- * a service's back breaks on their next redesign and is not this app's to use.
- * So the endpoint is a setting, and the setting has to be reachable.
- */
-describe('setting up the web', () => {
-  it('asks for an endpoint, and says what shapes are understood', () => {
-    expect(settingsPanel).toContain('syn.search_url');
-    expect(settingsPanel).toContain('settings_web');
-    for (const locale of [en, vi]) {
-      expect(locale.syn).toHaveProperty('search_url_hint');
-      expect(locale.syn).toHaveProperty('web_explainer');
-    }
-    expect(en.syn.search_url_hint).toContain('SearXNG');
-    expect(en.syn.search_url_hint).toContain('Brave');
-  });
-
-  /**
-   * The keychain, never the vault, and no command reads one back — the screen
-   * needs to know *whether* a key is set, never what it is.
-   */
-  it('keeps the key out of the vault and out of the screen', () => {
-    expect(settingsPanel).toContain("invoke('syn_set_search_key'");
-    expect(settingsPanel).toContain("invoke<boolean>('syn_has_search_key')");
-    expect(settingsPanel, 'nothing fetches a key back').not.toContain('syn_get_search_key');
-    expect(settingsPanel, 'and the box never shows one').toContain('type="password"');
-  });
-
-  /** An empty box means "leave what is stored", not "clear it". */
-  it('does not wipe a stored key by saving an untouched form', () => {
-    expect(settingsPanel).toContain('if (searchKey.value) {');
-  });
-
-  /**
-   * The endpoint used to decide whether Syn got search at all. It no longer
-   * does: `syn::browser` searches in a window, so the setting picks *which
-   * rung of the ladder* is taken and never whether the capability exists.
-   *
-   * The copy has to say so, or somebody reads an empty box as a missing
-   * feature — which is exactly the confusion this whole design removed.
-   */
-  it('says the endpoint is optional, not the thing that enables search', () => {
-    for (const [name, hint] of [['en', en.syn.search_url_hint], ['vi', vi.syn.search_url_hint]] as const) {
-      expect(hint.toLowerCase(), name).toMatch(/optional|không bắt buộc/);
-    }
-    expect(en.syn.web_explainer).toContain('out of the box');
-    expect(vi.syn.web_explainer).toContain('không cần cấu hình');
-  });
-});
-
-/**
  * A page Syn read is something you can go and check.
  *
  * `footing` marks an answer `Grounded` when a tool that only reads came back,

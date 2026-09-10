@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, computed, ref } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { logger } from '../../../utils/logger';
+import { onMounted, onUnmounted, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { X, RotateCcw, Save, Loader2 } from 'lucide-vue-next';
 import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
@@ -34,41 +32,7 @@ const {
 
 const usingOllama = computed(() => settings.value.provider === 'ollama');
 
-/**
- * The search endpoint and its key.
- *
- * The URL is an ordinary setting and lives in the vault; the key goes to the OS
- * keychain through its own command and never touches a file Syn can read. The
- * box shows whether one is stored, never the value — there is deliberately no
- * command that hands one back.
- */
-const searchUrl = ref('');
-const searchKey = ref('');
-const hasSearchKey = ref(false);
-
-const loadSearch = async () => {
-  searchUrl.value = settings.value.search_url ?? '';
-  try {
-    hasSearchKey.value = await invoke<boolean>('syn_has_search_key');
-  } catch (e) {
-    logger.warn('[Syn] Could not check for a search key', e);
-  }
-};
-
 const handleSave = async () => {
-  settings.value.search_url = searchUrl.value.trim() || null;
-  // Only when something was typed: an empty box means "leave what is stored",
-  // not "clear it". Clearing is done by typing a space, which trims to empty
-  // and removes the key — the same rule `set_syn_api_key` already follows.
-  if (searchKey.value) {
-    try {
-      await invoke('syn_set_search_key', { key: searchKey.value.trim() });
-      hasSearchKey.value = !!searchKey.value.trim();
-      searchKey.value = '';
-    } catch (e) {
-      logger.error('[Syn] Could not store the search key', e);
-    }
-  }
   await saveSettings();
   emit('saved');
   // The ask bar lives in `App.vue`, above every mini-app and outside this
@@ -90,7 +54,6 @@ const handleKeydown = (e: KeyboardEvent) => {
 
 onMounted(async () => {
   await loadSettings();
-  await loadSearch();
   window.addEventListener('keydown', handleKeydown);
 });
 
@@ -504,59 +467,6 @@ watch(() => props.vaultPath, () => {
                          focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                          transition-all"
                 />
-              </div>
-            </div>
-          </section>
-
-          <!-- THE WEB
-               Syn can read a page out of the box; searching needs somewhere to
-               search. Nothing is bundled and nothing is scraped — parsing a
-               search engine's HTML behind its back breaks on their next
-               redesign and is not this app's to do. -->
-          <section>
-            <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-              {{ t('syn.settings_web') }}
-            </h3>
-            <div class="space-y-3">
-              <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                {{ t('syn.web_explainer') }}
-              </p>
-
-              <div>
-                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
-                  {{ t('syn.search_url') }}
-                </label>
-                <input
-                  v-model="searchUrl"
-                  type="text"
-                  :placeholder="t('syn.search_url_placeholder')"
-                  class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                         text-xs font-mono text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
-                         outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-all"
-                >
-                <p class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  {{ t('syn.search_url_hint') }}
-                </p>
-              </div>
-
-              <div>
-                <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
-                  {{ t('syn.search_key') }}
-                </label>
-                <input
-                  v-model="searchKey"
-                  type="password"
-                  :placeholder="hasSearchKey ? t('syn.search_key_set') : t('syn.search_key_none')"
-                  class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                         text-xs font-mono text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500
-                         outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-all"
-                >
-                <!-- The keychain, never the vault, and nothing reads one back:
-                     the screen needs to know whether a key is set, never what
-                     it is. -->
-                <p class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  {{ t('syn.search_key_hint') }}
-                </p>
               </div>
             </div>
           </section>

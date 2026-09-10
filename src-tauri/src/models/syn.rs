@@ -410,19 +410,6 @@ pub struct SynSettings {
     #[serde(default = "default_memory_reflection")]
     pub memory_reflection: bool,
 
-    /// Where Syn searches the web, when it can.
-    ///
-    /// The user's own endpoint — a SearXNG they run, or a paid API they have a
-    /// key for. Nothing is bundled and nothing is scraped: parsing a search
-    /// engine's HTML behind its back breaks on their next redesign and is not
-    /// this app's to do.
-    ///
-    /// `None` means Syn has no search, and the tool is not offered at all —
-    /// rather than offered and failing, which would spend tokens every turn
-    /// describing something that cannot work.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub search_url: Option<String>,
-
     // Personality
     /// Kept only so an existing settings file still deserialises, and so
     /// `instructions::migrate_personality` can carry a chosen voice into
@@ -459,7 +446,6 @@ impl Default for SynSettings {
             include_feeds: true,
             graph_expansion_depth: 1,
             memory_reflection: default_memory_reflection(),
-            search_url: None,
             personality: None,
             custom_system_prompt: None,
         }

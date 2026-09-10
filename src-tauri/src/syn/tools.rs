@@ -329,11 +329,11 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// a page can try to act through the model that reads it. That argument is
 /// settled in `syn::web`, not here.
 ///
-/// The figure is also the first that is a **maximum** rather than a flat rate.
-/// `web_search` is only sent when the vault has a search endpoint configured,
-/// so a vault without one pays about 16,000 — which is the shape every future
-/// external tool should have, and the reason the gating went in with the first
-/// one rather than after the twentieth.
+/// The figure was also the first that was a **maximum** rather than a flat
+/// rate: `web_search` was sent only to a vault with a search endpoint
+/// configured. Both that tool and that setting have since gone, so it is a
+/// flat rate again — but the shape was the right one, and is still what every
+/// future external tool should have.
 ///
 /// So the ceiling is the achieved figure rounded up, the way
 /// `FIXED_SECTIONS_CHARS` was, and not a target somebody has to damage
@@ -419,13 +419,15 @@ pub fn payload_cost() -> crate::syn::prompt::ToolPayload {
 
 /// The tools a chat gets, given what this vault has configured.
 ///
-/// One argument today and it is the honest shape: `web_search` cannot work
-/// without an endpoint, and a tool described on every turn that cannot work is
-/// tokens spent on a promise. See `SEARCH_TOOL`.
+/// Nothing depends on the argument, and the argument is what is left of the
+/// day it did: `web_search` was left out of a vault with no endpoint, because
+/// a tool described every turn that cannot work is tokens spent on a promise.
+/// Both halves went — searching happens in a window that needs configuring by
+/// nobody, and the endpoint setting left with it.
 pub fn get_tool_definitions_for(settings: &crate::models::syn::SynSettings) -> Vec<ToolDefinition> {
-    // Nothing conditional any more: `browse` needs no configuration, because
-    // searching happens in a window rather than through somebody's API. That
-    // was the point of the window — see `syn::browser`.
+    // Kept as a parameter rather than removed, because the next external tool
+    // is likelier than not to need one: the connectors each bring their own
+    // credentials, and a tool nobody has connected should not be described.
     let _ = settings;
     get_tool_definitions()
 }
@@ -3931,11 +3933,12 @@ mod tests {
         // answer is not this description — `syn::web::REFUSED_AFTER_READING`
         // takes the tools that alter or destroy existing work away for the
         // rest of any run that fetched, which holds whatever the page says.
-        // `web_search` is the first tool that is not always sent: without an
-        // endpoint configured it is left out entirely, because a description
-        // costing tokens every turn for something that cannot work is a
-        // promise paid for in advance. `get_tool_definitions_for` does the
-        // leaving out; this list is what exists to be left out of.
+        // `web_search` was the first tool that was not always sent: without
+        // an endpoint configured it was left out entirely, because a
+        // description costing tokens every turn for something that cannot
+        // work is a promise paid for in advance. Both are gone now — but
+        // `get_tool_definitions_for` still takes the settings, so this list is
+        // still what exists to be left out of.
         let outside = [BROWSE_TOOL];
         for tool in outside {
             assert!(names.contains(&tool), "{tool} is missing");

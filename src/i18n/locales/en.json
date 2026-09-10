@@ -1999,16 +1999,7 @@
     "model_search": "Type to find a model…",
     "model_none_match": "Nothing matches “{query}”.",
     "model_hidden": "{n} hidden — they cannot answer a chat. Show them anyway",
-    "cap_browse": "Uses the browser",
-    "settings_web": "The web",
-    "web_explainer": "Syn can search and read the web out of the box — it opens a window you can watch, with its own session. Nothing to set up. If you run your own search endpoint you can point Syn at it below, and it will use that instead of the window when it can.",
-    "search_url": "Search endpoint",
-    "search_url_placeholder": "https://searx.example.org/search?format=json",
-    "search_url_hint": "Optional. A JSON endpoint (SearXNG `results`, Brave `web.results`) or RSS. Leave it empty and Syn searches in its own browser window instead.",
-    "search_key": "Search key",
-    "search_key_set": "A key is stored — type to replace it",
-    "search_key_none": "None stored",
-    "search_key_hint": "Kept in your OS keychain, never in the vault. Nothing can read it back. Type a space and save to remove it."
+    "cap_browse": "Uses the browser"
   },
   "update": {
     "available": "Synabit {version} is available!",

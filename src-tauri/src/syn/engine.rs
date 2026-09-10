@@ -1184,20 +1184,17 @@ async fn browse<R: tauri::Runtime>(
 
     // ── Rung 1: not an address, so it is a question. ──────────────
     if address.is_none() {
-        // A configured endpoint still wins: somebody who set one up wants it,
-        // and an API answers faster than a window.
-        let endpoint = settings.search_url.clone().unwrap_or_default();
-        if !endpoint.trim().is_empty() {
-            let key = crate::secrets::SecretManager::get_syn_api_key(None, web::SEARCH_KEY_SLOT);
-            if let Ok(hits) = web::search(&endpoint, key.as_deref(), what).await {
-                let cited = hits.iter().map(web::citation_of).collect();
-                return Ok((web::wrap_hits(what, &hits), cited));
-            }
-            // Falling through rather than failing: the window needs no
-            // configuration, so a broken endpoint should cost a moment, not
-            // the answer.
-            log::warn!("[Syn] The configured search endpoint failed; using the window");
-        }
+        // There used to be a rung above this one: a search endpoint the person
+        // configured, asked over HTTP because an API answers faster than a
+        // window. It is gone, and not for tidiness — it answered with six
+        // snippets and returned, short of the rung below that opens two
+        // articles and reconciles them. Configuring it made Syn worse, which is
+        // a bad thing for a setting to do. Search comes back as one of the
+        // connectors, reading pages like every other rung here does.
+        //
+        // What it cost: on Android the window does not work at all
+        // (`browser::visit`), so there is no search on a phone until then.
+        // Reading a named address still works there, over `web::fetch`.
 
         // A search replaces whatever page was in hand: `more` means the last
         // page asked for by address, and these two were chosen for the model.

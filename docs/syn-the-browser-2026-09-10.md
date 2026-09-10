@@ -156,3 +156,30 @@ Ba câu, trả lời được từ chính `Syn/runs` sau một tuần dùng bìn
 2. Số lần phép kiểm địa chỉ nổ trên 20 lượt.
 3. `input_cached / input` trung bình — con số quyết định mọi tranh luận về ngân
    sách còn lại.
+
+## 9. Bậc đã gỡ: endpoint tìm kiếm người dùng tự cấu hình
+
+*Ghi ngày 10/09/2026, sau khi thiết kế trên đã chốt.*
+
+Có một bậc nằm **trên** cả §4: nếu vault có `search_url`, `browse` hỏi endpoint
+đó qua HTTP thay vì mở cửa sổ. Nó đã bị gỡ, cùng với ô "Search endpoint" và ô
+"Search key" trong màn hình Settings.
+
+**Không phải vì gọn.** Vì nó là bậc *tệ hơn*. Endpoint trả về sáu snippet rồi
+`return` — dừng ngay phía trên nấc 1½, cái nấc mở hai bài và đối chiếu chúng.
+Nghĩa là ai cấu hình endpoint sẽ rơi đúng vào lỗi §2 mô tả: bốn lần tìm, bốn câu
+trả lời, không mở bài nào. Một cái setting mà bật lên thì sản phẩm kém đi là một
+cái setting sai.
+
+**Cái giá, nói thẳng:** trên Android cửa sổ không chạy được (`browser::visit`
+từ chối, và lý do là wry chèn script khởi động qua custom protocol của app —
+xem chính hàm đó). Endpoint là đường tìm kiếm duy nhất ở đó. Gỡ nó đi thì
+**điện thoại không còn tìm kiếm web**, cho tới đợt kết nối. Đọc một địa chỉ
+được nêu tên vẫn chạy trên mobile, qua `web::fetch`.
+
+**Khi nào quay lại.** Trong đợt tích hợp kết nối (search, GitHub, Atlassian,
+Google, …), như một connector giữa nhiều connector — và khi đó nó phải **đọc
+trang** như mọi bậc khác ở đây, chứ không dừng ở snippet. Slot keychain cũ tên
+`web_search`; key người dùng đã lưu vẫn nằm nguyên trong keychain của hệ điều
+hành, không bị xoá, nên một connector sau này dùng lại đúng slot đó sẽ thấy lại
+key mà không phải hỏi.

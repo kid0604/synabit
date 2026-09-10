@@ -1215,33 +1215,6 @@ pub async fn syn_browser_content(
     Ok(())
 }
 
-/// Store the search endpoint's key, or clear it when blank.
-///
-/// The keychain, never the vault, on the same terms as the model provider's
-/// key — and there is deliberately no command that reads one back. The screen
-/// needs to know *whether* one is set, never what it is.
-#[tauri::command]
-pub async fn syn_set_search_key(app: tauri::AppHandle, key: String) -> Result<(), AppError> {
-    crate::secrets::SecretManager::set_syn_api_key(
-        Some(&app),
-        crate::syn::web::SEARCH_KEY_SLOT,
-        &key,
-    )
-    .map_err(AppError::General)
-}
-
-/// Whether a search key is stored. Never the key itself.
-#[tauri::command]
-pub async fn syn_has_search_key(app: tauri::AppHandle) -> Result<bool, AppError> {
-    Ok(
-        crate::secrets::SecretManager::get_syn_api_key(
-            Some(&app),
-            crate::syn::web::SEARCH_KEY_SLOT,
-        )
-        .is_some(),
-    )
-}
-
 /// Everything Syn can reach, with what each one needs and what undoes it.
 ///
 /// The question the inspector could not answer. It had *what did it do*, *what

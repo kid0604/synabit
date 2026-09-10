@@ -65,18 +65,6 @@ export interface SynSettings {
   include_feeds: boolean;
   graph_expansion_depth: number;
 
-  /**
-   * Where Syn searches the web.
-   *
-   * The user's own endpoint — a SearXNG they run, or a paid API they have a
-   * key for. Nothing is bundled: parsing a search engine's HTML behind its
-   * back breaks on their next redesign and is not this app's to do.
-   *
-   * Empty means Syn has no search, and the tool is not offered to the model at
-   * all rather than offered and failing.
-   */
-  search_url: string | null;
-
   // Personality
   custom_system_prompt: string | null;
 
@@ -116,7 +104,6 @@ const DEFAULT_SETTINGS: SynSettings = {
   include_finance: true,
   include_feeds: true,
   graph_expansion_depth: 1,
-  search_url: null,
   custom_system_prompt: null,
   num_ctx: 8192,
   max_history_messages: 50,

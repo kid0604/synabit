@@ -1999,16 +1999,7 @@
     "model_search": "Gõ để tìm model…",
     "model_none_match": "Không có gì khớp “{query}”.",
     "model_hidden": "Ẩn {n} cái — chúng không trả lời chat được. Vẫn hiện ra",
-    "cap_browse": "Dùng trình duyệt",
-    "settings_web": "Web",
-    "web_explainer": "Syn tìm và đọc web được ngay, không cần cấu hình gì — nó mở một cửa sổ mày nhìn thấy, với session riêng. Nếu mày có endpoint tìm kiếm riêng thì trỏ vào bên dưới, Syn sẽ dùng nó thay cho cửa sổ khi được.",
-    "search_url": "Endpoint tìm kiếm",
-    "search_url_placeholder": "https://searx.example.org/search?format=json",
-    "search_url_hint": "Không bắt buộc. Một endpoint JSON (SearXNG `results`, Brave `web.results`) hoặc RSS. Để trống thì Syn tìm trong cửa sổ trình duyệt của chính nó.",
-    "search_key": "Key tìm kiếm",
-    "search_key_set": "Đã lưu một key — gõ để thay",
-    "search_key_none": "Chưa lưu key nào",
-    "search_key_hint": "Nằm trong keychain của hệ điều hành, không nằm trong vault. Không gì đọc lại được. Gõ một dấu cách rồi lưu để xoá."
+    "cap_browse": "Dùng trình duyệt"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
