@@ -1244,17 +1244,18 @@ mod tests {
     ///
     /// # Why this no longer says "nothing here takes focus"
     ///
-    /// It said that when nothing did, and the cost of nothing doing turned up
-    /// later: on macOS a window sends mouse-moved events to its **first
-    /// responder**, not to the view under the pointer, and wry only makes a
-    /// non-child webview one. So the pane never held it, the app answered for
-    /// the cursor over the pane's pixels too, and a link in a browser showed an
-    /// arrow. Arrow keys did not scroll it either. See `pane::focus_it`.
+    /// It said that when nothing did, and it is still what happens — but the
+    /// reason has been measured since, and it is worth writing down: on macOS a
+    /// window sends mouse-moved events to its **first responder**, and WebKit
+    /// asks for them across a view's whole visible rect. The app's webview is
+    /// full-window and cannot be moved, so it answers for the cursor over the
+    /// pane's pixels too. Focusing the pane does not settle that — it makes
+    /// *both* answer, and the cursor flickers. See the note above `pane::close`.
     ///
     /// The rule that mattered was never "nothing takes focus" — it was **a run
     /// must not take the caret out of what somebody is typing**. That is what
-    /// this asserts now, and the person's own openings are free to focus a
-    /// browser they just asked for, which is what every browser does.
+    /// this asserts now; clicking the page still focuses it, as AppKit does by
+    /// itself.
     #[test]
     fn a_run_is_visible_without_taking_the_keyboard() {
         let source = include_str!("browser.rs");

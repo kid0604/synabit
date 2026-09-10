@@ -398,10 +398,46 @@ focus" — mà là **một run không được lấy con trỏ nhập ra khỏi 
 gõ**. Test giờ nói đúng câu đó, và đổi tên thành
 `a_run_is_visible_without_taking_the_keyboard`.
 
-### Chưa sửa
+### Sửa như trên là sai, và đây là kết quả đo
 
-Trong lúc app đang giữ focus, trỏ vào link trong pane vẫn ra mũi tên cho tới khi
-bấm vào pane một cái. Trình duyệt thật thì cửa sổ nền vẫn hiện bàn tay, vì cửa
-sổ nào cũng có first responder riêng; ở đây hai webview dùng chung một cửa sổ và
-một first responder. Sửa triệt để cần focus chạy theo chuột — mà focus chạy theo
-chuột là thứ không ai mong đợi ở một app.
+Cho pane focus khi người tự mở — thử thật, và **tệ hơn**. Báo cáo nguyên văn:
+*"hình bàn tay gần như chỉ xuất hiện nháy nháy trong giây lát"*.
+
+Nghĩa là first responder chỉ là một nửa. Nửa còn lại: WebKit xin sự kiện chuột
+trên **toàn bộ visible rect** của view mình, và view của app phủ kín cửa sổ.
+Nên khi pane có focus thì **cả hai** cùng trả lời "con trỏ nên là gì", cả hai
+cùng gọi `[NSCursor set]`, ai gọi sau thì thắng — hai web process bất đồng bộ →
+nháy vài lần một giây.
+
+Một mũi tên sai đều đặn còn dùng được; một con trỏ nhấp nháy thì không. Nên
+`focus_it` đã bị gỡ. Còn lại đúng thứ AppKit tự làm: **bấm vào trang thì trang
+nhận focus**. Đọc thôi thì con trỏ là mũi tên; bấm vào rồi thì bàn phím chạy,
+đổi lại là cái nháy đó — nhưng chỉ với người đã chủ động bấm vào trình duyệt.
+
+Phần **trả focus lại cho app khi đóng pane** thì giữ: nó đúng độc lập với
+chuyện trên, và không có nó thì chữ trong app mất luôn con trỏ chữ I.
+
+### Sửa triệt để cần gì
+
+View của app phải **thôi phủ lên pane** — chỉ có một cách, và không có đường
+CSS nào cả.
+
+`set_bounds` của Tauri no-op cho webview chính (mục 0), nhưng `objc2` đã là
+dependency sẵn (`commands/paste.rs` đang dùng), nên gọi thẳng `setFrame:` và xoá
+autoresizing mask là làm được.
+
+Chỗ kẹt **không phải AppKit, mà là thanh địa chỉ**: nó `fixed top-0 right-0`, do
+webview app vẽ, nằm trong dải x của pane. Thu webview app lại thì thanh đó bị
+cắt mất. Một view là một hình chữ nhật — không thể vừa hẹp ở dưới vừa rộng ở
+trên. Nên thanh địa chỉ phải dọn đi trước, và có hai chỗ để dọn:
+
+| | Được | Mất |
+| --- | --- | --- |
+| **Webview con thứ ba** cho riêng thanh địa chỉ | giữ nguyên thiết kế: thanh nằm ngay trên trang | webview thứ ba, một trang HTML rời, theme và i18n phải tự lo, thêm một mặt ACL |
+| **Dọn vào cột của app**, góc trên phải, sát mép pane | không thêm webview, không thêm IPC | thanh điều khiển trình duyệt nằm *bên cạnh* trình duyệt chứ không phải *trên* nó |
+
+Và dù chọn cách nào cũng phải phòng chuyện `setFrame:` âm thầm không ăn — đúng
+kiểu thất bại đã lừa được một lần ở mục 0. Cách phòng: đọc ngược khung hình sau
+khi đặt, rồi **chỉ** tắt đường CSS cũ khi đọc lại thấy nó thật sự đã đổi. Thất
+bại thì lùi về đúng hành vi hôm nay, chứ không vỡ 69 cái overlay đang dựa vào
+`transform`.
