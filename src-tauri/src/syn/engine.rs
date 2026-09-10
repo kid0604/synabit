@@ -1304,12 +1304,13 @@ fn onward(
     let sent = page.clone().trimmed_to(cap);
     crate::syn::browser::note_reading(waiting, page, &sent);
 
-    let offered = web::worth_offering(&web::links_on(html, &page.url));
+    let all = web::links_on(html, &page.url);
+    let offered = web::worth_offering(&all);
     // Remembered before it is rendered, so the numbers the model reads are the
     // numbers this will answer to.
     crate::syn::browser::note_offered(waiting, &page.url, &offered);
 
-    let links = web::wrap_links(&offered);
+    let links = web::wrap_links(&offered, all.len());
     if links.is_empty() {
         web::wrap(&sent)
     } else {
