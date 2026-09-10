@@ -3,7 +3,7 @@ import { computed, ref, watch, nextTick, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useDebounceFn } from '@vueuse/core';
 import { marked, Renderer, type Tokens } from 'marked';
-import mermaid from 'mermaid';
+import { renderDiagram, diagramTheme } from '../../../shared/mermaid';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -59,36 +59,6 @@ hljs.registerLanguage('sql', sql);
 // the grammar is the only guard that works, and the cost is that a fenced
 // markdown block is shown unhighlighted, which for markdown inside markdown is
 // close to no cost at all.
-
-// Initialize mermaid with dark theme
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'dark',
-  themeVariables: {
-    darkMode: true,
-    background: '#1e1f25',
-    primaryColor: '#7c3aed',
-    primaryTextColor: '#e2e8f0',
-    primaryBorderColor: '#6d28d9',
-    secondaryColor: '#4c1d95',
-    tertiaryColor: '#2d1b69',
-    lineColor: '#6d28d9',
-    textColor: '#e2e8f0',
-    fontSize: '14px',
-    pie1: '#7c3aed',
-    pie2: '#a78bfa',
-    pie3: '#c084fc',
-    pie4: '#e879f9',
-    pie5: '#f472b6',
-    pie6: '#fb923c',
-    pie7: '#fbbf24',
-    pie8: '#34d399',
-    pie9: '#22d3ee',
-    pie10: '#60a5fa',
-    pie11: '#818cf8',
-    pie12: '#f87171',
-  },
-});
 
 // Custom renderer to intercept mermaid code blocks
 const renderer = new Renderer();
@@ -249,6 +219,8 @@ const messageEl = ref<HTMLElement | null>(null);
  * renderer minted, which is what the click carries.
  */
 const diagrams = new Map<string, string>();
+/** And what each was drawn from, so a theme change can draw it again. */
+const sources = new Map<string, string>();
 const openDiagram = ref<string | null>(null);
 
 // The template uses the global `$t`; the label below is written into markup
@@ -267,9 +239,17 @@ const renderMermaid = async () => {
     const code = el.textContent || '';
     if (!code.trim()) continue;
 
-    try {
-      const { svg } = await mermaid.render(id + '-svg', code);
+    const drawn = await renderDiagram(id + '-svg', code);
+    if ('error' in drawn) {
+      console.warn('[Mermaid] Render failed:', drawn.error);
+      el.setAttribute('data-processed', 'error');
+      continue;
+    }
+
+    {
+      const { svg } = drawn;
       diagrams.set(id, svg);
+      sources.set(id, code);
       // `data-diagram` is what `handleContentClick` looks for, and the button
       // role plus the label are what make a picture that does something say so
       // to somebody who cannot see the cursor change.
@@ -282,12 +262,28 @@ const renderMermaid = async () => {
       } else {
         el.outerHTML = opened;
       }
-    } catch (e) {
-      console.warn('[Mermaid] Render failed:', e);
-      el.setAttribute('data-processed', 'error');
     }
   }
 };
+
+/**
+ * Draw them again in the other theme.
+ *
+ * A diagram is an SVG with its colours baked into it, so switching the app
+ * between light and dark is a re-render rather than a stylesheet change. Which
+ * is why the source is kept beside the picture: there is nothing left in the
+ * DOM to derive it from once the `<pre>` has been replaced.
+ */
+watch(diagramTheme, async () => {
+  if (!messageEl.value) return;
+  for (const [id, code] of sources) {
+    const drawn = await renderDiagram(id + '-svg', code);
+    if ('error' in drawn) continue;
+    diagrams.set(id, drawn.svg);
+    const held = messageEl.value.querySelector(`[data-diagram="${id}"]`);
+    if (held) held.innerHTML = drawn.svg;
+  }
+});
 
 /**
  * Turn the parked formulas into mathematics.
@@ -834,6 +830,11 @@ const copyContent = async () => {
   border-color: var(--color-border-dark);
 }
 
+.dark :deep(.mermaid-rendered),
+.dark :deep(pre.mermaid) {
+  background: rgba(30, 31, 37, 0.5);
+}
+
 /* Mermaid chart containers */
 :deep(.mermaid-container) {
   margin: 0.75rem 0;
@@ -844,7 +845,13 @@ const copyContent = async () => {
 :deep(.mermaid-rendered) {
   display: flex;
   justify-content: center;
-  background: rgba(30, 31, 37, 0.5);
+  /*
+    The card follows the app, because the diagram inside it does now.
+    It used to be this dark in both themes, which is why a diagram in a light
+    conversation sat in a grey slab — the one visible trace of the chat having
+    its own private Mermaid configuration.
+  */
+  background: rgba(0, 0, 0, 0.03);
   border-radius: 0.75rem;
   padding: 1rem;
   border: 1px solid rgba(124, 58, 237, 0.15);
@@ -895,7 +902,7 @@ const copyContent = async () => {
 }
 
 :deep(pre.mermaid) {
-  background: rgba(30, 31, 37, 0.5);
+  background: rgba(0, 0, 0, 0.03);
   border-radius: 0.75rem;
   padding: 1rem;
   border: 1px solid rgba(124, 58, 237, 0.15);

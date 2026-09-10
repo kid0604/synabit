@@ -120,16 +120,46 @@ trần, không phải mức thường: câu trả lời không có công thức 
 Toán render **cả trong lúc stream**, khác mermaid. Một công thức viết dở vẫn là
 chữ (tokenizer cần cả hai dấu), còn một sơ đồ vẽ dở là lỗi cú pháp.
 
-## 6. Tiếp theo
+## 6. Đã làm: một Mermaid cho cả app
 
-1. **Gộp mermaid về một chỗ.** `CodeBlockComponent.vue:324` gọi
-   `mermaid.initialize` cho **mọi** code block, kể cả block không phải mermaid —
-   mà đó là cấu hình **toàn cục**. Mở một note bất kỳ có code block là bảng màu
-   `MessageBubble` đặt lúc nạp module biến mất. Hai bộ render, một biến toàn
-   cục, không ai biết ai.
-2. **Nối `DiagramViewer` vào note editor.** Cùng vấn đề, component đã ở
-   `shared/`.
-3. **Hành động trên một khối** — bắt đầu bằng đúng một cái: *"lưu sơ đồ này
+`mermaid.initialize` **không phải** tuỳ chọn cho từng sơ đồ — nó là cấu hình
+**toàn cục của thư viện**. Khung chat đặt một bảng màu tím riêng, một lần, lúc
+nạp module. Note editor gọi `applyMermaidTheme()` từ `onMounted` của **mọi code
+block, thuộc mọi ngôn ngữ**. Ai chạy sau thì quyết định mọi sơ đồ trong app
+trông thế nào từ đó trở đi.
+
+Nên mở một note bất kỳ có code block là lặng lẽ sơn lại toàn bộ sơ đồ trong
+cuộc trò chuyện. Không ai viết ra hành vi đó; nó rơi ra từ hai module dùng chung
+một biến toàn cục mà không biết.
+
+`shared/mermaid.ts` giữ ba thứ, mỗi thứ vì một lý do khác nhau:
+
+- **Cấu hình**, gọi *một lần cho mỗi lần đổi theme*, không phải mỗi sơ đồ.
+- **Hàng đợi.** Mermaid giữ trạng thái giữa lúc parse và lúc vẽ; hai render
+  chạy song song trả về sai hoặc không trả về. Note editor đã có hàng đợi này,
+  chat thì không — nên một câu trả lời có hai sơ đồ đang chạy đua với nhau, và
+  một note mở bên cạnh chạy đua với cả hai.
+- **Một `MutationObserver`** cho cả app. Note có mười hai code block thì trước
+  đây cài mười hai cái, mỗi cái nghe cùng một thay đổi thuộc tính và cấu hình
+  lại cùng một thư viện.
+
+**Bảng màu tím bị bỏ.** Hai mươi dòng `themeVariables` của chat đã bị ghi đè bởi
+note đầu tiên người dùng mở, nên nó chỉ có hiệu lực trong phiên nào chưa mở note
+nào. Giữ nó lại nghĩa là hai bảng màu cho hai bề mặt — đúng thứ file này sinh ra
+để dẹp. Theme `dark`/`default` của chính Mermaid, đi theo theme của app, mới là
+thứ app thật sự hiển thị phần lớn thời gian.
+
+Và cái khung chứa sơ đồ trong chat giờ cũng đi theo theme. Trước đây nó tối
+trong cả hai chế độ — đó là **dấu vết nhìn thấy được duy nhất** của việc chat có
+cấu hình Mermaid riêng: một sơ đồ trong cuộc trò chuyện sáng ngồi trong một khối
+xám.
+
+`DiagramViewer` đã nối vào note editor: cột note có đúng vấn đề mà bong bóng chat
+từng có, và câu trả lời đã nằm sẵn ở `shared/components`.
+
+## 7. Tiếp theo
+
+1. **Hành động trên một khối** — bắt đầu bằng đúng một cái: *"lưu sơ đồ này
    thành note"*. Nó dựng khung cho bảng, ảnh, sketch dùng lại.
-4. **Whiteboard qua giao-đi**, khi khung ở (3) đã đứng.
-5. **Bản đồ** — cuối, vì phải mua chỗ trong prompt mỗi lượt.
+2. **Whiteboard qua giao-đi**, khi khung ở (1) đã đứng.
+3. **Bản đồ** — cuối, vì phải mua chỗ trong prompt mỗi lượt.

@@ -59,7 +59,22 @@
     <!-- Mermaid Preview -->
     <div v-if="selectedLanguage === 'mermaid' && displayMode !== 'code'" class="mermaid-preview mt-2 p-4 rounded-lg border border-gray-200 dark:border-[#3f3f46] bg-white dark:bg-[#1e1e1e] flex flex-col items-center justify-center min-h-[100px]" contenteditable="false">
       <div v-if="mermaidError" class="text-red-500 text-xs w-full overflow-x-auto p-2 bg-red-50 dark:bg-red-900/20 rounded font-mono border border-red-100 dark:border-red-900/50">{{ mermaidError }}</div>
-      <div v-html="mermaidSvg" class="mermaid-svg-container w-full overflow-x-auto flex justify-center"></div>
+      <!--
+        Clicking it opens the same viewer the conversation uses. A diagram
+        squeezed into the width of a note column has exactly the problem a
+        diagram squeezed into a chat bubble had, and `shared/components` is
+        where the answer already was.
+      -->
+      <div
+        v-if="mermaidSvg"
+        v-html="mermaidSvg"
+        class="mermaid-svg-container w-full overflow-x-auto flex justify-center"
+        role="button"
+        tabindex="0"
+        @click="openDiagram = mermaidSvg"
+        @keydown.enter.prevent="openDiagram = mermaidSvg"
+      ></div>
+      <DiagramViewer :svg="openDiagram" @close="openDiagram = null" />
     </div>
 
     <!-- Markmap Preview -->
@@ -76,16 +91,18 @@
 </template>
 
 <script lang="ts">
-// Shared state across all instances of CodeBlockComponent
-let diagramIdCounter = 0;
-// Global queue to prevent concurrent mermaid rendering which causes race conditions
-let renderPromise = Promise.resolve();
+// The id counter, the render queue and the theme all moved to
+// `shared/mermaid`. They were shared across every instance of *this*
+// component, which was the whole problem: the conversation drew Mermaid too,
+// with its own configuration, and `mermaid.initialize` is global. Whichever
+// surface ran last decided how diagrams looked everywhere.
 </script>
 
 <script setup lang="ts">
 import { NodeViewWrapper, NodeViewContent, nodeViewProps } from '@tiptap/vue-3';
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import mermaid from 'mermaid';
+import { renderDiagram, diagramId, diagramTheme } from '../../shared/mermaid';
+import DiagramViewer from '../../shared/components/DiagramViewer.vue';
 import QueryResultTable from './QueryResultTable.vue';
 import { Transformer } from 'markmap-lib';
 import { Markmap, deriveOptions } from 'markmap-view';
@@ -131,16 +148,7 @@ const mermaidError = ref('');
 let renderTimeout: number | null = null;
 let observer: MutationObserver | null = null;
 
-const applyMermaidTheme = () => {
-  const isDark = document.documentElement.classList.contains('dark');
-  mermaid.initialize({ 
-    startOnLoad: false, 
-    theme: isDark ? 'dark' : 'default',
-    fontFamily: 'inherit'
-  });
-};
-
-const renderMermaid = () => {
+const renderMermaid = async () => {
   if (selectedLanguage.value !== 'mermaid') return;
   const content = props.node.textContent;
   if (!content.trim()) {
@@ -148,33 +156,28 @@ const renderMermaid = () => {
     mermaidError.value = '';
     return;
   }
-  
-  const id = `mermaid-diagram-${Date.now()}-${diagramIdCounter++}`;
-  
-  // Chain render calls to prevent concurrent execution bugs in mermaid
-  renderPromise = renderPromise.then(async () => {
-    // Re-check if content changed while waiting in queue
-    if (content !== props.node.textContent) return;
-    
-    try {
-      mermaidError.value = '';
-      const { svg } = await mermaid.render(id, content);
-      mermaidSvg.value = svg;
-    } catch (err: any) {
-      mermaidError.value = err.message || 'Syntax Error in Mermaid graph';
-      // Mermaid renders into a throwaway element of its own and leaves it in
-      // the body when the parse fails — which, mid-edit, is most of the time.
-      // It names that element after the id we handed it, with a `d` in front.
-      //
-      // This used to look for `#${err.hash}`: a parser error's hash is not a
-      // selector, so `querySelector` threw, the throw was swallowed by the
-      // chain below, and nothing was ever cleaned up. A session's worth of
-      // half-typed diagrams stayed in the document until the window closed.
-      document.getElementById(`d${id}`)?.remove();
-      document.getElementById(id)?.remove();
-    }
-  }).catch(() => {});
+
+  // The queue, the id and the cleanup after a failed parse all live in
+  // `shared/mermaid` now — the last of those because Mermaid leaves a scratch
+  // element in the body every time a parse fails, which mid-edit is most
+  // keystrokes.
+  const drawn = await renderDiagram(diagramId('note-diagram'), content);
+
+  // What is on screen has to be what is in the block. A render that finished
+  // after the text moved on is an answer to a question nobody is asking any
+  // more.
+  if (content !== props.node.textContent) return;
+
+  if ('error' in drawn) {
+    mermaidError.value = drawn.error;
+    return;
+  }
+  mermaidError.value = '';
+  mermaidSvg.value = drawn.svg;
 };
+
+/** The diagram, big enough to read — the same viewer the conversation uses. */
+const openDiagram = ref<string | null>(null);
 
 // --- Markmap Rendering Logic ---
 
@@ -314,15 +317,17 @@ watch(() => props.node.textContent, () => {
 
 watch(selectedLanguage, (newLang) => {
   if (newLang === 'mermaid') {
-    applyMermaidTheme();
     renderMermaid();
   } else if (newLang === 'markmap') {
     renderMarkmap();
   }
 });
 
+watch(diagramTheme, () => {
+  if (selectedLanguage.value === 'mermaid') renderMermaid();
+});
+
 onMounted(() => {
-  applyMermaidTheme();
   isDarkMode.value = document.documentElement.classList.contains('dark');
   
   if (selectedLanguage.value === 'mermaid') {
@@ -332,18 +337,17 @@ onMounted(() => {
   }
 
   // Watch for dark mode changes on the HTML element
+  // Markmap only. Mermaid follows `diagramTheme`, which is one observer for
+  // the whole app rather than one per code block — a note with a dozen blocks
+  // used to install a dozen of these, each reconfiguring the same global
+  // library on the same attribute change.
   observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
-      if (mutation.attributeName === 'class') {
-        const wasDark = isDarkMode.value;
-        isDarkMode.value = document.documentElement.classList.contains('dark');
-
-        applyMermaidTheme();
-        if (selectedLanguage.value === 'mermaid') {
-          renderMermaid();
-        } else if (selectedLanguage.value === 'markmap' && wasDark !== isDarkMode.value) {
-          renderMarkmap();
-        }
+      if (mutation.attributeName !== 'class') return;
+      const wasDark = isDarkMode.value;
+      isDarkMode.value = document.documentElement.classList.contains('dark');
+      if (selectedLanguage.value === 'markmap' && wasDark !== isDarkMode.value) {
+        renderMarkmap();
       }
     });
   });
@@ -390,6 +394,11 @@ onUnmounted(() => {
 }
 
 /* Fix Tailwind CSS breaking mermaid */
+/* It opens, and says so before anything is clicked. */
+.mermaid-svg-container {
+  cursor: zoom-in;
+}
+
 .mermaid-svg-container svg,
 .mermaid-svg-container svg * {
   max-width: none !important;
