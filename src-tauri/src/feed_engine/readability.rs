@@ -14,6 +14,23 @@ pub struct ReadabilityResult {
     pub published_at: String,
     pub thumbnail_url: String,
     pub content: String,
+    /// The same content before it was sanitised for display.
+    ///
+    /// # Why both are kept
+    ///
+    /// `content` is sanitised so it can be **rendered** — the feed reader puts
+    /// it in the page — and the sanitiser keeps only the tags that are safe to
+    /// draw. `div` is not among them, and ammonia drops a tag it does not know
+    /// while keeping the text inside it, so two neighbouring `div`s come out
+    /// welded together.
+    ///
+    /// Nothing renders this one. `syn::web::reduce` reads a page for a model
+    /// and wants its shape — which block ended, which cell is which — and then
+    /// throws every tag away. Running that through a rendering sanitiser first
+    /// destroys exactly the thing it came for: a share-price table arrived as
+    /// `Giá thấp nhấtGiá cao nhất72,20074,20024h`, and Syn read a
+    /// twenty-four-hour high as the high of the year.
+    pub raw_content: String,
     pub word_count: i64,
     pub read_time_minutes: i64,
 }
@@ -33,6 +50,7 @@ pub fn extract_content(html: &str, base_url: &str) -> ReadabilityResult {
 
     // 3. Sanitize content
     let sanitized = sanitizer::sanitize_html(&content, base_url);
+    let raw_content = content.clone();
 
     // 4. Calculate stats
     let text_only = Html::parse_fragment(&sanitized)
@@ -48,6 +66,7 @@ pub fn extract_content(html: &str, base_url: &str) -> ReadabilityResult {
         published_at,
         thumbnail_url,
         content: sanitized,
+        raw_content,
         word_count,
         read_time_minutes,
     }

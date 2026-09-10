@@ -434,7 +434,11 @@ pub fn looks_like_a_list(prose: usize, stories: usize, listed: usize) -> bool {
 /// are the answer instead.
 pub fn reduce(html: &str, url: &str) -> Page {
     let article = crate::feed_engine::readability::extract_content(html, url);
-    let (text, outline) = read_out(&scraper::Html::parse_fragment(&article.content));
+    // The **unsanitised** content: `reduce` never renders anything, and the
+    // sanitiser exists to make markup safe to draw. Passing through it first
+    // welds every `div` to the next one and turns a table of numbers into a
+    // heap of them. See `ReadabilityResult::raw_content`.
+    let (text, outline) = read_out(&scraper::Html::parse_fragment(&article.raw_content));
 
     // What kind of page this is. See `looks_like_a_list`.
     let links = links_on(html, url);
@@ -476,6 +480,14 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
 
     for node in fragment.root_element().descendants() {
         if let Some(element) = node.value().as_element() {
+            // A block ends a line. See `SEPARATE_LINES` for what happens
+            // without this, and it is worse than untidy.
+            if SEPARATE_LINES.contains(&element.name()) && !text.is_empty() && !text.ends_with('\n')
+            {
+                text.push('\n');
+                chars += 1;
+            }
+
             let Some(level) = heading_level(element.name()) else { continue };
             let Some(el) = scraper::ElementRef::wrap(node) else { continue };
 
@@ -489,8 +501,16 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
                 outline.push(Heading { level, text: words, at: chars });
             }
         } else if let Some(raw) = node.value().as_text() {
+            // Nothing renders this, so nothing has stripped the scripts out of
+            // it — and a page's JavaScript is not something anybody asked to
+            // have read aloud.
+            if node.ancestors().any(|a| {
+                a.value().as_element().is_some_and(|e| NOT_WORDS.contains(&e.name()))
+            }) {
+                continue;
+            }
             for word in raw.split_whitespace() {
-                if !text.is_empty() {
+                if !text.is_empty() && !text.ends_with('\n') {
                     text.push(' ');
                     chars += 1;
                 }
@@ -502,6 +522,53 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
 
     (text, outline)
 }
+
+/// What is in the markup and is not on the page.
+///
+/// The sanitiser used to take these out on the way past. It is no longer on the
+/// way — see `ReadabilityResult::raw_content` — so a page's own source code
+/// would otherwise be read to the model as though somebody had written it there
+/// to be read.
+const NOT_WORDS: &[&str] = &["script", "style", "noscript", "template", "svg", "iframe"];
+
+/// The elements that end a line.
+///
+/// # What a page looks like without this
+///
+/// Every text node was joined to the last with a single space and element
+/// boundaries counted for nothing. On prose that is invisible. On a table it is
+/// destruction, and this is a real reading of a share-price page, exactly as it
+/// reached the model:
+///
+/// ```text
+/// 21/10/2025Giá90,791.62 1D 1M 3M 1Y 5Y Tất cả Chỉ số cơ bản
+/// Giá thấp nhấtGiá cao nhất72,20074,20024hVốn hóa124,117TP/E12.41
+/// ```
+///
+/// Three things died there. The two headings ran together, then the two values
+/// ran together — `72,20074,200` is a pair of numbers with nothing saying where
+/// one ends. And `24h`, the only word on the page saying what period those two
+/// numbers cover, was glued to the end of the second: `74,20024h`.
+///
+/// Syn read that, took 74,200 — a **twenty-four hour** high — and reported it as
+/// the highest price of the **year**, then divided by it to four significant
+/// figures. The real figure is somewhere near 90,000: the same text carried
+/// `21/10/2025Giá90,791.62` and it was passed over. The answer said the share
+/// was 2% below its peak. It is about a quarter below it.
+///
+/// A heap of numbers with their labels torn off is the most dangerous thing
+/// that can be handed to a model, because it will pair them up and show its
+/// working.
+///
+/// This does not put labels back on values — nothing here can do that. It makes
+/// each number a token of its own and puts `24h` where it can be seen, which is
+/// the difference between a model that can be careful and one that cannot.
+const SEPARATE_LINES: &[&str] = &[
+    "address", "article", "aside", "blockquote", "br", "caption", "dd", "details", "dialog",
+    "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+    "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol", "option", "p", "pre",
+    "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
+];
 
 fn heading_level(tag: &str) -> Option<u8> {
     match tag {
@@ -2066,6 +2133,65 @@ mod tests {
         assert!(said.contains(crate::syn::tools::BROWSE_TOOL), "{said}");
     }
 
+    // ── a page whose meaning is in its layout ─────────────────────
+
+    /// A share-price panel, shaped the way simplize.vn shapes one: labels in
+    /// one row of `div`s, the values in the next, and the period marker at the
+    /// end of the row.
+    ///
+    /// This arrived at the model as
+    /// `Giá thấp nhấtGiá cao nhất72,20074,20024h` — two labels welded, two
+    /// numbers welded, and `24h` glued to the end of the second number. Syn
+    /// took 74,200, a **twenty-four hour** high, and reported it as the highest
+    /// price of the **year**, then divided by it to four significant figures.
+    /// The real figure is near 90,000. The answer said the share was 2% below
+    /// its peak; it is about a quarter below it.
+    ///
+    /// Two things did that. Element boundaries counted for nothing, and the
+    /// text was taken from markup that had been through a **rendering**
+    /// sanitiser first — which drops `div` and keeps what is inside it, welding
+    /// each block to the next.
+    #[test]
+    fn a_table_of_numbers_does_not_arrive_as_a_heap_of_them() {
+        let filler = "Công ty cổ phần FPT niêm yết trên sàn HOSE từ tháng 12 năm 2006. ".repeat(20);
+        let html = format!(
+            r#"<html><body><main><article><p>{filler}</p>
+               <div><div>Giá thấp nhất</div><div>Giá cao nhất</div></div>
+               <div><div>72,200</div><div>74,200</div><div>24h</div></div>
+               </article></main></body></html>"#
+        );
+
+        let page = reduce(&html, "https://simplize.vn/co-phieu/FPT");
+
+        assert!(!page.text.contains("72,20074,200"), "two numbers welded: {}", page.text);
+        assert!(!page.text.contains("74,20024h"), "the period glued to a number");
+        assert!(
+            page.text.contains("\n24h"),
+            "and `24h` has to be visible as its own thing, or the numbers it \
+             qualifies mean nothing: {}",
+            page.text
+        );
+    }
+
+    /// A page's own source code is not something anybody asked to have read
+    /// aloud — and nothing strips it out any more, because nothing renders this.
+    #[test]
+    fn what_is_in_the_markup_and_not_on_the_page_stays_out() {
+        let filler = "Một câu về công ty và giá cổ phiếu của nó. ".repeat(20);
+        let html = format!(
+            r#"<html><body><article><p>{filler}</p>
+               <script>var secret = "khong-duoc-doc-cai-nay";</script>
+               <style>.a {{ color: red }}</style>
+               <p>Đoạn cuối.</p></article></body></html>"#
+        );
+
+        let page = reduce(&html, "https://x.test/a");
+
+        assert!(!page.text.contains("khong-duoc-doc-cai-nay"), "{}", page.text);
+        assert!(!page.text.contains("color: red"));
+        assert!(page.text.contains("Đoạn cuối."), "and the words still arrive");
+    }
+
     // ── what a search cannot do ───────────────────────────────────
 
     /// Read off this vault's own transcripts: seven of twenty-four questions
@@ -2625,3 +2751,4 @@ mod real_pages {
         assert!(wrap(&page).contains("Published: "), "and so does what the model reads");
     }
 }
+
