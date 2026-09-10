@@ -775,19 +775,37 @@ fn results_dir(dir: &Path) -> AppResult<PathBuf> {
     Ok(path)
 }
 
+/// What a run read, keyed by step.
+///
+/// # Why this is a struct wrapping the map rather than the map
+///
+/// Because every JSON file in the vault is a node as far as the scanner is
+/// concerned, and it writes `"metadata": {"node_id": …}` into each one. A `Run`
+/// survives that because serde drops fields a struct does not declare — a bare
+/// map does not, and `"metadata"` is not a step number, so the whole file
+/// became unreadable and "show the whole result" failed on every run the
+/// scanner had been past.
+///
+/// Found by opening a real file, which is the reason for keeping them.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Results {
+    #[serde(default)]
+    steps: std::collections::BTreeMap<u32, String>,
+}
+
 /// Write the full results, if this run has any that outgrew their preview.
 fn save_results(dir: &Path, run: &Run) -> AppResult<()> {
-    let whole: std::collections::BTreeMap<u32, &String> = run
+    let steps: std::collections::BTreeMap<u32, String> = run
         .steps
         .iter()
-        .filter_map(|s| s.full.as_ref().map(|f| (s.index, f)))
+        .filter_map(|s| s.full.clone().map(|f| (s.index, f)))
         .collect();
 
-    if whole.is_empty() {
+    if steps.is_empty() {
         return Ok(());
     }
     let path = results_dir(dir)?.join(format!("{}.json", run.id));
-    atomic_write(&path, &serde_json::to_string(&whole)?)
+    atomic_write(&path, &serde_json::to_string(&Results { steps })?)
 }
 
 /// What a step actually returned, for a run already on disk.
@@ -799,8 +817,8 @@ pub fn load_result(vault_path: &str, run_id: &str, step: u32) -> AppResult<Optio
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
-    let whole: std::collections::BTreeMap<u32, String> = serde_json::from_str(&raw)?;
-    Ok(whole.get(&step).cloned())
+    let whole: Results = serde_json::from_str(&raw)?;
+    Ok(whole.steps.get(&step).cloned())
 }
 
 /// The same, but a failure is logged rather than propagated.
@@ -1209,6 +1227,37 @@ mod tests {
     /// Written beside the run rather than inside it, because `list_runs`
     /// parses every file in the directory and a page read in each step would
     /// make opening the list slow for everybody, always.
+    /// Anything in the vault gets a `node_id` stamped into it.
+    ///
+    /// Every JSON file under the vault is a node as far as the scanner is
+    /// concerned, and it writes `"metadata": {"node_id": …}` into each one. A
+    /// `Run` is a struct and serde drops the unknown field; this file was a
+    /// bare map, so the stamp made its keys unparseable and "show the whole
+    /// result" failed silently on every run the scanner had touched.
+    ///
+    /// Found by reading a real file, which is the whole point of keeping them.
+    #[test]
+    fn a_results_file_survives_the_vault_stamping_it() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let run = a_run_that_read(&"đường".repeat(MAX_STEP_PREVIEW));
+        save_run(vault, &run).expect("saved");
+
+        let path = dir
+            .path()
+            .join("Syn/runs/results")
+            .join(format!("{}.json", run.id));
+        let mut stamped: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("written")).expect("json");
+        stamped["metadata"] = serde_json::json!({ "node_id": "d958af90" });
+        std::fs::write(&path, stamped.to_string()).expect("stamped");
+
+        assert!(
+            load_result(vault, &run.id, 0).expect("still readable").is_some(),
+            "an extra key the vault added must not lose what the run read"
+        );
+    }
+
     #[test]
     fn the_whole_result_is_kept_out_of_the_run_file() {
         let dir = tempfile::tempdir().expect("temp");
