@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useDebounceFn } from '@vueuse/core';
 import { marked, Renderer, type Tokens } from 'marked';
 import mermaid from 'mermaid';
@@ -21,6 +22,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
+import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
 hljs.registerLanguage('javascript', javascript);
@@ -231,6 +233,21 @@ const renderedContent = computed(() => {
 // Trigger mermaid rendering after content updates
 const messageEl = ref<HTMLElement | null>(null);
 
+/**
+ * The rendered diagrams, kept so one can be opened big.
+ *
+ * The SVG goes into the bubble through `innerHTML` and is then the DOM's, not
+ * this component's — reading it back out of the DOM to show it again would work
+ * and would be reading a copy of something already held. Keyed by the id the
+ * renderer minted, which is what the click carries.
+ */
+const diagrams = new Map<string, string>();
+const openDiagram = ref<string | null>(null);
+
+// The template uses the global `$t`; the label below is written into markup
+// from script, so it needs the composable.
+const { t } = useI18n();
+
 const renderMermaid = async () => {
   await nextTick();
   if (!messageEl.value) return;
@@ -245,11 +262,18 @@ const renderMermaid = async () => {
 
     try {
       const { svg } = await mermaid.render(id + '-svg', code);
+      diagrams.set(id, svg);
+      // `data-diagram` is what `handleContentClick` looks for, and the button
+      // role plus the label are what make a picture that does something say so
+      // to somebody who cannot see the cursor change.
+      const opened =
+        `<div class="mermaid-rendered" data-diagram="${id}" role="button" tabindex="0"` +
+        ` title="${t('syn.diagram_open')}">${svg}</div>`;
       const container = el.parentElement;
       if (container && container.classList.contains('mermaid-container')) {
-        container.innerHTML = `<div class="mermaid-rendered">${svg}</div>`;
+        container.innerHTML = opened;
       } else {
-        el.outerHTML = `<div class="mermaid-rendered">${svg}</div>`;
+        el.outerHTML = opened;
       }
     } catch (e) {
       console.warn('[Mermaid] Render failed:', e);
@@ -279,9 +303,37 @@ onMounted(() => {
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
 
+/** Open the diagram this element sits in, if it sits in one. */
+const showDiagramUnder = (target: HTMLElement): boolean => {
+  const diagram = target.closest('[data-diagram]') as HTMLElement | null;
+  if (!diagram) return false;
+  const svg = diagrams.get(diagram.dataset.diagram ?? '');
+  if (svg) openDiagram.value = svg;
+  return true;
+};
+
+/**
+ * The same, from the keyboard.
+ *
+ * The diagram carries `role="button"`, and a button that only answers a mouse
+ * is a lie told to whoever is reading this with a keyboard or a screen reader.
+ */
+const handleContentKey = (e: KeyboardEvent) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (showDiagramUnder(e.target as HTMLElement)) e.preventDefault();
+};
+
 /** Handle clicks on wiki-links [[Title]] in rendered content */
 const handleContentClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement;
+
+  // A diagram fitted into a four-hundred-pixel bubble is a picture of a
+  // diagram. Clicking it opens the one you can read.
+  if (showDiagramUnder(target)) {
+    e.preventDefault();
+    return;
+  }
+
   const link = target.closest('a.wikilink') as HTMLElement | null;
   if (!link) return;
   
@@ -494,6 +546,7 @@ const copyContent = async () => {
             prose-strong:text-gray-900 dark:prose-strong:text-white"
           v-html="renderedContent"
           @click="handleContentClick"
+          @keydown="handleContentKey"
         />
 
         <!-- Streaming cursor -->
@@ -655,6 +708,8 @@ const copyContent = async () => {
     </div>
   </div>
 
+  <DiagramViewer :svg="openDiagram" @close="openDiagram = null" />
+
   <!-- Fullscreen image lightbox -->
   <Teleport to="body">
     <Transition
@@ -758,6 +813,22 @@ const copyContent = async () => {
   padding: 1rem;
   border: 1px solid rgba(124, 58, 237, 0.15);
   overflow-x: auto;
+  /*
+    It opens. `zoom-in` says so before anything is clicked, which matters more
+    here than anywhere else in this bubble: a diagram squeezed to bubble width
+    looks like a picture that has already given you everything it has.
+  */
+  cursor: zoom-in;
+  transition: border-color 0.15s ease;
+}
+
+:deep(.mermaid-rendered:hover) {
+  border-color: rgba(124, 58, 237, 0.45);
+}
+
+:deep(.mermaid-rendered:focus-visible) {
+  outline: 2px solid rgba(124, 58, 237, 0.6);
+  outline-offset: 2px;
 }
 
 :deep(.mermaid-rendered svg) {

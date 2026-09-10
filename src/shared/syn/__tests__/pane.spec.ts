@@ -145,15 +145,19 @@ describe('how much room the app needs', () => {
       .filter(([name]) => name === 'syn_pane_room')
       .map(([, args]) => (args as { chrome: number }).chrome);
 
+    // `last` rather than `.at(-1)`: this project's TypeScript target predates
+    // it, and `vue-tsc` is the only thing that says so.
+    const last = (of: number[]) => of[of.length - 1];
+
     sidebarRoom.value = 320;
     await new Promise(r => setTimeout(r, 0));
-    expect(said().at(-1)).toBe(RAIL + 320);
+    expect(last(said())).toBe(RAIL + 320);
 
     // Nothing beside the conversation is nothing, not a bare rail: an app that
     // has not said gets the floor exactly as it was.
     sidebarRoom.value = 0;
     await new Promise(r => setTimeout(r, 0));
-    expect(said().at(-1)).toBe(0);
+    expect(last(said())).toBe(0);
   });
 
   /**
