@@ -44,6 +44,54 @@ const stage = ref<HTMLElement | null>(null);
 const art = ref<HTMLElement | null>(null);
 
 /**
+ * The size the diagram was drawn at, in its own coordinates.
+ *
+ * Read off the `viewBox` attribute rather than the DOM property, because
+ * `SVGSVGElement.viewBox` is one of the things a test environment does not
+ * implement, and a viewer that only works in a browser is a viewer nothing can
+ * check.
+ */
+const drawnSize = (svgEl: SVGElement): { w: number; h: number } | null => {
+  const parts = (svgEl.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return null;
+  const [, , w, h] = parts;
+  return w > 0 && h > 0 ? { w, h } : null;
+};
+
+/**
+ * Give the picture a size of its own before anything tries to measure it.
+ *
+ * # The bug this is
+ *
+ * Mermaid's `calculateSvgSizeAttrs`, when `useMaxWidth` is on — and it is, by
+ * default — sets exactly three things:
+ *
+ * ```js
+ * attrs.set("width", "100%");
+ * attrs.set("style", `max-width: ${width}px;`);
+ * // ...and later: svgElem.attr("viewBox", vBox);
+ * ```
+ *
+ * No height at all, and the real size only in the `viewBox`. In a chat bubble
+ * the `max-width` is the one thing giving it a size. Taking that off — which
+ * this viewer must, or the drawing is scaled down and then straight back up —
+ * leaves `width: 100%` inside a wrapper that is itself sized to fit its
+ * contents. A box whose width depends on its content whose width depends on the
+ * box resolves to **zero**: the viewer opened onto an empty stage with the
+ * controls still cheerfully reading 100%.
+ *
+ * So the `viewBox` becomes an explicit width and height, and every measurement
+ * after this has something to measure.
+ */
+const settle = (svgEl: SVGElement) => {
+  svgEl.style.maxWidth = 'none';
+  const size = drawnSize(svgEl);
+  if (!size) return;
+  svgEl.setAttribute('width', String(size.w));
+  svgEl.setAttribute('height', String(size.h));
+};
+
+/**
  * Open at a size that shows the whole thing, and never magnified past its own.
  *
  * A diagram smaller than the window is drawn at natural size — scaling a
@@ -61,11 +109,19 @@ const fit = async () => {
   const room = stage.value;
   if (!svgEl || !room) return;
 
-  const drawn = svgEl.getBoundingClientRect();
-  if (!drawn.width || !drawn.height) return;
+  settle(svgEl);
+
+  // Measured where possible, and taken from the `viewBox` where nothing can be
+  // measured — a hidden or not-yet-laid-out element reports zero, and dividing
+  // by it would send the diagram to infinity.
+  const box = svgEl.getBoundingClientRect();
+  const drawn = box.width && box.height ? { w: box.width, h: box.height } : drawnSize(svgEl);
+  if (!drawn) return;
 
   const room_ = room.getBoundingClientRect();
-  scale.value = Math.min(1, room_.width / drawn.width, room_.height / drawn.height);
+  if (!room_.width || !room_.height) return;
+
+  scale.value = Math.min(1, room_.width / drawn.w, room_.height / drawn.h);
 };
 
 const by = (factor: number) => {
@@ -126,6 +182,11 @@ const onKey = (e: KeyboardEvent) => {
 watch(() => props.svg, svg => { if (svg) fit(); });
 
 onMounted(() => {
+  // Mounted with one already open. The watcher above only fires on a *change*,
+  // so without this a viewer created around a diagram would never be measured —
+  // which is how the tests mount it, and how a future caller might.
+  if (props.svg) fit();
+
   window.addEventListener('keydown', onKey);
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
@@ -235,9 +296,12 @@ onUnmounted(() => {
   reason.
 */
 .diagram-art :deep(svg) {
+  /*
+    `max-width` only. The width and height are set in script from the
+    `viewBox`, because `width: auto` on an SVG that says `width="100%"` inside a
+    shrink-to-fit wrapper resolves to nothing at all — see `settle`.
+  */
   max-width: none !important;
-  width: auto;
-  height: auto;
   display: block;
 }
 </style>

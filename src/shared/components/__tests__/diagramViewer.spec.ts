@@ -6,9 +6,17 @@ import bubble from '../../../mini-apps/messages/components/MessageBubble.vue?raw
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
 
-/** Enough of an SVG to be one. jsdom measures everything as zero, which is
- *  exactly why `fit` has to survive a diagram it cannot measure. */
-const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" style="max-width: 800px"><rect/></svg>';
+/**
+ * Shaped like the real thing, which is the point.
+ *
+ * Mermaid emits exactly this: `width="100%"` with the real size only in the
+ * `viewBox` and a `max-width` holding it together. jsdom measures every box as
+ * zero, which is also what a browser reports for a wrapper that has collapsed —
+ * so this fixture covers both.
+ */
+const SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 800 400"' +
+  ' style="max-width: 800px"><rect/></svg>';
 
 const open = (svg: string | null = SVG) =>
   mount(DiagramViewer, {
@@ -94,9 +102,41 @@ describe('the diagram viewer', () => {
    * that keeps it inside a bubble, and the one thing not wanted here. Left in,
    * the drawing is scaled down and then scaled back up, which is soft edges for
    * no reason.
+   *
+   * Taking it off is also what broke this the first time. `width="100%"` inside
+   * a wrapper sized to fit its contents resolves to **zero** once the
+   * `max-width` is gone, and the viewer opened onto an empty stage with the
+   * controls still reading 100%. The real size lives in the `viewBox` and has
+   * to be written out.
    */
-  it('takes off the max-width Mermaid wrote into the picture', () => {
+  it('gives the picture a size of its own, rather than a percentage of nothing', async () => {
+    const w = open();
+    await w.vm.$nextTick();
+    await w.vm.$nextTick();
+
+    const svgEl = document.querySelector('.diagram-art svg') as SVGElement;
+    expect(svgEl, 'the diagram is on the stage at all').toBeTruthy();
+    expect(svgEl.getAttribute('width')).toBe('800');
+    expect(svgEl.getAttribute('height')).toBe('400');
+    expect(svgEl.style.maxWidth).toBe('none');
+    w.unmount();
+  });
+
+  it('says in its own stylesheet that the max-width goes', () => {
     expect(source).toContain('max-width: none !important');
+  });
+
+  /** A diagram with no `viewBox` is left exactly as it came, rather than being
+   *  given a size invented out of nothing. */
+  it('leaves a picture that never said how big it is alone', async () => {
+    const w = open('<svg xmlns="http://www.w3.org/2000/svg" width="100%"><rect/></svg>');
+    await w.vm.$nextTick();
+    await w.vm.$nextTick();
+
+    const svgEl = document.querySelector('.diagram-art svg') as SVGElement;
+    expect(svgEl.getAttribute('width')).toBe('100%');
+    expect(svgEl.getAttribute('height')).toBeNull();
+    w.unmount();
   });
 
   it('has a label in both languages for everything it can do', () => {
