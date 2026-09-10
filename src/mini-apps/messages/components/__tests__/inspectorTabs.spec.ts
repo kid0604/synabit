@@ -57,3 +57,37 @@ describe('the inspector panel', () => {
     }
   });
 });
+
+/**
+ * A control that does nothing looks like a broken app, not a subtle bug.
+ *
+ * The Tools tab clamps each tool's description to two lines and expands it when
+ * the chevron is pressed. It did not: the span carried a static `block`
+ * alongside a bound `line-clamp-2`, and `line-clamp` works by setting
+ * `display: -webkit-box`. Both are plain utilities of equal specificity, and
+ * `.block` is emitted later in the stylesheet, so it won — every description
+ * was always full height and the chevron turned beside text that never moved.
+ *
+ * Nothing could have caught it but looking: it type-checks, it lints, and both
+ * classes are real. So the assertion is on the shape that caused it — the two
+ * must never be applied to the same element at once.
+ */
+describe('the tools tab', () => {
+  it('never puts a display utility where it would defeat line-clamp', () => {
+    const clamped = [...source.matchAll(/<(?:span|p|div)\b[^>]*line-clamp-\d[^>]*>/g)];
+    expect(clamped.length, 'the clamped descriptions are still here').toBeGreaterThan(0);
+
+    for (const [tag] of clamped) {
+      // Only the *static* class list, and only a bound one that would apply
+      // together with the clamp. `? 'block' : 'line-clamp-2'` is the fix, not
+      // the bug: the two branches are exclusive.
+      const statics = [...tag.matchAll(/(?:^|\s)class="([^"]*)"/g)].map(m => m[1]);
+      for (const list of statics) {
+        expect(
+          list.split(/\s+/),
+          `a static display utility beside line-clamp: ${tag}`,
+        ).not.toContain('block');
+      }
+    }
+  });
+});

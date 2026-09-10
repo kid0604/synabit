@@ -632,10 +632,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 <span class="min-w-0 flex-1">
                   <code class="text-[13px] font-mono text-violet-600 dark:text-violet-400">{{ tool.name }}</code>
                   <!-- Verbatim, and clamped until asked for: written for the
-                       model, and `query_nodes` alone is a paragraph. -->
+                       model, and `query_nodes` alone is a paragraph.
+
+                       `block` is in the bound class and not the static one, and
+                       that is the whole bug this line once had: `line-clamp-2`
+                       works by setting `display: -webkit-box`, and `.block`
+                       ships later in the stylesheet, so a static `block`
+                       silently won and nothing was ever clamped. The chevron
+                       turned, the text did not move, and the control looked
+                       broken because it was. -->
                   <span
-                    class="block mt-1 text-xs text-gray-500 dark:text-gray-400 leading-relaxed"
-                    :class="openTools.has(tool.name) ? '' : 'line-clamp-2'"
+                    class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-relaxed"
+                    :class="openTools.has(tool.name) ? 'block' : 'line-clamp-2'"
                   >{{ tool.description }}</span>
                 </span>
               </button>
