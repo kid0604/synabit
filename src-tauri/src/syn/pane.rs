@@ -112,6 +112,43 @@ pub const NARROWEST: u32 = 300;
 /// doing.
 pub const APP_KEEPS: u32 = 320;
 
+/// How much room the app has said it needs, in logical pixels.
+///
+/// # Why this is a number the screen sends rather than one written here
+///
+/// `APP_KEEPS` was reasoned about as *"the conversation keeps its floor"*, and
+/// it is not that. It is the floor for the app's **whole webview**, and inside
+/// that webview sit the icon rail and whichever mini-app's own sidebar is
+/// showing — on Syn, sixty-four pixels plus a thread list somebody can drag
+/// anywhere between 240 and 560.
+///
+/// So a floor of 320 left the conversation with a negative width, and pulling
+/// the pane leftward covered it entirely and kept going until it reached the
+/// sidebar. The floor was doing its job; it was measuring the wrong thing.
+///
+/// The width of that chrome is a fact only the screen has — nobody here knows
+/// how far somebody has pulled their thread list, or which app is even open.
+/// So the screen reports it, and the policy stays here: what a *conversation*
+/// needs is `APP_KEEPS`, and what the app needs is that plus its own furniture.
+/// A copy of the policy on the screen would be the second opinion this file
+/// already argues against; a fact travelling to where the policy lives is not.
+///
+/// Zero until the app has said, which is `APP_KEEPS` and the old behaviour.
+static ROOM_NOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The screen says how much of its width is furniture rather than conversation.
+///
+/// Sent when it changes — a sidebar dragged, an app switched, a sidebar folded
+/// away because there was no longer room for it.
+pub fn the_app_needs_room_for(chrome: u32) {
+    ROOM_NOW.store(chrome, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The floor in force: what a conversation needs, plus whatever is beside it.
+pub fn app_keeps() -> u32 {
+    APP_KEEPS.saturating_add(ROOM_NOW.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Two rectangles, in the units the caller measured in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
@@ -175,21 +212,38 @@ impl Layout {
 /// `the_bar_is_the_same_height_on_both_sides` is what makes it agree.
 pub const BAR: u32 = 36;
 
-pub fn layout(width: u32, height: u32, wanted: Option<f64>) -> Layout {
+pub fn layout(width: u32, height: u32, wanted: Option<f64>, app_keeps: u32) -> Layout {
     let Some(share) = wanted else {
         return Layout::only_the_app(width, height);
     };
 
-    // The app keeps its floor first: the conversation is what the pane is
-    // there to sit beside.
+    // Too narrow for both gets no pane, and that threshold is the *base* floor
+    // — what a conversation needs beside a readable page, and nothing about
+    // furniture. A window this small was never going to hold a sidebar too.
     if width < APP_KEEPS.saturating_add(NARROWEST) {
         return Layout::only_the_app(width, height);
     }
 
+    // What the app asked to keep, or everything except the narrowest page,
+    // whichever is smaller.
+    //
+    // `app_keeps` is what the app *wants* — its own furniture plus a
+    // conversation — and it is passed in rather than read from `APP_KEEPS`,
+    // because only the screen knows how wide that furniture is. On a window
+    // with room it is honoured exactly, and the edge stops before the
+    // conversation is covered.
+    //
+    // On a window without room it is not, and that is deliberate. Refusing to
+    // open a pane on a 900-pixel window because somebody's thread list is 560
+    // wide would be a floor making a layout decision, which is the mistake
+    // `APP_KEEPS` has already been corrected for once. A cramped conversation
+    // on a cramped window is the honest outcome; no browser at all is not.
+    let keeps = app_keeps.min(width.saturating_sub(NARROWEST));
+
     let asked = (width as f64 * share.clamp(0.0, 1.0)) as u32;
     let pane_width = asked
         .max(NARROWEST)
-        .min(width.saturating_sub(APP_KEEPS));
+        .min(width.saturating_sub(keeps));
 
     let app_width = width.saturating_sub(pane_width);
     // The bar comes off the top of the pane, and never off so much that the
@@ -290,7 +344,7 @@ pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>
     let scale = main.scale_factor().unwrap_or(1.0);
 
     let logical = |v: u32| (v as f64 / scale) as u32;
-    let plan = layout(logical(size.width), logical(size.height), wanted);
+    let plan = layout(logical(size.width), logical(size.height), wanted, app_keeps());
 
     // Nothing here touches the app's own webview. It cannot be moved on macOS
     // and does not need to be anywhere: it stays full-window and the *app*
@@ -457,6 +511,27 @@ pub fn drag_to<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) -> AppR
     Ok(arrange(app, Some(share))?.pane_share())
 }
 
+/// Lay the pane out again for a floor that has just moved.
+///
+/// The share is unchanged — nobody dragged anything — but the floor may now
+/// forbid it, in which case `layout` gives back what it can and the pane moves
+/// right to make room. Zero when there is no pane, which is also the answer
+/// when the app has none to arrange.
+///
+/// Best effort: a floor that could not be applied leaves the pane where it was,
+/// which is a layout somebody can fix by dragging rather than an app that stops.
+#[cfg(desktop)]
+pub fn rearrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> f64 {
+    let Some(share) = share_now() else { return 0.0 };
+    match arrange(app, Some(share)) {
+        Ok(plan) => plan.pane_share(),
+        Err(e) => {
+            log::warn!("[Syn] The pane did not make room for the app: {e}");
+            share
+        }
+    }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 //  WHAT IS ON IT
@@ -606,7 +681,7 @@ mod tests {
     /// the 69 overlays need no changing.
     #[test]
     fn the_two_never_overlap_and_leave_no_gap() {
-        let plan = layout(1600, 900, Some(SHARE));
+        let plan = layout(1600, 900, Some(SHARE), APP_KEEPS);
         let (ax, _, aw, ah) = plan.app;
         let (px, py, pw, ph) = plan.pane.expect("there is room for both");
 
@@ -627,7 +702,7 @@ mod tests {
     /// the arithmetic still has to produce a rectangle rather than an underflow.
     #[test]
     fn a_window_shorter_than_the_bar_still_produces_a_rectangle() {
-        let plan = layout(1600, 10, Some(SHARE));
+        let plan = layout(1600, 10, Some(SHARE), APP_KEEPS);
         let (_, py, _, ph) = plan.pane.expect("width is what decides, not height");
         assert_eq!((py, ph), (10, 0));
     }
@@ -651,7 +726,7 @@ mod tests {
     /// Refusing to open is honest; opening something nobody can read is not.
     #[test]
     fn a_window_too_narrow_for_both_keeps_the_conversation() {
-        let plan = layout(APP_KEEPS + NARROWEST - 1, 800, Some(SHARE));
+        let plan = layout(APP_KEEPS + NARROWEST - 1, 800, Some(SHARE), APP_KEEPS);
 
         assert!(plan.pane.is_none(), "{plan:?}");
         assert_eq!(plan.app, (0, 0, APP_KEEPS + NARROWEST - 1, 800), "the app keeps all of it");
@@ -663,7 +738,7 @@ mod tests {
     #[test]
     fn the_conversation_is_never_squeezed_past_its_floor() {
         for width in [900, 1000, 1200, 1600, 2560, 3840] {
-            let plan = layout(width, 900, Some(SHARE));
+            let plan = layout(width, 900, Some(SHARE), APP_KEEPS);
             let (_, _, app_width, _) = plan.app;
             assert!(
                 app_width >= APP_KEEPS,
@@ -675,12 +750,85 @@ mod tests {
         }
     }
 
+    /// The floor has to cover what is actually beside the conversation.
+    ///
+    /// This is the bug, in arithmetic. `APP_KEEPS` was read as *"the
+    /// conversation keeps its floor"* and it is the floor for the app's whole
+    /// webview — inside which sit the icon rail and a thread list somebody can
+    /// drag to 560. At 320 the conversation was left with less than nothing, so
+    /// pulling the pane leftward covered it completely and only stopped when it
+    /// reached the sidebar.
+    #[test]
+    fn the_floor_covers_the_furniture_beside_the_conversation() {
+        const RAIL: u32 = 64;
+        const THREADS: u32 = 320;
+        let chrome = RAIL + THREADS;
+
+        // What the old floor did: the app is left with less than its own
+        // furniture, so the conversation is not merely thin, it is gone.
+        let old = layout(1600, 900, Some(0.95), APP_KEEPS);
+        assert!(
+            old.app.2 < chrome,
+            "the old floor let the app be narrower than its own sidebar: {}",
+            old.app.2
+        );
+
+        // What the floor does when it is told what is there.
+        let now = layout(1600, 900, Some(0.95), APP_KEEPS + chrome);
+        assert_eq!(now.app.2, APP_KEEPS + chrome);
+        assert!(
+            now.app.2 - chrome >= APP_KEEPS,
+            "the conversation keeps {APP_KEEPS} whatever is beside it"
+        );
+    }
+
+    /// A floor is a preference; a window is a fact.
+    ///
+    /// A thread list pulled to 560 asks for a floor of 944, which on a
+    /// 900-pixel window cannot be had. Refusing to open a browser because of it
+    /// would be a floor deciding the layout — the exact mistake `APP_KEEPS` has
+    /// been corrected for once already. So the ask is honoured where there is
+    /// room and given up where there is not, and the *pane* keeps its own floor
+    /// either way.
+    #[test]
+    fn a_floor_the_window_cannot_afford_still_leaves_a_readable_pane() {
+        let greedy = APP_KEEPS + 64 + 560;
+
+        for width in [900u32, 950, 1000] {
+            let plan = layout(width, 900, Some(SHARE), greedy);
+            let (_, _, pane_width, _) = plan.pane.expect("a small window still gets a pane");
+            assert_eq!(pane_width, NARROWEST, "at {width} the pane was {pane_width}");
+            assert_eq!(plan.app.2, width - NARROWEST);
+        }
+
+        // And on a window with room, the ask is honoured exactly.
+        let roomy = layout(2560, 900, Some(0.95), greedy);
+        assert_eq!(roomy.app.2, greedy);
+    }
+
+    /// A floor that is reported and one that is not both have to work.
+    ///
+    /// Nothing has said anything until the app has painted once, and a pane
+    /// opened before then must still land somewhere sensible rather than
+    /// nowhere.
+    #[test]
+    fn saying_nothing_leaves_the_floor_where_it_was() {
+        the_app_needs_room_for(0);
+        assert_eq!(app_keeps(), APP_KEEPS);
+
+        the_app_needs_room_for(384);
+        assert_eq!(app_keeps(), APP_KEEPS + 384);
+
+        // Put it back: this is a process-wide static and the tests share one.
+        the_app_needs_room_for(0);
+    }
+
     /// Not wanted is the whole window, which is also how the app starts and
     /// what it must go back to when the pane closes.
     #[test]
     fn closing_it_gives_the_window_back() {
-        assert_eq!(layout(1600, 900, None), Layout::only_the_app(1600, 900));
-        assert!(layout(1600, 900, None).pane.is_none());
+        assert_eq!(layout(1600, 900, None, APP_KEEPS), Layout::only_the_app(1600, 900));
+        assert!(layout(1600, 900, None, APP_KEEPS).pane.is_none());
     }
 
     /// A very wide window gives the pane a share rather than everything left
@@ -688,7 +836,7 @@ mod tests {
     /// conversation is still the thing being worked in.
     #[test]
     fn a_wide_window_does_not_give_the_pane_everything() {
-        let (_, _, pane_width, _) = layout(3840, 1000, Some(SHARE)).pane.expect("room for both");
+        let (_, _, pane_width, _) = layout(3840, 1000, Some(SHARE), APP_KEEPS).pane.expect("room for both");
         assert!(pane_width < 3840 / 2, "the pane took half a very wide window: {pane_width}");
     }
 
@@ -737,17 +885,17 @@ mod tests {
     #[test]
     fn dragging_the_edge_still_obeys_both_floors() {
         // Pulled far too wide: the conversation keeps its floor.
-        let greedy = layout(1600, 900, Some(0.95));
+        let greedy = layout(1600, 900, Some(0.95), APP_KEEPS);
         assert_eq!(greedy.app.2, APP_KEEPS);
         assert_eq!(greedy.pane.expect("still open").2, 1600 - APP_KEEPS);
 
         // Pulled almost shut: the pane keeps its own.
-        let squeezed = layout(1600, 900, Some(0.01));
+        let squeezed = layout(1600, 900, Some(0.01), APP_KEEPS);
         assert_eq!(squeezed.pane.expect("still open").2, NARROWEST);
 
         // And nonsense is clamped rather than believed.
         for share in [-1.0, 0.0, 1.0, 2.0, f64::NAN] {
-            let plan = layout(1600, 900, Some(share));
+            let plan = layout(1600, 900, Some(share), APP_KEEPS);
             let (_, _, pane_width, _) = plan.pane.expect("open at any asking");
             assert!(
                 (NARROWEST..=1600 - APP_KEEPS).contains(&pane_width),
@@ -762,7 +910,7 @@ mod tests {
     #[test]
     fn the_share_describes_the_layout_it_came_from() {
         for width in [900, 1280, 1600, 2560] {
-            let plan = layout(width, 900, Some(SHARE));
+            let plan = layout(width, 900, Some(SHARE), APP_KEEPS);
             let share = plan.pane_share();
             let drawn = (width as f64 * (1.0 - share)).round() as u32;
 
@@ -773,7 +921,7 @@ mod tests {
             );
         }
 
-        assert_eq!(layout(1600, 900, None).pane_share(), 0.0, "closed is zero");
+        assert_eq!(layout(1600, 900, None, APP_KEEPS).pane_share(), 0.0, "closed is zero");
     }
 
     /// A floor that leaves no room to drag is not a floor, it is a decision.
@@ -793,8 +941,8 @@ mod tests {
         const ROOM_TO_PULL: u32 = 200;
 
         for width in [900u32, 950, 1280, 1600, 2560] {
-            let widest = layout(width, 900, Some(1.0)).pane.expect("a pane at any width").2;
-            let narrowest = layout(width, 900, Some(0.0)).pane.expect("a pane at any width").2;
+            let widest = layout(width, 900, Some(1.0), APP_KEEPS).pane.expect("a pane at any width").2;
+            let narrowest = layout(width, 900, Some(0.0), APP_KEEPS).pane.expect("a pane at any width").2;
             let room = widest - narrowest;
 
             assert!(
@@ -809,9 +957,9 @@ mod tests {
     #[test]
     fn it_opens_somewhere_it_can_be_pulled_from_either_side() {
         for width in [950u32, 1280, 1600, 2560] {
-            let opened = layout(width, 900, Some(SHARE)).pane.expect("open").2;
-            let widest = layout(width, 900, Some(1.0)).pane.expect("open").2;
-            let narrowest = layout(width, 900, Some(0.0)).pane.expect("open").2;
+            let opened = layout(width, 900, Some(SHARE), APP_KEEPS).pane.expect("open").2;
+            let widest = layout(width, 900, Some(1.0), APP_KEEPS).pane.expect("open").2;
+            let narrowest = layout(width, 900, Some(0.0), APP_KEEPS).pane.expect("open").2;
 
             assert!(
                 opened > narrowest && opened < widest,

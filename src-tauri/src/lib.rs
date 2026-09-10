@@ -905,6 +905,7 @@ pub fn run() {
             syn_commands::syn_pane_back,
             syn_commands::syn_pane_forward,
             syn_commands::syn_pane_resize,
+            syn_commands::syn_pane_room,
             syn_commands::syn_list_grants,
             syn_commands::syn_revoke_grant,
             syn_commands::syn_audit_log,

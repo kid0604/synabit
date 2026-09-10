@@ -1555,6 +1555,42 @@ pub async fn syn_pane_resize(app: tauri::AppHandle, share: f64) -> Result<f64, A
     }
 }
 
+/// Say how much of the app's width is furniture rather than conversation.
+///
+/// The icon rail, plus whichever mini-app sidebar is showing, plus nothing
+/// else. `pane::layout` adds what a conversation needs and clamps the edge
+/// against the sum.
+///
+/// # Why this crosses at all
+///
+/// Because the floor was measuring the app's whole webview and calling it the
+/// conversation. Inside that webview sit sixty-four pixels of rail and a thread
+/// list somebody can pull anywhere between 240 and 560, so a floor of 320 left
+/// the conversation with less than nothing — and the pane could be dragged
+/// clean over it, all the way to the sidebar.
+///
+/// How wide that furniture is right now is a fact only the screen has. The
+/// policy stays in `pane`: this carries the fact to it, and does not carry an
+/// opinion.
+///
+/// Re-arranging afterwards is the point rather than a side effect: a sidebar
+/// pulled wider while the pane is open has to push the pane, or the two overlap
+/// again by a different route.
+#[tauri::command]
+pub async fn syn_pane_room(app: tauri::AppHandle, chrome: u32) -> Result<f64, AppError> {
+    crate::syn::pane::the_app_needs_room_for(chrome);
+
+    #[cfg(desktop)]
+    {
+        Ok(crate::syn::pane::rearrange(&app))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        Ok(0.0)
+    }
+}
+
 /// What the browsing pane is showing, for the address bar to draw.
 ///
 /// Asked once when the app starts, because the pane outlives a reload of the

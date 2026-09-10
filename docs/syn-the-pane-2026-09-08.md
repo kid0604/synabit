@@ -284,3 +284,66 @@ thẳng `pane.ts` từ Rust.
 - **Kéo giãn cửa sổ với thanh địa chỉ mới là thứ tao không tự nhìn được.**
   `keep_arranged` đúng về số học; có giật hay không thì người chạy `tauri dev`
   mới trả lời được. Đó vẫn là giới hạn tao đã nói ở mục 6, và nó chưa mất đi.
+
+## 10. Cái sàn đo nhầm thứ, 10-09-2026
+
+Kéo mép pane sang trái thì nó **chồm lên hết khung chat**, chỉ dừng khi chạm
+sidebar. Sàn có, và sàn chạy đúng — nó chỉ đang đo nhầm thứ.
+
+`APP_KEEPS = 320` được viết ra với ý *"khung hội thoại giữ lấy sàn của nó"*.
+Nhưng nó là sàn cho **cả webview của app**, mà trong webview đó còn có:
+
+| | Rộng |
+| --- | --- |
+| Thanh icon dọc bên trái (`w-16`) | 64 |
+| Sidebar của mini-app đang mở (Syn: `useSidebarResize`) | 240 – 560, mặc định 320 |
+
+64 + 320 = **384 > 320**. Nghĩa là ở đúng cái sàn, khung hội thoại còn lại
+**số âm** — bị đẩy khỏi màn hình, và sidebar cũng bắt đầu bị cắt. Đúng như
+những gì nhìn thấy.
+
+### Vì sao con số này phải đi từ màn hình sang Rust
+
+Không ai bên Rust biết được người dùng đã kéo thread list rộng bao nhiêu, hay
+đang mở app nào. Đó là **sự thật** chỉ phía màn hình có.
+
+Nên: màn hình gửi *sự thật* (`syn_pane_room { chrome }` = rail + sidebar),
+Rust giữ *chính sách* (`APP_KEEPS` = khung hội thoại cần bao nhiêu). Sàn thành
+`APP_KEEPS + chrome`. Đây **không phải** bản sao của chính sách sang CSS — cái
+mà file này đã cãi chống lại một lần rồi — mà là một sự thật đi tới nơi chính
+sách đang sống.
+
+### Sàn là mong muốn, cửa sổ là sự thật
+
+Một thread list kéo tới 560 đòi sàn 944. Trên cửa sổ 900px thì không có.
+
+Từ chối mở browser vì lý do đó sẽ lại là **sàn đi quyết định bố cục** — đúng cái
+sai mà `APP_KEEPS` đã phải sửa một lần. Nên:
+
+```rust
+let keeps = app_keeps.min(width.saturating_sub(NARROWEST));
+```
+
+Cửa sổ có chỗ thì tôn trọng đúng con số app xin; không có chỗ thì thôi, và
+**pane vẫn giữ sàn của nó**. Ngưỡng "hẹp quá thì không có pane" vẫn tính trên
+sàn gốc (320 + 300 = 620), không đổi — cửa sổ nhỏ tới mức đó thì vốn cũng không
+chứa nổi sidebar.
+
+### Chỗ dễ sai đã tránh
+
+- **`<keep-alive>`.** MessagesApp không unmount khi chuyển app, nên
+  `onUnmounted` không bao giờ chạy. Dùng `onActivated`/`onDeactivated`, không
+  thì Syn sẽ tiếp tục đòi chỗ cho một sidebar không còn hiển thị.
+- **Kéo sidebar bắn sự kiện mỗi lần chuột nhúc nhích.** Chỉ gửi khi con số
+  *đổi* — mỗi lần gửi là một lần sắp lại hai webview.
+- **Kéo sidebar rộng ra trong lúc pane đang mở** phải đẩy pane sang phải, không
+  thì hai cái chồng nhau lại bằng một đường khác. `rearrange` làm việc đó.
+
+### Còn nợ
+
+`window.innerWidth` xuất hiện **35 chỗ** trong `src/`. Phần lớn là định vị menu
+theo toạ độ cửa sổ — đúng. Nhưng những chỗ hỏi *"tôi có bao nhiêu chỗ"*
+(`isMobile`, `showLeft`, `viewMode`…) thì **sai khi pane đang mở**: app đo cửa
+sổ, mà app không còn sở hữu cả cửa sổ nữa. Lần này chỉ sửa cái sàn, tức là chặn
+không cho chồng lấn; chưa sửa việc các breakpoint đó không tự co lại. Mini-app
+nào chưa báo `sidebarRoom` thì vẫn dùng sàn cũ.

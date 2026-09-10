@@ -123,3 +123,68 @@ describe('the address bar', () => {
     expect(typeof pane.openBeside).toBe('function');
   });
 });
+
+/**
+ * How much of the app's width is furniture, and who is allowed to know.
+ *
+ * The pane's floor was measuring the app's whole webview and calling it the
+ * conversation. Inside that webview sit the icon rail and whichever mini-app
+ * sidebar is showing — sixty-four pixels plus a thread list somebody can pull
+ * to 560 — so a floor of 320 left the conversation with less than nothing, and
+ * the pane could be dragged straight across it until it reached the sidebar.
+ *
+ * The fix is a fact travelling to the policy, not a copy of the policy: this
+ * side reports what it is showing, and `pane::layout` still decides where the
+ * edge stops.
+ */
+describe('how much room the app needs', () => {
+  it('reports the rail plus the sidebar, and nothing when there is no sidebar', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const { sidebarRoom, RAIL } = await import('../pane');
+    const said = () => (invoke as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter(([name]) => name === 'syn_pane_room')
+      .map(([, args]) => (args as { chrome: number }).chrome);
+
+    sidebarRoom.value = 320;
+    await new Promise(r => setTimeout(r, 0));
+    expect(said().at(-1)).toBe(RAIL + 320);
+
+    // Nothing beside the conversation is nothing, not a bare rail: an app that
+    // has not said gets the floor exactly as it was.
+    sidebarRoom.value = 0;
+    await new Promise(r => setTimeout(r, 0));
+    expect(said().at(-1)).toBe(0);
+  });
+
+  /**
+   * A sidebar drag fires on every pointer move. The floor only moves when the
+   * number does, and each call re-lays-out two webviews.
+   */
+  it('says nothing when nothing changed', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const { sidebarRoom } = await import('../pane');
+    const count = () => (invoke as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter(([name]) => name === 'syn_pane_room').length;
+
+    sidebarRoom.value = 400;
+    await new Promise(r => setTimeout(r, 0));
+    const before = count();
+
+    sidebarRoom.value = 400;
+    await new Promise(r => setTimeout(r, 0));
+    expect(count()).toBe(before);
+  });
+
+  /**
+   * `RAIL` is Tailwind's `w-16` in `App.vue`, written here as a number because
+   * this is the one place that has to add it up. Two numbers that have to agree
+   * are two numbers that drift.
+   */
+  it('is the width the rail is actually drawn at', async () => {
+    const { RAIL } = await import('../pane');
+    const app = (await import('../../../App.vue?raw')).default;
+
+    expect(RAIL).toBe(64);
+    expect(app, 'the rail is still w-16, which is 4rem').toContain("'w-16 flex-shrink-0");
+  });
+});

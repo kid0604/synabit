@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../utils/logger';
@@ -42,6 +42,54 @@ export const paneShare = ref(0);
 listen<number>('syn-pane-share', event => {
   paneShare.value = event.payload;
 }).catch(e => logger.error('[Syn] Could not listen for the pane', e));
+
+/**
+ * How wide the icon rail down the left of the window is, in CSS pixels.
+ *
+ * `w-16` in `App.vue`, which is Tailwind's 4rem. Repeated here because this is
+ * the one place that has to add it up, and `the_rail_is_the_width_this_says_it_is`
+ * fails if the class changes.
+ */
+export const RAIL = 64;
+
+/**
+ * How wide the current mini-app's own sidebar is, in CSS pixels.
+ *
+ * # Why anything outside the app cares
+ *
+ * Because the browsing pane's floor was measuring the app's whole webview and
+ * calling it the conversation. Inside that webview sit this rail and a thread
+ * list somebody can pull between 240 and 560 — so a floor of 320 left the
+ * conversation with less than nothing, and the pane could be dragged clean over
+ * it and kept going until it hit the sidebar.
+ *
+ * How wide that furniture is right now is a fact only this side has. The policy
+ * — how much conversation must survive — stays in `pane::layout`. This carries
+ * the fact there and carries no opinion with it.
+ *
+ * Zero means "nothing beside the conversation", which is what an app that has
+ * not said gets, and is the floor as it was before any of this.
+ */
+export const sidebarRoom = ref(0);
+
+let roomTold = -1;
+
+/**
+ * Tell Rust, when it has changed, and only then.
+ *
+ * A drag of the sidebar edge fires on every pointer move; the floor only moves
+ * when the number does, and each call re-lays-out two webviews.
+ */
+watch(sidebarRoom, async room => {
+  const chrome = room > 0 ? RAIL + room : 0;
+  if (chrome === roomTold) return;
+  roomTold = chrome;
+  try {
+    await invoke('syn_pane_room', { chrome });
+  } catch (e) {
+    logger.error('[Syn] Could not say how much room the app needs', e);
+  }
+}, { immediate: true });
 
 /**
  * How tall the strip above the pane is, in CSS pixels.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, computed } from 'vue';
 import { useSidebarResize } from '../../composables/useSidebarResize';
-import { paneShare, openBeside, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
+import { paneShare, sidebarRoom, openBeside, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
@@ -415,6 +415,24 @@ const togglePane = () => (paneOpen.value ? closePane() : openBeside(SOMEWHERE_TO
  * somebody pulls it.
  */
 const sidebar = useSidebarResize({ left: { initial: 320, min: 240, max: 560 } });
+
+/**
+ * Tell the browsing pane how much room this sidebar is taking.
+ *
+ * Without it the pane's floor measured the whole app webview and called it the
+ * conversation — so the edge could be dragged straight over the conversation
+ * and only stopped when it reached this sidebar. See `shared/syn/pane`.
+ *
+ * Reported while this app is on screen and given back when it is not: the panel
+ * is kept alive behind `<keep-alive>`, so `onDeactivated` is what "not showing"
+ * looks like here, and `onUnmounted` would never fire.
+ */
+watch([sidebar.leftWidth, isMobile], ([width, mobile]) => {
+  sidebarRoom.value = mobile ? 0 : width;
+}, { immediate: true });
+
+onActivated(() => { sidebarRoom.value = isMobile.value ? 0 : sidebar.leftWidth.value; });
+onDeactivated(() => { sidebarRoom.value = 0; });
 
 onMounted(() => {
   window.addEventListener('mousemove', sidebar.onMouseMove);
