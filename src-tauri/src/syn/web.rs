@@ -507,7 +507,14 @@ fn read_out(fragment: &scraper::Html) -> (String, Vec<Heading>) {
             // A picture leaves a mark, or a page that is one picture reads as
             // a page with nothing on it. See `SAYS_IT_IS_DECORATION`.
             if element.name() == "img" {
-                if let Some(mark) = a_picture_was_here(element) {
+                // Worked out here, where the node's type is in hand rather than
+                // being spelled out in a signature.
+                let framed = node.ancestors().any(|a| {
+                    a.value()
+                        .as_element()
+                        .is_some_and(|e| matches!(e.name(), "picture" | "figure"))
+                });
+                if let Some(mark) = a_picture_was_here(element, framed) {
                     push_words(&mut text, &mut chars, &mark);
                 }
                 continue;
@@ -588,6 +595,59 @@ fn says_it_is_decoration(element: &scraper::node::Element) -> bool {
         || element.attr("role") == Some("none")
 }
 
+/// And what the page says louder: that this picture *is* the content.
+///
+/// # Why one claim has to beat the other
+///
+/// A lazy-loaded picture carries `alt=""` in the markup a server sends, because
+/// the real one is filled in later or never — so `says_it_is_decoration` was
+/// true of the only thing on the page that mattered.
+///
+/// VnExpress ran an article whose prices existed **only** as a bar chart. The
+/// chart was in the markup all along, as a `<picture>` around
+/// `<img itemprop="contentUrl" data-src="…iPhone-18-Price-copy…" alt="">` —
+/// and it was dropped for calling itself decoration. Syn read the nine hundred
+/// words around it and said *"the article does not give prices"*, which was
+/// true of everything it had been shown.
+///
+/// Nobody wraps a spacer in `<picture>`, gives it `itemprop="contentUrl"`, or
+/// goes to the trouble of loading it lazily. These are the page saying *this is
+/// the content*, and they are more specific than an empty `alt`, so they win.
+fn says_it_is_the_content(element: &scraper::node::Element, framed: bool) -> bool {
+    framed
+        || element.attr("data-src").is_some()
+        || element.attr("data-srcset").is_some()
+        || element.attr("itemprop") == Some("contentUrl")
+}
+
+/// What a picture's file is called, when nothing else says what it shows.
+///
+/// A file name is not a caption and is never presented as one — the mark says
+/// `file:` so nobody can mistake which kind of claim it is. But it is the
+/// page's own name for the thing, and on the article that prompted all this it
+/// is `iPhone-18-Price-copy`, which is the difference between *there is a
+/// picture here* and *there is a picture about iPhone prices here*.
+///
+/// Skipped when it is all digits and hashes, which is most of the web.
+fn what_the_file_is_called(src: &str) -> Option<String> {
+    let path = src.split(['?', '#']).next()?;
+    let name = path.rsplit('/').next()?;
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+    // Trailing cache-buster digits are the site's business, not a description.
+    let stem = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-' || c == '_');
+
+    // A *run* of letters, not a count of them: `8f3a1c99e2` has four letters
+    // and is a hash, `iPhone-18-Price-copy` has "Phone" and "Price" and is a
+    // name. Most of the web is hashes.
+    let longest_run = stem
+        .split(|c: char| !c.is_alphabetic())
+        .map(|w| w.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    (longest_run >= 3 && stem.chars().count() <= MAX_ALT).then(|| stem.to_string())
+}
+
 /// The mark a picture leaves behind, if it leaves one.
 ///
 /// # Why a picture has to leave a mark
@@ -603,15 +663,19 @@ fn says_it_is_decoration(element: &scraper::node::Element) -> bool {
 /// usually boilerplate — forty images captioned "… - Ảnh 1.", "… - Ảnh 2." —
 /// and that costs a little and says a little. On a chart or a diagram it is
 /// often the only description of the thing that exists in text at all.
-fn a_picture_was_here(element: &scraper::node::Element) -> Option<String> {
-    if says_it_is_decoration(element) {
+fn a_picture_was_here(element: &scraper::node::Element, framed: bool) -> Option<String> {
+    if says_it_is_decoration(element) && !says_it_is_the_content(element, framed) {
         return None;
     }
-    match element.attr("alt").map(str::trim).filter(|a| !a.is_empty()) {
-        Some(alt) => {
-            let alt: String = alt.chars().take(MAX_ALT).collect();
-            Some(format!("[image: {alt}]"))
-        }
+    if let Some(alt) = element.attr("alt").map(str::trim).filter(|a| !a.is_empty()) {
+        let alt: String = alt.chars().take(MAX_ALT).collect();
+        return Some(format!("[image: {alt}]"));
+    }
+    // No alt, so the page never said what it shows. Its own file name is the
+    // next best thing, and is marked as a file name so it is not read as one.
+    let src = element.attr("data-src").or_else(|| element.attr("src"));
+    match src.and_then(what_the_file_is_called) {
+        Some(name) => Some(format!("[image, file: {name}]")),
         None => Some("[image]".to_string()),
     }
 }
@@ -2320,6 +2384,66 @@ mod tests {
 
         let mark = page.text.split("[image: ").nth(1).expect("there is a mark");
         assert!(mark.chars().take_while(|c| *c != ']').count() <= MAX_ALT);
+    }
+
+    /// A lazy-loaded picture calls itself decoration in the markup a server
+    /// sends, because its real `alt` is filled in later or never.
+    ///
+    /// VnExpress ran an article whose prices existed **only** as a bar chart.
+    /// The chart was in the markup all along — a `<picture>` around
+    /// `<img itemprop="contentUrl" data-src="…iPhone-18-Price-copy…" alt="">` —
+    /// and the empty `alt` had it thrown away. Syn read the nine hundred words
+    /// around it and said *"the article does not give prices"*, which was true
+    /// of everything it had been shown and false about the article.
+    ///
+    /// Nobody wraps a spacer in `<picture>`, gives it `itemprop="contentUrl"`,
+    /// or loads it lazily. Those are more specific claims than an empty `alt`,
+    /// so they win.
+    #[test]
+    fn a_lazy_picture_is_content_however_empty_its_alt_is() {
+        let prose = "Một câu đủ dài để readability chịu nhận đây là nội dung. ".repeat(6);
+        let html = format!(
+            r#"<article><p>{prose}</p>
+               <picture><source data-srcset="/x.jpg 1x">
+               <img itemprop="contentUrl" loading="lazy" alt="" class="lazy"
+                    src="/thumb.jpg?w=220"
+                    data-src="https://i1.vnecdn.net/2026/09/10/iPhone-18-Price-copy-1789010522.jpg?w=0">
+               </picture><p>{prose}</p></article>"#
+        );
+
+        let page = reduce(&html, "https://vnexpress.net/a.html");
+
+        assert!(
+            page.text.contains("[image, file: iPhone-18-Price-copy]"),
+            "the chart the whole article is about: {}",
+            page.text
+        );
+    }
+
+    /// And a file name is never presented as a description. It is the page's
+    /// own name for the thing and it is marked as one, so nobody can mistake
+    /// which kind of claim it is.
+    #[test]
+    fn a_file_name_is_offered_as_a_file_name_or_not_at_all() {
+        assert_eq!(
+            what_the_file_is_called("https://i1.vnecdn.net/2026/09/10/iPhone-18-Price-copy-1789010522.jpg?w=0&q=100"),
+            Some("iPhone-18-Price-copy".to_string())
+        );
+        // A hash is not a description, and most of the web is hashes.
+        assert_eq!(what_the_file_is_called("https://cdn.test/8f3a1c99e2.png"), None);
+        assert_eq!(what_the_file_is_called("https://cdn.test/1789010522.jpg"), None);
+        assert_eq!(what_the_file_is_called("https://cdn.test/"), None);
+    }
+
+    /// A real spacer is still a spacer: nothing frames it, nothing loads it
+    /// lazily, and the page said it carries nothing.
+    #[test]
+    fn a_bare_empty_alt_is_still_decoration() {
+        let prose = "Một câu đủ dài để readability chịu nhận đây là nội dung. ".repeat(6);
+        let html = format!(
+            r#"<article><p>{prose}</p><img src="/spacer.gif" alt=""><p>{prose}</p></article>"#
+        );
+        assert_eq!(reduce(&html, "https://x.test/a").text.matches("[image").count(), 0);
     }
 
     // ── a page whose meaning is in its layout ─────────────────────
