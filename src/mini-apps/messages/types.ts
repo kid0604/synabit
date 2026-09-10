@@ -376,6 +376,18 @@ export interface ToolCard {
   description: string;
   capability?: Capability | null;
   reversal?: Reversal | null;
+  /** What this one declaration costs on the wire, in characters. */
+  chars: number;
+  /**
+   * How often it has been called across every run in this vault, and when last.
+   *
+   * Zero and `null` mean never — which, for most of this list, is the true
+   * answer and the one worth showing.
+   */
+  used: number;
+  last_used?: string | null;
+  /** Whether it is being sent to the model at all. False when switched off. */
+  offered: boolean;
 }
 
 /**

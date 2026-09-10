@@ -896,6 +896,7 @@ pub fn run() {
             syn_commands::syn_create_skill,
             syn_commands::syn_recipe_problems,
             syn_commands::syn_list_tools,
+            syn_commands::syn_set_capability,
             syn_commands::syn_browser_content,
             syn_commands::syn_pane_open,
             syn_commands::syn_open_page,

@@ -619,8 +619,79 @@ describe('what Syn can reach', () => {
   });
 
   it('reads the catalogue from Rust rather than listing tools in the frontend', () => {
-    expect(inspector).toContain("invoke<ToolCard[]>('syn_list_tools')");
+    expect(inspector).toContain("invoke<ToolCard[]>('syn_list_tools'");
     expect(inspector, 'no second copy of the tool names').not.toContain("'query_nodes'");
+  });
+
+  /**
+   * A catalogue with no controls sends you somewhere else to use it.
+   *
+   * The only way to turn anything off was to wait for Syn to ask and answer
+   * *Never* — which, of twenty-nine tools, could happen for exactly one. The
+   * switch belongs where the list is, because the list is where somebody goes
+   * to find out what Syn can do.
+   */
+  it('can turn a group off from the screen that lists it', () => {
+    expect(inspector).toContain("invoke('syn_set_capability'");
+    expect(inspector, 'the switch is a real one to a screen reader').toContain('role="switch"');
+    expect(inspector).toContain(':aria-checked="group.on"');
+    for (const locale of [en, vi]) {
+      expect(locale.syn).toHaveProperty('tools_switch_on');
+      expect(locale.syn).toHaveProperty('tools_group_off');
+    }
+  });
+
+  /**
+   * The switch is on the group, never on the row.
+   *
+   * Twenty-nine switches is twenty-nine decisions, and the group is the only
+   * unit the consent ledger can file: a `Never` is recorded per capability, so
+   * a per-tool switch would need a scope that has no word for it.
+   */
+  it('switches a whole capability, not one tool at a time', () => {
+    expect(inspector).toContain('setCapability(group.capability');
+    expect(inspector, 'no per-row switch').not.toContain('setCapability(tool');
+  });
+
+  /**
+   * A capability scoped to a host cannot be switched from a catalogue.
+   *
+   * The catalogue is built with no arguments — it describes what a tool *is*,
+   * not a call about to be made — so a `NetRead { domain }` arrives with an
+   * empty host. A switch on that would file a refusal against nowhere. Those
+   * stay where the host is actually known: the consent card.
+   */
+  it('offers no switch for a capability that is scoped to a host', () => {
+    expect(inspector).toContain(`v-if="typeof group.capability === 'string'"`);
+  });
+
+  /**
+   * What turns twenty-nine claims into one decision.
+   *
+   * The catalogue said what each tool was for and nothing about whether Syn had
+   * ever reached for it. Counted over this vault's runs the answer is lopsided
+   * — most have never been called — and that is the fact somebody needs to
+   * decide anything at all.
+   */
+  it('says how often each tool has actually been used', () => {
+    expect(inspector).toContain('tools_used_never');
+    expect(inspector).toContain('tool.last_used');
+    for (const locale of [en, vi]) {
+      expect(locale.syn).toHaveProperty('tools_used');
+      expect(locale.syn).toHaveProperty('tools_used_never');
+    }
+  });
+
+  /**
+   * A switched-off tool is greyed, not hidden.
+   *
+   * A row that disappears from a list is indistinguishable from one that never
+   * existed, and this panel's whole claim is that the list is complete: *Syn
+   * cannot call anything that is not here*.
+   */
+  it('keeps a switched-off tool on the screen', () => {
+    expect(inspector).toContain("tool.offered ? '' : 'opacity-50'");
+    expect(inspector, 'nothing filters the list down').not.toMatch(/v-if="tool\.offered"/);
   });
 
   /**

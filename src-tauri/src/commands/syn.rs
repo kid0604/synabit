@@ -1215,15 +1215,82 @@ pub async fn syn_browser_content(
     Ok(())
 }
 
-/// Everything Syn can reach, with what each one needs and what undoes it.
+/// Everything Syn can reach, with what each one needs, what undoes it, what it
+/// costs, how often it has been used, and whether it is switched on.
 ///
 /// The question the inspector could not answer. It had *what did it do*, *what
 /// was it told* and *what has it been allowed* — and no way to find out what it
 /// can reach in the first place, which is the question people ask before they
 /// decide to trust something rather than after.
+///
+/// It could not answer the next one either: *and may I change that*. The list
+/// was a catalogue with no controls, so the only way to turn anything off was
+/// to wait for Syn to ask about it — which, of twenty-nine tools, happened for
+/// exactly one.
+///
+/// The usage tally is a whole-directory read. It costs about a megabyte of
+/// JSON on a vault with a few hundred runs, on a panel somebody opened
+/// deliberately, and it is what turns twenty-nine decisions into one.
 #[tauri::command]
-pub async fn syn_list_tools() -> Result<Vec<crate::syn::registry::ToolCard>, AppError> {
-    Ok(crate::syn::registry::catalogue())
+pub async fn syn_list_tools(
+    vault_path: String,
+) -> Result<Vec<crate::syn::registry::ToolCard>, AppError> {
+    let ledger = crate::syn::consent::load(&vault_path);
+    let now = chrono::Utc::now().to_rfc3339();
+    let used = crate::syn::run::tool_usage(&vault_path);
+
+    Ok(crate::syn::registry::catalogue(&ledger, &now)
+        .into_iter()
+        .map(|mut card| {
+            if let Some((count, last)) = used.get(&card.name) {
+                card.used = *count;
+                card.last_used = Some(last.clone());
+            }
+            card
+        })
+        .collect())
+}
+
+/// Turn a whole kind of power on or off.
+///
+/// # Why the switch is a `Never` and not a setting of its own
+///
+/// Because the ledger already answers "what may Syn do", the Permissions tab
+/// already shows it, and `decide` already reads it before anything runs. A
+/// second list of enabled tools would be the same fact written twice, and two
+/// places to edit one contract is how the two come to disagree — which this
+/// codebase has watched happen often enough to have a rule about it.
+///
+/// So switching off records the same `Never` a person would have produced by
+/// answering a card, and switching back on is the same revoke the Permissions
+/// tab already offers. One record, two views of it.
+///
+/// The capability arrives from the screen as the value it was given, rather
+/// than as a key the front end assembles. A scope string composed in
+/// TypeScript would be a second copy of `scope_key`, and the first thing it
+/// would do is drift.
+#[tauri::command]
+pub async fn syn_set_capability(
+    vault_path: String,
+    capability: crate::syn::consent::Capability,
+    allowed: bool,
+) -> Result<(), AppError> {
+    if allowed {
+        let Some(scope) = capability.scope_key() else {
+            // Nothing to take back: `Spend` and `Execute` are asked every time
+            // and no answer to them is kept. Silence rather than an error,
+            // because "it is already on" is what the caller wanted.
+            return Ok(());
+        };
+        return crate::syn::consent::revoke(&vault_path, &scope);
+    }
+
+    crate::syn::consent::record(
+        &vault_path,
+        &capability,
+        crate::syn::consent::Answer::Never,
+        chrono::Utc::now(),
+    )
 }
 
 #[tauri::command]

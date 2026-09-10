@@ -25,7 +25,7 @@ import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemor
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
 import { captureFocus } from '../../../shared/syn/focus';
-import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard, Run } from '../types';
+import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard, Run, Capability } from '../types';
 import { capabilityLabel } from '../composables/useSynConsent';
 
 const props = defineProps<{
@@ -143,12 +143,53 @@ const showTheRunBehind = async (memory: Memory) => {
 const tools = ref<ToolCard[]>([]);
 const toolError = ref<string | null>(null);
 
+/**
+ * Always re-read, never cached.
+ *
+ * It used to return early when the list was already loaded, which was fine for
+ * a catalogue that could not change. It can now: a switch writes to the consent
+ * ledger, and the usage tally moves every time Syn calls anything. A screen
+ * showing yesterday's answer to "is this on" is worse than no screen.
+ */
 const loadTools = async () => {
-  if (tools.value.length) return;
   try {
-    tools.value = await invoke<ToolCard[]>('syn_list_tools');
+    tools.value = await invoke<ToolCard[]>('syn_list_tools', { vaultPath: props.vaultPath });
   } catch (e) {
     toolError.value = (e as { message?: string })?.message ?? String(e);
+  }
+};
+
+/**
+ * Turn a whole kind of power on or off.
+ *
+ * The unit is the group, not the tool. Twenty-nine switches is twenty-nine
+ * decisions, and the groups are already the words the consent card uses — so
+ * one switch here answers a question somebody can hold in their head.
+ *
+ * The capability goes back exactly as it arrived. Composing a scope string in
+ * TypeScript would be a second copy of `Capability::scope_key`, and the first
+ * thing a second copy does is drift.
+ *
+ * Re-read afterwards rather than assumed: the answer to "is it off now" is the
+ * ledger's, and this asks it rather than guessing.
+ */
+const switching = ref<string | null>(null);
+const setCapability = async (capability: Capability, allowed: boolean, key: string) => {
+  switching.value = key;
+  try {
+    await invoke('syn_set_capability', {
+      vaultPath: props.vaultPath,
+      capability,
+      allowed,
+    });
+    await loadTools();
+    // The Permissions tab is the other view of this one record. Left stale, it
+    // would show a switch that this screen says is off and that one does not.
+    await loadAudit();
+  } catch (e) {
+    toolError.value = (e as { message?: string })?.message ?? String(e);
+  } finally {
+    switching.value = null;
   }
 };
 
@@ -162,12 +203,20 @@ const loadTools = async () => {
 const CAPABILITY_ORDER = ['VaultRead', 'VaultWrite', 'VaultStructural'];
 
 const toolGroups = computed(() => {
-  const by = new Map<string, { label: ReturnType<typeof capabilityLabel> | null; tools: ToolCard[] }>();
+  const by = new Map<string, {
+    label: ReturnType<typeof capabilityLabel> | null;
+    capability: Capability | null;
+    tools: ToolCard[];
+  }>();
   for (const tool of tools.value) {
     const cap = tool.capability ?? null;
     const key = cap === null ? '' : typeof cap === 'string' ? cap : Object.keys(cap)[0];
     if (!by.has(key)) {
-      by.set(key, { label: cap === null ? null : capabilityLabel(cap), tools: [] });
+      by.set(key, {
+        label: cap === null ? null : capabilityLabel(cap),
+        capability: cap,
+        tools: [],
+      });
     }
     by.get(key)!.tools.push(tool);
   }
@@ -178,8 +227,23 @@ const toolGroups = computed(() => {
       if (!b) return 1;
       return CAPABILITY_ORDER.indexOf(a) - CAPABILITY_ORDER.indexOf(b);
     })
-    .map(([key, group]) => ({ key, ...group }));
+    .map(([key, group]) => ({
+      key,
+      ...group,
+      // Off, not partly off. A capability is one row in the ledger, so every
+      // tool under it moves together — and if that ever stopped being true the
+      // header would be lying rather than merely wrong.
+      on: group.tools.some(tool => tool.offered),
+      // What this group costs the payload, in the units the Prompt tab uses.
+      chars: group.tools.reduce((sum, tool) => sum + tool.chars, 0),
+      never: group.tools.filter(tool => !tool.used).length,
+    }));
 });
+
+/** What the whole list costs right now — the figure a switch moves. */
+const toolChars = computed(() =>
+  tools.value.filter(tool => tool.offered).reduce((sum, tool) => sum + tool.chars, 0),
+);
 
 /**
  * Which descriptions are open.
@@ -604,22 +668,80 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
            recipe step names; nothing ever showed it to anybody. -->
       <div v-else-if="tab === 'tools'" class="flex-1 overflow-y-auto p-6">
         <p class="text-sm text-gray-500">{{ t('syn.tools_explainer') }}</p>
-        <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.tools_count', { n: tools.length }) }}</p>
+        <!-- The count, and what it costs. The second number is the one a
+             switch moves, and it is the same figure the Prompt tab shows
+             against its budget — `ToolCard.chars` is measured by the same
+             `serde_json` call, so the parts add up to that whole. -->
+        <p class="mt-1 text-[11px] text-gray-400">
+          {{ t('syn.tools_count', { n: tools.length }) }} ·
+          {{ t('syn.tools_cost', { chars: toolChars, tokens: Math.round(toolChars / 4) }) }}
+        </p>
 
         <div v-for="group in toolGroups" :key="group.key || 'unclassified'" class="mt-6">
-          <h3
-            class="mb-2 text-sm font-medium"
-            :class="group.label ? 'text-text dark:text-text-dark' : 'text-amber-600 dark:text-amber-500'"
-          >
-            {{ group.label ? t(group.label.key, group.label.values) : t('syn.tools_unclassified') }}
-            <span class="ml-1.5 text-[11px] font-normal text-gray-400">{{ group.tools.length }}</span>
-          </h3>
+          <div class="mb-2 flex items-center gap-2">
+            <h3
+              class="text-sm font-medium"
+              :class="group.label ? 'text-text dark:text-text-dark' : 'text-amber-600 dark:text-amber-500'"
+            >
+              {{ group.label ? t(group.label.key, group.label.values) : t('syn.tools_unclassified') }}
+              <span class="ml-1.5 text-[11px] font-normal text-gray-400">{{ group.tools.length }}</span>
+            </h3>
+
+            <!-- The switch, on the group and not on the tool.
+
+                 Twenty-nine switches is twenty-nine decisions; four is one you
+                 can hold in your head. And the group is what the consent ledger
+                 can actually record — a `Never` is filed per capability, so a
+                 per-tool switch would need a scope the ledger has no word for.
+
+                 Off is a `Never` in that same ledger, which the Permissions tab
+                 shows and can take back. One record, two views.
+
+                 Only for a capability that is one whole thing. A scoped one —
+                 `NetRead { domain }` — arrives here from a catalogue built with
+                 no arguments, so its host is the empty string, and a switch on
+                 it would file a refusal against nowhere. Those are decided per
+                 host, on the card, at the moment the host is known. -->
+            <button
+              v-if="typeof group.capability === 'string'"
+              type="button"
+              role="switch"
+              :aria-checked="group.on"
+              :aria-label="t(group.on ? 'syn.tools_switch_off' : 'syn.tools_switch_on')"
+              :disabled="switching === group.key"
+              class="ml-auto relative w-9 h-5 shrink-0 rounded-full transition-colors disabled:opacity-50"
+              :class="group.on ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-700'"
+              @click="setCapability(group.capability, !group.on, group.key)"
+            >
+              <span
+                class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                :class="group.on ? 'left-[18px]' : 'left-0.5'"
+              />
+            </button>
+          </div>
+
+          <!-- What switching it off actually does, in the same breath as the
+               switch. Reading the vault is the one worth spelling out: turning
+               it off leaves Syn answering from the conversation alone, which is
+               a thing some people want and nobody should discover by accident. -->
+          <p class="mb-2 text-[11px] text-gray-400 leading-relaxed max-w-prose">
+            <template v-if="group.on">
+              {{ t('syn.tools_group_cost', { chars: group.chars, tokens: Math.round(group.chars / 4) }) }}
+              <span v-if="group.never" class="text-gray-400">
+                · {{ t('syn.tools_group_never', { n: group.never }) }}
+              </span>
+            </template>
+            <span v-else class="text-amber-600 dark:text-amber-500">
+              {{ t('syn.tools_group_off') }}
+            </span>
+          </p>
 
           <ul class="space-y-2">
             <li
               v-for="tool in group.tools"
               :key="tool.name"
-              class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
+              class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3 transition-opacity"
+              :class="tool.offered ? '' : 'opacity-50'"
             >
               <button
                 class="w-full flex items-start gap-2 text-left cursor-pointer"
@@ -630,7 +752,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                   :class="openTools.has(tool.name) ? 'rotate-90' : ''"
                 />
                 <span class="min-w-0 flex-1">
-                  <code class="text-[13px] font-mono text-violet-600 dark:text-violet-400">{{ tool.name }}</code>
+                  <span class="flex items-baseline gap-2">
+                    <code class="text-[13px] font-mono text-violet-600 dark:text-violet-400">{{ tool.name }}</code>
+                    <!-- How often Syn has actually reached for it.
+
+                         This is what turns a list of twenty-nine claims into
+                         one decision: most of them have never been called, and
+                         until this line nothing said so. It informs and does
+                         not decide — `restore_node` is used on the one day
+                         somebody needs it, which is why the switch is on the
+                         group above and this number is here. -->
+                    <span class="ml-auto shrink-0 text-[11px] text-gray-400">
+                      <template v-if="tool.used">
+                        {{ t('syn.tools_used', { n: tool.used }) }}
+                        <span v-if="tool.last_used"> · {{ tool.last_used.slice(0, 10) }}</span>
+                      </template>
+                      <span v-else class="text-gray-300 dark:text-gray-600">{{ t('syn.tools_used_never') }}</span>
+                    </span>
+                  </span>
                   <!-- Verbatim, and clamped until asked for: written for the
                        model, and `query_nodes` alone is a paragraph.
 
@@ -660,6 +799,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 <template v-else-if="tool.reversal && 'how' in tool.reversal">
                   {{ t('syn.tools_undo') }}: {{ tool.reversal.how }}
                 </template>
+                <!-- Only once the row is open: what it costs every turn. A
+                     number on every collapsed row would be twenty-nine numbers
+                     nobody asked for. -->
+                <span v-if="openTools.has(tool.name)" class="ml-2 text-gray-300 dark:text-gray-600">
+                  · {{ t('syn.tools_cost', { chars: tool.chars, tokens: Math.round(tool.chars / 4) }) }}
+                </span>
               </p>
             </li>
           </ul>

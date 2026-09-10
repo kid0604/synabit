@@ -843,6 +843,63 @@ pub fn get_run(vault_path: &str, id: &str) -> AppResult<Run> {
     Ok(serde_json::from_str(&content)?)
 }
 
+/// How often each tool has actually been called, and when it last was.
+///
+/// # Why this is counted rather than assumed
+///
+/// The tools screen listed twenty-nine tools and said nothing about which of
+/// them Syn had ever reached for. Counted over this vault's own runs the
+/// picture is not close to even: on the day this was written ten had ever been
+/// called and nineteen never had, and those nineteen were 56% of the payload
+/// sent on every single turn.
+///
+/// Read-only, unlike `list_runs`, which puts abandoned runs right as it goes.
+/// This is a tally for a panel; it should not write to the vault to draw a
+/// number.
+///
+/// A file that will not parse is skipped in silence. `list_runs` already
+/// complains about the same file for the same reason, and two warnings per
+/// broken run is one too many.
+pub fn tool_usage(vault_path: &str) -> std::collections::HashMap<String, (u32, String)> {
+    let mut tally: std::collections::HashMap<String, (u32, String)> =
+        std::collections::HashMap::new();
+
+    let Ok(dir) = runs_dir(vault_path) else {
+        return tally;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return tally;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(run) = serde_json::from_str::<Run>(&content) else {
+            continue;
+        };
+
+        for step in &run.steps {
+            let Some(tool) = step.tool.as_deref() else {
+                continue;
+            };
+            let seen = tally.entry(tool.to_string()).or_insert((0, String::new()));
+            seen.0 += 1;
+            // Whichever is later, because runs arrive in whatever order the
+            // directory hands them over.
+            if step.at > seen.1 {
+                seen.1 = step.at.clone();
+            }
+        }
+    }
+
+    tally
+}
+
 /// Every run on disk, newest first.
 ///
 /// Also the place a run left `Working` by a process that is no longer running
@@ -1102,6 +1159,67 @@ mod tests {
             back.steps[0].reversal,
             Some(crate::syn::registry::Reversal::Nothing)
         );
+    }
+
+    /// The tally the tools screen is built on.
+    ///
+    /// Across runs, not within one — the question is "has Syn ever reached for
+    /// this", and one run answers it for one afternoon.
+    #[test]
+    fn tools_are_counted_across_every_run_with_the_latest_time_kept() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut older = Run::new("hôm qua", None, budget());
+        older.record_tool(0, "browse", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        older.record_tool(1, "get_node", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        for step in &mut older.steps {
+            step.at = "2026-09-01T08:00:00Z".to_string();
+        }
+        save_run(vault, &older).expect("saves");
+
+        let mut newer = Run::new("hôm nay", None, budget());
+        newer.record_tool(0, "browse", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        for step in &mut newer.steps {
+            step.at = "2026-09-10T08:00:00Z".to_string();
+        }
+        save_run(vault, &newer).expect("saves");
+
+        let tally = tool_usage(vault);
+        assert_eq!(tally.get("browse").map(|u| u.0), Some(2), "counted across both runs");
+        assert_eq!(
+            tally.get("browse").map(|u| u.1.as_str()),
+            Some("2026-09-10T08:00:00Z"),
+            "and the later time is the one kept, whatever order the files came in"
+        );
+        assert_eq!(tally.get("get_node").map(|u| u.0), Some(1));
+        assert!(
+            !tally.contains_key("trash_node"),
+            "a tool never called is absent, which is what the screen says as `never`"
+        );
+    }
+
+    /// A tally is not a repair job.
+    ///
+    /// `list_runs` puts abandoned runs right as it reads them, which is correct
+    /// there and wrong here: drawing a number on a panel should not write to
+    /// somebody's vault.
+    #[test]
+    fn counting_tools_does_not_write_anything() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut run = Run::new("bỏ dở", None, budget());
+        run.record_tool(0, "browse", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        save_run(vault, &run).expect("saves");
+        assert_eq!(run.state, RunState::Working, "left as a run nothing is driving");
+
+        let path = runs_dir(vault).expect("dir").join(format!("{}.json", run.id));
+        let before = std::fs::read_to_string(&path).expect("reads");
+        let _ = tool_usage(vault);
+        let after = std::fs::read_to_string(&path).expect("reads");
+
+        assert_eq!(before, after, "the file is untouched");
     }
 
     /// The case the transcript exists for: the process died mid-run. Nothing

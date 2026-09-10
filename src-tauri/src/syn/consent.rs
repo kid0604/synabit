@@ -127,8 +127,23 @@ impl Capability {
     ///
     /// `Spend` and `Execute` deliberately have none. There is nothing to
     /// remember about them, because they are asked every time — see `decide`.
+    ///
+    /// # Why the vault arms have one, when they never ask
+    ///
+    /// Because a scope key is not only how a question is remembered; it is the
+    /// only way a refusal can be *written down at all*. Without one, `record`
+    /// files a `Never` under `"unscoped"` and `decide` never looks there, so
+    /// "no, do not change my notes" was a decision the ledger had no place to
+    /// put and the code had no way to honour.
+    ///
+    /// That is what the Tools screen needed: a switch is a `Never`, and a
+    /// `Never` needs somewhere to live. Nothing else changes — the vault arms
+    /// still never *ask*; see `decide`.
     pub fn scope_key(&self) -> Option<String> {
         match self {
+            Capability::VaultRead => Some("vault_read".to_string()),
+            Capability::VaultWrite => Some("vault_write".to_string()),
+            Capability::VaultStructural => Some("vault_structural".to_string()),
             Capability::Browse => Some("browse".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
@@ -162,8 +177,19 @@ impl Capability {
     /// better than recording one and ignoring it: a ledger that shows a
     /// permission which does not apply is a ledger that lies to the person
     /// reading it to decide what they have agreed to.
+    ///
+    /// Nor does it for the vault arms, which are allowed without asking — an
+    /// `Always` there would be a row in the ledger that decided nothing.
+    ///
+    /// Listed rather than derived from `scope_key`, which it used to be. The
+    /// two questions looked like one question while only three arms had a
+    /// scope; they came apart the moment the vault arms needed somewhere to
+    /// file a refusal, and a switch is not a grant.
     pub fn can_be_remembered(&self) -> bool {
-        self.scope_key().is_some()
+        matches!(
+            self,
+            Capability::Browse | Capability::NetRead { .. } | Capability::NetWrite { .. }
+        )
     }
 }
 
@@ -247,28 +273,27 @@ fn save(vault_path: &str, ledger: &Ledger) -> AppResult<()> {
 ///
 /// The rules, in the order they apply:
 ///
-/// - Reading and writing the vault never ask. That is today's behaviour, stated
-///   rather than changed, and it rests on everything in the vault being
-///   recoverable.
-/// - A recorded `Never` refuses, for anything. A person who has said no is not
-///   asked again by a different route.
+/// - A recorded `Never` refuses, for anything, and is looked for first. A
+///   person who has said no is not asked again by a different route — including
+///   the route that never asks.
+/// - Otherwise, reading and writing the vault never ask. That is today's
+///   behaviour, stated rather than changed, and it rests on everything in the
+///   vault being recoverable.
 /// - Money and running code always ask, whatever the ledger says. There is no
 ///   scope under which "you already agreed once" should spend again.
 /// - A live `Always` allows. An expired one does not, and asking again is the
 ///   whole reason it expires.
 pub fn decide(capability: &Capability, ledger: &Ledger, now: &str) -> Decision {
-    if matches!(
-        capability,
-        Capability::VaultRead | Capability::VaultWrite | Capability::VaultStructural
-    ) {
-        return Decision::Allow;
-    }
-
     let scope = capability.scope_key();
 
-    // A refusal is honoured even for the capabilities that otherwise always
-    // ask. Saying "never run code" and then being asked to run code every time
-    // is not a setting, it is a nag.
+    // A refusal is honoured for **anything**, and it is read first.
+    //
+    // It used to be read second, under a short-circuit that allowed the three
+    // vault arms outright — so of the twenty-nine tools exactly one could be
+    // switched off, and the sentence in this comment was untrue of the other
+    // twenty-eight. Order is the whole fix: a person who has said no is not
+    // asked again by a different route, and that includes the route that never
+    // asks.
     let refused = ledger.grants.iter().any(|g| {
         g.answer == Answer::Never
             && match (&scope, capability) {
@@ -280,6 +305,16 @@ pub fn decide(capability: &Capability, ledger: &Ledger, now: &str) -> Decision {
     });
     if refused {
         return Decision::Refuse;
+    }
+
+    // Reading and writing the vault never *ask*. That still rests on everything
+    // in the vault being recoverable, and it is unchanged by the above: what
+    // moved is only whether a refusal is looked for first.
+    if matches!(
+        capability,
+        Capability::VaultRead | Capability::VaultWrite | Capability::VaultStructural
+    ) {
+        return Decision::Allow;
     }
 
     if !capability.can_be_remembered() {
@@ -505,6 +540,61 @@ mod tests {
         ] {
             assert_eq!(decide(&capability, &ledger, NOW), Decision::Allow);
         }
+    }
+
+    /// Never asking is not the same as never being switched off.
+    ///
+    /// This is what the Tools screen's switches are made of, and it did not
+    /// work: `decide` allowed the three vault arms before it looked at the
+    /// ledger, and `scope_key` gave them nowhere to be filed anyway. So of the
+    /// twenty-nine tools exactly one — `browse` — could be turned off at all,
+    /// and that only by waiting to be asked.
+    #[test]
+    fn a_vault_arm_can_be_switched_off_even_though_it_never_asks() {
+        let (_dir, vault) = vault();
+
+        for capability in [
+            Capability::VaultRead,
+            Capability::VaultWrite,
+            Capability::VaultStructural,
+        ] {
+            assert_eq!(
+                decide(&capability, &load(&vault), NOW),
+                Decision::Allow,
+                "on by default: `{}`",
+                capability.describe()
+            );
+
+            record(&vault, &capability, Answer::Never, at(NOW)).expect("a switch is a Never");
+            assert_eq!(
+                decide(&capability, &load(&vault), NOW),
+                Decision::Refuse,
+                "switched off: `{}`",
+                capability.describe()
+            );
+
+            let scope = capability.scope_key().expect("a refusal needs somewhere to live");
+            revoke(&vault, &scope).expect("and switching it back on is a revoke");
+            assert_eq!(decide(&capability, &load(&vault), NOW), Decision::Allow);
+        }
+    }
+
+    /// A switch is not a grant.
+    ///
+    /// The vault arms can be refused and cannot be granted: an `Always` on one
+    /// would be a row in the ledger that decided nothing, which is the same
+    /// objection that keeps `Spend` and `Execute` out.
+    #[test]
+    fn a_vault_arm_takes_a_no_but_not_a_yes() {
+        let (_dir, vault) = vault();
+        let reading = Capability::VaultRead;
+
+        assert!(!reading.can_be_remembered());
+        assert!(
+            record(&vault, &reading, Answer::Always, at(NOW)).is_err(),
+            "an always for the vault decides nothing and should not be stored"
+        );
+        assert!(load(&vault).grants.is_empty());
     }
 
     /// Asked once, then remembered.

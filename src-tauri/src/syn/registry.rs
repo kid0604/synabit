@@ -231,15 +231,36 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         "vault"
     }
 
-    /// What this vault's settings say Syn can actually do.
+    /// What this vault's settings and this person's switches say Syn can do.
     ///
-    /// A settings read per run, to leave `web_search` out when no endpoint is
-    /// configured. Describing a tool that cannot work costs tokens on every
-    /// turn and ends in a model reaching for it and failing, which is worse
-    /// than never having offered it.
+    /// A settings read per run — that argument is vestigial today; see
+    /// `get_tool_definitions_for` — and a ledger read per run, which is not.
+    ///
+    /// # Why a switched-off tool is not sent at all
+    ///
+    /// Because refusing it at call time leaves the declaration in every
+    /// request: the model is told about a tool, reaches for it, and is told no.
+    /// That is tokens spent on a promise and a round spent learning it was
+    /// empty. Leaving it out is the same decision expressed where it costs
+    /// nothing — and it is the only version the person can *see*, because the
+    /// Prompt tab's payload figure drops the moment a switch moves.
+    ///
+    /// The capability is asked for with `Value::Null`, like the catalogue: this
+    /// is a declaration, not a call. Every capability in the table today is
+    /// decided by the tool's name alone. One that varied by argument would have
+    /// to be judged at call time instead, and `execute` still asks then.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
         let settings = crate::syn::settings::load_settings(ctx.vault_path).unwrap_or_default();
+        let ledger = crate::syn::consent::load(ctx.vault_path);
+        let now = chrono::Utc::now().to_rfc3339();
+
         crate::syn::tools::get_tool_definitions_for(&settings)
+            .into_iter()
+            .filter(|definition| {
+                Self::table(&definition.function.name, &Value::Null)
+                    .is_none_or(|c| !is_switched_off(&c, &ledger, &now))
+            })
+            .collect()
     }
 
     fn capability(&self, tool: &str, args: &Value) -> Option<Capability> {
@@ -342,6 +363,39 @@ pub struct ToolCard {
     /// What puts it back, derived from the capability rather than declared
     /// twice.
     pub reversal: Option<Reversal>,
+    /// What this one declaration costs on the wire, in characters.
+    ///
+    /// Measured the way `tools::payload_cost` measures the whole payload —
+    /// `serde_json` on the struct the provider sends — so the parts add up to
+    /// the total the Prompt tab shows, and a switch can say what turning it off
+    /// saves without anybody estimating.
+    pub chars: usize,
+    /// How many times this tool has actually been called, and when it last was.
+    ///
+    /// # Why a catalogue needs this
+    ///
+    /// Twenty-nine tools is twenty-nine decisions if all you know is what each
+    /// one claims to do. Counted over this vault's own runs it is one decision:
+    /// on the day this was written, ten of the twenty-nine had ever been called
+    /// and the other nineteen were 56% of the payload, sent every turn.
+    ///
+    /// It informs; it does not decide. `restore_node` is used on the one day
+    /// somebody needs it, so nothing here says "switch off what you have not
+    /// used" — which is exactly why the switch is on the group and this number
+    /// is on the row.
+    #[serde(default)]
+    pub used: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<String>,
+    /// Whether this tool is being sent to the model at all.
+    ///
+    /// False when its capability has been switched off — a `Never` in the
+    /// consent ledger. The screen shows it greyed rather than hidden: a tool
+    /// that has gone missing from a list is indistinguishable from one that
+    /// never existed, and the whole point of this panel is that the list is
+    /// complete.
+    #[serde(default)]
+    pub offered: bool,
 }
 
 /// Every tool a chat can reach, with what it needs and what undoes it.
@@ -355,11 +409,12 @@ pub struct ToolCard {
 /// are exactly that list. `the_catalogue_covers_what_a_chat_can_reach` is the
 /// guard: add a second provider and it fails here rather than silently showing
 /// a screen that is missing half of what Syn can do.
-pub fn catalogue() -> Vec<ToolCard> {
+pub fn catalogue(ledger: &crate::syn::consent::Ledger, now: &str) -> Vec<ToolCard> {
     let registry = Registry::<tauri::Wry>::for_chat();
     crate::syn::tools::get_tool_definitions()
         .into_iter()
         .map(|definition| {
+            let chars = serde_json::to_string(&definition).map(|s| s.len()).unwrap_or(0);
             // No arguments: this is the catalogue describing what a tool
             // *is*, not a call about to be made. A scoped capability answers
             // with an empty scope and the screen says so.
@@ -368,10 +423,30 @@ pub fn catalogue() -> Vec<ToolCard> {
                 name: definition.function.name,
                 description: definition.function.description,
                 reversal: capability.as_ref().map(reversal_of),
+                offered: capability
+                    .as_ref()
+                    .is_none_or(|c| !is_switched_off(c, ledger, now)),
                 capability,
+                chars,
+                used: 0,
+                last_used: None,
             }
         })
         .collect()
+}
+
+/// Whether a capability has been switched off, and its tools left unsent.
+///
+/// One question asked in two places — the catalogue, which greys the row, and
+/// `VaultTools::definitions`, which leaves the declaration out of the request.
+/// Written once so the screen cannot say a tool is unavailable while the model
+/// is still being offered it.
+pub fn is_switched_off(
+    capability: &Capability,
+    ledger: &crate::syn::consent::Ledger,
+    now: &str,
+) -> bool {
+    crate::syn::consent::decide(capability, ledger, now) == crate::syn::consent::Decision::Refuse
 }
 
 pub struct Registry<R: tauri::Runtime> {
@@ -441,6 +516,10 @@ impl<R: tauri::Runtime> Registry<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Any instant. Nothing in these tests turns on the clock — the ledger they
+    /// pass is empty, so no grant has a date to compare against.
+    const NOW: &str = "2026-09-10T00:00:00Z";
 
     /// The guard this module exists to provide: a tool that nobody decided the
     /// power of does not get to ship.
@@ -551,7 +630,7 @@ mod tests {
     /// can do.
     #[test]
     fn the_catalogue_covers_what_a_chat_can_reach() {
-        let cards = catalogue();
+        let cards = catalogue(&crate::syn::consent::Ledger::default(), NOW);
         let offered: Vec<String> = crate::syn::tools::get_tool_definitions()
             .into_iter()
             .map(|t| t.function.name)
@@ -620,7 +699,7 @@ mod tests {
     /// the second from the first is what stops them ever disagreeing.
     #[test]
     fn the_catalogue_says_what_undoes_each_tool() {
-        let cards = catalogue();
+        let cards = catalogue(&crate::syn::consent::Ledger::default(), NOW);
 
         let read = cards.iter().find(|c| c.name == "query_nodes").expect("query_nodes");
         assert_eq!(read.reversal, Some(Reversal::Nothing));
@@ -636,12 +715,78 @@ mod tests {
         assert!(matches!(structural.reversal, Some(Reversal::Automatic { .. })));
     }
 
+    /// A switch is one decision that covers a group, and the screen and the
+    /// request have to agree about which group it covered.
+    #[test]
+    fn a_switched_off_capability_leaves_its_whole_group_unoffered() {
+        let mut ledger = crate::syn::consent::Ledger::default();
+        ledger.grants.push(crate::syn::consent::Grant {
+            scope: "vault_structural".into(),
+            about: Capability::VaultStructural.describe(),
+            answer: crate::syn::consent::Answer::Never,
+            granted_at: NOW.into(),
+            expires_at: None,
+        });
+
+        let cards = catalogue(&ledger, NOW);
+        let (off, on): (Vec<_>, Vec<_>) = cards
+            .iter()
+            .partition(|c| c.capability == Some(Capability::VaultStructural));
+
+        assert!(!off.is_empty(), "the group has tools in it");
+        assert!(off.iter().all(|c| !c.offered), "all of them switched off together");
+        assert!(on.iter().all(|c| c.offered), "and nothing else was touched");
+
+        // Still listed. A tool that vanishes from the catalogue is
+        // indistinguishable from one that never existed, and the panel's whole
+        // claim is that the list is complete.
+        assert_eq!(cards.len(), crate::syn::tools::get_tool_definitions().len());
+    }
+
+    /// The screen and the request must not be able to disagree.
+    ///
+    /// One says a tool is switched off by greying the row; the other acts on it
+    /// by leaving the declaration out of the payload. If those were two
+    /// predicates, the day they drifted would look like a switch that does
+    /// nothing — which is the exact complaint this screen was rebuilt for.
+    #[test]
+    fn the_row_and_the_request_ask_the_same_question() {
+        let source = include_str!("registry.rs");
+        let definitions = source
+            .split("impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {")
+            .nth(1)
+            .and_then(|rest| rest.split("fn capability(").next())
+            .expect("VaultTools::definitions is there");
+
+        assert!(
+            definitions.contains("is_switched_off"),
+            "the request has to ask the same function the catalogue asks"
+        );
+    }
+
+    /// What a switch saves, said in the same units the Prompt tab shows.
+    ///
+    /// The parts have to add up to the whole, or the figure under a switch is a
+    /// different number from the one on the budget bar — and the person reading
+    /// both would be right to trust neither.
+    #[test]
+    fn what_each_tool_costs_adds_up_to_what_the_payload_costs() {
+        let cards = catalogue(&crate::syn::consent::Ledger::default(), NOW);
+        let parts: usize = cards.iter().map(|c| c.chars).sum();
+        let whole = crate::syn::tools::payload_cost().chars;
+
+        // `[` + items joined by `,` + `]`: one comma between each pair, two
+        // brackets around the lot.
+        assert_eq!(parts + cards.len() + 1, whole, "parts {parts}, whole {whole}");
+        assert!(cards.iter().all(|c| c.chars > 0));
+    }
+
     /// The description is the model's, verbatim. A friendlier paraphrase
     /// written for the screen would be a second wording to keep in step, and
     /// the one people read would be the one that was never sent.
     #[test]
     fn the_description_is_the_one_the_model_is_given() {
-        let cards = catalogue();
+        let cards = catalogue(&crate::syn::consent::Ledger::default(), NOW);
         for definition in crate::syn::tools::get_tool_definitions() {
             let card = cards
                 .iter()
