@@ -172,6 +172,40 @@ const NOT_SITES: &[&str] = &[
 /// spaces, a real-looking label and ending. `mu everton kết quả` is a question;
 /// `bongdanet.co` is a place.
 ///
+/// A page on a named site, when `what` says which one.
+///
+/// # Why `browse(site, what)` needs this
+///
+/// `site` sends Syn to a site's front door instead of a search box, and until
+/// now it did that whatever `what` held. Asked to read Simplize's page on TCB,
+/// the model wrote `site: "simplize.vn", what: "co-phieu/TCB"` — which is a
+/// path, and says exactly which page — and was taken to the home page. A round
+/// spent on the wrong page, in a run that then ran out of rounds.
+///
+/// Narrow on purpose, like `address_of`. `what` counts as a path only when it
+/// is one token with a `/` in it and nothing a path cannot hold; a question has
+/// spaces, and still goes to the front door as before. A whole address in
+/// `what` — `simplize.vn/co-phieu/TCB` — is taken as it stands.
+pub fn page_on(site: &str, what: &str) -> Option<String> {
+    let what = what.trim();
+    if what.is_empty() || what.split_whitespace().count() != 1 {
+        return None;
+    }
+    if let Some(whole) = address_of(what) {
+        return Some(whole);
+    }
+    if !what.contains('/') || what.contains("://") || what.contains("..") {
+        return None;
+    }
+    let path_safe = |c: char| c.is_ascii_alphanumeric() || "-._~/%?=&#+:@!$'()*,;".contains(c);
+    if !what.chars().all(path_safe) {
+        return None;
+    }
+
+    let front = address_of(site)?;
+    Some(format!("{}/{}", front.trim_end_matches('/'), what.trim_start_matches('/')))
+}
+
 /// A `/path` is allowed after the host, because half the addresses anybody
 /// names have one and dropping it would land on a front page instead.
 pub fn address_of(text: &str) -> Option<String> {
@@ -1002,6 +1036,35 @@ pub fn close_when_done<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _waiting: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Asked for Simplize's page on TCB, the model wrote a path in `what` and
+    /// was taken to the home page — a round spent on the wrong page.
+    #[test]
+    fn a_path_on_a_named_site_goes_to_that_page() {
+        assert_eq!(
+            page_on("simplize.vn", "co-phieu/TCB").as_deref(),
+            Some("https://simplize.vn/co-phieu/TCB")
+        );
+        assert_eq!(
+            page_on("https://simplize.vn/", "/co-phieu/TCB/phan-tich").as_deref(),
+            Some("https://simplize.vn/co-phieu/TCB/phan-tich")
+        );
+        // A whole address in `what` is taken as it stands.
+        assert_eq!(
+            page_on("simplize.vn", "simplize.vn/co-phieu/TCB").as_deref(),
+            Some("https://simplize.vn/co-phieu/TCB")
+        );
+    }
+
+    /// A question is still a question, and still goes to the front door.
+    #[test]
+    fn a_question_on_a_named_site_is_not_a_path() {
+        assert_eq!(page_on("simplize.vn", "giá đỉnh 52 tuần"), None);
+        assert_eq!(page_on("simplize.vn", "tcb"), None, "one word, no slash: not a page");
+        assert_eq!(page_on("simplize.vn", "../../etc/passwd"), None);
+        assert_eq!(page_on("simplize.vn", "co-phieu/<script>"), None);
+        assert_eq!(page_on("GenK", "a/b"), None, "a name is not a site to put a path on");
+    }
 
     #[test]
     fn a_query_becomes_a_search_a_person_could_have_typed() {

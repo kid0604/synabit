@@ -109,6 +109,59 @@ pub fn stop_conversation(conversation_id: Option<&str>) {
 //  HISTORY
 // ═══════════════════════════════════════════════════════════════
 
+/// Whether an address is the search engine the window searches with.
+fn is_the_search_page(address: &str) -> bool {
+    let host = |a: &str| url::Url::parse(a).ok().and_then(|u| u.host_str().map(str::to_string));
+    host(address).is_some() && host(address) == host(crate::syn::browser::DEFAULT_SEARCH)
+}
+
+/// How many of an earlier answer's pages are named back to the model.
+const PAGES_NAMED_BACK: usize = 4;
+
+/// An earlier answer as the model sees it: its words, and where they came from.
+///
+/// # Why the addresses have to travel with it
+///
+/// Because nothing else carries them. A conversation keeps each answer's text
+/// and the pages it was read from, and only the text was being sent back. So
+/// the model knew TCB was at 31,600 and not that the figure came from
+/// `simplize.vn/co-phieu/TCB` — and asked what the 52-week high was, one
+/// question later, it searched from scratch for a page it had just read. Four
+/// rounds of searching, in a run allowed five, and no answer.
+///
+/// Named back, the page is one `browse` away; and while the pane is still
+/// showing it, that `browse` reads the screen rather than the network.
+///
+/// Only web pages. A note is already named in the answer's `[[links]]`, and
+/// the vault is reachable by its own tools.
+fn with_what_it_read(m: &SynMessage) -> String {
+    if m.role != "assistant" {
+        return m.content.clone();
+    }
+    let pages: Vec<String> = m
+        .sources
+        .iter()
+        .flatten()
+        .filter(|s| s.node_type == crate::syn::web::WEB_SOURCE_TYPE)
+        // A search results page is where the looking happened, not what the
+        // answer stands on, and naming it back would invite searching again.
+        // Told apart by where it is, not by what its title happens to say.
+        .filter(|s| !is_the_search_page(&s.id))
+        .take(PAGES_NAMED_BACK)
+        .map(|s| format!("{} — {}", s.id, s.title))
+        .collect();
+
+    if pages.is_empty() {
+        return m.content.clone();
+    }
+    format!(
+        "{}\n\n(Pages this answer was read from — browse one again rather than searching, \
+         if the next question is about the same thing: {})",
+        m.content,
+        pages.join("; ")
+    )
+}
+
 /// Trim a conversation to the last `max_msgs`, keeping the system prompt.
 ///
 /// The system message carries the personality and the RAG context, so dropping
@@ -117,7 +170,7 @@ pub fn stop_conversation(conversation_id: Option<&str>) {
 fn build_pruned_history(history: &[SynMessage], max_msgs: usize) -> Vec<ChatMessage> {
     let as_chat = |m: &SynMessage| ChatMessage {
         role: m.role.clone(),
-        content: m.content.clone(),
+        content: with_what_it_read(m),
         tool_calls: None,
         tool_call_id: None,
         images: m.images.clone(),
@@ -451,9 +504,13 @@ impl SynEngine {
             }
 
             // Words said on the way to reaching for a tool are part of the
-            // record even though they are not the answer.
+            // record even though they are not the answer. And a round that said
+            // nothing still cost something — most rounds are that kind, and
+            // they were never counted. See `Run::charge`.
             if !reply.content.is_empty() {
                 run.record_assistant(iteration, &reply.content, reply.usage, turn_ms);
+            } else {
+                run.charge(reply.usage, turn_ms);
             }
 
             // The assistant turn that asked for the tools has to go back into
@@ -738,6 +795,11 @@ impl SynEngine {
                     images: None,
                 });
             }
+
+            // How much of the run is left, said at the end of the round's
+            // results — the one place the model reads between deciding to
+            // look and deciding whether to look again. See `rounds_left`.
+            tell_the_rounds_left(&mut working, &run.spent, &run.budget);
         };
 
         // Out of something. Ask once more without tools so the model has to
@@ -1053,6 +1115,59 @@ impl<R: tauri::Runtime> Watchers<'_, R> {
 
 }
 
+/// What the model is told about the rounds it has left.
+///
+/// # Why it has to be told at all
+///
+/// Because a ceiling it cannot see is a ceiling it walks into. With five
+/// rounds, the first Gemini conversation spent four searching for a figure a
+/// page it had already read would have given, and was cut off with nothing
+/// said. The ceiling is the person's to set; knowing where it is, is what lets
+/// the model spend the last rounds answering rather than looking.
+///
+/// Plain on every round and pointed only near the end — a nudge on every
+/// round would read as "hurry", and the whole point of a budget of ten is to
+/// be allowed to look properly for most of it.
+fn rounds_left(spent: &crate::syn::run::Spent, budget: &crate::syn::run::Budget) -> Option<String> {
+    let max = budget.iterations?;
+    let used = spent.iterations.min(max);
+    let left = max - used;
+    Some(match left {
+        0 => format!(
+            "Round {used} of {max}: that was the last round with tools. The next reply is the \
+             answer — give it from what you have, and say what you did not get to check."
+        ),
+        1 | 2 => format!(
+            "Round {used} of {max}; {left} left. If what you have already answers the question, \
+             answer now — after round {max} no more tools can be used."
+        ),
+        _ => format!("Round {used} of {max}; {left} left."),
+    })
+}
+
+/// Put `rounds_left` on the last result of the round.
+///
+/// Once per round, not once per result: parallel calls would repeat it. On a
+/// JSON object it goes in as a field, so the result stays JSON — Gemini sends a
+/// result as an object and would otherwise have to wrap the whole thing as a
+/// string. Anything else gets it as a closing line.
+fn tell_the_rounds_left(
+    working: &mut [ChatMessage],
+    spent: &crate::syn::run::Spent,
+    budget: &crate::syn::run::Budget,
+) {
+    let Some(said) = rounds_left(spent, budget) else { return };
+    let Some(last) = working.last_mut().filter(|m| m.role == "tool") else { return };
+
+    last.content = match serde_json::from_str::<serde_json::Value>(&last.content) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert("rounds".into(), serde_json::Value::String(said));
+            serde_json::Value::Object(map).to_string()
+        }
+        _ => format!("{}\n\n[{said}]", last.content),
+    };
+}
+
 /// What a call the run never got to is told, in place of a result.
 ///
 /// Phrased for the model, which is who reads it: it did not run, and nothing
@@ -1200,6 +1315,12 @@ async fn browse<R: tauri::Runtime>(
     //
     // An address in `what` still wins: it is the more specific of the two.
     if !site.is_empty() && !browser::looks_like_a_url(what) {
+        // A path in `what` says which page on the site, and is where to go.
+        // See `browser::page_on`.
+        if let Some(page) = browser::page_on(site, what) {
+            log::info!("[Syn] Going to {page}, on {site}");
+            return look_at(req, &page, cap).await;
+        }
         match browser::address_of(site) {
             Some(front_door) => {
                 log::info!("[Syn] Going to {front_door} rather than searching for {what:?}");
@@ -1551,6 +1672,103 @@ mod tests {
             tool_call_id: id.map(str::to_string),
             images: None,
         }
+    }
+
+    fn answered_from(pages: &[(&str, &str)]) -> SynMessage {
+        SynMessage {
+            id: "a1".into(),
+            role: "assistant".into(),
+            content: "TCB đang ở 31.600 đ.".into(),
+            model: None,
+            timestamp: String::new(),
+            tokens: None,
+            duration_ms: None,
+            sources: Some(
+                pages
+                    .iter()
+                    .map(|(url, title)| crate::models::syn::SourceRef {
+                        id: url.to_string(),
+                        title: title.to_string(),
+                        node_type: crate::syn::web::WEB_SOURCE_TYPE.to_string(),
+                    })
+                    .collect(),
+            ),
+            footing: None,
+            tool_calls_log: None,
+            images: None,
+        }
+    }
+
+    fn spent(rounds: u8) -> crate::syn::run::Spent {
+        crate::syn::run::Spent { iterations: rounds, ..Default::default() }
+    }
+
+    fn rounds(n: u8) -> crate::syn::run::Budget {
+        crate::syn::run::Budget { iterations: Some(n), tool_calls: Some(50), tokens: None, wall_ms: Some(60_000) }
+    }
+
+    /// Plain for most of the run, pointed only near the end.
+    #[test]
+    fn the_model_is_told_how_many_rounds_are_left() {
+        let b = rounds(10);
+        assert_eq!(rounds_left(&spent(4), &b).unwrap(), "Round 4 of 10; 6 left.");
+
+        let near = rounds_left(&spent(8), &b).unwrap();
+        assert!(near.contains("2 left") && near.contains("answer now"), "{near}");
+
+        let last = rounds_left(&spent(10), &b).unwrap();
+        assert!(last.contains("last round with tools"), "{last}");
+
+        let unlimited = crate::syn::run::Budget { iterations: None, ..b };
+        assert!(rounds_left(&spent(4), &unlimited).is_none(), "nothing to say without a ceiling");
+    }
+
+    /// Once per round, on the last result, and a JSON result stays JSON.
+    #[test]
+    fn the_rounds_go_on_the_last_result_and_keep_it_json() {
+        let mut working = vec![result_for(Some("a")), result_for(Some("b"))];
+        working[1].content = "{\"total\":3}".into();
+        tell_the_rounds_left(&mut working, &spent(4), &rounds(10));
+
+        assert_eq!(working[0].content, "{}", "only the last result carries it");
+        let parsed: serde_json::Value = serde_json::from_str(&working[1].content).expect("still JSON");
+        assert_eq!(parsed["total"], 3);
+        assert_eq!(parsed["rounds"], "Round 4 of 10; 6 left.");
+
+        let mut page = vec![result_for(Some("c"))];
+        page[0].content = "=== PAGE FROM THE INTERNET ===".into();
+        tell_the_rounds_left(&mut page, &spent(4), &rounds(10));
+        assert!(page[0].content.ends_with("[Round 4 of 10; 6 left.]"), "{}", page[0].content);
+    }
+
+    /// Asked about the 52-week high one question after reading TCB's page, the
+    /// model searched from scratch: the answer's text had come back to it, and
+    /// the page it was read from had not.
+    #[test]
+    fn an_earlier_answer_comes_back_with_the_pages_it_was_read_from() {
+        let m = answered_from(&[
+            ("https://simplize.vn/co-phieu/TCB", "Giá Cổ Phiếu TCB Hôm Nay"),
+            ("https://duckduckgo.com/?q=gia+co+phieu+TCB", "gia co phieu TCB at DuckDuckGo"),
+        ]);
+        let seen = with_what_it_read(&m);
+
+        assert!(seen.starts_with("TCB đang ở 31.600 đ."), "the words first: {seen}");
+        assert!(seen.contains("https://simplize.vn/co-phieu/TCB"), "{seen}");
+        assert!(!seen.contains("duckduckgo"), "not the search it came through: {seen}");
+    }
+
+    /// Notes, questions, and answers that read nothing are sent as they are.
+    #[test]
+    fn nothing_is_added_where_nothing_was_read() {
+        assert_eq!(with_what_it_read(&answered_from(&[])), "TCB đang ở 31.600 đ.");
+
+        let mut asked = answered_from(&[("https://simplize.vn/co-phieu/TCB", "TCB")]);
+        asked.role = "user".into();
+        assert_eq!(with_what_it_read(&asked), "TCB đang ở 31.600 đ.");
+
+        let mut from_a_note = answered_from(&[("Notes/tcb.md", "TCB")]);
+        from_a_note.sources.as_mut().unwrap()[0].node_type = "note".into();
+        assert_eq!(with_what_it_read(&from_a_note), "TCB đang ở 31.600 đ.");
     }
 
     /// The history that emptied an answer: the last round asked for a page and

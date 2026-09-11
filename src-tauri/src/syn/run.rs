@@ -489,6 +489,13 @@ pub struct Run {
     #[serde(default)]
     pub spent: Spent,
     pub steps: Vec<Step>,
+    /// What a round that wrote nothing cost, waiting for the step it belongs to.
+    ///
+    /// See `charge`. Never written to disk: once claimed it lives on the step,
+    /// and a run saved with some still waiting has already counted it in
+    /// `spent.tokens`.
+    #[serde(skip)]
+    unclaimed: Option<(crate::syn::provider::Usage, u64)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Whether this run is reading out a plan rather than carrying it out.
@@ -562,6 +569,7 @@ impl Run {
             budget,
             spent: Spent::default(),
             steps: Vec::new(),
+            unclaimed: None,
             error: None,
             plan_only: false,
             pending_consent: None,
@@ -578,7 +586,7 @@ impl Run {
     /// can set `index` is a caller that eventually skips one, and a caller
     /// that can set `kind` freely is one that records a tool call as an
     /// assistant turn and stops the budget from seeing it.
-    fn push(&mut self, step: NewStep<'_>) {
+    fn push(&mut self, mut step: NewStep<'_>) {
         if matches!(step.kind, StepKind::ToolCall) {
             self.spent.tool_calls += 1;
         }
@@ -587,6 +595,19 @@ impl Run {
         // so input is most of what a run costs, and it was the half nobody was
         // counting. A budget watching the reply alone never stopped anything.
         self.spent.tokens += step.tokens.unwrap_or(0);
+
+        // A round that asked for tools and wrote nothing is shown on the first
+        // step it produced — its first tool, a refusal, the question to the
+        // user. Already counted in `spent` by `charge`, so not counted again.
+        if step.usage.is_silent() {
+            if let Some((usage, ms)) = self.unclaimed.take() {
+                step.tokens = usage.charged();
+                step.usage = usage;
+                if step.ms == 0 {
+                    step.ms = ms;
+                }
+            }
+        }
 
         let now = chrono::Utc::now().to_rfc3339();
         self.steps.push(Step {
@@ -628,6 +649,29 @@ impl Run {
             ms,
             ..NewStep::blank()
         });
+    }
+
+    /// What a round that asked for tools and wrote no words cost.
+    ///
+    /// # Why this exists
+    ///
+    /// Usage used to be recorded with the model's words, and a round that only
+    /// reaches for a tool has none — so it was never recorded at all. Most
+    /// rounds are that kind. The first Gemini conversation in the vault shows
+    /// it: four rounds of browsing, each re-sending fifteen to nineteen
+    /// thousand tokens, and the run said `tokens: 0`. The figure under an
+    /// answer was the last round alone, and the token ceiling could not see
+    /// the rounds most likely to run away.
+    ///
+    /// Counted into `spent` now, so a ceiling half-way through the round sees
+    /// it, and shown on the next step the round produces, so the transcript
+    /// says what each round cost.
+    pub fn charge(&mut self, usage: crate::syn::provider::Usage, ms: u64) {
+        if usage.is_silent() {
+            return;
+        }
+        self.spent.tokens += usage.charged().unwrap_or(0);
+        self.unclaimed = Some((usage, ms));
     }
 
     /// Everything this run actually read, whole.
@@ -1131,6 +1175,42 @@ mod tests {
             b.exceeded_by(&Spent { wall_ms: 900, ..Default::default() }),
             Some("wall_ms")
         );
+    }
+
+    /// A round that only called tools still cost what it cost.
+    ///
+    /// The first Gemini conversation: four rounds of browsing, each re-sending
+    /// fifteen to nineteen thousand tokens, and the run said `tokens: 0`.
+    #[test]
+    fn a_round_that_wrote_nothing_is_still_counted_and_shown() {
+        use crate::syn::provider::Usage;
+        let mut run = Run::new("tra giá", None, budget());
+
+        let round = Usage { input: Some(15_000), output: Some(60), output_hidden: Some(40), ..Default::default() };
+        run.charge(round, 900);
+        assert_eq!(run.spent.tokens, 15_060, "counted at once, so a ceiling mid-round sees it");
+
+        run.record_tool(0, "browse", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 5_000);
+        assert_eq!(run.spent.tokens, 15_060, "and not counted a second time");
+
+        let step = &run.steps[0];
+        assert_eq!(step.usage, round, "shown on the step the round produced");
+        assert_eq!(step.tokens, Some(15_060));
+        assert_eq!(step.ms, 5_000, "the tool keeps its own time");
+
+        // The next round's first step does not inherit it.
+        run.record_tool(1, "browse", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 10);
+        assert!(run.steps[1].usage.is_silent());
+    }
+
+    /// A provider that said nothing leaves nothing waiting.
+    #[test]
+    fn a_silent_round_charges_nothing() {
+        let mut run = Run::new("q", None, budget());
+        run.charge(crate::syn::provider::Usage::default(), 100);
+        run.record_tool(0, "x", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        assert_eq!(run.spent.tokens, 0);
+        assert!(run.steps[0].usage.is_silent());
     }
 
     /// A round admitted at the top of the loop gets to run the tools it asked
