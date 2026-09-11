@@ -239,8 +239,21 @@ const loadConversation = async (id: string) => {
   try {
     const full = await invoke<SynConversationFull>('syn_get_conversation', { vaultPath: props.vaultPath, conversationId: id });
     activeMessages.value = full.messages;
-    if (full.meta.model) {
-      selectedModel.value = full.meta.model;
+    // The model this conversation last used — but only if the provider in use
+    // still has it.
+    //
+    // Copied across unconditionally, opening one old OpenAI conversation after
+    // switching to Gemini put `gpt-5.6-luna` back in the header, and the next
+    // message — in that conversation or a new one — asked Gemini for it: a
+    // 404 on the first question, which is exactly how the first Gemini
+    // conversation in this vault began. The backend already ignores a pin
+    // from another provider; this screen was putting it straight back.
+    //
+    // Judged by the list, as `fetchModels` does. An empty list is models not
+    // loaded yet, and `fetchModels` chooses again once they are.
+    const pinned = full.meta.model;
+    if (pinned && (models.value.length === 0 || models.value.some(m => m.name === pinned))) {
+      selectedModel.value = pinned;
     }
   } catch (e) {
     logger.error('[Syn] Failed to load conversation', e);

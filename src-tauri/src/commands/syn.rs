@@ -564,7 +564,15 @@ pub async fn syn_send_message(
     // retrieved for precisely the runs that had the most to stand on.
     let retrieved = retrieval.sources.len();
 
-    if !retrieval.sources.is_empty() && !used_tools {
+    // And only under an answer. A run that stopped to ask permission has
+    // nothing to stand on anything yet — the same test the footing below uses —
+    // and it was getting ten retrieved notes pinned under an empty bubble. When
+    // the resumed run then failed, that bubble was all the conversation kept:
+    // no answer, and ten sources for it.
+    if !retrieval.sources.is_empty()
+        && !used_tools
+        && !assistant_message.content.trim().is_empty()
+    {
         assistant_message.sources = Some(retrieval.sources);
     }
 

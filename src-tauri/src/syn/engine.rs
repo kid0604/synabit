@@ -468,7 +468,9 @@ impl SynEngine {
 
             for tc in &reply.tool_calls {
                 run.spent.wall_ms = started.elapsed().as_millis() as u64;
-                if let Some(which) = run.budget.exceeded_by(&run.spent) {
+                // Not the round count: this round was admitted at the top and
+                // has been counted since. See `Budget::exceeded_during_a_round`.
+                if let Some(which) = run.budget.exceeded_during_a_round(&run.spent) {
                     break 'drive LoopEnd::Ceiling(which);
                 }
                 // A round can ask for a long chain of tools, and somebody who
@@ -771,6 +773,13 @@ impl SynEngine {
                 run.note(run.spent.iterations, &message);
                 run.finish(RunState::BudgetExhausted);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
+
+                // A tool, time or token ceiling can still stop a round between
+                // its tools, and whatever it did not get to is still asked for
+                // in the history. Answered here, or the call below goes out
+                // with a request nobody replied to — which every hosted
+                // provider refuses.
+                answer_the_unanswered(&mut working, UNANSWERED);
             }
             LoopEnd::NeedsChoice(choice) => {
                 // Same shape as consent below, for the same reason: a run
@@ -1042,6 +1051,67 @@ impl<R: tauri::Runtime> Watchers<'_, R> {
         }
     }
 
+}
+
+/// What a call the run never got to is told, in place of a result.
+///
+/// Phrased for the model, which is who reads it: it did not run, and nothing
+/// will — so the next thing to do is answer from what is already in hand.
+const UNANSWERED: &str =
+    "Not run: this piece of work reached its limit before this call was made. Answer from \
+     what you already have, and say plainly what you did not get to check.";
+
+/// Give every tool call still waiting in the history a result.
+///
+/// # Why a request cannot be left hanging
+///
+/// Because the conversation stops being valid. OpenAI refuses an assistant
+/// message whose `tool_calls` are not each followed by a `tool` message naming
+/// them. Gemini goes further and refuses any request whose history ends on a
+/// model turn at all. Ollama tolerates it, which is why this was never seen —
+/// and on the first run in this vault ever to reach a ceiling, on Gemini, the
+/// answer came back empty.
+///
+/// Only the last assistant turn can have waiting calls: every earlier one was
+/// answered before the next round was asked for.
+fn answer_the_unanswered(working: &mut Vec<ChatMessage>, why: &str) {
+    let Some(asked_at) = working
+        .iter()
+        .rposition(|m| m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
+    else {
+        return;
+    };
+
+    let answered: std::collections::HashSet<Option<String>> = working[asked_at + 1..]
+        .iter()
+        .filter(|m| m.role == "tool")
+        .map(|m| m.tool_call_id.clone())
+        .collect();
+    let replies_so_far = working[asked_at + 1..].iter().filter(|m| m.role == "tool").count();
+
+    let waiting: Vec<Option<String>> = working[asked_at]
+        .tool_calls
+        .iter()
+        .flatten()
+        .enumerate()
+        // By id where there is one; by position where there is not, which is
+        // how Ollama pairs them and the only thing left to go on.
+        .filter(|(i, call)| match &call.id {
+            Some(_) => !answered.contains(&call.id),
+            None => *i >= replies_so_far,
+        })
+        .map(|(_, call)| call.id.clone())
+        .collect();
+
+    for id in waiting {
+        working.push(ChatMessage {
+            role: "tool".to_string(),
+            content: serde_json::json!({ "not_run": why }).to_string(),
+            tool_calls: None,
+            tool_call_id: id,
+            images: None,
+        });
+    }
 }
 
 /// What to tell a person when a run stopped short.
@@ -1451,6 +1521,72 @@ fn assemble(
 }
 #[cfg(test)]
 mod tests {
+
+    fn asking(ids: &[Option<&str>]) -> ChatMessage {
+        ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: Some(
+                ids.iter()
+                    .map(|id| crate::models::syn::ToolCall {
+                        id: id.map(str::to_string),
+                        function: crate::models::syn::ToolCallFunction {
+                            name: "browse".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        thought_signature: None,
+                    })
+                    .collect(),
+            ),
+            tool_call_id: None,
+            images: None,
+        }
+    }
+
+    fn result_for(id: Option<&str>) -> ChatMessage {
+        ChatMessage {
+            role: "tool".into(),
+            content: "{}".into(),
+            tool_calls: None,
+            tool_call_id: id.map(str::to_string),
+            images: None,
+        }
+    }
+
+    /// The history that emptied an answer: the last round asked for a page and
+    /// the run stopped before fetching it. Every hosted provider refuses a
+    /// request with a call nobody replied to.
+    #[test]
+    fn a_call_the_run_never_got_to_is_answered_before_the_last_word() {
+        let mut working = vec![ChatMessage::new("user", "q"), asking(&[Some("a"), Some("b")]), result_for(Some("a"))];
+        answer_the_unanswered(&mut working, UNANSWERED);
+
+        assert_eq!(working.len(), 4);
+        let last = working.last().unwrap();
+        assert_eq!(last.role, "tool");
+        assert_eq!(last.tool_call_id.as_deref(), Some("b"), "only the one still waiting");
+        assert!(last.content.contains("Not run"), "{}", last.content);
+    }
+
+    /// Calls with no id are paired by position, the way Ollama pairs them.
+    #[test]
+    fn calls_without_ids_are_answered_by_position() {
+        let mut working = vec![ChatMessage::new("user", "q"), asking(&[None, None, None]), result_for(None)];
+        answer_the_unanswered(&mut working, UNANSWERED);
+        assert_eq!(working.iter().filter(|m| m.role == "tool").count(), 3);
+    }
+
+    /// A history where everything was answered is left exactly as it was.
+    #[test]
+    fn nothing_is_added_when_nothing_is_waiting() {
+        let mut working = vec![ChatMessage::new("user", "q"), asking(&[Some("a")]), result_for(Some("a"))];
+        answer_the_unanswered(&mut working, UNANSWERED);
+        assert_eq!(working.len(), 3);
+
+        let mut plain = vec![ChatMessage::new("user", "q"), ChatMessage::new("assistant", "hi")];
+        answer_the_unanswered(&mut plain, UNANSWERED);
+        assert_eq!(plain.len(), 2);
+    }
 
     /// A named site is a place to go, and it is decided before anything is
     /// searched for.
@@ -2059,6 +2195,10 @@ mod driving {
         transcript_seen: Mutex<Vec<usize>>,
         /// Run each call before answering, for the cancellation test.
         before_reply: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+        /// The role of the last message in each request, so a test can see
+        /// what a hosted provider would: Gemini refuses a request ending on a
+        /// model turn, and OpenAI one with a tool call left unanswered.
+        last_roles: Mutex<Vec<String>>,
         vault: String,
         run_id: String,
     }
@@ -2070,6 +2210,7 @@ mod driving {
                 looping: Mutex::new(None),
                 transcript_seen: Mutex::new(Vec::new()),
                 before_reply: Mutex::new(None),
+                last_roles: Mutex::new(Vec::new()),
                 vault: vault.to_string(),
                 run_id: run_id.to_string(),
             }
@@ -2083,6 +2224,12 @@ mod driving {
             let s = Self::new(vault, run_id, Vec::new());
             *s.looping.lock().expect("lock") = Some(Box::new(reply));
             s
+        }
+
+        fn saw(&self, req: &ChatRequest<'_>) {
+            if let Some(last) = req.messages.last() {
+                self.last_roles.lock().expect("lock").push(last.role.clone());
+            }
         }
 
         /// `tools_offered` is what a real model sees, and it changes what a
@@ -2128,6 +2275,7 @@ mod driving {
             unreachable!("the loop never asks")
         }
         async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
+            self.saw(&req);
             Ok(self.next(req.tools.is_some()))
         }
         async fn chat_streaming(
@@ -2135,6 +2283,7 @@ mod driving {
             req: ChatRequest<'_>,
             sink: &StreamSink<'_>,
         ) -> AppResult<ChatReply> {
+            self.saw(&req);
             let reply = self.next(req.tools.is_some());
             (sink.on_token)(&reply.content);
             Ok(reply)
@@ -3469,6 +3618,76 @@ mod driving {
         );
 
         // And the user still gets words rather than silence.
+        assert!(!reply.content.is_empty());
+    }
+
+    /// The last round a run is allowed gets to finish, and the last word goes
+    /// out with nothing left hanging.
+    ///
+    /// Both failed together on the first run in this vault ever to reach a
+    /// ceiling. Round five of five asked for a page and was stopped before
+    /// fetching it — five `>=` five, checked again after the round had been
+    /// counted — and the final call went out ending on that unanswered request.
+    /// Gemini refused it: "Requests ending with a model turn are not
+    /// supported". The person got an empty answer.
+    #[tokio::test]
+    async fn the_last_round_finishes_and_the_last_word_ends_on_a_result() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+
+        let mut run = Run::new("search forever", Some("conv-1".into()), budget(2));
+        let provider = std::sync::Arc::new(Scripted::looping_on(&vault, &run.id, || {
+            calls("query_nodes", serde_json::json!({ "query": "type:task" }))
+        }));
+
+        struct Shared(std::sync::Arc<Scripted>);
+        #[async_trait::async_trait]
+        impl ChatProvider for Shared {
+            fn id(&self) -> SynProvider { self.0.id() }
+            async fn check_status(&self) -> AppResult<ProviderStatus> { self.0.check_status().await }
+            async fn list_models(&self) -> AppResult<Vec<ModelInfo>> { self.0.list_models().await }
+            async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> { self.0.chat(req).await }
+            async fn chat_streaming(&self, req: ChatRequest<'_>, sink: &StreamSink<'_>) -> AppResult<ChatReply> {
+                self.0.chat_streaming(req, sink).await
+            }
+        }
+
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        let engine = SynEngine::new(Box::new(Shared(provider.clone())));
+
+        let reply = engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("search forever"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("still answers");
+
+        let ran = run.steps.iter().filter(|s| s.kind == StepKind::ToolCall).count();
+        assert_eq!(ran, 2, "both admitted rounds ran what they asked for");
+
+        let roles = provider.last_roles.lock().expect("lock").clone();
+        assert_eq!(
+            roles.last().map(String::as_str),
+            Some("tool"),
+            "the last request ends on a result, not on a request nobody answered: {roles:?}"
+        );
         assert!(!reply.content.is_empty());
     }
 

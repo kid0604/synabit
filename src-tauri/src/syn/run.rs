@@ -388,6 +388,29 @@ impl Budget {
         }
         None
     }
+
+    /// The same question, asked between the tools of a round already under way.
+    ///
+    /// Everything but the round count. The round was admitted at the top of the
+    /// loop, when it was checked; asking again half-way through, after the round
+    /// has been counted, finds it at the ceiling it was just allowed to reach.
+    ///
+    /// # What that did
+    ///
+    /// With a ceiling of five rounds, round five started, the model asked for a
+    /// page, and the ceiling fired before the page was fetched: five `>=` five.
+    /// The request was thrown away, the answer came from a sixth call made with
+    /// no tools — and that call went out with the unanswered request as the
+    /// last thing in the history, which Gemini refuses outright ("Requests
+    /// ending with a model turn are not supported") and OpenAI refuses for a
+    /// tool call with no result. The person got an empty answer.
+    ///
+    /// Tool calls, tokens and time still stop a round mid-way. Those are about
+    /// what the round is spending, and a round can ask for a long chain of tools.
+    pub fn exceeded_during_a_round(&self, spent: &Spent) -> Option<&'static str> {
+        let without_rounds = Budget { iterations: None, ..*self };
+        without_rounds.exceeded_by(spent)
+    }
 }
 
 /// What a run has used so far.
@@ -1108,6 +1131,26 @@ mod tests {
             b.exceeded_by(&Spent { wall_ms: 900, ..Default::default() }),
             Some("wall_ms")
         );
+    }
+
+    /// A round admitted at the top of the loop gets to run the tools it asked
+    /// for. Checked again half-way through, after being counted, it found
+    /// itself at the ceiling it had just been allowed to reach — the fifth of
+    /// five rounds asked for a page, never got it, and the answer came back
+    /// empty.
+    #[test]
+    fn a_round_already_admitted_is_not_stopped_by_the_round_count() {
+        let b = Budget { iterations: Some(5), tool_calls: Some(40), tokens: None, wall_ms: Some(60_000) };
+        let in_round_five = Spent { iterations: 5, tool_calls: 4, tokens: 0, wall_ms: 1_000 };
+
+        assert_eq!(b.exceeded_by(&in_round_five), Some("iterations"), "the next round is not started");
+        assert_eq!(b.exceeded_during_a_round(&in_round_five), None, "but this one finishes");
+
+        // What a round spends still stops it half-way.
+        let too_long = Spent { wall_ms: 60_000, ..in_round_five };
+        assert_eq!(b.exceeded_during_a_round(&too_long), Some("wall_ms"));
+        let too_many = Spent { tool_calls: 40, ..in_round_five };
+        assert_eq!(b.exceeded_during_a_round(&too_many), Some("tool_calls"));
     }
 
     /// A `None` ceiling is no ceiling, not a ceiling of zero. Getting this

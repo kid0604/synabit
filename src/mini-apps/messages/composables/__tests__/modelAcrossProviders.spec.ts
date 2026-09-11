@@ -59,3 +59,18 @@ describe('the model in the chat header, across a change of provider', () => {
     expect(m.selectedModel.value).toBe('gpt-5.6-luna');
   });
 });
+
+/**
+ * Opening a conversation used to copy its model into the header whatever the
+ * provider. One old OpenAI conversation opened after switching to Gemini, and
+ * the next message asked Gemini for `gpt-5.6-luna` — a 404, which is how the
+ * first Gemini conversation in the vault began.
+ */
+describe('opening a conversation from another provider', () => {
+  it('takes its model only when the provider in use has it', async () => {
+    const app = (await import('../../MessagesApp.vue?raw')).default;
+    const body = app.slice(app.indexOf('const loadConversation'), app.indexOf('const loadConversation') + 1600);
+    expect(body).toContain('models.value.some(m => m.name === pinned)');
+    expect(body, 'no unconditional copy of the pin').not.toMatch(/if \(full\.meta\.model\) \{\s*selectedModel\.value = full\.meta\.model;/);
+  });
+});

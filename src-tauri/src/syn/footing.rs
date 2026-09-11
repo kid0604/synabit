@@ -565,4 +565,24 @@ mod tests {
             "the guard must still be open where the footing is set"
         );
     }
+
+    /// And no sources under a turn that did not answer, by the same test.
+    ///
+    /// A consent stop was getting the ten notes retrieval had found pinned
+    /// under its empty bubble. When the resumed run then failed, that bubble
+    /// was all the conversation kept — no answer, and ten sources for it,
+    /// none of them about the question.
+    #[test]
+    fn the_send_path_only_cites_under_a_turn_that_actually_answered() {
+        let source = include_str!("../commands/syn.rs");
+        let at = source
+            .find("assistant_message.sources = Some(retrieval.sources);")
+            .expect("retrieved sources are still attached there");
+        let condition = &source[source[..at].rfind("if ").expect("under a condition")..at];
+
+        assert!(
+            condition.contains("!assistant_message.content.trim().is_empty()"),
+            "sources go only under a turn that said something: {condition}"
+        );
+    }
 }

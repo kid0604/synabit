@@ -345,6 +345,8 @@ fn request_body(req: &ChatRequest<'_>) -> Value {
         }
     }
 
+    close_the_last_turn(&mut contents);
+
     let mut body = Map::new();
     body.insert(
         "contents".into(),
@@ -372,6 +374,43 @@ fn request_body(req: &ChatRequest<'_>) -> Value {
     }
 
     Value::Object(body)
+}
+
+/// Never let a request end on a model turn that asked for something.
+///
+/// Newer Gemini models refuse it outright — *"Requests ending with a model turn
+/// are not supported"* — where older ones tolerated it. The engine answers any
+/// call it did not get to (`engine::answer_the_unanswered`), and this is the
+/// same promise kept at the last place it can be: whatever path through the
+/// tool loop a future change opens, a request with calls left hanging goes out
+/// with each one answered as not run, rather than as a 400 and an empty reply.
+///
+/// A model turn of plain text is left alone. Nothing here writes one last, and
+/// inventing a user's words to follow it would be worse than the error.
+fn close_the_last_turn(contents: &mut Vec<(String, Vec<Value>)>) {
+    let Some((role, parts)) = contents.last() else { return };
+    if role != "model" {
+        return;
+    }
+    let waiting: Vec<Value> = parts
+        .iter()
+        .filter_map(|p| p.get("functionCall"))
+        .map(|call| {
+            let mut response = Map::new();
+            response.insert("name".into(), call.get("name").cloned().unwrap_or(Value::Null));
+            response.insert(
+                "response".into(),
+                json!({ "output": "Not run: the work stopped before this call was made." }),
+            );
+            if let Some(id) = call.get("id") {
+                response.insert("id".into(), id.clone());
+            }
+            json!({ "functionResponse": Value::Object(response) })
+        })
+        .collect();
+    if !waiting.is_empty() {
+        contents.push(("user".to_string(), waiting));
+    }
 }
 
 /// Syn's tool declarations, as Gemini reads them.
@@ -889,6 +928,36 @@ mod tests {
         assert!(body["contents"][1]["parts"][0]["functionCall"].get("id").is_none());
         assert!(body["contents"][2]["parts"][0]["functionResponse"].get("id").is_none());
         assert_eq!(body["contents"][2]["parts"][0]["functionResponse"]["name"], "query_nodes");
+    }
+
+    /// "Requests ending with a model turn are not supported" — the 400 that
+    /// emptied an answer the first time a run in this vault reached its
+    /// ceiling. A history that ends on a call nobody answered goes out with
+    /// the call answered as not run.
+    #[test]
+    fn a_request_never_ends_on_a_call_nobody_answered() {
+        let mut asked = msg("assistant", "");
+        asked.tool_calls = Some(vec![call(Some("c9"), "browse", Some("SIG"))]);
+        let history = [msg("user", "giá đỉnh 52 tuần"), asked];
+        let body = request_body(&request(&history, "gemini-3.8-flash"));
+
+        let contents = body["contents"].as_array().unwrap();
+        let last = contents.last().unwrap();
+        assert_eq!(last["role"], "user", "{body:#}");
+        assert_eq!(last["parts"][0]["functionResponse"]["name"], "browse");
+        assert_eq!(last["parts"][0]["functionResponse"]["id"], "c9");
+    }
+
+    /// And a history that already ends properly is not touched.
+    #[test]
+    fn a_history_that_ends_on_a_result_is_left_as_it_is() {
+        let mut asked = msg("assistant", "");
+        asked.tool_calls = Some(vec![call(Some("c1"), "browse", None)]);
+        let mut answered = msg("tool", "{}");
+        answered.tool_call_id = Some("c1".into());
+        let history = [msg("user", "q"), asked, answered];
+        let body = request_body(&request(&history, "gemini-3.8-flash"));
+        assert_eq!(body["contents"].as_array().unwrap().len(), 3);
     }
 
     /// Google's advice for Gemini 3 is to leave temperature at 1.0; lower
