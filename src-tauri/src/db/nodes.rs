@@ -127,22 +127,14 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("DB Count Error: {}", e)))
     }
 
-    /// Caps still asking to be dealt with: everything except the archived.
+    /// Caps still asking to be dealt with, which is every cap.
     ///
-    /// The badge counts this rather than every cap. Archiving is the user
-    /// saying "keep it, stop asking" — a number that kept counting those would
-    /// be a number they learn to ignore, which is the one thing a pressure
-    /// signal must not become.
+    /// Caps used to have a "put away" state that dropped them from this
+    /// count. It is gone, and a cap still carrying the old `archived`
+    /// property is back in the list — so it has to be back in the badge too,
+    /// or the number and the screen disagree.
     pub fn count_inbox_caps(&self) -> AppResult<i64> {
-        self.conn
-            .query_row(
-                "SELECT COUNT(*) FROM nodes
-                 WHERE node_type = 'quickcap'
-                   AND COALESCE(json_extract(properties, '$.archived'), 0) NOT IN (1, 'true')",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::General(format!("DB Count Error: {}", e)))
+        self.count_nodes_by_type("quickcap")
     }
 
     /// How much of a node's body a list screen gets to see.

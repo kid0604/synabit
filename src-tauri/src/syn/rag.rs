@@ -292,6 +292,87 @@ const STOP_WORDS: &[&str] = &[
 /// found only weak things still return them rather than nothing.
 const RELEVANCE_FRACTION: f64 = 0.25;
 
+/// How much of a vault a word may appear in and still be worth searching for.
+///
+/// # Measured, on the vault that produced the complaint
+///
+/// A question in Vietnamese survives stopword removal as a row of bare
+/// syllables, and a syllable is not a word. *"vẽ thử một hình minh hoạ kiến
+/// trúc của splunk"* became nine terms, and this is how much of that vault's
+/// 913 documents each one matches:
+///
+/// | term | documents | share |
+/// | --- | ---: | ---: |
+/// | vẽ | 342 | 37% |
+/// | minh | 313 | 34% |
+/// | hoạ | 100 | 11% |
+/// | thử | 99 | 11% |
+/// | splunk | 85 | 9% |
+/// | một | 69 | 8% |
+/// | hình | 44 | 5% |
+/// | kiến | 25 | 3% |
+/// | trúc | 22 | 2% |
+///
+/// Searched with `match_any`, that is a union of most of the vault, and BM25
+/// then ranks a long note carrying five common syllables above a short one
+/// carrying the only word that mattered. The answer arrived under ten source
+/// chips — *Sao chúng ta lại ngủ?*, *The map is not the territory*, two loose
+/// dates — for a question about Splunk, **in a vault with eighty-five documents
+/// mentioning Splunk**. Searched for `splunk` alone the same index answers
+/// *Cơ chế off auto refresh của splunk dashboard*, *Xây dựng MTPQ cho Splunk*,
+/// *Splunk query*.
+///
+/// A fifth is where the noise sat on that vault: it takes out `vẽ`, `minh`,
+/// `công` (44%), `ty` (31%) and `hiểu` (33%) and leaves everything that names
+/// a subject. It is a threshold and not a law; what makes it defensible is
+/// that it is measured against the vault in front of it rather than a list of
+/// words somebody wrote down.
+const TOO_COMMON_SHARE: f64 = 0.20;
+
+/// Below this many documents, a share is not evidence.
+///
+/// A fifth of nine notes is two. Every word in a small vault looks common, and
+/// the filter would answer a real question with nothing — which is the one
+/// failure worse than answering it with noise.
+const ENOUGH_TO_JUDGE: u32 = 50;
+
+/// Keep the words that could tell one note from another.
+///
+/// # Why the index is asked rather than a list consulted
+///
+/// Because which words are common is a fact about **this** vault. `công` is in
+/// 44% of the one this was measured on; in a vault of English research notes it
+/// is in none, and a stopword list carrying it would be throwing away the only
+/// term in the question.
+///
+/// A word matching nothing is kept. It is as discriminating as a word can be —
+/// it simply is not here — and dropping it would turn "nothing in the vault is
+/// about this" into "search for the rest of the sentence instead", which is
+/// exactly the failure above.
+pub fn discriminating(db: &DbBridge, terms: &[String]) -> Vec<String> {
+    let total = db.indexed_documents().unwrap_or(0);
+    if total < ENOUGH_TO_JUDGE {
+        return terms.to_vec();
+    }
+
+    let ceiling = (total as f64 * TOO_COMMON_SHARE) as u32;
+    terms
+        .iter()
+        .filter(|term| {
+            let found = db.documents_containing(term).unwrap_or(0);
+            if found > ceiling {
+                log::info!(
+                    "[RAG] Dropping \"{term}\": in {found} of {total} documents, which tells \
+                     nothing apart"
+                );
+                return false;
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  A. EXTRACT SEARCH TERMS
 // ═══════════════════════════════════════════════════════════════
@@ -426,6 +507,22 @@ pub fn retrieve_context(
     }
 
     log::info!("[RAG] Extracted {} search terms: {:?}", terms.len(), &terms);
+
+    // What is left after the words that match half the vault are taken out.
+    //
+    // Retrieval can now come back with nothing, and that is the point: before
+    // this, a question whose only real subject was absent from the vault was
+    // answered by searching the *rest of the sentence*, and the answer arrived
+    // under ten source chips that had nothing to do with it.
+    let terms = discriminating(db, &terms);
+    if terms.is_empty() {
+        log::info!("[RAG] Nothing in the question tells one note from another; not retrieving");
+        return Ok(RetrievalResult {
+            context_chunks: Vec::new(),
+            total_tokens_estimate: 0,
+            sources: Vec::new(),
+        });
+    }
 
     let terms_joined = terms.join(" ");
     let mut all_chunks: Vec<ContextChunk> = Vec::new();
@@ -957,6 +1054,129 @@ fn parse_metadata(metadata: &Option<String>) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A word that matches half the vault cannot tell one note from another.
+    ///
+    /// This is the whole of the complaint, in a test. A question in Vietnamese
+    /// survives stopword removal as a row of bare syllables — `vẽ`, `minh`,
+    /// `công`, `hiểu` — and `match_any` turns those into a union of most of the
+    /// vault. The one word that named a subject was then outranked by long
+    /// notes carrying five common ones.
+    #[test]
+    fn a_word_in_half_the_vault_is_not_a_search_term() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+
+        // Sixty documents, because below `ENOUGH_TO_JUDGE` a share is not
+        // evidence and the filter stands aside.
+        for i in 0..60 {
+            db.upsert_search_entry(
+                &format!("Notes/{i}.md"),
+                "note",
+                &format!("Ghi chú {i}"),
+                "",
+                // In every one of them, and therefore useless.
+                "công ty một buổi họp",
+                "{}",
+                None,
+                "2026-08-01T00:00:00Z",
+                &format!("Notes/{i}.md"),
+            );
+        }
+        // In one, and therefore the only word worth searching for.
+        db.upsert_search_entry(
+            "Notes/splunk.md",
+            "note",
+            "Splunk query",
+            "",
+            "cách viết splunk query cho dashboard",
+            "{}",
+            None,
+            "2026-08-01T00:00:00Z",
+            "Notes/splunk.md",
+        );
+
+        let asked: Vec<String> = ["công", "ty", "splunk"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(discriminating(&db, &asked), vec!["splunk".to_string()]);
+    }
+
+    /// A word the vault has never heard of is the most discriminating word
+    /// there is. Dropping it would turn "nothing here is about this" into
+    /// "search for the rest of the sentence instead", which is the failure.
+    #[test]
+    fn a_word_that_matches_nothing_is_kept() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        for i in 0..60 {
+            db.upsert_search_entry(
+                &format!("Notes/{i}.md"),
+                "note",
+                "Ghi chú",
+                "",
+                "công ty một buổi họp",
+                "{}",
+                None,
+                "2026-08-01T00:00:00Z",
+                &format!("Notes/{i}.md"),
+            );
+        }
+
+        let asked = vec!["công".to_string(), "kubernetes".to_string()];
+        assert_eq!(discriminating(&db, &asked), vec!["kubernetes".to_string()]);
+    }
+
+    /// A fifth of nine notes is two. Every word in a small vault looks common,
+    /// and answering a real question with nothing is the one failure worse than
+    /// answering it with noise.
+    #[test]
+    fn a_small_vault_keeps_every_word() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        for i in 0..5 {
+            db.upsert_search_entry(
+                &format!("Notes/{i}.md"),
+                "note",
+                "Ghi chú",
+                "",
+                "công ty một buổi họp",
+                "{}",
+                None,
+                "2026-08-01T00:00:00Z",
+                &format!("Notes/{i}.md"),
+            );
+        }
+
+        let asked = vec!["công".to_string(), "ty".to_string()];
+        assert_eq!(discriminating(&db, &asked).len(), 2);
+    }
+
+    /// And when nothing survives, nothing is retrieved — rather than the
+    /// question being answered by whatever the leftover words happened to hit.
+    #[test]
+    fn a_question_of_nothing_but_common_words_retrieves_nothing() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        for i in 0..60 {
+            db.upsert_search_entry(
+                &format!("Notes/{i}.md"),
+                "note",
+                "Ghi chú",
+                "",
+                "công ty một buổi họp",
+                "{}",
+                None,
+                "2026-08-01T00:00:00Z",
+                &format!("Notes/{i}.md"),
+            );
+        }
+
+        let found = retrieve_context(
+            &db,
+            "công ty một buổi họp",
+            &[],
+            &RagConfig::default(),
+        )
+        .expect("retrieval");
+
+        assert!(found.sources.is_empty(), "{:?}", found.sources);
+        assert!(found.context_chunks.is_empty());
+    }
 
     #[test]
     fn test_extract_search_terms_basic() {

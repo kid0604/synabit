@@ -253,6 +253,41 @@ impl DbBridge {
     }
 
     /// Perform a full-text search using FTS5 with BM25 ranking.
+    /// How many indexed documents there are at all.
+    ///
+    /// The denominator for "how much of this vault does that word match" —
+    /// see `syn::rag::discriminating`. A share means nothing without it, and a
+    /// vault of nine notes and a vault of nine hundred want different answers
+    /// from the same count.
+    pub fn indexed_documents(&self) -> AppResult<u32> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM search_index", [], |row| row.get(0))
+            .unwrap_or(0))
+    }
+
+    /// How many documents one word appears in.
+    ///
+    /// Asked of the index rather than guessed from a list, because which words
+    /// are common is a property of **this** vault. `công` is in 44% of this
+    /// one; in somebody else's it might be in none.
+    ///
+    /// Its own query rather than `search_fts`'s `total_count`, which on one
+    /// branch reports the size of the page instead of the size of the match.
+    pub fn documents_containing(&self, term: &str) -> AppResult<u32> {
+        // Quoted, so a term carrying FTS5 syntax is a word rather than an
+        // operator — and so a word with a `-` in it does not become NOT.
+        let phrase = format!("\"{}\"", term.replace('"', ""));
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM search_index WHERE search_index MATCH ?1",
+                [&phrase],
+                |row| row.get(0),
+            )
+            .unwrap_or(0))
+    }
+
     pub fn search_fts(
         &self,
         parsed: &crate::search::ParsedQuery,

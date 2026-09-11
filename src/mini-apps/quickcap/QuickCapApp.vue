@@ -8,7 +8,7 @@ import { useEventBus } from '../../composables/useEventBus';
 import { usePlatform } from '../../composables/usePlatform';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask, message, open as openDialog } from '@tauri-apps/plugin-dialog';
-import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus, Mic, Square, Pin, Archive } from 'lucide-vue-next';
+import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus, Mic, Square, Pin } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from 'tiptap-markdown';
@@ -115,26 +115,25 @@ const isCold = (cap: NodeMetadata) => {
 };
 
 /** Which slice of the inbox is on screen. */
-const ageFilter = ref<'all' | 'fresh' | 'cold' | 'archived'>('all');
+const ageFilter = ref<'all' | 'fresh' | 'cold'>('all');
 
-const coldCount = computed(() => quickCaps.value.filter((c) => isCold(c) && !isArchived(c)).length);
-const archivedCount = computed(() => quickCaps.value.filter(isArchived).length);
+const coldCount = computed(() => quickCaps.value.filter(isCold).length);
 
 watch(ageFilter, () => {
     renderLimit.value = RENDER_BATCH;
 });
 
-const filteredCaps = computed(() => {
-    // Put-away caps are out of every view except their own: that is the
-    // difference between filing something and merely ignoring it.
-    const inbox = quickCaps.value.filter((cap) => !isArchived(cap));
+// The tabs hide once nothing is cold, so the filter must not be left on a
+// slice that no longer has a way back out of it.
+watch(coldCount, (count) => {
+    if (count === 0) ageFilter.value = 'all';
+});
 
+const filteredCaps = computed(() => {
     const byAge =
-        ageFilter.value === 'archived'
-            ? quickCaps.value.filter(isArchived)
-            : ageFilter.value === 'all'
-              ? inbox
-              : inbox.filter((cap) => (ageFilter.value === 'cold' ? isCold(cap) : !isCold(cap)));
+        ageFilter.value === 'all'
+            ? [...quickCaps.value]
+            : quickCaps.value.filter((cap) => (ageFilter.value === 'cold' ? isCold(cap) : !isCold(cap)));
 
     // Pinned first, and only then by recency. A pin is the user overruling
     // the sort, so nothing else may overrule the pin.
@@ -263,18 +262,14 @@ const changeCapColor = async (cap: NodeMetadata, colorName: string) => {
 };
 
 const isPinned = (cap: NodeMetadata) => cap.properties?.pinned === true;
-const isArchived = (cap: NodeMetadata) => cap.properties?.archived === true;
 
 /**
  * Flip a flag on some caps and write it down.
  *
- * Pinning and putting away are the two answers that are neither "turn this
- * into something" nor "throw it away" — keep it in front of me, and keep it
- * but stop asking. Without the second one an inbox can only ever be emptied
- * by promoting or deleting, and a thought that deserves neither has nowhere
- * to go but to sit there going stale.
+ * Pinning is the one answer that is neither "turn this into something" nor
+ * "throw it away": keep it in front of me.
  */
-const setCapFlag = async (caps: NodeMetadata[], flag: 'pinned' | 'archived', value: boolean) => {
+const setCapFlag = async (caps: NodeMetadata[], flag: 'pinned', value: boolean) => {
     for (const cap of caps) {
         const properties = { ...cap.properties, [flag]: value };
         try {
@@ -1449,10 +1444,14 @@ const capViews = computed(() =>
 
 const { width: windowWidth } = useWindowSize();
 
-/** Mirrors the Tailwind breakpoints the grid used to switch at. */
+/**
+ * Mirrors the Tailwind breakpoints the grid used to switch at.
+ *
+ * Three at most: the grid shares one column with the composer and the
+ * toolbar, and a fourth card would not fit that width at a readable size.
+ */
 const columnCount = computed(() => {
     const w = windowWidth.value;
-    if (w >= 1280) return 4;
     if (w >= 1024) return 3;
     if (w >= 640) return 2;
     return mobileViewMode.value === 'grid' ? 2 : 1;
@@ -1629,13 +1628,6 @@ const handleTriageKey = (e: KeyboardEvent) => {
             void setCapFlag(caps, 'pinned', !caps.every(isPinned));
             return;
         }
-        case 'a': {
-            const caps = capsInPlay();
-            if (caps.length === 0) return;
-            e.preventDefault();
-            void setCapFlag(caps, 'archived', !caps.every(isArchived)).then(clearSelection);
-            return;
-        }
         case 'p': {
             const caps = capsInPlay();
             if (caps.length === 0) return;
@@ -1789,9 +1781,20 @@ const deleteCap = async (id: string) => {
 </script>
 
 <template>
-  <div class="h-full bg-[#fdfdfc] dark:bg-[#242424] overflow-y-auto w-full pt-12 pb-16 px-4">
+  <!--
+    One column for everything: the composer, the toolbar and the cards all
+    share `max-w-4xl px-4`, so they line up on the same two edges instead of
+    each centring on its own width.
+  -->
+  <div class="relative flex flex-col h-full bg-[#fdfdfc] dark:bg-[#242424] overflow-y-auto w-full pt-12 pb-16 px-4">
+    <!-- App navigation stays in the corner, apart from the list controls -->
+    <div class="absolute top-3 left-4">
+        <NavButtons />
+    </div>
+
     <!-- Input Bar (Desktop Only) -->
-    <div class="hidden md:flex flex-col mx-auto w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all mb-12">
+    <div class="hidden md:block shrink-0 w-full max-w-4xl px-4 mx-auto mb-10">
+    <div class="flex flex-col w-full bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all">
         <textarea
            ref="inputRef"
            v-model="newCapText"
@@ -1848,11 +1851,29 @@ const deleteCap = async (id: string) => {
            </button>
         </div>
     </div>
-    
+    </div>
+
     <!-- Filter Bar -->
-    <div class="w-full max-w-7xl px-4 flex items-center justify-between mb-8 mx-auto -mt-4">
-        <div class="flex items-center gap-3 flex-1">
-        <NavButtons />
+    <div class="shrink-0 w-full max-w-4xl px-4 flex items-center justify-between gap-4 mb-4 mx-auto">
+        <!--
+          Age, not just search. A number on the tab creates pressure only if
+          the list can be narrowed to what is actually stale; otherwise a big
+          inbox is one undifferentiated wall. With nothing cold, Recent and All
+          are the same list, so there is nothing to choose between.
+        -->
+        <div v-if="coldCount > 0" class="hidden sm:flex items-center gap-1 shrink-0">
+            <button
+                v-for="option in (['all', 'fresh', 'cold'] as const)"
+                :key="option"
+                @click="ageFilter = option"
+                class="px-2.5 py-1 rounded-md text-[13px] transition-colors cursor-pointer whitespace-nowrap"
+                :class="ageFilter === option ? 'bg-black/5 dark:bg-white/10 text-[#1c1c1e] dark:text-[#f4f4f5] font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
+            >
+                {{ $t(`quickcap.filter_${option}`) }}<span v-if="option === 'cold'" class="ml-1 opacity-60">{{ coldCount }}</span>
+            </button>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 flex-1 min-w-0">
         <div class="relative w-full sm:max-w-xs group">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                 <Search class="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
@@ -1867,26 +1888,8 @@ const deleteCap = async (id: string) => {
                 <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
             </button>
         </div>
-        </div>
-        <!--
-          Age, not just search. A number on the tab creates pressure only if
-          the list can be narrowed to what is actually stale; otherwise a big
-          inbox is one undifferentiated wall.
-        -->
-        <div v-if="coldCount > 0 || archivedCount > 0" class="ml-3 hidden sm:flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm">
-            <button
-                v-for="option in (['all', 'fresh', 'cold', 'archived'] as const)"
-                :key="option"
-                v-show="option !== 'cold' || coldCount > 0"
-                @click="ageFilter = option"
-                class="px-2.5 py-1 rounded-md text-[12px] transition-colors cursor-pointer whitespace-nowrap"
-                :class="ageFilter === option ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
-            >
-                {{ $t(`quickcap.filter_${option}`) }}<span v-if="option === 'cold' && coldCount > 0" class="ml-1 opacity-60">{{ coldCount }}</span><span v-else-if="option === 'archived' && archivedCount > 0" class="ml-1 opacity-60">{{ archivedCount }}</span>
-            </button>
-        </div>
 
-        <div class="ml-4 flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm md:hidden">
+        <div class="ml-1 flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm md:hidden">
             <button 
                 @click="mobileViewMode = 'list'" 
                 class="p-1.5 rounded-md transition-colors" 
@@ -1904,10 +1907,11 @@ const deleteCap = async (id: string) => {
                 <LayoutGrid class="w-4 h-4" />
             </button>
         </div>
+        </div>
     </div>
 
     <!-- Masonry Grid -->
-    <div class="w-full max-w-7xl px-4 mx-auto flex items-start gap-4 sm:gap-6">
+    <div class="shrink-0 w-full max-w-4xl px-4 mx-auto flex items-start gap-4 sm:gap-6">
       <div v-for="(column, columnIndex) in capColumns" :key="columnIndex" class="flex-1 min-w-0 flex flex-col gap-4 sm:gap-6">
         <div
             v-for="{ cap, index, html, tags } in column"
@@ -1925,7 +1929,7 @@ const deleteCap = async (id: string) => {
                 :class="[
                     colourClass(cap.color) || 'bg-white dark:bg-[#1e1e1e]',
                     isCold(cap)
-                        ? 'border-dashed border-gray-300 dark:border-[#3a3a3a] opacity-60 hover:opacity-100'
+                        ? 'border-dashed border-gray-300 dark:border-[#3a3a3a]'
                         : 'border-[#e6e6e6] dark:border-[#2c2c2c]',
                 ]"
                 :title="isCold(cap) ? $t('quickcap.cold_hint', { days: 14 }) : undefined"
@@ -1992,9 +1996,6 @@ const deleteCap = async (id: string) => {
                               <button @click.stop="setCapFlag([cap], 'pinned', !isPinned(cap))" :title="$t(isPinned(cap) ? 'quickcap.unpin' : 'quickcap.pin')" class="p-1.5 rounded-full transition-colors cursor-pointer" :class="isPinned(cap) ? 'text-amber-500' : 'text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10'">
                                   <Pin class="w-3.5 h-3.5" :class="isPinned(cap) ? 'fill-current' : ''" />
                               </button>
-                              <button @click.stop="setCapFlag([cap], 'archived', !isArchived(cap))" :title="$t(isArchived(cap) ? 'quickcap.unarchive' : 'quickcap.archive')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
-                                  <Archive class="w-3.5 h-3.5" />
-                              </button>
                               <button @click.stop="openPromote([cap])" :title="$t('quickcap.promote')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <FileText class="w-3.5 h-3.5" />
                               </button>
@@ -2032,11 +2033,6 @@ const deleteCap = async (id: string) => {
         </button>
     </div>
 
-    <!-- What the keyboard can do here, said once rather than hidden in a manual -->
-    <p v-if="!isMobileOS && quickCaps.length > 0" class="hidden md:block w-full max-w-7xl px-4 mx-auto mt-6 text-[11px] text-gray-400 dark:text-gray-500 select-none">
-        {{ $t('quickcap.triage_hint') }} · {{ $t('quickcap.triage_hint_select') }} · {{ $t('quickcap.triage_hint_flags') }}
-    </p>
-
     <!-- Scroll anchor: builds the next batch of cards before it comes into view -->
     <div v-if="hasMoreToRender" ref="loadMoreAnchor" class="h-px w-full" aria-hidden="true"></div>
 
@@ -2045,6 +2041,9 @@ const deleteCap = async (id: string) => {
         <CheckSquare class="w-16 h-16 mb-4"/>
         <p class="text-lg">{{ $t('quickcap.empty_state') }}</p>
     </div>
+    <div v-else-if="filteredCaps.length === 0 && !searchQuery.trim()" class="flex flex-col items-center justify-center mt-12 w-full text-gray-400 dark:text-gray-500">
+        <p class="text-base">{{ $t('quickcap.no_recent', { days: COLD_AFTER_DAYS }) }}</p>
+    </div>
     <div v-else-if="filteredCaps.length === 0" class="flex flex-col items-center justify-center mt-12 w-full text-gray-400 dark:text-gray-500">
         <Search class="w-12 h-12 mb-4 opacity-40"/>
         <p class="text-base">{{ $t('quickcap.no_results') }}</p>
@@ -2052,6 +2051,15 @@ const deleteCap = async (id: string) => {
             {{ $t('quickcap.clear_search') }}
         </button>
     </div>
+
+    <!--
+      What the keyboard can do here, said once rather than hidden in a manual.
+      `mt-auto` sets it at the foot of the page, apart from the cards, instead
+      of trailing directly under whichever column happens to be longest.
+    -->
+    <p v-if="!isMobileOS && quickCaps.length > 0" class="hidden md:block shrink-0 w-full max-w-4xl px-4 mx-auto mt-auto pt-10 text-[11px] text-gray-400 dark:text-gray-500 select-none">
+        {{ $t('quickcap.triage_hint') }} · {{ $t('quickcap.triage_hint_select') }} · {{ $t('quickcap.triage_hint_flags') }}
+    </p>
 
     <!-- Mobile FAB -->
     <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-[0_8px_16px_rgba(37,99,235,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);" :aria-label="$t('quickcap.new_quickcap')">
