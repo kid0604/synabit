@@ -277,14 +277,20 @@ watch(() => props.vaultPath, () => {
                   {{ t('syn.default_model') }}
                 </label>
                 <!-- Not a list of another provider's models. Every name in it
-                     would be a 404 on the one the selector now reads. -->
-                <p
+                     would be a 404 on the one the selector now reads. What
+                     this provider was last set to is shown, because it is
+                     remembered — and switching back finds the other's intact. -->
+                <div
                   v-if="modelsAreStale"
-                  class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-dashed border-gray-200 dark:border-gray-700/50
-                         text-xs text-gray-500 dark:text-gray-400"
+                  class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-dashed border-gray-200 dark:border-gray-700/50"
                 >
-                  {{ t('syn.default_model_after_save') }}
-                </p>
+                  <p v-if="settings.default_model" class="text-sm text-text dark:text-text-dark">
+                    {{ settings.default_model }}
+                  </p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('syn.default_model_after_save') }}
+                  </p>
+                </div>
                 <select
                   v-else
                   v-model="settings.default_model"

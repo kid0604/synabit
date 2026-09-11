@@ -1757,7 +1757,7 @@
     "api_key": "API key",
     "api_key_placeholder": "sk-…",
     "api_key_placeholder_gemini": "AIza…",
-    "default_model_after_save": "Save first, and this provider's models will be here to choose from. Until then the chat picks one of them for you.",
+    "default_model_after_save": "This provider's models appear here once you save. Switching back keeps each provider's own default.",
     "api_key_stored": "A key is saved — type to replace it",
     "api_key_remove": "Remove",
     "api_key_desc": "Stored in this computer's keychain, never in your vault, so it does not sync or reach git. Leave it empty for a local server that needs no key.",

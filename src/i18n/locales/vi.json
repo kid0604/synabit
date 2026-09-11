@@ -1757,7 +1757,7 @@
     "api_key": "API key",
     "api_key_placeholder": "sk-…",
     "api_key_placeholder_gemini": "AIza…",
-    "default_model_after_save": "Lưu trước, rồi danh sách model của provider này sẽ hiện ở đây để chọn. Trong lúc đó khung chat tự chọn một model của nó.",
+    "default_model_after_save": "Lưu xong thì danh sách model của provider này hiện ở đây. Đổi qua đổi lại thì mỗi provider vẫn giữ default model của riêng nó.",
     "api_key_stored": "Đã lưu một khoá — gõ để thay",
     "api_key_remove": "Xoá",
     "api_key_desc": "Lưu trong keychain của máy này, không bao giờ nằm trong vault, nên nó không sync và không vào git. Để trống nếu server nội bộ không cần khoá.",

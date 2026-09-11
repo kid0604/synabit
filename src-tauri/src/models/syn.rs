@@ -264,7 +264,7 @@ fn default_enabled() -> bool {
 /// which this app's tool calls — like those of most OpenAI clients — are
 /// rebuilt field by field and would drop. Syn is nothing *but* a tool loop, so
 /// the failure would be on nearly every question. See `provider::gemini`.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SynProvider {
     #[default]
@@ -374,7 +374,28 @@ pub struct SynSettings {
     /// piece of work.
     #[serde(default)]
     pub openai_reasoning_effort: Option<String>,
+    /// The default model for the provider in use.
+    ///
+    /// Everything that needs a model reads this one field, so it always has to
+    /// mean the model of `provider` — never a name left over from another.
     pub default_model: Option<String>,
+    /// Each provider's own default, remembered while it is not the one in use.
+    ///
+    /// # Why one field was not enough
+    ///
+    /// Somebody who uses OpenAI and sets up Gemini as a second option switches
+    /// the selector to Gemini to paste its key, and back again. With a single
+    /// `default_model`, either the OpenAI model was kept under Gemini — and the
+    /// first message asked Gemini for `gpt-5.6-luna`, a 404 — or it was emptied
+    /// on the way through, and the person came back to find the choice they
+    /// made for OpenAI gone. A model name belongs to the provider that listed
+    /// it, so each provider keeps its own and switching loses nobody's.
+    ///
+    /// Written by the settings screen as the selector moves; `default_model` is
+    /// what the rest of the app reads, and it is the active provider's entry.
+    /// Absent in files written before this existed, which is an empty map.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub default_models: std::collections::BTreeMap<SynProvider, String>,
 
     // Generation
     pub temperature: f64,
@@ -459,6 +480,7 @@ impl Default for SynSettings {
             openai_base_url: default_openai_base_url(),
             openai_reasoning_effort: None,
             default_model: None,
+            default_models: std::collections::BTreeMap::new(),
             temperature: 0.7,
             max_tool_iterations: default_max_tool_iterations(),
             num_ctx: 8192,

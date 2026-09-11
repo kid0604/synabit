@@ -134,6 +134,35 @@ mod tests {
         }
     }
 
+    /// Each provider's default survives the round trip through the file, under
+    /// the name the frontend writes for it — and a file written before the map
+    /// existed still loads, with nothing in it.
+    #[test]
+    fn each_provider_keeps_its_own_default_model() {
+        let mut s = SynSettings::default();
+        s.default_models.insert(SynProvider::OpenAiCompat, "gpt-5.6-luna".into());
+        s.default_models.insert(SynProvider::Gemini, "gemini-3.8-flash".into());
+
+        let json = serde_json::to_value(&s).expect("serialises");
+        assert_eq!(json["default_models"]["open_ai_compat"], "gpt-5.6-luna");
+        assert_eq!(json["default_models"]["gemini"], "gemini-3.8-flash");
+
+        let back: SynSettings = serde_json::from_value(json).expect("reads back");
+        assert_eq!(back.default_models.get(&SynProvider::Gemini).map(String::as_str), Some("gemini-3.8-flash"));
+
+        let old: SynSettings = serde_json::from_value(serde_json::json!({
+            "provider": "open_ai_compat",
+            "default_model": "gpt-5.6-luna",
+            "temperature": 0.7, "max_tool_iterations": 12, "rag_enabled": true,
+            "max_context_chars": 12000, "include_finance": true, "include_feeds": true,
+            "graph_expansion_depth": 1, "num_ctx": 8192, "max_history_messages": 50,
+            "ollama_url": "http://localhost:11434"
+        }))
+        .expect("a file from before the map still loads");
+        assert!(old.default_models.is_empty());
+        assert_eq!(old.default_model.as_deref(), Some("gpt-5.6-luna"));
+    }
+
     /// Each provider that takes a key has a slot of its own.
     ///
     /// Two providers sharing one would mean saving a Gemini key overwrote an

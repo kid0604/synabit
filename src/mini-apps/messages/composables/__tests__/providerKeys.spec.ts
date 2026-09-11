@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { nextTick } from 'vue';
 
 const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+/** What `Syn/settings.json` says, as far as these tests need it to. */
+let file: Record<string, unknown> = { provider: 'open_ai_compat' };
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => {
     calls.push({ cmd, args });
-    if (cmd === 'syn_get_settings') return { provider: 'open_ai_compat' };
+    if (cmd === 'syn_get_settings') return file;
     if (cmd === 'syn_has_api_key') return args.provider === 'gemini';
     return undefined;
   }),
@@ -21,7 +23,10 @@ const flush = async () => {
   await new Promise(r => setTimeout(r, 0));
 };
 
-beforeEach(() => { calls.length = 0; });
+beforeEach(() => {
+  calls.length = 0;
+  file = { provider: 'open_ai_compat' };
+});
 
 /**
  * A key per provider, and the field always meaning the one that is selected.
@@ -52,21 +57,45 @@ describe('the API key for the selected provider', () => {
   });
 
   /**
-   * Type an OpenAI key, change the selector to Gemini, press Save. Without this
-   * the OpenAI key is filed as Gemini's, and fails with a message about a key
-   * the person is sure they typed correctly. They did — into the other slot.
+   * One field on screen, a draft behind it per provider.
+   *
+   * A key typed under OpenAI must never be filed as Gemini's. And a Gemini key
+   * typed while setting Gemini up as a second option must survive switching
+   * back to OpenAI — which is exactly how somebody adds a second provider
+   * without leaving the first.
    */
-  it('throws away a half-typed key when the provider changes', async () => {
+  it('keeps what was typed with the provider it was typed for', async () => {
     const s = useSynSettings('/vault');
     await s.loadSettings();
 
     s.apiKeyDraft.value = 'sk-openai-xxxx';
     s.settings.value.provider = 'gemini';
     await flush();
-    expect(s.apiKeyDraft.value).toBe('');
+    expect(s.apiKeyDraft.value, 'Gemini’s field is its own').toBe('');
 
+    s.apiKeyDraft.value = 'AIza-gemini';
+    s.settings.value.provider = 'open_ai_compat';
+    await flush();
+    expect(s.apiKeyDraft.value, 'and OpenAI’s draft is where it was left').toBe('sk-openai-xxxx');
+  });
+
+  /** Set Gemini up, go back to OpenAI, save: Gemini's key is stored, and
+   *  OpenAI is still the provider in use. */
+  it('files every draft under its own slot, whichever provider is selected', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+
+    s.settings.value.provider = 'gemini';
+    await flush();
+    s.apiKeyDraft.value = 'AIza-gemini';
+    s.settings.value.provider = 'open_ai_compat';
+    await flush();
     await s.saveSettings();
-    expect(calls.some(c => c.cmd === 'syn_set_api_key'), 'nothing was filed anywhere').toBe(false);
+
+    const filed = calls.filter(c => c.cmd === 'syn_set_api_key').map(c => c.args);
+    expect(filed).toEqual([{ provider: 'gemini', key: 'AIza-gemini' }]);
+    const saved = calls.find(c => c.cmd === 'syn_save_settings');
+    expect((saved?.args.settings as { provider: string }).provider).toBe('open_ai_compat');
   });
 
   it('files a key under the provider it was typed for', async () => {
@@ -142,43 +171,65 @@ describe('the default model across a change of provider', () => {
     }
   });
 
-  it('forgets a default chosen from another provider’s list when saved', async () => {
+  /**
+   * The flow that was broken: OpenAI in use with its own default, the selector
+   * moved to Gemini to set it up as a second option, and moved back. Coming
+   * back must find `gpt-5.6-luna` exactly where it was.
+   */
+  it('gives each provider its own default, and loses neither across a switch', async () => {
     const s = useSynSettings('/vault');
     await s.loadSettings();
     s.settings.value.default_model = 'gpt-5.6-luna';
 
     s.settings.value.provider = 'gemini';
     await flush();
+    expect(s.settings.value.default_model, 'Gemini is not handed an OpenAI model').toBeNull();
+
+    s.settings.value.default_model = 'gemini-3.8-flash';
+    s.settings.value.provider = 'open_ai_compat';
+    await flush();
+    expect(s.settings.value.default_model).toBe('gpt-5.6-luna');
+
+    s.settings.value.provider = 'gemini';
+    await flush();
+    expect(s.settings.value.default_model).toBe('gemini-3.8-flash');
+  });
+
+  it('saves every provider’s default, with the active one in use', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+    s.settings.value.default_model = 'gpt-5.6-luna';
+    s.settings.value.provider = 'gemini';
+    await flush();
+    s.settings.value.default_model = 'gemini-3.8-flash';
     await s.saveSettings();
 
-    const saved = calls.find(c => c.cmd === 'syn_save_settings');
-    expect((saved?.args.settings as { default_model: unknown }).default_model).toBeNull();
+    const saved = calls.find(c => c.cmd === 'syn_save_settings')?.args.settings as {
+      provider: string; default_model: string | null; default_models: Record<string, string>;
+    };
+    expect(saved.provider).toBe('gemini');
+    expect(saved.default_model).toBe('gemini-3.8-flash');
+    expect(saved.default_models).toEqual({
+      open_ai_compat: 'gpt-5.6-luna',
+      gemini: 'gemini-3.8-flash',
+    });
     expect(s.savedProvider.value).toBe('gemini');
   });
 
-  it('keeps it when the provider did not change', async () => {
+  /** A file written before providers kept their own defaults has one, and it
+   *  belongs to the provider that file names. Loading must not file it under
+   *  whatever the empty form happened to start on. */
+  it('files an old single default under the provider the file names', async () => {
+    file = { provider: 'open_ai_compat', default_model: 'gpt-5.6-luna' };
     const s = useSynSettings('/vault');
     await s.loadSettings();
-    s.settings.value.default_model = 'gpt-5.6-luna';
-    await s.saveSettings();
-
-    const saved = calls.find(c => c.cmd === 'syn_save_settings');
-    expect((saved?.args.settings as { default_model: unknown }).default_model).toBe('gpt-5.6-luna');
-  });
-
-  /** And switching away and back again is not a change at all. */
-  it('keeps it when the selector comes back to where it started', async () => {
-    const s = useSynSettings('/vault');
-    await s.loadSettings();
-    s.settings.value.default_model = 'gpt-5.6-luna';
-
-    s.settings.value.provider = 'gemini';
     await flush();
-    s.settings.value.provider = 'open_ai_compat';
-    await flush();
-    await s.saveSettings();
 
-    const saved = calls.find(c => c.cmd === 'syn_save_settings');
-    expect((saved?.args.settings as { default_model: unknown }).default_model).toBe('gpt-5.6-luna');
+    expect(s.settings.value.default_models).toEqual({ open_ai_compat: 'gpt-5.6-luna' });
+    expect(s.settings.value.default_model, 'and it is still the one in use').toBe('gpt-5.6-luna');
+    expect(
+      s.settings.value.default_models,
+      'nothing filed under the Ollama the empty form started on',
+    ).not.toHaveProperty('ollama');
   });
 });

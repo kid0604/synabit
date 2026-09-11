@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 
@@ -54,7 +54,16 @@ export interface SynSettings {
    * being quietly dropped.
    */
   openai_reasoning_effort: string | null;
+  /** The default model for the provider in use. What everything else reads. */
   default_model: string | null;
+  /**
+   * Each provider's own default, kept while it is not the one in use.
+   *
+   * A model name belongs to the provider that listed it. Switching the selector
+   * to Gemini to paste its key, and back to OpenAI, must neither send
+   * `gpt-5.6-luna` to Gemini nor come back to find it gone.
+   */
+  default_models: Partial<Record<SynProviderId, string>>;
 
   // Generation
   temperature: number;
@@ -106,6 +115,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   openai_base_url: 'https://api.openai.com/v1',
   openai_reasoning_effort: null,
   default_model: null,
+  default_models: {},
   temperature: 0.7,
   max_tool_iterations: 12,
   rag_enabled: true,
@@ -139,8 +149,21 @@ export function useSynSettings(vaultPath: string) {
    */
   const hasApiKey = ref(false);
 
-  /** What the user typed into the key field this session. */
-  const apiKeyDraft = ref('');
+  /**
+   * What was typed into the key field, per provider.
+   *
+   * One field on screen, a draft behind it for each provider. The field shows
+   * the selected provider's, so a key typed under OpenAI can never be filed as
+   * Gemini's — and a Gemini key typed while setting Gemini up as a second
+   * option survives switching back to OpenAI and is saved to Gemini's slot.
+   */
+  const drafts = ref<Partial<Record<SynProviderId, string>>>({});
+
+  /** The draft for whichever provider is selected — what the field binds to. */
+  const apiKeyDraft = computed<string>({
+    get: () => drafts.value[settings.value.provider] ?? '',
+    set: (typed) => { drafts.value = { ...drafts.value, [settings.value.provider]: typed }; },
+  });
 
   /**
    * The provider the rest of the app is using — what was loaded or last saved.
@@ -168,15 +191,30 @@ export function useSynSettings(vaultPath: string) {
   };
 
   /**
-   * Switching provider throws away a half-typed key.
+   * Which provider the form was last showing, so a switch knows where from.
    *
-   * The field is one field for whichever provider is selected. Type an OpenAI
-   * key, change the selector to Gemini, press Save — and without this the
-   * OpenAI key is filed as Gemini's, where it fails with a message about a key
-   * the person is sure they entered correctly. They did; into the other slot.
+   * Set synchronously on load, so the watcher below sees a load as no switch
+   * at all — otherwise loading the file would file its own default under
+   * whatever provider the empty form started on.
    */
-  watch(() => settings.value.provider, () => {
-    apiKeyDraft.value = '';
+  let showing: SynProviderId = DEFAULT_SETTINGS.provider;
+
+  /**
+   * Moving the selector puts one provider's default model away and gets the
+   * other's out.
+   *
+   * `default_model` is the one field everything reads, so it always holds the
+   * selected provider's model: never a name left over from another provider,
+   * and never a choice lost by passing through one.
+   */
+  watch(() => settings.value.provider, (now) => {
+    if (now !== showing) {
+      const models = { ...settings.value.default_models };
+      if (settings.value.default_model) models[showing] = settings.value.default_model;
+      settings.value.default_models = models;
+      settings.value.default_model = models[now] ?? null;
+      showing = now;
+    }
     void refreshApiKeyState();
   });
 
@@ -187,9 +225,18 @@ export function useSynSettings(vaultPath: string) {
       // Merged over the defaults rather than assigned: a settings file written
       // before providers existed has neither `provider` nor `openai_base_url`,
       // and binding a `<select>` to `undefined` leaves it blank.
-      settings.value = { ...DEFAULT_SETTINGS, ...result };
+      const loaded = { ...DEFAULT_SETTINGS, ...result };
+      // A file written before providers kept their own defaults has one
+      // `default_model`, and it belongs to the provider that file names.
+      loaded.default_models = { ...loaded.default_models };
+      if (loaded.default_model && !loaded.default_models[loaded.provider]) {
+        loaded.default_models[loaded.provider] = loaded.default_model;
+      }
+      showing = loaded.provider;
+      settings.value = loaded;
     } catch (e) {
       logger.error('[Syn] Failed to load settings', e);
+      showing = DEFAULT_SETTINGS.provider;
       settings.value = { ...DEFAULT_SETTINGS };
     } finally {
       savedProvider.value = settings.value.provider;
@@ -201,28 +248,26 @@ export function useSynSettings(vaultPath: string) {
   const saveSettings = async () => {
     isSaving.value = true;
     try {
-      // A default model chosen from another provider's list goes with it.
-      //
-      // `gpt-5.6-luna` saved as Gemini's default is sent to Gemini on the first
-      // message and comes back a 404 — after the person has already done
-      // everything the screen asked. Emptied, the chat picks one of the new
-      // provider's own models, and this screen offers them next time.
-      if (settings.value.provider !== savedProvider.value) {
-        settings.value.default_model = null;
-      }
+      // The active provider's choice goes in its own slot as well, so it is
+      // there to come back to after using another one.
+      const models = { ...settings.value.default_models };
+      const active = settings.value.provider;
+      if (settings.value.default_model) models[active] = settings.value.default_model;
+      else delete models[active];
+      settings.value.default_models = models;
+
       await invoke('syn_save_settings', { vaultPath, settings: settings.value });
       savedProvider.value = settings.value.provider;
 
-      // Only when the user typed something. An untouched field must not clear
-      // a key that is already stored.
-      if (apiKeyDraft.value.trim() && takesKey(settings.value.provider)) {
-        await invoke('syn_set_api_key', {
-          provider: settings.value.provider,
-          key: apiKeyDraft.value.trim(),
-        });
-        apiKeyDraft.value = '';
-        await refreshApiKeyState();
+      // Every draft to its own provider's slot, whichever one is selected.
+      // Only what was typed: an untouched field must not clear a stored key.
+      for (const provider of KEYED_PROVIDERS) {
+        const typed = drafts.value[provider]?.trim();
+        if (!typed) continue;
+        await invoke('syn_set_api_key', { provider, key: typed });
       }
+      drafts.value = {};
+      await refreshApiKeyState();
     } catch (e) {
       logger.error('[Syn] Failed to save settings', e);
     } finally {
