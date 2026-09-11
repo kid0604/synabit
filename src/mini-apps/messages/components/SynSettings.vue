@@ -31,6 +31,14 @@ const {
 } = useSynSettings(props.vaultPath);
 
 const usingOllama = computed(() => settings.value.provider === 'ollama');
+const usingGemini = computed(() => settings.value.provider === 'gemini');
+
+/** What to say under the selector about where the words go. */
+const providerSays = computed(() => {
+  if (usingOllama.value) return t('syn.provider_ollama_desc');
+  if (usingGemini.value) return t('syn.provider_gemini_desc');
+  return t('syn.provider_openai_desc');
+});
 
 const handleSave = async () => {
   await saveSettings();
@@ -168,9 +176,10 @@ watch(() => props.vaultPath, () => {
                 >
                   <option value="ollama">{{ t('syn.provider_ollama') }}</option>
                   <option value="open_ai_compat">{{ t('syn.provider_openai') }}</option>
+                  <option value="gemini">{{ t('syn.provider_gemini') }}</option>
                 </select>
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ usingOllama ? t('syn.provider_ollama_desc') : t('syn.provider_openai_desc') }}
+                  {{ providerSays }}
                 </p>
               </div>
 
@@ -190,9 +199,11 @@ watch(() => props.vaultPath, () => {
                 />
               </div>
 
-              <!-- OpenAI-compatible endpoint -->
+              <!-- A hosted provider: an address for the OpenAI shape, and a key
+                   for both. Gemini has one address and nothing to point
+                   elsewhere, so it shows the key alone. -->
               <template v-else>
-                <div>
+                <div v-if="!usingGemini">
                   <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
                     {{ t('syn.openai_base_url') }}
                   </label>
@@ -240,7 +251,7 @@ watch(() => props.vaultPath, () => {
                     </button>
                   </div>
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('syn.api_key_desc') }}
+                    {{ usingGemini ? t('syn.api_key_desc_gemini') : t('syn.api_key_desc') }}
                   </p>
                 </div>
 

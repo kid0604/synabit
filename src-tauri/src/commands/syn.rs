@@ -6,7 +6,7 @@ use crate::models::syn::{
 };
 use crate::syn::engine::DriveRequest;
 use crate::syn::prompt::{ChatPrompt, PromptPlan, PromptPreview, DEFAULT_BUDGET_CHARS};
-use crate::syn::provider::{ollama::OllamaProvider, openai::OpenAiCompatProvider, ChatProvider};
+use crate::syn::provider::{ollama::OllamaProvider, ChatProvider};
 use crate::syn::registry::Registry;
 use crate::syn::run::{Budget, Run, RunSummary};
 use crate::syn::{conversation, engine::SynEngine, rag};
@@ -69,14 +69,15 @@ async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> Option<Strin
 }
 
 async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
-    match settings.provider {
-        SynProvider::Ollama => Box::new(OllamaProvider::new(&settings.ollama_url)),
-        SynProvider::OpenAiCompat => Box::new(OpenAiCompatProvider::new(
-            &settings.openai_base_url,
-            api_key_for(app, SynProvider::OpenAiCompat.key_slot()).await,
-            settings.openai_reasoning_effort.clone(),
-        )),
-    }
+    // Ollama has no key, and the keychain is not asked for one: a read can wait
+    // on a macOS permission dialog, and nothing should wait on that for a
+    // provider that would ignore the answer.
+    let key = if settings.provider.is_local() {
+        None
+    } else {
+        api_key_for(app, settings.provider.key_slot()).await
+    };
+    crate::syn::provider::for_settings(settings, key)
 }
 
 /// The user's standing instructions, from the file if there is one.

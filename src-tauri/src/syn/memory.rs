@@ -1661,7 +1661,6 @@ mod memory_changes_the_answer {
     use super::does_memory_reach_the_model::CASES;
     use super::*;
     use crate::db::DbBridge;
-    use crate::models::syn::SynProvider;
     use crate::syn::provider::{ChatMessage, ChatProvider, ChatRequest};
     use tauri::Manager;
 
@@ -1680,18 +1679,10 @@ mod memory_changes_the_answer {
             .expect("a default model must be configured");
 
         let build = || -> Box<dyn ChatProvider> {
-            match settings.provider {
-                SynProvider::Ollama => Box::new(
-                    crate::syn::provider::ollama::OllamaProvider::new(&settings.ollama_url),
-                ),
-                SynProvider::OpenAiCompat => Box::new(
-                    crate::syn::provider::openai::OpenAiCompatProvider::new(
-                        &settings.openai_base_url,
-                        crate::secrets::SecretManager::get_syn_api_key(None, "openai_compat"),
-                        settings.openai_reasoning_effort.clone(),
-                    ),
-                ),
-            }
+            crate::syn::provider::for_settings(
+                &settings,
+                crate::secrets::SecretManager::get_syn_api_key(None, settings.provider.key_slot()),
+            )
         };
 
         // Several runs per arm, because one cannot tell a change from a

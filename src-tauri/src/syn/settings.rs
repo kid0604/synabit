@@ -118,6 +118,45 @@ mod tests {
             serde_json::to_value(SynProvider::OpenAiCompat).expect("serialises"),
             serde_json::json!("open_ai_compat")
         );
+        assert_eq!(
+            serde_json::to_value(SynProvider::Gemini).expect("serialises"),
+            serde_json::json!("gemini")
+        );
+
+        // And the other side actually writes them. Checking the Rust names
+        // alone would pass while the TypeScript union still lacked one — and a
+        // provider missing there is a `<select>` whose value Vue cannot bind.
+        let ts = include_str!("../../../src/mini-apps/messages/composables/useSynSettings.ts");
+        for provider in [SynProvider::Ollama, SynProvider::OpenAiCompat, SynProvider::Gemini] {
+            let name = serde_json::to_value(provider).expect("serialises");
+            let quoted = format!("'{}'", name.as_str().expect("a string"));
+            assert!(ts.contains(&quoted), "useSynSettings.ts does not know {quoted}");
+        }
+    }
+
+    /// Each provider that takes a key has a slot of its own.
+    ///
+    /// Two providers sharing one would mean saving a Gemini key overwrote an
+    /// OpenAI one, silently, and the first sign would be a 401 on the provider
+    /// the person had not touched.
+    #[test]
+    fn every_provider_files_its_key_somewhere_different() {
+        let slots = [
+            SynProvider::Ollama.key_slot(),
+            SynProvider::OpenAiCompat.key_slot(),
+            SynProvider::Gemini.key_slot(),
+        ];
+        let unique: std::collections::HashSet<_> = slots.iter().collect();
+        assert_eq!(unique.len(), slots.len(), "{slots:?}");
+    }
+
+    /// Only a model on this machine is local; everything hosted is sized as
+    /// hosted. This is what a web page's length turns on.
+    #[test]
+    fn only_ollama_is_local() {
+        assert!(SynProvider::Ollama.is_local());
+        assert!(!SynProvider::OpenAiCompat.is_local());
+        assert!(!SynProvider::Gemini.is_local());
     }
 
     /// The two default tables have to agree.

@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 
@@ -9,7 +9,17 @@ import { logger } from '../../../utils/logger';
  * `{vault}/Syn/settings.json`; a Rust test pins them, because a typo here
  * would be a settings file that silently loads as Ollama.
  */
-export type SynProviderId = 'ollama' | 'open_ai_compat';
+export type SynProviderId = 'ollama' | 'open_ai_compat' | 'gemini';
+
+/**
+ * The providers that take an API key, each filed under its own slot.
+ *
+ * Ollama is not here: it runs on this machine and has nothing to authenticate.
+ */
+export const KEYED_PROVIDERS: readonly SynProviderId[] = ['open_ai_compat', 'gemini'];
+
+/** Whether a provider is one a key is stored for. */
+export const takesKey = (provider: SynProviderId): boolean => KEYED_PROVIDERS.includes(provider);
 
 export interface SynSettings {
   /**
@@ -116,12 +126,16 @@ export function useSynSettings(vaultPath: string) {
   const isSaving = ref(false);
 
   /**
-   * Whether a key is stored for the OpenAI-compatible provider.
+   * Whether a key is stored for the provider that is selected.
    *
    * Only ever a boolean. The key itself lives in the OS keychain and there is
    * no command that reads one back — the UI needs to know that one is set, not
    * what it is, and a key that can be read is a key that can leak into a log,
    * a screenshot or a bug report.
+   *
+   * Per provider, because each has its own slot. It used to be hard-wired to
+   * the OpenAI-compatible one, which was right while that was the only
+   * provider with a key.
    */
   const hasApiKey = ref(false);
 
@@ -129,15 +143,31 @@ export function useSynSettings(vaultPath: string) {
   const apiKeyDraft = ref('');
 
   const refreshApiKeyState = async () => {
+    const provider = settings.value.provider;
+    if (!takesKey(provider)) {
+      hasApiKey.value = false;
+      return;
+    }
     try {
-      hasApiKey.value = await invoke<boolean>('syn_has_api_key', {
-        provider: 'open_ai_compat',
-      });
+      hasApiKey.value = await invoke<boolean>('syn_has_api_key', { provider });
     } catch (e) {
       logger.error('[Syn] Failed to check for a stored API key', e);
       hasApiKey.value = false;
     }
   };
+
+  /**
+   * Switching provider throws away a half-typed key.
+   *
+   * The field is one field for whichever provider is selected. Type an OpenAI
+   * key, change the selector to Gemini, press Save — and without this the
+   * OpenAI key is filed as Gemini's, where it fails with a message about a key
+   * the person is sure they entered correctly. They did; into the other slot.
+   */
+  watch(() => settings.value.provider, () => {
+    apiKeyDraft.value = '';
+    void refreshApiKeyState();
+  });
 
   const loadSettings = async () => {
     isLoading.value = true;
@@ -163,9 +193,9 @@ export function useSynSettings(vaultPath: string) {
 
       // Only when the user typed something. An untouched field must not clear
       // a key that is already stored.
-      if (apiKeyDraft.value.trim()) {
+      if (apiKeyDraft.value.trim() && takesKey(settings.value.provider)) {
         await invoke('syn_set_api_key', {
-          provider: 'open_ai_compat',
+          provider: settings.value.provider,
           key: apiKeyDraft.value.trim(),
         });
         apiKeyDraft.value = '';
@@ -181,7 +211,8 @@ export function useSynSettings(vaultPath: string) {
   /** Forget the stored key. This is how a user revokes one. */
   const clearApiKey = async () => {
     try {
-      await invoke('syn_set_api_key', { provider: 'open_ai_compat', key: '' });
+      if (!takesKey(settings.value.provider)) return;
+      await invoke('syn_set_api_key', { provider: settings.value.provider, key: '' });
       apiKeyDraft.value = '';
       await refreshApiKeyState();
     } catch (e) {

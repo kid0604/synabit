@@ -1344,7 +1344,7 @@ mod rag_vs_agentic {
     use super::*;
     use crate::db::DbBridge;
     use crate::models::node::NodeMetadata;
-    use crate::models::syn::{SynProvider, SynSettings};
+    use crate::models::syn::SynSettings;
     use crate::syn::engine::SynEngine;
     use crate::syn::provider::ChatProvider;
 
@@ -2296,18 +2296,10 @@ mod rag_vs_agentic {
             .expect("a default model must be configured");
 
         let build_provider = || -> Box<dyn ChatProvider> {
-            match settings.provider {
-                SynProvider::Ollama => Box::new(
-                    crate::syn::provider::ollama::OllamaProvider::new(&settings.ollama_url),
-                ),
-                SynProvider::OpenAiCompat => Box::new(
-                    crate::syn::provider::openai::OpenAiCompatProvider::new(
-                        &settings.openai_base_url,
-                        crate::secrets::SecretManager::get_syn_api_key(None, "openai_compat"),
-                        settings.openai_reasoning_effort.clone(),
-                    ),
-                ),
-            }
+            crate::syn::provider::for_settings(
+                &settings,
+                crate::secrets::SecretManager::get_syn_api_key(None, settings.provider.key_slot()),
+            )
         };
 
         // One run of five questions is not enough to compare accuracy: the

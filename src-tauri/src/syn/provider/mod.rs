@@ -17,11 +17,16 @@
 //!   them as `image_url` parts inside the content.
 //! - `num_ctx` is a thing you ask Ollama for. Everywhere else the context
 //!   window is a property of the model and there is nothing to send.
+//! - Gemini has no `tool` role and no system message: tool results are
+//!   `functionResponse` parts in a `user` turn, the system prompt is a separate
+//!   `systemInstruction`, and every function call carries a signature that has
+//!   to come back verbatim. See `gemini`.
 //!
 //! Streaming is a callback rather than a `Stream`, so the trait stays
 //! object-safe and the caller keeps deciding what a token means — today that
 //! is a Tauri event, and the provider does not need to know it.
 
+pub mod gemini;
 pub mod ollama;
 pub mod openai;
 
@@ -201,6 +206,54 @@ pub trait ChatProvider: Send + Sync {
     /// throughout and the user sees words as they are generated.
     fn streams_tool_calls(&self) -> bool {
         false
+    }
+}
+
+/// The provider these settings describe, holding the key they need.
+///
+/// # Why one function
+///
+/// This `match` was written out four times — the command that serves the app,
+/// and three measurement harnesses — and each copy had to learn about a new
+/// provider on its own. The copy that is forgotten is not a compile error in
+/// the others; it is a harness that silently measures the wrong thing. So there
+/// is one, and the caller only has to find the key.
+///
+/// `api_key` is the key filed under `settings.provider.key_slot()`, or `None`.
+/// Reading it is left to the caller because the app reads the keychain on a
+/// blocking thread with a timeout and a test harness does not.
+pub fn for_settings(
+    settings: &crate::models::syn::SynSettings,
+    api_key: Option<String>,
+) -> Box<dyn ChatProvider> {
+    match settings.provider {
+        SynProvider::Ollama => Box::new(ollama::OllamaProvider::new(&settings.ollama_url)),
+        SynProvider::OpenAiCompat => Box::new(openai::OpenAiCompatProvider::new(
+            &settings.openai_base_url,
+            api_key,
+            settings.openai_reasoning_effort.clone(),
+        )),
+        SynProvider::Gemini => Box::new(gemini::GeminiProvider::new(api_key)),
+    }
+}
+
+/// The media type of a base64 payload, read from its first bytes.
+///
+/// The vault stores raw base64 with no note of what it is, and every hosted API
+/// wants one declared — OpenAI in a data URI, Gemini as `inlineData.mimeType`.
+/// Guessing `jpeg` for a PNG is rejected by some servers and silently
+/// mis-decoded by others, so the magic numbers are worth the twelve lines.
+pub(crate) fn media_type_of(b64: &str) -> &'static str {
+    if b64.starts_with("iVBORw0KGgo") {
+        "image/png"
+    } else if b64.starts_with("R0lGOD") {
+        "image/gif"
+    } else if b64.starts_with("UklGR") {
+        "image/webp"
+    } else {
+        // "/9j/" is JPEG, and it is also the sane default: it is what a photo
+        // captured or pasted on any of these platforms actually is.
+        "image/jpeg"
     }
 }
 

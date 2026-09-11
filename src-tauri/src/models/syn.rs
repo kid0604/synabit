@@ -253,12 +253,24 @@ fn default_enabled() -> bool {
 /// Groq, vLLM, LM Studio and llama.cpp's own server all speak. Pointing it at
 /// `http://localhost:8080/v1` is as valid as pointing it at api.openai.com, and
 /// the local case needs no key.
+///
+/// # Why Gemini is its own arm and not a base URL for the second
+///
+/// Google does serve an OpenAI-compatible endpoint, and pointing `OpenAiCompat`
+/// at it looks like it works — right up to the second round of any tool loop.
+/// Gemini 3 attaches a `thought_signature` to each function call and refuses the
+/// next request with a 400 unless it comes back verbatim. On that endpoint it
+/// travels in a non-standard `extra_content.google` field on the tool call,
+/// which this app's tool calls — like those of most OpenAI clients — are
+/// rebuilt field by field and would drop. Syn is nothing *but* a tool loop, so
+/// the failure would be on nearly every question. See `provider::gemini`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SynProvider {
     #[default]
     Ollama,
     OpenAiCompat,
+    Gemini,
 }
 
 impl SynProvider {
@@ -267,7 +279,19 @@ impl SynProvider {
         match self {
             SynProvider::Ollama => "ollama",
             SynProvider::OpenAiCompat => "openai_compat",
+            SynProvider::Gemini => "gemini",
         }
+    }
+
+    /// Whether the model runs on this machine.
+    ///
+    /// Asked by anything that sizes a request to what the model can hold — a
+    /// web page is 8,000 characters for a local model and 24,000 for a hosted
+    /// one. One question rather than a `match` in each such place, because each
+    /// of those `match`es had to learn about every new provider separately, and
+    /// the one that is forgotten is the one that quietly gets the wrong answer.
+    pub fn is_local(&self) -> bool {
+        matches!(self, SynProvider::Ollama)
     }
 }
 
@@ -485,6 +509,19 @@ pub struct ToolCall {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub function: ToolCallFunction,
+    /// An opaque token the provider requires back, verbatim, with this call.
+    ///
+    /// Gemini 3 signs each function call with a `thoughtSignature` — its
+    /// reasoning, encrypted — and refuses the next request in the same turn
+    /// with a 400 if the call is replayed without it. Nothing here reads it;
+    /// it is carried from the reply into the assistant message that echoes the
+    /// call back, which is the whole of its job.
+    ///
+    /// Skipped when absent, so Ollama and the OpenAI shape — which have no such
+    /// thing and would reject an unknown field — see exactly what they saw
+    /// before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// The function name and arguments within a tool call.

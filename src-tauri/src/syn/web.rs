@@ -101,9 +101,10 @@ pub fn page_chars(settings: &crate::models::syn::SynSettings) -> usize {
     if let Some(asked) = settings.max_page_chars {
         return (asked as usize).max(crate::syn::browser::ENOUGH_TEXT);
     }
-    match settings.provider {
-        crate::models::syn::SynProvider::Ollama => PAGE_CHARS_LOCAL,
-        crate::models::syn::SynProvider::OpenAiCompat => PAGE_CHARS_REMOTE,
+    if settings.provider.is_local() {
+        PAGE_CHARS_LOCAL
+    } else {
+        PAGE_CHARS_REMOTE
     }
 }
 

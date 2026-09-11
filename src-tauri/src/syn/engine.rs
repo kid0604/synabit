@@ -1768,7 +1768,6 @@ mod gate_one {
     use super::*;
     use crate::db::DbBridge;
     use crate::models::node::NodeMetadata;
-    use crate::models::syn::SynProvider;
 
     /// A vault with a shape the job needs: a project, tasks under it, some
     /// overdue and some not, and noise that must not be swept up.
@@ -1848,18 +1847,10 @@ mod gate_one {
         )
         .expect("the real Syn settings");
 
-        let provider: Box<dyn ChatProvider> = match settings.provider {
-            SynProvider::Ollama => Box::new(crate::syn::provider::ollama::OllamaProvider::new(
-                &settings.ollama_url,
-            )),
-            SynProvider::OpenAiCompat => Box::new(
-                crate::syn::provider::openai::OpenAiCompatProvider::new(
-                    &settings.openai_base_url,
-                    crate::secrets::SecretManager::get_syn_api_key(None, "openai_compat"),
-                    settings.openai_reasoning_effort.clone(),
-                ),
-            ),
-        };
+        let provider: Box<dyn ChatProvider> = crate::syn::provider::for_settings(
+            &settings,
+            crate::secrets::SecretManager::get_syn_api_key(None, settings.provider.key_slot()),
+        );
 
         let model = settings
             .default_model
@@ -2168,6 +2159,7 @@ mod driving {
                     name: tool.to_string(),
                     arguments: args,
                 },
+                thought_signature: None,
             }],
             usage: Default::default(),
             duration_ms: None,
@@ -3165,6 +3157,7 @@ mod driving {
                             name: "send_test".into(),
                             arguments: serde_json::json!({}),
                         },
+                        thought_signature: None,
                     }),
                 },
             )
@@ -3508,6 +3501,7 @@ mod driving {
                         name: "list_schemas".into(),
                         arguments: serde_json::json!({}),
                     },
+                    thought_signature: None,
                 })
                 .collect(),
             usage: Default::default(),

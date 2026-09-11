@@ -203,26 +203,6 @@ struct OpenAiModelEntry {
 //  CONVERSION
 // ═══════════════════════════════════════════════════════════════
 
-/// The media type of a base64 payload, read from its first bytes.
-///
-/// The vault stores raw base64 with no note of what it is, and a data URI has
-/// to declare something. Guessing `jpeg` for a PNG is rejected by some servers
-/// and silently mis-decoded by others, so the magic numbers are worth the
-/// twelve lines.
-fn sniff_media_type(b64: &str) -> &'static str {
-    if b64.starts_with("iVBORw0KGgo") {
-        "image/png"
-    } else if b64.starts_with("R0lGOD") {
-        "image/gif"
-    } else if b64.starts_with("UklGR") {
-        "image/webp"
-    } else {
-        // "/9j/" is JPEG, and it is also the sane default: it is what a photo
-        // captured or pasted on any of these platforms actually is.
-        "image/jpeg"
-    }
-}
-
 /// Arguments as OpenAI wants them: a string holding JSON.
 fn arguments_to_string(value: &serde_json::Value) -> String {
     match value {
@@ -259,7 +239,7 @@ fn to_wire_message(m: &ChatMessage) -> serde_json::Value {
                 let url = if img.starts_with("data:") {
                     img.clone()
                 } else {
-                    format!("data:{};base64,{}", sniff_media_type(img), img)
+                    format!("data:{};base64,{}", crate::syn::provider::media_type_of(img), img)
                 };
                 parts.push(serde_json::json!({
                     "type": "image_url",
@@ -352,6 +332,7 @@ impl ToolCallAccumulator {
                     name,
                     arguments: arguments_to_value(&args),
                 },
+                thought_signature: None,
             })
             .collect()
     }
@@ -907,6 +888,7 @@ mod tests {
                 name: "create_node".into(),
                 arguments: serde_json::json!({ "type": "book" }),
             },
+            thought_signature: None,
         }]);
 
         let wire = to_wire_message(&m);
@@ -955,11 +937,11 @@ mod tests {
 
     #[test]
     fn media_types_are_read_from_the_payload() {
-        assert_eq!(sniff_media_type("iVBORw0KGgo…"), "image/png");
-        assert_eq!(sniff_media_type("R0lGOD…"), "image/gif");
-        assert_eq!(sniff_media_type("UklGR…"), "image/webp");
-        assert_eq!(sniff_media_type("/9j/4AAQ…"), "image/jpeg");
-        assert_eq!(sniff_media_type("unrecognised"), "image/jpeg");
+        assert_eq!(crate::syn::provider::media_type_of("iVBORw0KGgo…"), "image/png");
+        assert_eq!(crate::syn::provider::media_type_of("R0lGOD…"), "image/gif");
+        assert_eq!(crate::syn::provider::media_type_of("UklGR…"), "image/webp");
+        assert_eq!(crate::syn::provider::media_type_of("/9j/4AAQ…"), "image/jpeg");
+        assert_eq!(crate::syn::provider::media_type_of("unrecognised"), "image/jpeg");
     }
 
     /// A blank key must not produce `Authorization: Bearer `, which a local
