@@ -70,6 +70,22 @@ export function useSynModels() {
       // The fallback stays, because a vault that has never chosen one has to
       // start somewhere, but it now prefers a model that can hold a
       // conversation over one that cannot.
+      // A selection this provider does not list is not a selection.
+      //
+      // It survived a change of provider: the chat header went on saying
+      // `gpt-5.6-luna` after Settings had been switched to Gemini, and every
+      // message went to Gemini asking for it — a 404 each time, with a header
+      // that looked perfectly normal. A model name only means something to the
+      // provider that listed it.
+      //
+      // Only when there is a list to judge by. An empty one is a failed fetch
+      // or a missing key, and throwing away somebody's choice because the
+      // network hiccupped would be worse than keeping a stale one.
+      if (selectedModel.value && result.length > 0 && !result.some(m => m.name === selectedModel.value)) {
+        logger.info(`[Syn] ${selectedModel.value} is not offered here any more; choosing again`);
+        selectedModel.value = '';
+      }
+
       if (!selectedModel.value && result.length > 0) {
         const preferred = vaultPath
           ? await invoke<{ default_model: string | null }>('syn_get_settings', { vaultPath })

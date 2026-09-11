@@ -142,6 +142,17 @@ export function useSynSettings(vaultPath: string) {
   /** What the user typed into the key field this session. */
   const apiKeyDraft = ref('');
 
+  /**
+   * The provider the rest of the app is using — what was loaded or last saved.
+   *
+   * Not the same as `settings.provider` while the form is being edited, and the
+   * difference matters: the model list on this screen came from *this* one. A
+   * model name only means something to the provider that listed it, so a list
+   * fetched from OpenAI shown under a selector reading "Gemini" is a list of
+   * names that would all be 404s.
+   */
+  const savedProvider = ref<SynProviderId>(DEFAULT_SETTINGS.provider);
+
   const refreshApiKeyState = async () => {
     const provider = settings.value.provider;
     if (!takesKey(provider)) {
@@ -181,6 +192,7 @@ export function useSynSettings(vaultPath: string) {
       logger.error('[Syn] Failed to load settings', e);
       settings.value = { ...DEFAULT_SETTINGS };
     } finally {
+      savedProvider.value = settings.value.provider;
       isLoading.value = false;
     }
     await refreshApiKeyState();
@@ -189,7 +201,17 @@ export function useSynSettings(vaultPath: string) {
   const saveSettings = async () => {
     isSaving.value = true;
     try {
+      // A default model chosen from another provider's list goes with it.
+      //
+      // `gpt-5.6-luna` saved as Gemini's default is sent to Gemini on the first
+      // message and comes back a 404 — after the person has already done
+      // everything the screen asked. Emptied, the chat picks one of the new
+      // provider's own models, and this screen offers them next time.
+      if (settings.value.provider !== savedProvider.value) {
+        settings.value.default_model = null;
+      }
       await invoke('syn_save_settings', { vaultPath, settings: settings.value });
+      savedProvider.value = settings.value.provider;
 
       // Only when the user typed something. An untouched field must not clear
       // a key that is already stored.
@@ -233,6 +255,7 @@ export function useSynSettings(vaultPath: string) {
 
   return {
     settings,
+    savedProvider,
     isLoading,
     isSaving,
     hasApiKey,

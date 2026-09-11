@@ -111,3 +111,74 @@ describe('Gemini in the settings screen', () => {
     expect(settingsPanel).toContain('<div v-if="!usingGemini">');
   });
 });
+
+/**
+ * The key field is shaped like the key that goes in it.
+ *
+ * It said `sk-…` under Google Gemini. Gemini keys start with `AIza`; a hint
+ * shaped like an OpenAI key is a hint that an OpenAI key goes here.
+ */
+describe('what an empty key field looks like', () => {
+  it('looks like a Gemini key under Gemini', () => {
+    expect(en.syn.api_key_placeholder_gemini.startsWith('AIza')).toBe(true);
+    expect(vi_.syn.api_key_placeholder_gemini.startsWith('AIza')).toBe(true);
+    expect(settingsPanel).toContain("usingGemini.value ? t('syn.api_key_placeholder_gemini')");
+  });
+});
+
+/**
+ * A model name only means something to the provider that listed it.
+ *
+ * Switching the selector to Gemini left "gpt-5.6-luna" as the default model,
+ * listed under a heading that now read Gemini. Saved like that, the first
+ * message asks Gemini for an OpenAI model and comes back a 404 — after the
+ * person has done everything the screen asked of them.
+ */
+describe('the default model across a change of provider', () => {
+  it('does not show another provider’s models under this one', () => {
+    expect(settingsPanel).toContain('v-if="modelsAreStale"');
+    for (const locale of [en, vi_]) {
+      expect(locale.syn).toHaveProperty('default_model_after_save');
+    }
+  });
+
+  it('forgets a default chosen from another provider’s list when saved', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+    s.settings.value.default_model = 'gpt-5.6-luna';
+
+    s.settings.value.provider = 'gemini';
+    await flush();
+    await s.saveSettings();
+
+    const saved = calls.find(c => c.cmd === 'syn_save_settings');
+    expect((saved?.args.settings as { default_model: unknown }).default_model).toBeNull();
+    expect(s.savedProvider.value).toBe('gemini');
+  });
+
+  it('keeps it when the provider did not change', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+    s.settings.value.default_model = 'gpt-5.6-luna';
+    await s.saveSettings();
+
+    const saved = calls.find(c => c.cmd === 'syn_save_settings');
+    expect((saved?.args.settings as { default_model: unknown }).default_model).toBe('gpt-5.6-luna');
+  });
+
+  /** And switching away and back again is not a change at all. */
+  it('keeps it when the selector comes back to where it started', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+    s.settings.value.default_model = 'gpt-5.6-luna';
+
+    s.settings.value.provider = 'gemini';
+    await flush();
+    s.settings.value.provider = 'open_ai_compat';
+    await flush();
+    await s.saveSettings();
+
+    const saved = calls.find(c => c.cmd === 'syn_save_settings');
+    expect((saved?.args.settings as { default_model: unknown }).default_model).toBe('gpt-5.6-luna');
+  });
+});

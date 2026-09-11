@@ -20,6 +20,7 @@ const { t } = useI18n();
 
 const {
   settings,
+  savedProvider,
   isLoading,
   isSaving,
   hasApiKey,
@@ -32,6 +33,19 @@ const {
 
 const usingOllama = computed(() => settings.value.provider === 'ollama');
 const usingGemini = computed(() => settings.value.provider === 'gemini');
+
+/**
+ * Whether the model list below belongs to a provider other than the one
+ * selected. It is fetched for the provider in use, and until this screen is
+ * saved that is not the one the selector now reads.
+ */
+const modelsAreStale = computed(() => settings.value.provider !== savedProvider.value);
+
+/** What an empty key field shows. Keys look different, and a hint shaped
+ *  like the wrong one is a hint that the wrong key goes here. */
+const keyLooksLike = computed(() =>
+  usingGemini.value ? t('syn.api_key_placeholder_gemini') : t('syn.api_key_placeholder'),
+);
 
 /** What to say under the selector about where the words go. */
 const providerSays = computed(() => {
@@ -237,7 +251,7 @@ watch(() => props.vaultPath, () => {
                              text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
                              focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                              transition-all"
-                      :placeholder="hasApiKey ? t('syn.api_key_stored') : t('syn.api_key_placeholder')"
+                      :placeholder="hasApiKey ? t('syn.api_key_stored') : keyLooksLike"
                     />
                     <button
                       v-if="hasApiKey"
@@ -262,7 +276,17 @@ watch(() => props.vaultPath, () => {
                 <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
                   {{ t('syn.default_model') }}
                 </label>
+                <!-- Not a list of another provider's models. Every name in it
+                     would be a 404 on the one the selector now reads. -->
+                <p
+                  v-if="modelsAreStale"
+                  class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-dashed border-gray-200 dark:border-gray-700/50
+                         text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t('syn.default_model_after_save') }}
+                </p>
                 <select
+                  v-else
                   v-model="settings.default_model"
                   class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                          text-sm text-text dark:text-text-dark outline-none cursor-pointer
