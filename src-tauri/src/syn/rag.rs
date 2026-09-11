@@ -373,6 +373,158 @@ pub fn discriminating(db: &DbBridge, terms: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Whether a word is Vietnamese — which is to say, one syllable of a word.
+///
+/// `splunk`, `grafana`, `tcb` are names and are searched as they are; `kiến`,
+/// `trúc`, `đỉnh` are syllables, and a syllable on its own means too many
+/// things.
+///
+/// A letter outside ASCII settles it. Without one, the word is a syllable if
+/// it has the shape of one: `minh`, `trong`, `hoa` are written with no marks
+/// at all, and taken for names they decided the search — "minh hoạ" made
+/// `minh` a name beside `splunk`. `splunk` cannot be a syllable (no syllable
+/// starts `spl`), nor can `tcb` (no vowel) or `grafana` (three of them).
+fn is_a_syllable(word: &str) -> bool {
+    word.chars().any(|c| c.is_alphabetic() && !c.is_ascii()) || shaped_like_a_syllable(word)
+}
+
+/// A Vietnamese syllable written without its marks: an initial consonant, a
+/// run of one to three vowels, a final consonant — every part a real one.
+fn shaped_like_a_syllable(word: &str) -> bool {
+    const INITIALS: [&str; 26] = [
+        "ngh", "ng", "nh", "ch", "gh", "gi", "kh", "ph", "qu", "th", "tr", "b", "c", "d",
+        "g", "h", "k", "l", "m", "n", "p", "r", "s", "t", "v", "x",
+    ];
+    const FINALS: [&str; 8] = ["ng", "nh", "ch", "c", "m", "n", "p", "t"];
+    const VOWELS: &str = "aeiouy";
+
+    let w = word.to_ascii_lowercase();
+    if w.is_empty() || !w.chars().all(|c| c.is_ascii_lowercase()) {
+        return false;
+    }
+    let rest = INITIALS
+        .iter()
+        .find_map(|i| w.strip_prefix(i).filter(|r| r.starts_with(|c| VOWELS.contains(c))))
+        .unwrap_or(&w);
+    let vowels = rest.chars().take_while(|c| VOWELS.contains(*c)).count();
+    if !(1..=3).contains(&vowels) {
+        return false;
+    }
+    let last = &rest[vowels..];
+    last.is_empty() || FINALS.contains(&last)
+}
+
+/// Adjacent pairs of Vietnamese syllables, in the order they were written.
+///
+/// Pairs of words that were next to each other, and neither of them a word
+/// that tells nothing — a stop word between two syllables ends the pair.
+fn syllable_pairs(text: &str) -> Vec<String> {
+    let stop_set = &*STOP_SET;
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase())
+        .collect();
+
+    words
+        .windows(2)
+        .filter(|pair| {
+            pair.iter().all(|w| {
+                w.chars().count() >= 2 && is_a_syllable(w) && !stop_set.contains(w.as_str())
+            })
+        })
+        .map(|pair| format!("{} {}", pair[0], pair[1]))
+        .collect()
+}
+
+/// What a question is searched for, as FTS expressions.
+///
+/// # Why a Vietnamese word is searched as a pair
+///
+/// Vietnamese is written a syllable at a time, and after stop words are taken
+/// out a question is a row of syllables that each mean several things. Measured
+/// on the vault that produced the complaint, *"vẽ thử một hình minh hoạ kiến
+/// trúc của splunk"*: `kiến` is in 25 documents and `trúc` in 22 — `kiến thức`,
+/// `sáng kiến`, `cấu trúc` — while `"kiến trúc"`, the word that was actually
+/// asked about, is in 6. Searched a syllable at a time, those two carried the
+/// question to notes about knowledge and structure; the ten source chips under
+/// the answer included *Sao chúng ta lại ngủ?*
+///
+/// So, in order:
+///
+/// 1. **A word that is not a syllable** — `splunk`, `tcb`, `grafana` — is
+///    searched on its own, and **if the vault has it, it is the whole
+///    search.** Names are what questions are about. Measured on the same
+///    vault, pairs searched beside a name still lost to it: BM25 over an `OR`
+///    rewards a long note carrying several of the parts, so `"vẽ thử"` and
+///    `"thử một"` — *try drawing*, *try one* — filled the list with daily notes
+///    and pushed the three notes about Splunk below the cut. Scores from
+///    separate searches cannot be compared, so the answer is not to merge two
+///    lists but to search for the name alone.
+/// 2. **Otherwise syllables are searched in pairs**, as written, and only pairs
+///    the vault actually contains.
+/// 3. **A lone syllable only when no pair found anything.** "tìm sách" has no
+///    pair worth having, and `sách` is still the question.
+/// 4. **Anything in more than a fifth of the vault is dropped**, pair or not.
+///    See `TOO_COMMON_SHARE`.
+///
+/// An English question is all names, and is searched as it always was.
+///
+/// A small vault is left to `discriminating`: with no evidence of which words
+/// are common, the question is searched as it was.
+pub fn query_parts(
+    db: &DbBridge,
+    user_message: &str,
+    recent_messages: &[SynMessage],
+    terms: &[String],
+) -> Vec<String> {
+    let total = db.indexed_documents().unwrap_or(0);
+    if total < ENOUGH_TO_JUDGE {
+        return terms.to_vec();
+    }
+    let ceiling = (total as f64 * TOO_COMMON_SHARE) as u32;
+    let found = |part: &str| db.documents_containing(part).unwrap_or(0);
+
+    let (syllables, names): (Vec<String>, Vec<String>) =
+        terms.iter().cloned().partition(|t| is_a_syllable(t));
+
+    let mut parts: Vec<String> = discriminating(db, &names);
+
+    // A name the vault has decides the search. See point 1 above.
+    if parts.iter().any(|name| found(name) > 0) {
+        log::info!("[RAG] Searching for the names {parts:?}");
+        return parts;
+    }
+
+    // The same sources `extract_search_terms` reads: this message, then the
+    // two before it, so a follow-up keeps the subject it is following.
+    let recent_user: Vec<&SynMessage> =
+        recent_messages.iter().rev().filter(|m| m.role == "user").take(2).collect();
+    let mut pairs: Vec<String> = syllable_pairs(user_message);
+    for m in recent_user {
+        pairs.extend(syllable_pairs(&m.content));
+    }
+    let mut seen = HashSet::new();
+    pairs.retain(|p| seen.insert(p.clone()));
+
+    let useful: Vec<String> = pairs
+        .into_iter()
+        .filter(|pair| {
+            let n = found(pair);
+            n > 0 && n <= ceiling
+        })
+        .map(|pair| format!("\"{pair}\""))
+        .collect();
+
+    if useful.is_empty() {
+        parts.extend(discriminating(db, &syllables));
+    } else {
+        parts.extend(useful);
+    }
+
+    log::info!("[RAG] Searching for {parts:?}");
+    parts
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  A. EXTRACT SEARCH TERMS
 // ═══════════════════════════════════════════════════════════════
@@ -514,7 +666,7 @@ pub fn retrieve_context(
     // this, a question whose only real subject was absent from the vault was
     // answered by searching the *rest of the sentence*, and the answer arrived
     // under ten source chips that had nothing to do with it.
-    let terms = discriminating(db, &terms);
+    let terms = query_parts(db, user_message, conversation_messages, &terms);
     if terms.is_empty() {
         log::info!("[RAG] Nothing in the question tells one note from another; not retrieving");
         return Ok(RetrievalResult {
@@ -1054,6 +1206,102 @@ fn parse_metadata(metadata: &Option<String>) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn index(db: &DbBridge, id: &str, title: &str, body: &str) {
+        db.upsert_search_entry(
+            id, "note", title, "", body, "{}", None, "2026-08-01T00:00:00Z", id,
+        );
+    }
+
+    /// A vault shaped like the one that produced ten irrelevant chips: many
+    /// notes carrying `kiến` and `trúc` in other words, a few about
+    /// architecture, and one about Splunk.
+    fn syllable_vault() -> DbBridge {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        for i in 0..40 {
+            index(&db, &format!("Notes/k{i}.md"), &format!("Ghi chú {i}"),
+                "kiến thức nền tảng và sáng kiến cải tiến quy trình");
+        }
+        for i in 0..20 {
+            index(&db, &format!("Notes/t{i}.md"), &format!("Cấu trúc {i}"),
+                "cấu trúc dữ liệu và cấu trúc tổ chức");
+        }
+        index(&db, "Notes/arch.md", "Kiến trúc hệ thống", "sơ đồ kiến trúc giám sát");
+        index(&db, "Notes/splunk.md", "Splunk query", "cách viết splunk query cho dashboard");
+        index(&db, "Notes/sach.md", "Sách hay", "danh sách sách nên đọc");
+        db
+    }
+
+    #[test]
+    fn a_syllable_written_without_marks_is_still_a_syllable() {
+        for syllable in ["minh", "trong", "hoa", "nghieng", "gia", "quy", "an", "khoa"] {
+            assert!(is_a_syllable(syllable), "`{syllable}`");
+        }
+        for name in ["splunk", "tcb", "grafana", "datadog", "dashboard", "api", "k8s", "vpb"] {
+            assert!(!is_a_syllable(name), "`{name}`");
+        }
+    }
+
+    /// A name the vault has is what the question is about, and decides the
+    /// search. On the real vault, pairs beside it filled the list with daily
+    /// notes and pushed the three notes about Splunk below the cut.
+    #[test]
+    fn a_name_the_vault_has_decides_the_search() {
+        let db = syllable_vault();
+        let q = "vẽ thử một hình minh hoạ kiến trúc của splunk";
+        let parts = query_parts(&db, q, &[], &extract_search_terms(q, &[]));
+        assert_eq!(parts, vec!["splunk".to_string()]);
+
+        let found = retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval");
+        let ids: Vec<&str> = found.sources.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["Notes/splunk.md"], "nothing about knowledge or structure");
+    }
+
+    /// Without a name the vault has, `kiến` and `trúc` are searched as the one
+    /// word they make — not as the several each of them means.
+    #[test]
+    fn syllables_are_searched_as_the_word_they_make() {
+        let db = syllable_vault();
+        let q = "vẽ thử một hình minh hoạ kiến trúc của datadog";
+        let parts = query_parts(&db, q, &[], &extract_search_terms(q, &[]));
+
+        assert!(parts.contains(&"\"kiến trúc\"".to_string()), "{parts:?}");
+        for alone in ["kiến", "trúc"] {
+            assert!(!parts.contains(&alone.to_string()), "`{alone}` alone is not the word: {parts:?}");
+        }
+
+        let found = retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval");
+        let ids: Vec<&str> = found.sources.iter().map(|s| s.id.as_str()).collect();
+        assert!(ids.contains(&"Notes/arch.md"), "{ids:?}");
+        assert!(
+            ids.iter().all(|id| !id.starts_with("Notes/k") && !id.starts_with("Notes/t")),
+            "nothing about knowledge or structure: {ids:?}"
+        );
+    }
+
+    /// A one-syllable subject with no pair to make is still the question.
+    #[test]
+    fn a_lone_syllable_is_searched_when_no_pair_found_anything() {
+        let db = syllable_vault();
+        let q = "tìm sách";
+        let parts = query_parts(&db, q, &[], &extract_search_terms(q, &[]));
+        assert_eq!(parts, vec!["sách".to_string()]);
+    }
+
+    /// A follow-up keeps the subject it is following.
+    #[test]
+    fn a_follow_up_keeps_the_name_from_the_question_before() {
+        let db = syllable_vault();
+        index(&db, "Notes/tcb.md", "TCB", "ghi chép về cổ phiếu tcb");
+        let before = vec![SynMessage {
+            id: "u0".into(), role: "user".into(), content: "giá cổ phiếu tcb hôm nay".into(),
+            model: None, timestamp: String::new(), tokens: None, duration_ms: None,
+            sources: None, footing: None, tool_calls_log: None, images: None,
+        }];
+        let q = "giá này so với đỉnh của 1 năm trở lại đây thì như nào";
+        let parts = query_parts(&db, q, &before, &extract_search_terms(q, &before));
+        assert!(parts.contains(&"tcb".to_string()), "{parts:?}");
+    }
 
     /// A word that matches half the vault cannot tell one note from another.
     ///
