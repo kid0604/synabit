@@ -525,6 +525,20 @@ pub fn query_parts(
     parts
 }
 
+/// What a search that matches plain text is given — feed articles, finance.
+///
+/// Words, narrowed the way the vault's own search is narrowed and no further.
+/// `query_parts` writes FTS expressions: quoted pairs, and a single name when
+/// the vault knows it. Both are wrong here. `search_feed_articles_for_rag`
+/// quotes what it is handed, so `"cổ phiếu"` goes looking for the quote marks;
+/// `search_finance_nodes_for_rag` matches with `LIKE`, where they never match
+/// at all. And a lone name is one term, which is below the two these searches
+/// ask for before they will run — so a question about a stock price skipped
+/// the feed search that had eleven articles about stock prices in it.
+fn words_for_matching_text(db: &DbBridge, terms: &[String]) -> Vec<String> {
+    filter_vault_terms(&discriminating(db, terms))
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  A. EXTRACT SEARCH TERMS
 // ═══════════════════════════════════════════════════════════════
@@ -666,6 +680,15 @@ pub fn retrieve_context(
     // this, a question whose only real subject was absent from the vault was
     // answered by searching the *rest of the sentence*, and the answer arrived
     // under ten source chips that had nothing to do with it.
+    // Two lists out of one question, because two different searches read them.
+    //
+    // `words` are words: the vault's own FTS is the only search here that
+    // understands a quoted pair, and the feed and finance searches below match
+    // what they are given as text. Handed `"cổ phiếu"` they look for the quote
+    // marks; handed a question whose name the vault knows, they are handed one
+    // word and skip themselves for having too little to go on. Neither is what
+    // the narrowing was for.
+    let words = words_for_matching_text(db, &terms);
     let terms = query_parts(db, user_message, conversation_messages, &terms);
     if terms.is_empty() {
         log::info!("[RAG] Nothing in the question tells one note from another; not retrieving");
@@ -768,8 +791,8 @@ pub fn retrieve_context(
         }
     }
 
-    // Pre-compute filtered terms for feeds and finance (same input, same output)
-    let non_vault_terms = filter_vault_terms(&terms);
+    // Feeds and finance, which read words rather than FTS expressions.
+    let non_vault_terms = words;
 
     // Step 3: Search feed articles (separate FTS5 table)
     // Only search feeds if we have enough specific terms (not just vault-related words)
@@ -1230,6 +1253,28 @@ mod tests {
         index(&db, "Notes/splunk.md", "Splunk query", "cách viết splunk query cho dashboard");
         index(&db, "Notes/sach.md", "Sách hay", "danh sách sách nên đọc");
         db
+    }
+
+    /// Feeds and finance get words, and enough of them to run.
+    ///
+    /// They match what they are handed as text: quoted pairs send them looking
+    /// for quote marks, and a lone name is below the two terms they ask for
+    /// before they will search at all. The day this broke, a question about a
+    /// stock price narrowed to `["tcb"]` and the feed search — eleven articles
+    /// about stock prices in it — skipped itself.
+    #[test]
+    fn the_searches_that_match_text_are_given_words() {
+        let db = syllable_vault();
+        let q = "vẽ thử một hình minh hoạ kiến trúc của splunk";
+        let terms = extract_search_terms(q, &[]);
+
+        let words = words_for_matching_text(&db, &terms);
+        assert!(words.len() >= 2, "enough to search with: {words:?}");
+        assert!(words.contains(&"splunk".to_string()), "{words:?}");
+        assert!(words.iter().all(|w| !w.contains('"')), "no FTS quoting: {words:?}");
+
+        let parts = query_parts(&db, q, &[], &terms);
+        assert_eq!(parts, vec!["splunk".to_string()], "the vault's own search still narrows");
     }
 
     #[test]
