@@ -161,3 +161,49 @@ describe('who uses it', () => {
     expect(block).toContain('cursor: zoom-in');
   });
 });
+
+/**
+ * A diagram carries its colours in a `<style>` element inside its own SVG.
+ *
+ * Which makes the app's Content Security Policy part of whether a diagram is
+ * visible at all. Ours says `style-src 'self' 'unsafe-inline'` — but Tauri
+ * rewrites that before serving the app: it stamps a nonce on every `<style>`
+ * in `index.html` (there is one, painting the ground colour before any
+ * stylesheet loads) and appends `'nonce-…'` to `style-src`. And **a nonce
+ * anywhere in `style-src` makes `'unsafe-inline'` ignored**, so Mermaid's
+ * style element — which has no nonce and cannot be given one, it arrives as
+ * markup — is blocked. An unstyled `rect` is filled black by SVG's own
+ * default, and every diagram in the packaged app came out as black slabs.
+ *
+ * Only in the packaged app: in development the front end is served by Vite
+ * over http and no CSP is applied at all, so the machine running `tauri dev`
+ * showed the diagrams correctly while the one running the dmg did not.
+ *
+ * `dangerousDisableAssetCspModification` keeps `style-src` as written here.
+ * The nonce on `script-src` — the one that guards against injected scripts —
+ * is left alone.
+ */
+describe('the policy a diagram has to live under', () => {
+  it('leaves style-src as written, inline styles and all', async () => {
+    const conf = (await import('../../../src-tauri/tauri.conf.json')).default as {
+      app: { security: { csp: string; dangerousDisableAssetCspModification?: string[] } };
+    };
+    const security = conf.app.security;
+
+    expect(security.csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(
+      security.dangerousDisableAssetCspModification,
+      'Tauri will add a style-src nonce, and a nonce makes unsafe-inline ignored',
+    ).toContain('style-src');
+    expect(
+      security.dangerousDisableAssetCspModification,
+      'script-src keeps its nonce: that is the one that guards against injected scripts',
+    ).not.toContain('script-src');
+  });
+
+  /** The `<style>` that earns the nonce, and why it cannot move to a file. */
+  it('still paints the ground colour before any stylesheet loads', async () => {
+    const html = (await import('../../../index.html?raw')).default;
+    expect(html).toContain('<style>');
+  });
+});
