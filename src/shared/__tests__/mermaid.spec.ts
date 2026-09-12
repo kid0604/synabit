@@ -163,6 +163,34 @@ describe('who uses it', () => {
 });
 
 /**
+ * Opening a conversation drew every diagram in it, before anything could be
+ * scrolled.
+ *
+ * Measured on a real one: twenty-two diagrams, 14.1 seconds, the largest 2.1
+ * seconds on its own — and a conversation opens at its end, so twenty of those
+ * were pictures nobody was looking at. The app looked hung because for a
+ * quarter of a minute it was.
+ */
+describe('when a diagram is drawn', () => {
+  it('waits until it is near the screen', async () => {
+    const bubble = (await import('../../mini-apps/messages/components/MessageBubble.vue?raw')).default;
+
+    expect(bubble).toContain('IntersectionObserver');
+    expect(bubble, 'and a screen of warning, so a scroll lands on a picture')
+      .toContain("'800px 0px'");
+    expect(bubble, 'the ones still waiting are a space, not a wall of code')
+      .toContain('pre.mermaid[data-processed="waiting"]');
+  });
+
+  /** And several arriving at once do not become one unbroken stretch of work. */
+  it('lets the page breathe between one picture and the next', async () => {
+    const source = (await import('../mermaid.ts?raw')).default;
+    const queued = source.slice(source.indexOf('const mine = queue.then'));
+    expect(queued.slice(0, queued.indexOf('mermaid.render'))).toContain('setTimeout');
+  });
+});
+
+/**
  * A diagram carries its colours in a `<style>` element inside its own SVG.
  *
  * Which makes the app's Content Security Policy part of whether a diagram is

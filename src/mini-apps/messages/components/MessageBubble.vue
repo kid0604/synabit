@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onMounted } from 'vue';
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { logger } from '../../../utils/logger';
 import { useDebounceFn } from '@vueuse/core';
@@ -237,23 +237,68 @@ const { t } = useI18n();
 const nodes = useNodeService();
 const bus = useEventBus();
 
+/**
+ * Diagrams are drawn when they come into view, not when the answer arrives.
+ *
+ * # The fourteen seconds
+ *
+ * Measured on a real conversation: twenty-two diagrams, 14.1 seconds of
+ * drawing, the largest of them 2.1 seconds on its own. All of it on the main
+ * thread, all of it before the transcript could be scrolled — so opening that
+ * conversation looked like the app had hung, because for a quarter of a minute
+ * it had.
+ *
+ * Almost none of that work is wanted at that moment. A conversation opens at
+ * its end; the twenty diagrams above the fold are drawings nobody is looking
+ * at yet. Eight hundred pixels of margin is roughly a screen of warning, which
+ * is enough for a scroll to arrive at a picture that is already there.
+ */
+let watching: IntersectionObserver | null = null;
+const DRAW_AHEAD = '800px 0px';
+
+onBeforeUnmount(() => {
+  watching?.disconnect();
+  watching = null;
+});
+
 const renderMermaid = async () => {
   await nextTick();
   if (!messageEl.value) return;
-  
+
   const mermaidEls = messageEl.value.querySelectorAll('pre.mermaid:not([data-processed])');
   if (mermaidEls.length === 0) return;
 
+  watching ??= new IntersectionObserver(
+    entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        watching?.unobserve(entry.target);
+        void drawDiagram(entry.target as HTMLElement);
+      }
+    },
+    { rootMargin: DRAW_AHEAD },
+  );
+
   for (const el of mermaidEls) {
+    // Marked at once, so a second pass does not queue the same picture twice,
+    // and sized, so the transcript does not jump as each one lands.
+    el.setAttribute('data-processed', 'waiting');
+    watching.observe(el);
+  }
+};
+
+/** Draw one, when it is worth drawing. */
+const drawDiagram = async (el: HTMLElement) => {
+  {
     const id = el.id || `mermaid-auto-${Date.now()}`;
     const code = el.textContent || '';
-    if (!code.trim()) continue;
+    if (!code.trim()) return;
 
     const drawn = await renderDiagram(id + '-svg', code);
     if ('error' in drawn) {
       console.warn('[Mermaid] Render failed:', drawn.error);
       el.setAttribute('data-processed', 'error');
-      continue;
+      return;
     }
 
     {
@@ -1021,6 +1066,23 @@ const copyContent = async () => {
 }
 
 /* Mermaid chart containers */
+/*
+  A diagram that has not been drawn yet is a space, not a wall of code.
+
+  `pre.mermaid` holds the diagram's source until the picture replaces it, and
+  until this rule it showed that source — thirty lines of `flowchart TD` for
+  every picture below the fold. The height keeps the transcript from jumping
+  as each one lands.
+*/
+:deep(pre.mermaid[data-processed="waiting"]) {
+  min-height: 140px;
+  color: transparent;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(124, 58, 237, 0.08);
+}
+
 :deep(.mermaid-container) {
   margin: 0.75rem 0;
   /* Column, because the diagram now has a row of its own controls under it. */

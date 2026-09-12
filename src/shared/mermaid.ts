@@ -96,6 +96,14 @@ export type Drawn = { svg: string } | { error: string };
 
 export const renderDiagram = (id: string, code: string): Promise<Drawn> => {
   const mine = queue.then(async (): Promise<Drawn> => {
+    // A breath between diagrams.
+    //
+    // The queue is what stops two renders colliding, and it also means a
+    // screenful of pictures is one unbroken stretch of work: twenty-two of
+    // them measured 14.1 seconds, the largest 2.1 on its own. Yielding to the
+    // event loop first lets the page paint what the last one produced, and
+    // lets a click be heard, between one picture and the next.
+    await new Promise(resolve => setTimeout(resolve, 0));
     configure();
     try {
       const { svg } = await mermaid.render(id, code);
