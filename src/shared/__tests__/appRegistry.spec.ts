@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BUILT_IN_APPS, appById, appName } from '../appRegistry';
+import { Waypoints } from 'lucide-vue-next';
 import router from '../../router';
 // The sidebar's markup as text. `?raw` rather than `node:fs` because this
 // project carries no `@types/node`, and adding it to read one file would put
@@ -64,6 +65,26 @@ describe('the app registry', () => {
       'nexus', 'messages', 'quickcap', 'note', 'task',
       'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds', 'things',
     ]);
+  });
+
+  /**
+   * Two apps wearing the same picture is two apps you cannot tell apart in a
+   * column of twelve. Nexus and the browser button were both a globe — and
+   * they sit at opposite ends of the same sidebar, so the column had it twice.
+   */
+  it('gives no two apps the same icon', () => {
+    const icons = BUILT_IN_APPS.map((a) => a.icon);
+    expect(new Set(icons).size, 'two apps share an icon').toBe(icons.length);
+  });
+
+  /** The globe belongs to the browser: it is the web. Nexus is the vault's
+   *  own graph with a search over it. */
+  it('leaves the globe to the browser', () => {
+    expect(appById('nexus')?.icon).toBe(Waypoints);
+
+    const nexusButton = appVueSource.split("isAppVisible('nexus')")[1]?.split('</button>')[0] ?? '';
+    expect(nexusButton).toContain('<Waypoints');
+    expect(nexusButton, 'the sidebar drew a different icon than the registry').not.toContain('<Globe');
   });
 
   it('gives every app a name and an icon', () => {

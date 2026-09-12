@@ -21,20 +21,7 @@
  */
 
 import type { Component } from 'vue';
-import {
-  Globe,
-  MessageCircle,
-  Zap,
-  FileText,
-  CheckSquare,
-  Calendar,
-  FolderOpen,
-  Palette,
-  Users,
-  Wallet,
-  Rss,
-  Boxes,
-} from 'lucide-vue-next';
+import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Zap } from 'lucide-vue-next';
 
 export interface AppEntry {
   /**
@@ -71,7 +58,7 @@ export interface AppEntry {
  * remembers, what it knows how to do, what it did and what it is allowed to do.
  */
 export const BUILT_IN_APPS: readonly AppEntry[] = [
-  { id: 'nexus',      name: 'Nexus',      icon: Globe,         view: () => import('../mini-apps/nexus/NexusApp.vue') },
+  { id: 'nexus',      name: 'Nexus',      icon: Waypoints,     view: () => import('../mini-apps/nexus/NexusApp.vue') },
   { id: 'messages',   name: 'Syn',        icon: MessageCircle, view: () => import('../mini-apps/messages/MessagesApp.vue') },
   { id: 'quickcap',   name: 'QuickCap',   icon: Zap,           view: () => import('../mini-apps/quickcap/QuickCapApp.vue') },
   { id: 'note',       name: 'Notes',      icon: FileText,      view: () => import('../mini-apps/note/NoteApp.vue') },

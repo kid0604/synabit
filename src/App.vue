@@ -106,7 +106,7 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
   window.removeEventListener('mouseup', endPaneDrag);
 });
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
+import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -1227,7 +1227,13 @@ onUnmounted(() => {
           <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-[55] h-full'" data-tauri-drag-region>
               <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
                 <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
-                   <Globe class="w-5 h-5" />
+                   <!--
+                     A globe here and a globe on the browser button were the
+                     same picture for two different things. The globe belongs to
+                     the browser — it is the web. Nexus is the vault's own graph
+                     with a search over it, which is what this draws.
+                   -->
+                   <Waypoints class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
                 </button>
 
