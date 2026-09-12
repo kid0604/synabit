@@ -26,7 +26,6 @@
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { VueFlow, type NodeDragEvent } from '@vue-flow/core';
-import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import { X, PenTool } from 'lucide-vue-next';
 import ShapeNode from '../../whiteboard/nodes/ShapeNode.vue';
@@ -89,7 +88,7 @@ watch(
 );
 
 // ── How much of the row this takes ──────────────────────────
-const width = ref(620);
+const width = ref(Math.min(Math.max(Math.round(window.innerWidth * 0.45), 420), 900));
 const dragging = ref(false);
 const paneStyle = computed(() => ({ width: `${width.value}px` }));
 
@@ -191,17 +190,28 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="flex-1 min-h-0">
+      <!--
+        No dotted background, and no zooming out past a quarter.
+
+        A drawing of two data centres is five thousand pixels wide, and fitting
+        that into a pane means a zoom of about a tenth: the boxes become
+        smudges, the dot pattern lands at sub-pixel spacing, and every pan
+        repaints a field of dots nobody can see. Opening at a readable zoom and
+        letting the person pan is both quicker and more use — and with
+        `onlyRenderVisibleElements`, what is off-screen is not in the page at
+        all.
+      -->
       <VueFlow
         v-model:nodes="nodes"
         v-model:edges="edges"
         class="w-full h-full"
         :fit-view-on-init="true"
+        :fit-view-options="{ padding: 0.08, minZoom: 0.25, maxZoom: 1 }"
         :nodes-connectable="false"
         :only-render-visible-elements="true"
-        :min-zoom="0.05"
+        :min-zoom="0.1"
         @node-drag-stop="onDragStop"
       >
-        <Background :gap="16" />
         <Controls :show-interactive="false" />
         <template #node-shape="nodeProps"><ShapeNode v-bind="(nodeProps as any)" /></template>
         <template #edge-default="edgeProps">

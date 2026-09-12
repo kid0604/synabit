@@ -1100,17 +1100,20 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 </div>
             </template>
         </div>
-
-        <!-- Beside the conversation, in the row rather than over it: the
-             picture is being arranged against what the answer said. -->
-        <BoardPane
-          v-if="arrangedBoard"
-          :vault-path="props.vaultPath"
-          :board="arrangedBoard"
-          @close="arrangedBoard = null"
-          @open="emit('open-node', arrangedBoard!.id, 'whiteboard')"
-        />
     </div>
+
+    <!-- Beside the conversation, in the row rather than over it: the picture is
+         being arranged against what the answer said. A sibling of the whole
+         conversation column, not of the transcript inside it — put one level
+         in, it lands in a `flex-col` and squeezes the conversation to nothing,
+         which is what it did. -->
+    <BoardPane
+      v-if="arrangedBoard"
+      :vault-path="props.vaultPath"
+      :board="arrangedBoard"
+      @close="arrangedBoard = null"
+      @open="emit('open-node', arrangedBoard!.id, 'whiteboard')"
+    />
 
     <!-- What Syn did, and what it was told -->
     <RunInspector
