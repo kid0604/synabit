@@ -1,3 +1,4 @@
+pub mod board;
 pub mod conversation;
 pub mod ambiguity;
 pub mod answer;

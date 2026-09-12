@@ -43,7 +43,7 @@ fn board_from_node(node: &NodeMetadata) -> WhiteboardMetadata {
 /// Parsing goes through the same `parse_file_to_node` every other file in the
 /// vault goes through, so a board indexed here and the same board indexed by a
 /// vault scan cannot end up describing themselves differently.
-fn index_board(db: &DbBridge, vault_path: &str, abs_path: &Path) -> Option<WhiteboardMetadata> {
+pub(crate) fn index_board(db: &DbBridge, vault_path: &str, abs_path: &Path) -> Option<WhiteboardMetadata> {
     let node = parse_file_to_node(vault_path, abs_path)?;
     let board = board_from_node(&node);
 

@@ -195,6 +195,7 @@ impl VaultTools {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
             | "list_versions" | "search_feed_articles" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
+            | "read_board"
             | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL => {
                 VaultRead
             }
@@ -205,7 +206,11 @@ impl VaultTools {
             // out here. Under-declaring would be the dangerous direction; this
             // errs the other way and stays true.
             "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version"
-            | "update_feed_article" | "create_transaction" | "remember" | "run_recipe" => {
+            | "update_feed_article" | "create_transaction" | "remember" | "run_recipe"
+            // A board is a vault node like any other; what makes these two
+            // different is that the model must not decide where anything goes.
+            // See `syn::board`.
+            | "draw_board" | "edit_board" => {
                 VaultWrite
             }
 
@@ -254,8 +259,16 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         let ledger = crate::syn::consent::load(ctx.vault_path);
         let now = chrono::Utc::now().to_rfc3339();
 
+        // A vault with no whiteboard in it is told about no whiteboard tools.
+        // Same reasoning as the paragraph above, one step earlier: the three of
+        // them cost about two thousand characters of every request, and where
+        // there is nothing to read or change they can only ever be a promise
+        // paid for in advance. See `board::any_board`.
+        let boards = crate::syn::board::any_board(ctx.vault_path);
+
         crate::syn::tools::get_tool_definitions_for(&settings)
             .into_iter()
+            .filter(|definition| boards || !crate::syn::board::TOOLS.contains(&definition.function.name.as_str()))
             .filter(|definition| {
                 Self::table(&definition.function.name, &Value::Null)
                     .is_none_or(|c| !is_switched_off(&c, &ledger, &now))
@@ -560,6 +573,7 @@ mod tests {
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
+            "read_board", "draw_board", "edit_board",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
         ];

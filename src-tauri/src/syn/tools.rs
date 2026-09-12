@@ -398,7 +398,21 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// for two hundred characters, not two thousand. The ceiling is a number
 /// somebody has to walk past deliberately, and this is what walking past it
 /// looks like when there is finally evidence to walk past it with.
-pub const PAYLOAD_BUDGET_CHARS: usize = 16_200;
+///
+/// # Raised to 18,400, for three tools nobody pays for unless they have a board
+///
+/// `read_board`, `draw_board` and `edit_board` cost 2,067 characters — about
+/// 517 tokens — which is ten times what the paragraph above says a raise
+/// should argue for. What makes it a different argument is that this ceiling
+/// measures the **catalogue**, and the catalogue is no longer what every vault
+/// is sent: `VaultTools::definitions` leaves all three out where the vault
+/// holds no whiteboard, the way `web_search` used to be left out where no
+/// endpoint was configured. A vault with boards pays 517 tokens a turn to be
+/// able to read, draw and change them; a vault without pays nothing at all.
+///
+/// It leaves a hundred and thirty characters of headroom. That is deliberate:
+/// the next tool should have to make its own case, not inherit this one's.
+pub const PAYLOAD_BUDGET_CHARS: usize = 18_400;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -809,6 +823,73 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 }),
             },
         },
+                ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "read_board".to_string(),
+                description: "What is on a whiteboard: boxes, frames, and the lines between them. Use this, not get_node — a board file is mostly coordinates.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["board"],
+                    "properties": { "board": { "type": "string", "description": "Its title, or its path." } }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "draw_board".to_string(),
+                description: "Draw a whiteboard the user can then rearrange by hand. Say what is on it and what joins what; where things go is worked out here. Items sharing a `group` get a frame, and frames sit side by side — use it for sites and zones.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["title", "items"],
+                    "properties": {
+                        "title": { "type": "string" },
+                        "items": {
+                            "type": "array",
+                            "description": "Boxes. Labels must differ: lines and later edits name them.",
+                            "items": { "type": "object", "required": ["label"], "properties": {
+                                "label": { "type": "string" },
+                                "shape": { "type": "string", "description": "rectangle (default), roundedRect, ellipse, diamond, hexagon, cylinder" },
+                                "group": { "type": "string" }
+                            } }
+                        },
+                        "links": {
+                            "type": "array",
+                            "items": { "type": "object", "required": ["from", "to"], "properties": {
+                                "from": { "type": "string" }, "to": { "type": "string" },
+                                "label": { "type": "string" }
+                            } }
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "edit_board".to_string(),
+                description: "Change a whiteboard that exists. Nothing moves but what you move: a board has been arranged by hand, so never redraw one to update it.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["board", "changes"],
+                    "properties": {
+                        "board": { "type": "string", "description": "Its title, or its path." },
+                        "changes": {
+                            "type": "array",
+                            "description": "add {label, shape?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of}. Boxes are named by what is written on them.",
+                            "items": { "type": "object", "required": ["op"], "properties": {
+                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place"] },
+                                "label": { "type": "string" }, "shape": { "type": "string" },
+                                "near": { "type": "string" }, "from": { "type": "string" },
+                                "to": { "type": "string" }, "item": { "type": "string" },
+                                "side": { "type": "string" }, "of": { "type": "string" }
+                            } }
+                        }
+                    }
+                }),
+            },
+        },
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -954,6 +1035,9 @@ pub fn execute_tool<R: tauri::Runtime>(
         "create_node" => tool_create_node(ctx, args),
         "update_node" => over_each(ctx, args, tool_update_node),
         "get_linked_nodes" => tool_get_linked_nodes(&*lock(ctx)?, args),
+        "read_board" => tool_read_board(ctx, args),
+        "draw_board" => tool_draw_board(ctx, args),
+        "edit_board" => tool_edit_board(ctx, args),
 
         // What Syn knows about the person rather than about their vault.
         // Stored as nodes, so `trash_node` and `restore_node` already forget
@@ -3441,6 +3525,164 @@ fn format_number_with_separator(n: i64) -> String {
     result
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  WHITEBOARDS
+// ═══════════════════════════════════════════════════════════════
+
+/// The board a name means.
+///
+/// A path if the model repeats one back from `query_nodes`, and otherwise the
+/// title as a person would say it. Names are what a conversation has to work
+/// with — "the PSS board" — and a tool that only took file paths would make
+/// every board question two calls.
+fn board_at(vault: &std::path::Path, name: &str) -> AppResult<std::path::PathBuf> {
+    let wanted = name.trim();
+    if wanted.is_empty() {
+        return Err(AppError::General("Which board? Give its title.".into()));
+    }
+
+    let dir = vault.join(crate::syn::board::BOARDS_DIR);
+    let mut titles: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.to_string_lossy().ends_with(".whiteboard.json") {
+                continue;
+            }
+            let title = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|v| v.get("title").and_then(|t| t.as_str()).map(str::to_string))
+                .unwrap_or_default();
+            titles.push((title, path));
+        }
+    }
+
+    // A path, answered as a path — but only inside the boards folder, which is
+    // the same rule every other tool keeps about where it may read.
+    if wanted.ends_with(".json") {
+        let rel = wanted.trim_start_matches('/');
+        if rel.contains("..") || !rel.starts_with(crate::syn::board::BOARDS_DIR) {
+            return Err(AppError::General("Boards live in the Whiteboards folder.".into()));
+        }
+        let path = vault.join(rel);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    let lower = wanted.to_lowercase();
+    if let Some((_, path)) = titles.iter().find(|(t, _)| t.to_lowercase() == lower) {
+        return Ok(path.clone());
+    }
+    let near: Vec<&(String, std::path::PathBuf)> =
+        titles.iter().filter(|(t, _)| t.to_lowercase().contains(&lower)).collect();
+    match near.len() {
+        1 => Ok(near[0].1.clone()),
+        0 => Err(AppError::General(format!(
+            "No board called \"{wanted}\". There is: {}",
+            if titles.is_empty() {
+                "nothing yet".to_string()
+            } else {
+                titles.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(", ")
+            }
+        ))),
+        _ => Err(AppError::General(format!(
+            "\"{wanted}\" matches {} boards: {}. Say which.",
+            near.len(),
+            near.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(", ")
+        ))),
+    }
+}
+
+fn read_board_file(path: &std::path::Path) -> AppResult<crate::syn::board::Board> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| AppError::General(format!("Could not read that board: {e}")))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| AppError::General(format!("That board is not a board this app can read: {e}")))
+}
+
+/// Write a board back and put it in the index, the way the app's own commands do.
+fn save_board_file<R: tauri::Runtime>(
+    ctx: &ToolContext<R>,
+    path: &std::path::Path,
+    board: &crate::syn::board::Board,
+) -> AppResult<()> {
+    let json = serde_json::to_string_pretty(board)
+        .map_err(|e| AppError::General(format!("Could not write that board: {e}")))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, json)?;
+
+    let db = lock(ctx)?;
+    crate::commands::whiteboards::index_board(&db, ctx.vault_path, path);
+    Ok(())
+}
+
+fn tool_read_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
+    let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
+    let board = read_board_file(&path)?;
+    Ok(crate::syn::board::describe(&board))
+}
+
+fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::General("A board needs a title.".into()))?;
+
+    let sketch: crate::syn::board::Sketch = serde_json::from_value(args.clone())
+        .map_err(|e| AppError::General(format!("That is not a drawing this can lay out: {e}")))?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let board = crate::syn::board::draw(title, &sketch, now).map_err(AppError::General)?;
+
+    let path = std::path::Path::new(ctx.vault_path)
+        .join(crate::syn::board::BOARDS_DIR)
+        .join(format!("whiteboard-{now}.whiteboard.json"));
+    save_board_file(ctx, &path, &board)?;
+
+    let rel = format!("{}/whiteboard-{now}.whiteboard.json", crate::syn::board::BOARDS_DIR);
+    Ok(serde_json::json!({
+        "board": rel,
+        "title": title,
+        "items": sketch.items.len(),
+        "links": sketch.links.len(),
+        "note": "Drawn and saved. The person can drag it into shape in the Whiteboard app; \
+                 do not redraw it — use edit_board to change it.",
+    })
+    .to_string())
+}
+
+fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
+    let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
+    let mut board = read_board_file(&path)?;
+
+    let changes: Vec<crate::syn::board::Change> = serde_json::from_value(
+        args.get("changes").cloned().unwrap_or(Value::Null),
+    )
+    .map_err(|e| AppError::General(format!("Those changes cannot be read: {e}")))?;
+    if changes.is_empty() {
+        return Err(AppError::General("No changes were given.".into()));
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let done = crate::syn::board::apply(&mut board, &changes, now).map_err(AppError::General)?;
+    save_board_file(ctx, &path, &board)?;
+
+    Ok(serde_json::json!({
+        "board": board.title,
+        "did": done,
+        "note": "Only what was asked for moved. Everything else is where the person left it.",
+    })
+    .to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3848,6 +4090,15 @@ mod tests {
         // document's extracted text lives in `file_text` and not in the node,
         // and finance keeps transactions inside a month node as an array that
         // no node query can add up.
+        //
+        // The three boards tools are here on a different ground, and it is
+        // worth stating because a board *is* an ordinary node: `query_nodes`
+        // finds it, `trash_node` removes it. What the generic tools cannot do
+        // is read one or write one. `get_node` hands back the first four
+        // thousand characters of a file that is mostly coordinates — on a real
+        // board, the points of one freehand stroke — and `update_node` would
+        // mean the model writing positions, which is the one thing it must
+        // never do here. See `syn::board`.
         let specialised = [
             "search_feed_articles",
             "update_feed_article",
@@ -3857,6 +4108,9 @@ mod tests {
             "search_finance",
             "get_transactions",
             "create_transaction",
+            "read_board",
+            "draw_board",
+            "edit_board",
         ];
         for tool in specialised {
             assert!(names.contains(&tool), "{tool} is missing");
@@ -4033,6 +4287,97 @@ mod tests {
     /// every test passed, the node was written correctly, Things listed it, and
     /// the Calendar was empty. `create_node`'s own description told the model
     /// to write `start_date`, and nothing in the Calendar has ever read that.
+    /// The three board tools, against a real vault and a real index.
+    ///
+    /// Drawing, reading back what was drawn, and changing it — because the
+    /// halves that can fail are the ones between the module and the disk: a
+    /// file written where the app does not look, a board the index never
+    /// hears about, a name the model uses that nothing matches.
+    #[test]
+    fn a_board_can_be_drawn_read_and_changed_by_name() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+
+        let call = |tool: &str, args: serde_json::Value| -> String {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None };
+            execute_tool(&ctx, tool, &args).expect("the tool runs")
+        };
+
+        let drawn: serde_json::Value = serde_json::from_str(&call(
+            "draw_board",
+            serde_json::json!({
+                "title": "Luồng PSS",
+                "items": [
+                    { "label": "TCTV" },
+                    { "label": "Kong 1", "group": "DC1" },
+                    { "label": "App PSS 1", "group": "DC1" },
+                    { "label": "Kong 2", "group": "DC2" },
+                    { "label": "App PSS 2", "group": "DC2" }
+                ],
+                "links": [
+                    { "from": "TCTV", "to": "Kong 1", "label": "MPLS" },
+                    { "from": "Kong 1", "to": "App PSS 1" },
+                    { "from": "Kong 2", "to": "App PSS 2" }
+                ]
+            }),
+        ))
+        .expect("JSON");
+
+        let rel = drawn["board"].as_str().expect("a path");
+        assert!(rel.starts_with("Whiteboards/"), "{rel}");
+        assert!(vault.join(rel).exists(), "the file is where the app looks");
+
+        // The index heard about it, which is what makes it appear in the app's
+        // own list and in `query_nodes`.
+        {
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().expect("lock");
+            let node = db.get_node(rel).expect("read").expect("indexed");
+            assert_eq!(node.title, "Luồng PSS");
+        }
+
+        // Read back by title, the way a conversation would name it.
+        let said = call("read_board", serde_json::json!({ "board": "PSS" }));
+        assert!(said.contains("5 boxes"), "{said}");
+        assert!(said.contains("TCTV → Kong 1 (MPLS)"), "{said}");
+
+        // And changed by name, without touching anything else.
+        let before = std::fs::read_to_string(vault.join(rel)).expect("read");
+        let changed: serde_json::Value = serde_json::from_str(&call(
+            "edit_board",
+            serde_json::json!({
+                "board": "Luồng PSS",
+                "changes": [
+                    { "op": "add", "label": "Keycloak", "near": "Kong 1" },
+                    { "op": "connect", "from": "Kong 1", "to": "Keycloak", "label": "Validate" }
+                ]
+            }),
+        ))
+        .expect("JSON");
+        assert_eq!(changed["did"].as_array().expect("did").len(), 2);
+
+        let after = std::fs::read_to_string(vault.join(rel)).expect("read");
+        assert!(after.contains("Keycloak"), "the change reached the file");
+        assert!(before.len() < after.len(), "and nothing was lost making room for it");
+
+        // A name nothing answers to says what there is, rather than failing
+        // bare — and it comes back as a result the model reads, not as an
+        // error that ends the run.
+        let missing = call("read_board", serde_json::json!({ "board": "Splunk" }));
+        assert!(missing.contains("No board called"), "{missing}");
+        assert!(missing.contains("Luồng PSS"), "it says what there is instead: {missing}");
+    }
+
     #[test]
     fn an_event_written_by_the_assistant_carries_the_fields_the_calendar_reads() {
         let holder = tempfile::tempdir().expect("temp");
