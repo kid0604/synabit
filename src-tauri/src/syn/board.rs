@@ -334,6 +334,45 @@ fn box_width(label: &str) -> f64 {
     ((longest as f64) * 8.2 + 36.0).clamp(120.0, 300.0)
 }
 
+/// The items of a column, gathered into a row per rank.
+///
+/// Ranks are compacted as they are read: a drawing with cycles in it can rank
+/// its boxes 0, 1, 82, 124 and those numbers are an order, not a distance. Two
+/// boxes on the same rank share a row; the rows come out in the order the
+/// ranks do.
+///
+/// A rank with more in it than `PER_ROW` is split across rows rather than run
+/// out sideways. Eighteen boxes on one line is the tower laid on its side, and
+/// just as unreadable — a site drawn that way came out 2,510 pixels wide.
+fn rows_by_rank<'a>(
+    members: &[&'a SketchItem],
+    rank_of: &std::collections::HashMap<String, usize>,
+) -> Vec<Vec<&'a SketchItem>> {
+    let mut by_rank: std::collections::BTreeMap<usize, Vec<&SketchItem>> = Default::default();
+    for item in members {
+        let rank = rank_of.get(item.label.trim()).copied().unwrap_or(0);
+        by_rank.entry(rank).or_default().push(item);
+    }
+    by_rank
+        .into_values()
+        .flat_map(|rank| {
+            rank.chunks(PER_ROW).map(<[&SketchItem]>::to_vec).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// How many boxes a row holds before the rest go on the next one.
+///
+/// Four. Wide enough that the things arriving at one gateway are visibly
+/// together, narrow enough that a site stays something you can read across.
+const PER_ROW: usize = 4;
+
+/// How wide a row of boxes is, gaps included.
+fn row_width(row: &[&SketchItem]) -> f64 {
+    let boxes: f64 = row.iter().map(|i| box_width(&i.label)).sum();
+    boxes + GAP_X * (row.len().saturating_sub(1)) as f64
+}
+
 /// Lay a sketch out, and hand back a board.
 ///
 /// # The shape this produces, and why that one
@@ -398,39 +437,48 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
         columns.iter().filter(|(g, _)| g.is_some()).collect();
 
     let mut y = START;
-    let mut x = START;
-    let mut widest_top: f64 = 0.0;
-    for item in &loose {
-        let w = box_width(&item.label);
-        let at_rank = rank_of.get(item.label.trim()).copied().unwrap_or(0);
-        let row_y = START + (at_rank as f64) * (BOX_H + GAP_Y);
-        where_is.insert(item.label.trim().to_lowercase(), (x, row_y, w, BOX_H));
-        nodes.push(shape(id("box"), x, row_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
-        x += w + GAP_X;
-        widest_top = widest_top.max(row_y + BOX_H);
+    let mut lowest_top: f64 = START;
+    for row in rows_by_rank(&loose, &rank_of) {
+        let mut at_x = START;
+        let row_y = lowest_top;
+        for item in &row {
+            let w = box_width(&item.label);
+            where_is.insert(item.label.trim().to_lowercase(), (at_x, row_y, w, BOX_H));
+            nodes.push(shape(id("box"), at_x, row_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
+            at_x += w + GAP_X;
+        }
+        lowest_top = row_y + BOX_H + GAP_Y;
     }
     if !loose.is_empty() {
-        y = widest_top + GAP_Y * 1.5;
+        y = lowest_top + GAP_Y / 2.0;
     }
 
-    // ── Each group a column, ranked top to bottom ──
+    // ── Each group a column; inside it, a row per rank ──
+    //
+    // A row per rank, not a row per item. The first real drawing this was
+    // asked for had twenty-one boxes in a site, four of them fed by the same
+    // gateway — and stacking them one to a row made each site a tower 2,692
+    // pixels tall and 354 wide. Things that arrive at the same point belong
+    // beside each other; that is what a layer *is*.
     let mut frames: Vec<(String, f64, f64, f64, f64)> = Vec::new();
     let mut column_x = START;
     for (group, members) in grouped {
-        let column_w = members.iter().map(|m| box_width(&m.label)).fold(160.0_f64, f64::max);
-        let mut placed: Vec<(&SketchItem, f64)> = members
+        let rows = rows_by_rank(members, &rank_of);
+        let column_w = rows
             .iter()
-            .map(|m| (*m, rank_of.get(m.label.trim()).copied().unwrap_or(0) as f64))
-            .collect();
-        placed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            .map(|row| row_width(row))
+            .fold(160.0_f64, f64::max);
 
         let inner_x = column_x + FRAME_PAD;
         let mut inner_y = y + FRAME_TOP;
-        for (item, _) in &placed {
-            let w = box_width(&item.label);
-            let at = inner_x + (column_w - w) / 2.0;
-            where_is.insert(item.label.trim().to_lowercase(), (at, inner_y, w, BOX_H));
-            nodes.push(shape(id("box"), at, inner_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
+        for row in &rows {
+            let mut at_x = inner_x + (column_w - row_width(row)) / 2.0;
+            for item in row {
+                let w = box_width(&item.label);
+                where_is.insert(item.label.trim().to_lowercase(), (at_x, inner_y, w, BOX_H));
+                nodes.push(shape(id("box"), at_x, inner_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
+                at_x += w + GAP_X;
+            }
             inner_y += BOX_H + GAP_Y;
         }
 
@@ -506,11 +554,23 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
 
 /// How far along the chain each item sits.
 ///
-/// The longest path to it, which is what every layered layout ranks by: a box
-/// goes below everything that feeds it, however many ways round there are. The
-/// pass is repeated rather than recursed so that a loop — and these drawings
-/// have loops, a pair of switches that talk both ways — settles instead of
+/// The longest path to it: a box goes below everything that feeds it. The pass
+/// is repeated rather than recursed so that a loop — and these drawings have
+/// them, a pair of firewalls that answer each other — settles instead of
 /// running forever.
+///
+/// # Why the numbers are allowed to be absurd
+///
+/// Around a cycle every pass adds one to every node on it, so a real drawing
+/// of twenty-one boxes came out ranked 1, 2, 82, 83, 84, 84, 85 … 127. Those
+/// numbers are nonsense as distances and exactly right as an **order**, which
+/// is all that is asked of them: `rows_by_rank` groups by rank and lays the
+/// groups out in order, so 82 and 127 become the third row and the tenth.
+///
+/// A depth-first version that dropped the return legs was tried, and ranked
+/// worse: it put a database on the same row as the gateway three steps above
+/// it, because which edge counts as the way back depends on where the walk
+/// happened to start.
 fn ranks(sketch: &Sketch) -> std::collections::HashMap<String, usize> {
     let mut rank: std::collections::HashMap<String, usize> =
         sketch.items.iter().map(|i| (i.label.trim().to_string(), 0)).collect();
@@ -855,6 +915,81 @@ mod tests {
         // The upstream chain is above both sites.
         assert!(at(&board, "TCTV").position.y < dc1.position.y);
         assert!(at(&board, "FW Checkpoint").position.y < dc1.position.y);
+    }
+
+    /// The drawing Syn was actually asked for, and what it came out as.
+    ///
+    /// Forty-four boxes, two sites, fifty-two lines — kept as a fixture
+    /// because it is the shape that showed both defects at once. Ranked by a
+    /// loop of relaxations, its cycles pushed ranks to 82, 124, 127; stacked a
+    /// box to a row, each site came out 2,692 pixels tall and 354 wide. Two
+    /// towers with a wire between them, and the person who asked for it said
+    /// it was ugly, which it was.
+    #[test]
+    fn a_real_drawing_comes_out_in_layers_rather_than_a_tower() {
+        let sketch: Sketch =
+            serde_json::from_str(include_str!("testdata/board-sketch.json")).expect("the sketch");
+        let board = draw("Kiến trúc DC1 - DC2", &sketch, NOW).expect("drawn");
+
+        let frames: Vec<&Item> = board
+            .nodes
+            .iter()
+            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(FRAME_COLOUR))
+            .collect();
+        assert_eq!(frames.len(), 2, "a frame per site");
+
+        // Twenty-one boxes come out as a block somebody can read across:
+        // 1,205 × 1,284, eleven rows, never more than four to a row. Before
+        // this it was 354 × 2,692 — a tower — and the first attempt at fixing
+        // it went the other way, to 2,510 wide with eighteen boxes on one line.
+        for frame in &frames {
+            let (w, h) = (frame.width(), frame.height());
+            assert!(h < w * 2.0, "`{}` is {w}×{h} — a tower again", frame.label());
+            assert!(w < h * 2.0, "`{}` is {w}×{h} — a tower on its side", frame.label());
+        }
+
+        // Boxes fed by the same thing share a row.
+        let by_y = |y: f64| {
+            board
+                .nodes
+                .iter()
+                .filter(move |n| {
+                    n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR)
+                        && (n.position.y - y).abs() < 1.0
+                })
+                .count()
+        };
+        let rows: std::collections::BTreeSet<i64> = board
+            .nodes
+            .iter()
+            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR))
+            .map(|n| n.position.y as i64)
+            .collect();
+        assert!(
+            rows.iter().any(|y| by_y(*y as f64) >= 4),
+            "no row holds more than three boxes, so nothing was laid side by side"
+        );
+        // Both sites share every row, so a row holds at most PER_ROW from each.
+        for y in &rows {
+            let across = by_y(*y as f64);
+            assert!(across <= PER_ROW * 2, "a row of {across} boxes is a line nobody reads");
+        }
+
+        // And still nothing on top of anything else.
+        let boxes: Vec<&Item> = board
+            .nodes
+            .iter()
+            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR))
+            .collect();
+        for (i, a) in boxes.iter().enumerate() {
+            for b in boxes.iter().skip(i + 1) {
+                let apart = a.position.x + a.width() <= b.position.x
+                    || b.position.x + b.width() <= a.position.x
+                    || a.position.y + a.height() <= b.position.y
+                    || b.position.y + b.height() <= a.position.y;
+                assert!(apart, "`{}` sits on `{}`", a.label(), b.label());
+            }
+        }
     }
 
     /// A frame is a box drawn behind its members, so it has to contain them.

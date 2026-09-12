@@ -1,0 +1,412 @@
+{
+ "items": [
+  {
+   "label": "TCTV (Tổ chức thành viên)"
+  },
+  {
+   "label": "Internet / ISP"
+  },
+  {
+   "label": "SW WAN (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "FW Checkpoint (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "F5 TPZ (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "SW Core (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "OPZ FW Edge (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "OPZ FW Core (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Cloudflare ZTNA Gateway (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "OPZ Internal Apps (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "OPZ Database (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "OPZ MGMT - Jumpbox & Mon (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Kong API Gateway (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Keycloak IAM (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "App PSS (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "TPZ FW Core (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Redis Cache & Rate Limit (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Confluent Kafka (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "HashiCorp Vault (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "HSM 1 - Primary (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "HSM 2 - Secondary (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Oracle RAC TXN (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "Postgres DB (DC 1)",
+   "group": "DATA CENTER 1 (DC 1)"
+  },
+  {
+   "label": "SW WAN (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "FW Checkpoint (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "F5 TPZ (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "SW Core (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "OPZ FW Edge (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "OPZ FW Core (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Cloudflare ZTNA Gateway (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "OPZ Internal Apps (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "OPZ Database (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "OPZ MGMT - Jumpbox & Mon (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Kong API Gateway (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Keycloak IAM (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "App PSS (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "TPZ FW Core (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Redis Cache & Rate Limit (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Confluent Kafka (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "HashiCorp Vault (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "HSM 1 - Primary (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "HSM 2 - Secondary (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Oracle RAC TXN (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  },
+  {
+   "label": "Postgres DB (DC 2)",
+   "group": "DATA CENTER 2 (DC 2)"
+  }
+ ],
+ "links": [
+  {
+   "from": "TCTV (Tổ chức thành viên)",
+   "to": "SW WAN (DC 1)",
+   "label": "MPLS Line 1"
+  },
+  {
+   "from": "TCTV (Tổ chức thành viên)",
+   "to": "SW WAN (DC 1)",
+   "label": "MPLS Line 2"
+  },
+  {
+   "from": "TCTV (Tổ chức thành viên)",
+   "to": "SW WAN (DC 2)",
+   "label": "MPLS Line"
+  },
+  {
+   "from": "Internet / ISP",
+   "to": "OPZ FW Edge (DC 1)"
+  },
+  {
+   "from": "Internet / ISP",
+   "to": "OPZ FW Edge (DC 2)"
+  },
+  {
+   "from": "SW Core (DC 1)",
+   "to": "SW Core (DC 2)",
+   "label": "Backbone (DCI)"
+  },
+  {
+   "from": "SW WAN (DC 1)",
+   "to": "FW Checkpoint (DC 1)"
+  },
+  {
+   "from": "FW Checkpoint (DC 1)",
+   "to": "SW Core (DC 1)"
+  },
+  {
+   "from": "SW Core (DC 1)",
+   "to": "F5 TPZ (DC 1)",
+   "label": "1. Forward to VIP"
+  },
+  {
+   "from": "F5 TPZ (DC 1)",
+   "to": "SW Core (DC 1)",
+   "label": "2. Routed back"
+  },
+  {
+   "from": "SW Core (DC 1)",
+   "to": "TPZ FW Core (DC 1)",
+   "label": "Route TPZ"
+  },
+  {
+   "from": "SW Core (DC 1)",
+   "to": "OPZ FW Edge (DC 1)",
+   "label": "Internet Gateway"
+  },
+  {
+   "from": "SW Core (DC 1)",
+   "to": "OPZ FW Core (DC 1)",
+   "label": "Route OPZ Core"
+  },
+  {
+   "from": "TPZ FW Core (DC 1)",
+   "to": "Kong API Gateway (DC 1)"
+  },
+  {
+   "from": "Kong API Gateway (DC 1)",
+   "to": "Keycloak IAM (DC 1)",
+   "label": "1. Validate Token / Auth"
+  },
+  {
+   "from": "Kong API Gateway (DC 1)",
+   "to": "Redis Cache & Rate Limit (DC 1)",
+   "label": "2. Rate Limit Counter"
+  },
+  {
+   "from": "Kong API Gateway (DC 1)",
+   "to": "App PSS (DC 1)",
+   "label": "3. Proxy Request"
+  },
+  {
+   "from": "App PSS (DC 1)",
+   "to": "Redis Cache & Rate Limit (DC 1)"
+  },
+  {
+   "from": "App PSS (DC 1)",
+   "to": "Confluent Kafka (DC 1)"
+  },
+  {
+   "from": "App PSS (DC 1)",
+   "to": "HashiCorp Vault (DC 1)"
+  },
+  {
+   "from": "App PSS (DC 1)",
+   "to": "TPZ FW Core (DC 1)",
+   "label": "Access HSM/DB"
+  },
+  {
+   "from": "TPZ FW Core (DC 1)",
+   "to": "HSM 1 - Primary (DC 1)"
+  },
+  {
+   "from": "TPZ FW Core (DC 1)",
+   "to": "HSM 2 - Secondary (DC 1)"
+  },
+  {
+   "from": "TPZ FW Core (DC 1)",
+   "to": "Oracle RAC TXN (DC 1)"
+  },
+  {
+   "from": "TPZ FW Core (DC 1)",
+   "to": "Postgres DB (DC 1)"
+  },
+  {
+   "from": "OPZ FW Edge (DC 1)",
+   "to": "Cloudflare ZTNA Gateway (DC 1)",
+   "label": "DMZ Interface"
+  },
+  {
+   "from": "OPZ FW Core (DC 1)",
+   "to": "OPZ Internal Apps (DC 1)"
+  },
+  {
+   "from": "OPZ FW Core (DC 1)",
+   "to": "OPZ Database (DC 1)"
+  },
+  {
+   "from": "OPZ FW Core (DC 1)",
+   "to": "OPZ MGMT - Jumpbox & Mon (DC 1)"
+  },
+  {
+   "from": "SW WAN (DC 2)",
+   "to": "FW Checkpoint (DC 2)"
+  },
+  {
+   "from": "FW Checkpoint (DC 2)",
+   "to": "SW Core (DC 2)"
+  },
+  {
+   "from": "SW Core (DC 2)",
+   "to": "F5 TPZ (DC 2)",
+   "label": "1. Forward to VIP"
+  },
+  {
+   "from": "F5 TPZ (DC 2)",
+   "to": "SW Core (DC 2)",
+   "label": "2. Routed back"
+  },
+  {
+   "from": "SW Core (DC 2)",
+   "to": "TPZ FW Core (DC 2)",
+   "label": "Route TPZ"
+  },
+  {
+   "from": "SW Core (DC 2)",
+   "to": "OPZ FW Edge (DC 2)",
+   "label": "Internet Gateway"
+  },
+  {
+   "from": "SW Core (DC 2)",
+   "to": "OPZ FW Core (DC 2)",
+   "label": "Route OPZ Core"
+  },
+  {
+   "from": "TPZ FW Core (DC 2)",
+   "to": "Kong API Gateway (DC 2)"
+  },
+  {
+   "from": "Kong API Gateway (DC 2)",
+   "to": "Keycloak IAM (DC 2)",
+   "label": "1. Validate Token / Auth"
+  },
+  {
+   "from": "Kong API Gateway (DC 2)",
+   "to": "Redis Cache & Rate Limit (DC 2)",
+   "label": "2. Rate Limit Counter"
+  },
+  {
+   "from": "Kong API Gateway (DC 2)",
+   "to": "App PSS (DC 2)",
+   "label": "3. Proxy Request"
+  },
+  {
+   "from": "App PSS (DC 2)",
+   "to": "Redis Cache & Rate Limit (DC 2)"
+  },
+  {
+   "from": "App PSS (DC 2)",
+   "to": "Confluent Kafka (DC 2)"
+  },
+  {
+   "from": "App PSS (DC 2)",
+   "to": "HashiCorp Vault (DC 2)"
+  },
+  {
+   "from": "App PSS (DC 2)",
+   "to": "TPZ FW Core (DC 2)",
+   "label": "Access HSM/DB"
+  },
+  {
+   "from": "TPZ FW Core (DC 2)",
+   "to": "HSM 1 - Primary (DC 2)"
+  },
+  {
+   "from": "TPZ FW Core (DC 2)",
+   "to": "HSM 2 - Secondary (DC 2)"
+  },
+  {
+   "from": "TPZ FW Core (DC 2)",
+   "to": "Oracle RAC TXN (DC 2)"
+  },
+  {
+   "from": "TPZ FW Core (DC 2)",
+   "to": "Postgres DB (DC 2)"
+  },
+  {
+   "from": "OPZ FW Edge (DC 2)",
+   "to": "Cloudflare ZTNA Gateway (DC 2)",
+   "label": "DMZ Interface"
+  },
+  {
+   "from": "OPZ FW Core (DC 2)",
+   "to": "OPZ Internal Apps (DC 2)"
+  },
+  {
+   "from": "OPZ FW Core (DC 2)",
+   "to": "OPZ Database (DC 2)"
+  },
+  {
+   "from": "OPZ FW Core (DC 2)",
+   "to": "OPZ MGMT - Jumpbox & Mon (DC 2)"
+  }
+ ]
+}
