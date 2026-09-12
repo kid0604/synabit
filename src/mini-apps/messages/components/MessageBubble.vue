@@ -316,19 +316,29 @@ const showBoards = async () => {
     if (boardsShown.has(path)) continue;
     boardsShown.add(path);
 
-    const whole = await nodes.getNode(path).catch(() => null);
+    // `read_whiteboard`, not `getNode`.
+    //
+    // A node's `content` is the text the index keeps for searching — for a
+    // board that is its labels run together, "Data Center 1 (DC 1) Network Hub
+    // …", which parses as nothing. The file itself is what has the positions
+    // in it, and this is the same command the Whiteboard app opens a board
+    // with.
+    const raw = await invoke<string>('read_whiteboard', {
+      vaultPath: props.vaultPath || '',
+      path,
+    }).catch(() => null);
     let data: WhiteboardData | null = null;
     try {
-      data = JSON.parse(whole?.content ?? '') as WhiteboardData;
+      data = JSON.parse(raw ?? '') as WhiteboardData;
     } catch {
       data = null;
     }
-    if (!data) continue;
+    if (!data?.nodes) continue;
 
     const picture = boardPreview(data);
     if (!picture) continue;
 
-    const title = data.title || whole?.title || path;
+    const title = data.title || path;
     boards.set(path, { id: path, path, title, data });
     const card = document.createElement('div');
     card.className = 'board-card';

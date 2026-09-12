@@ -334,6 +334,47 @@ fn box_width(label: &str) -> f64 {
     ((longest as f64) * 8.2 + 36.0).clamp(120.0, 300.0)
 }
 
+/// The site an item belongs to: everything before the first `/`.
+fn site_of(item: &SketchItem) -> Option<String> {
+    item.group
+        .as_ref()
+        .map(|g| g.split('/').next().unwrap_or("").trim().to_string())
+        .filter(|g| !g.is_empty())
+}
+
+/// The zone within that site: everything after the first `/`, if there is one.
+fn zone_of(item: &SketchItem) -> Option<String> {
+    let group = item.group.as_ref()?;
+    let (_, zone) = group.split_once('/')?;
+    let zone = zone.trim();
+    (!zone.is_empty()).then(|| zone.to_string())
+}
+
+/// A column's members, split into bands — one per zone, in the order the zones
+/// first appear — and each band laid out in rows by rank.
+///
+/// Items with no zone come first, as the part of the site that is not in one.
+type Band<'a> = (Option<String>, Vec<Vec<&'a SketchItem>>);
+
+fn bands_within<'a>(
+    members: &[&'a SketchItem],
+    rank_of: &std::collections::HashMap<String, usize>,
+) -> Vec<Band<'a>> {
+    let mut bands: Vec<(Option<String>, Vec<&SketchItem>)> = Vec::new();
+    for item in members {
+        let zone = zone_of(item);
+        match bands.iter_mut().find(|(name, _)| name == &zone) {
+            Some((_, held)) => held.push(item),
+            None => bands.push((zone, vec![item])),
+        }
+    }
+    bands.sort_by_key(|(zone, _)| zone.is_some());
+    bands
+        .into_iter()
+        .map(|(zone, held)| (zone, rows_by_rank(&held, rank_of)))
+        .collect()
+}
+
 /// The items of a column, gathered into a row per rank.
 ///
 /// Ranks are compacted as they are read: a drawing with cycles in it can rank
@@ -414,7 +455,7 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
     // ── Columns: one per group, in the order the groups first appear ──
     let mut columns: Vec<(Option<String>, Vec<&SketchItem>)> = Vec::new();
     for item in &sketch.items {
-        let group = item.group.as_ref().map(|g| g.trim().to_string()).filter(|g| !g.is_empty());
+        let group = site_of(item);
         match columns.iter_mut().find(|(name, _)| name == &group) {
             Some((_, members)) => members.push(item),
             None => columns.push((group, vec![item])),
@@ -453,7 +494,7 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
         y = lowest_top + GAP_Y / 2.0;
     }
 
-    // ── Each group a column; inside it, a row per rank ──
+    // ── Each group a column; inside it, a band per zone, a row per rank ──
     //
     // A row per rank, not a row per item. The first real drawing this was
     // asked for had twenty-one boxes in a site, four of them fed by the same
@@ -463,23 +504,48 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
     let mut frames: Vec<(String, f64, f64, f64, f64)> = Vec::new();
     let mut column_x = START;
     for (group, members) in grouped {
-        let rows = rows_by_rank(members, &rank_of);
-        let column_w = rows
+        // A zone inside a site: `group: "DC 1/Network Hub"`. One level of
+        // nesting, because that is what these drawings have — a site with
+        // zones in it — and because the alternative was what happened without
+        // it: three devices renamed `[Network Hub] SW WAN` to say in words
+        // what a frame says by holding them.
+        let bands = bands_within(members, &rank_of);
+        let column_w = bands
             .iter()
-            .map(|row| row_width(row))
+            .flat_map(|(zone, rows)| {
+                let pad = if zone.is_some() { FRAME_PAD * 2.0 } else { 0.0 };
+                rows.iter().map(move |row| row_width(row) + pad)
+            })
             .fold(160.0_f64, f64::max);
 
         let inner_x = column_x + FRAME_PAD;
         let mut inner_y = y + FRAME_TOP;
-        for row in &rows {
-            let mut at_x = inner_x + (column_w - row_width(row)) / 2.0;
-            for item in row {
-                let w = box_width(&item.label);
-                where_is.insert(item.label.trim().to_lowercase(), (at_x, inner_y, w, BOX_H));
-                nodes.push(shape(id("box"), at_x, inner_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
-                at_x += w + GAP_X;
+        for (zone, rows) in &bands {
+            let band_top = inner_y;
+            if zone.is_some() {
+                inner_y += FRAME_TOP;
             }
-            inner_y += BOX_H + GAP_Y;
+            for row in rows {
+                let mut at_x = inner_x + (column_w - row_width(row)) / 2.0;
+                for item in row {
+                    let w = box_width(&item.label);
+                    where_is.insert(item.label.trim().to_lowercase(), (at_x, inner_y, w, BOX_H));
+                    nodes.push(shape(id("box"), at_x, inner_y, w, BOX_H, &item.label, item.shape.as_deref(), now_ms));
+                    at_x += w + GAP_X;
+                }
+                inner_y += BOX_H + GAP_Y;
+            }
+            if let Some(name) = zone {
+                // The zone's own frame, around the rows that belong to it.
+                frames.push((
+                    name.clone(),
+                    inner_x - FRAME_PAD / 2.0,
+                    band_top,
+                    column_w + FRAME_PAD,
+                    (inner_y - GAP_Y) - band_top + FRAME_PAD / 2.0,
+                ));
+                inner_y += GAP_Y / 2.0;
+            }
         }
 
         let frame_h = (inner_y - GAP_Y) - y + FRAME_PAD;
@@ -660,6 +726,15 @@ pub enum Change {
         /// everything, where it is visible and in nobody's way.
         #[serde(default)]
         near: Option<String>,
+        /// Which frame it belongs in — a zone, a site, a rack.
+        ///
+        /// Without this there was no way to say "inside", and it showed: asked
+        /// to put three devices in a Network Hub, the assistant put them
+        /// underneath it, was told that was wrong, and settled for renaming
+        /// them `[Network Hub] SW WAN`. The frame is what says where something
+        /// lives; a label saying so is a caption pretending to be a place.
+        #[serde(default)]
+        inside: Option<String>,
     },
     /// Join two things that are already there.
     Connect {
@@ -683,6 +758,11 @@ pub enum Change {
         side: String,
         of: String,
     },
+    /// Move something that is already on the board into a frame.
+    MoveInto {
+        item: String,
+        frame: String,
+    },
 }
 
 /// Apply changes, and say what happened.
@@ -697,7 +777,7 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
     let mut done = Vec::new();
     for change in changes {
         match change {
-            Change::Add { label, shape: kind, near } => {
+            Change::Add { label, shape: kind, near, inside } => {
                 if label.trim().is_empty() {
                     return Err("An item needs a label.".into());
                 }
@@ -705,8 +785,13 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                     return Err(format!("\"{label}\" is already on this board."));
                 }
                 let w = box_width(label);
-                let (x, y) = match near {
-                    Some(name) => {
+                let (x, y) = match (inside, near) {
+                    (Some(zone), _) => {
+                        let frame = find(board, zone)
+                            .ok_or_else(|| format!("There is no frame called \"{zone}\" here."))?;
+                        under_the_last_thing_in(board, frame, w)
+                    }
+                    (None, Some(name)) => {
                         let anchor = find(board, name)
                             .ok_or_else(|| format!("There is nothing called \"{name}\" here."))?;
                         let (ax, ay, aw) = (
@@ -716,7 +801,7 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                         );
                         free_spot(board, ax + aw + GAP_X, ay, w, BOX_H)
                     }
-                    None => {
+                    (None, None) => {
                         let below = board
                             .nodes
                             .iter()
@@ -727,6 +812,15 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                 };
                 let id = format!("box-{now_ms:x}-{}", board.nodes.len());
                 board.nodes.push(shape(id, x, y, w, BOX_H, label, kind.as_deref(), now_ms));
+                // A frame told to hold something holds it from this moment,
+                // not from whenever geometry happens to agree: the new box is
+                // placed under the last thing in the frame, which is below the
+                // frame's own edge until the frame is grown for it.
+                if let Some(zone) = inside {
+                    if let Some(frame) = find(board, zone) {
+                        grow_to_hold(board, frame, x, y, w, BOX_H, now_ms);
+                    }
+                }
                 done.push(format!("added \"{label}\""));
             }
 
@@ -776,6 +870,22 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                 done.push(format!("removed \"{item}\" and {lines} line(s) that ended on it"));
             }
 
+            Change::MoveInto { item, frame: zone } => {
+                let moving = find(board, item)
+                    .ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
+                let frame = find(board, zone)
+                    .ok_or_else(|| format!("There is no frame called \"{zone}\" here."))?;
+                if moving == frame {
+                    return Err("A frame cannot be put inside itself.".into());
+                }
+                let (w, h) = (board.nodes[moving].width(), board.nodes[moving].height());
+                let (x, y) = under_the_last_thing_in(board, frame, w);
+                board.nodes[moving].position = Point { x, y };
+                board.nodes[moving].updated = Some(now_ms);
+                grow_to_hold(board, frame, x, y, w, h, now_ms);
+                done.push(format!("put \"{item}\" inside \"{zone}\""));
+            }
+
             Change::Place { item, side, of } => {
                 let moving = find(board, item)
                     .ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
@@ -805,11 +915,116 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
         }
     }
 
+    // A frame has to hold what it holds.
+    //
+    // It did not: three devices added to a site landed below it, the frame
+    // stayed the size it was drawn, and the picture showed an empty box with
+    // its contents dangling underneath. A frame is the one thing on a board
+    // whose size is not a choice somebody made — it is a consequence of what
+    // is inside it.
+    refit_frames(board, now_ms);
+
     board.metadata.get_or_insert_with(Map::new).insert(
         "updated_at".into(),
         json!(chrono::Utc::now().to_rfc3339()),
     );
     Ok(done)
+}
+
+/// A free row inside a frame, under whatever is already in it.
+///
+/// Inside, not beside: the caller has said which zone this belongs to, and a
+/// zone is a place on the board rather than a word in a label.
+fn under_the_last_thing_in(board: &Board, frame: usize, w: f64) -> (f64, f64) {
+    let (fx, fy, fw) = (
+        board.nodes[frame].position.x,
+        board.nodes[frame].position.y,
+        board.nodes[frame].width(),
+    );
+    let bottom = held_by(board, frame)
+        .into_iter()
+        .map(|i| board.nodes[i].position.y + board.nodes[i].height())
+        .fold(fy + FRAME_TOP - GAP_Y, f64::max);
+
+    let x = fx + (fw - w).max(FRAME_PAD * 2.0) / 2.0;
+    (x, bottom + GAP_Y)
+}
+
+/// Stretch a frame so that one more box is inside it.
+#[allow(clippy::too_many_arguments)]
+fn grow_to_hold(board: &mut Board, frame: usize, x: f64, y: f64, w: f64, h: f64, now_ms: i64) {
+    let node = &mut board.nodes[frame];
+    let left = node.position.x.min(x - FRAME_PAD);
+    let top = node.position.y.min(y - FRAME_TOP);
+    let right = (node.position.x + node.width()).max(x + w + FRAME_PAD);
+    let bottom = (node.position.y + node.height()).max(y + h + FRAME_PAD);
+
+    node.position = Point { x: left, y: top };
+    node.data.insert("width".into(), json!(right - left));
+    node.data.insert("height".into(), json!(bottom - top));
+    node.updated = Some(now_ms);
+}
+
+/// Which items sit inside this one.
+fn held_by(board: &Board, frame: usize) -> Vec<usize> {
+    let outer = &board.nodes[frame];
+    board
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(i, n)| {
+            *i != frame
+                && n.kind == "shape"
+                && n.position.x >= outer.position.x
+                && n.position.y >= outer.position.y
+                && n.position.x + n.width() <= outer.position.x + outer.width()
+                && n.position.y + n.height() <= outer.position.y + outer.height()
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Grow every frame around what it holds.
+///
+/// Membership is decided before anything moves, because a frame that has been
+/// outgrown no longer contains its own contents — which is exactly the state
+/// this repairs. Anything that was inside it, or was put there by name, counts.
+///
+/// Only frames change size. Nothing inside one moves: the arrangement is the
+/// person's, and this is the board catching up with it.
+fn refit_frames(board: &mut Board, now_ms: i64) {
+    let frames: Vec<usize> = (0..board.nodes.len())
+        .filter(|i| board.nodes[*i].kind == "shape" && held_by(board, *i).len() >= 2)
+        .collect();
+
+    for frame in frames {
+        let held = held_by(board, frame);
+        if held.len() < 2 {
+            continue;
+        }
+        let (mut left, mut top, mut right, mut bottom) =
+            (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for i in held {
+            let n = &board.nodes[i];
+            left = left.min(n.position.x);
+            top = top.min(n.position.y);
+            right = right.max(n.position.x + n.width());
+            bottom = bottom.max(n.position.y + n.height());
+        }
+
+        let x = (left - FRAME_PAD).min(board.nodes[frame].position.x);
+        let y = (top - FRAME_TOP).min(board.nodes[frame].position.y);
+        let w = (right + FRAME_PAD - x).max(board.nodes[frame].width());
+        let h = (bottom + FRAME_PAD - y).max(board.nodes[frame].height());
+
+        let node = &mut board.nodes[frame];
+        if node.position.x != x || node.position.y != y || node.width() != w || node.height() != h {
+            node.position = Point { x, y };
+            node.data.insert("width".into(), json!(w));
+            node.data.insert("height".into(), json!(h));
+            node.updated = Some(now_ms);
+        }
+    }
 }
 
 /// The box somebody means when they say a name.
@@ -990,6 +1205,119 @@ mod tests {
                 assert!(apart, "`{}` sits on `{}`", a.label(), b.label());
             }
         }
+    }
+
+    /// A zone inside a site, which is what these drawings are made of.
+    ///
+    /// Asked to put three devices in a Network Hub, the assistant put them
+    /// *under* it, was told that was wrong, and settled for renaming them
+    /// `[Network Hub] SW WAN` — a caption pretending to be a place, because
+    /// there was no way to say "inside".
+    #[test]
+    fn a_zone_inside_a_site_is_a_frame_inside_a_frame() {
+        let nested = sketch(json!({
+            "items": [
+                { "label": "SW WAN 1", "group": "DC 1/Network Hub" },
+                { "label": "FW CheckPoint 1", "group": "DC 1/Network Hub" },
+                { "label": "TPZ 1", "group": "DC 1" },
+                { "label": "SW WAN 2", "group": "DC 2/Network Hub" },
+                { "label": "FW CheckPoint 2", "group": "DC 2/Network Hub" },
+                { "label": "TPZ 2", "group": "DC 2" }
+            ],
+            "links": [
+                { "from": "SW WAN 1", "to": "FW CheckPoint 1" },
+                { "from": "FW CheckPoint 1", "to": "TPZ 1" },
+                { "from": "SW WAN 2", "to": "FW CheckPoint 2" },
+                { "from": "FW CheckPoint 2", "to": "TPZ 2" }
+            ]
+        }));
+        let board = draw("Hai DC", &nested, NOW).expect("drawn");
+
+        let inside = |outer: &Item, inner: &Item| {
+            inner.position.x >= outer.position.x
+                && inner.position.y >= outer.position.y
+                && inner.position.x + inner.width() <= outer.position.x + outer.width()
+                && inner.position.y + inner.height() <= outer.position.y + outer.height()
+        };
+
+        let site = at(&board, "DC 1");
+        let hubs: Vec<Item> = board
+            .nodes
+            .iter()
+            .filter(|n| n.label() == "Network Hub")
+            .cloned()
+            .collect();
+        assert_eq!(hubs.len(), 2, "a hub per site");
+
+        let hub = hubs.iter().find(|h| inside(&site, h)).expect("the hub is inside its site");
+        for label in ["SW WAN 1", "FW CheckPoint 1"] {
+            assert!(inside(hub, &at(&board, label)), "`{label}` is not in the hub");
+        }
+        assert!(!inside(hub, &at(&board, "TPZ 1")), "the TPZ is not part of the hub");
+        assert!(inside(&site, &at(&board, "TPZ 1")), "but it is part of the site");
+    }
+
+    /// A frame is the one box whose size is not somebody's choice: it is what
+    /// is inside it. Adding to a site used to leave the site the size it was
+    /// drawn, with its new contents hanging below the line.
+    #[test]
+    fn a_frame_grows_around_what_is_put_in_it() {
+        let mut board = draw("Luồng PSS", &two_sites(), NOW).expect("drawn");
+        let was = at(&board, "DC1").height();
+
+        apply(
+            &mut board,
+            &changes(json!([
+                { "op": "add", "label": "Keycloak", "inside": "DC1" },
+                { "op": "add", "label": "Redis", "inside": "DC1" }
+            ])),
+            NOW,
+        )
+        .expect("applied");
+
+        let frame = at(&board, "DC1");
+        assert!(frame.height() > was, "the frame did not grow");
+        for label in ["Keycloak", "Redis", "Kong 1"] {
+            let item = at(&board, label);
+            assert!(
+                item.position.x >= frame.position.x
+                    && item.position.y >= frame.position.y
+                    && item.position.x + item.width() <= frame.position.x + frame.width()
+                    && item.position.y + item.height() <= frame.position.y + frame.height(),
+                "`{label}` is outside the frame that is supposed to hold it"
+            );
+        }
+        // And the other site is where it was.
+        assert_eq!(at(&board, "DC2").height(), was);
+    }
+
+    /// Something already on the board, moved into a zone.
+    #[test]
+    fn a_box_can_be_moved_into_a_frame() {
+        let mut board = draw("Luồng PSS", &two_sites(), NOW).expect("drawn");
+        apply(&mut board, &changes(json!([{ "op": "add", "label": "Keycloak" }])), NOW)
+            .expect("added");
+        assert!(
+            at(&board, "Keycloak").position.y > at(&board, "DC1").position.y + at(&board, "DC1").height(),
+            "it starts outside, below everything"
+        );
+
+        apply(
+            &mut board,
+            &changes(json!([{ "op": "move_into", "item": "Keycloak", "frame": "DC1" }])),
+            NOW,
+        )
+        .expect("moved");
+
+        let frame = at(&board, "DC1");
+        let moved = at(&board, "Keycloak");
+        assert!(
+            moved.position.x >= frame.position.x
+                && moved.position.y >= frame.position.y
+                && moved.position.x + moved.width() <= frame.position.x + frame.width()
+                && moved.position.y + moved.height() <= frame.position.y + frame.height(),
+            "it is still not inside"
+        );
     }
 
     /// A frame is a box drawn behind its members, so it has to contain them.

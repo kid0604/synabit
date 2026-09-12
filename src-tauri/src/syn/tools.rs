@@ -827,7 +827,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "read_board".to_string(),
-                description: "What is on a whiteboard: boxes, frames, and the lines between them. Use this, not get_node — a board file is mostly coordinates.".to_string(),
+                description: "What is on a whiteboard: boxes, frames, lines. Use this, not get_node: a board file is mostly coordinates.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["board"],
@@ -839,7 +839,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "draw_board".to_string(),
-                description: "Draw a whiteboard the user can then rearrange by hand. Say what is on it and what joins what; where things go is worked out here. Items sharing a `group` get a frame, and frames sit side by side — use it for sites and zones.".to_string(),
+                description: "Draw a whiteboard the user can rearrange by hand. Say what is on it and what joins what; positions are worked out here. Items sharing a `group` get a frame, frames sit side by side, and a group nests: `\"DC 1/Network Hub\"`.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["title", "items"],
@@ -847,10 +847,10 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "title": { "type": "string" },
                         "items": {
                             "type": "array",
-                            "description": "Boxes. Labels must differ: lines and later edits name them.",
+                            "description": "Boxes. Labels must differ: lines and edits name them.",
                             "items": { "type": "object", "required": ["label"], "properties": {
                                 "label": { "type": "string" },
-                                "shape": { "type": "string", "description": "rectangle (default), roundedRect, ellipse, diamond, hexagon, cylinder" },
+                                "shape": { "type": "string", "description": "rectangle, roundedRect, ellipse, diamond, hexagon, cylinder" },
                                 "group": { "type": "string" }
                             } }
                         },
@@ -877,11 +877,12 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "board": { "type": "string", "description": "Its title, or its path." },
                         "changes": {
                             "type": "array",
-                            "description": "add {label, shape?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of}. Boxes are named by what is written on them.",
+                            "description": "add {label, shape?, inside?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame}. `inside`/`move_into` put a box in a frame: the only way to say it is in a zone. The frame grows. Name boxes by label.",
                             "items": { "type": "object", "required": ["op"], "properties": {
-                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place"] },
+                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into"] },
                                 "label": { "type": "string" }, "shape": { "type": "string" },
-                                "near": { "type": "string" }, "from": { "type": "string" },
+                                "near": { "type": "string" }, "inside": { "type": "string" },
+                                "frame": { "type": "string" }, "from": { "type": "string" },
                                 "to": { "type": "string" }, "item": { "type": "string" },
                                 "side": { "type": "string" }, "of": { "type": "string" }
                             } }
