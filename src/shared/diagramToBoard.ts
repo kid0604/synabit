@@ -35,14 +35,116 @@ const NODE_COLOUR = '#7c3aed';
 /** And the quieter one for a group's frame, which is background, not content. */
 const GROUP_COLOUR = '#94a3b8';
 
-/** `translate(12, 34)` → `[12, 34]`, and `null` for anything else. */
-const translationOf = (el: Element | null): [number, number] | null => {
-  const m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)/.exec(el?.getAttribute('transform') ?? '');
-  return m ? [parseFloat(m[1]), parseFloat(m[2])] : null;
+/** `translate(12, 34)` → `[12, 34]`; `translate(12)` → `[12, 0]`. */
+const translationOf = (el: Element | null): [number, number] => {
+  const m = /translate\(\s*([-\d.]+)(?:[ ,]+([-\d.]+))?/.exec(el?.getAttribute('transform') ?? '');
+  return m ? [parseFloat(m[1]), parseFloat(m[2] ?? '0') || 0] : [0, 0];
+};
+
+/**
+ * Where an element really sits, transforms of its parents included.
+ *
+ * # Why this is not just the element's own transform
+ *
+ * Because a subgraph is a `<g>` with a transform of its own, and everything
+ * inside it is placed **relative to that**. Reading only the node's own
+ * transform put every box of a subgraph within a few pixels of the subgraph's
+ * corner: on a real drawing of two data centres, forty-four boxes came out in
+ * three overlapping heaps.
+ */
+const placeOf = (el: Element): [number, number] => {
+  let x = 0;
+  let y = 0;
+  for (let at: Element | null = el; at && at.tagName !== 'svg'; at = at.parentElement) {
+    const [dx, dy] = translationOf(at);
+    x += dx;
+    y += dy;
+  }
+  return [x, y];
 };
 
 const numberAttr = (el: Element | null, name: string): number =>
   parseFloat(el?.getAttribute(name) ?? '0') || 0;
+
+/** A box in the diagram's own coordinates. */
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  shape: string;
+}
+
+/** The numbers in `points="9.75,0 144,0 …"`, as a box. */
+const polygonBox = (points: string): { x: number; y: number; w: number; h: number } | null => {
+  const n = points.trim().split(/[\s,]+/).map(Number).filter(v => !Number.isNaN(v));
+  if (n.length < 6) return null;
+  const xs = n.filter((_, i) => i % 2 === 0);
+  const ys = n.filter((_, i) => i % 2 === 1);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+};
+
+/**
+ * The shape a node is drawn as, and how big it is.
+ *
+ * Mermaid draws its shapes five different ways and only one of them is a
+ * `<rect>`: a decision is a `<polygon>`, a database is a `<path>` of arcs, a
+ * round node is a `<circle>`. Reading rectangles alone meant a diagram came
+ * across with its databases and its junctions missing — which on a network
+ * drawing is most of the interesting boxes.
+ *
+ * Every one of them is drawn centred on the node, which is what makes the
+ * arc-covered `<path>` measurable without parsing arcs: its own `translate`
+ * is the corner it starts from, so twice that is its size.
+ */
+const shapeOf = (node: Element): Box | null => {
+  const kid = node.querySelector('rect, polygon, circle, ellipse, path');
+  if (!kid) return null;
+  const [ox, oy] = translationOf(kid);
+  const num = (name: string) => parseFloat(kid.getAttribute(name) ?? '0') || 0;
+
+  switch (kid.tagName.toLowerCase()) {
+    case 'rect': {
+      const w = num('width');
+      const h = num('height');
+      if (!w || !h) return null;
+      // A corner radius is Mermaid's rounded node, and the board has one too.
+      const shape = num('rx') > 2 ? 'roundedRect' : 'rectangle';
+      return { x: num('x') + ox, y: num('y') + oy, w, h, shape };
+    }
+    case 'circle': {
+      const r = num('r');
+      return r ? { x: num('cx') - r + ox, y: num('cy') - r + oy, w: r * 2, h: r * 2, shape: 'ellipse' } : null;
+    }
+    case 'ellipse': {
+      const rx = num('rx');
+      const ry = num('ry');
+      return rx && ry
+        ? { x: num('cx') - rx + ox, y: num('cy') - ry + oy, w: rx * 2, h: ry * 2, shape: 'ellipse' }
+        : null;
+    }
+    case 'polygon': {
+      const box = polygonBox(kid.getAttribute('points') ?? '');
+      if (!box) return null;
+      const corners = (kid.getAttribute('points') ?? '').trim().split(/\s+/).length;
+      return {
+        x: box.x + ox,
+        y: box.y + oy,
+        w: box.w,
+        h: box.h,
+        shape: corners === 4 ? 'diamond' : 'hexagon',
+      };
+    }
+    default: {
+      // The arc-drawn shapes — a database is the one that matters. Centred on
+      // the node, so the corner it is translated to says how big it is.
+      if (ox >= 0 || oy >= 0) return null;
+      return { x: ox, y: oy, w: -ox * 2, h: -oy * 2, shape: 'cylinder' };
+    }
+  }
+};
 
 /**
  * The words in a label, as one line.
@@ -117,7 +219,16 @@ const sidesBetween = (
  * hide them.
  */
 export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
-  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  // Parsed as HTML, not as XML.
+  //
+  // The picture is full of `foreignObject` labels holding ordinary HTML —
+  // `<br>`, `&nbsp;`, whatever somebody wrote in a node — and one of those is
+  // enough for a strict XML parse to stop where it stands. It did: a real
+  // drawing of forty-four boxes parsed as eleven, silently, because the parser
+  // gave back the part it had managed before the first unescaped thing. HTML
+  // parsing is what the browser does with this markup anyway — the conversation
+  // puts the same string into the page with `innerHTML`.
+  const doc = new DOMParser().parseFromString(svg, 'text/html');
   const root = doc.querySelector('svg');
   if (!root) return { nodes: [], edges: [] };
   const svgId = root.getAttribute('id') ?? '';
@@ -134,12 +245,26 @@ export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
   for (const cluster of Array.from(root.querySelectorAll('g.cluster'))) {
     const rect = cluster.querySelector('rect');
     if (!rect) continue;
+    // A subgraph inside a subgraph is placed relative to the one that holds
+    // it, the same as everything else. See `placeOf`.
+    const [gx, gy] = placeOf(cluster);
+    const id = nextId('group');
+    // A subgraph is a thing a line can be drawn to, so it goes in the lookup
+    // beside the boxes. Fourteen of the real drawing's forty-six lines ended
+    // on a subgraph rather than on a box, and without this they were dropped.
+    boxes.set((cluster.getAttribute('id') ?? '').replace(new RegExp(`^${svgId}-`), ''), {
+      id,
+      x: gx + numberAttr(rect, 'x') + MARGIN,
+      y: gy + numberAttr(rect, 'y') + MARGIN,
+      w: numberAttr(rect, 'width'),
+      h: numberAttr(rect, 'height'),
+    });
     nodes.push({
-      id: nextId('group'),
+      id,
       type: 'shape',
       position: {
-        x: numberAttr(rect, 'x') + MARGIN,
-        y: numberAttr(rect, 'y') + MARGIN,
+        x: gx + numberAttr(rect, 'x') + MARGIN,
+        y: gy + numberAttr(rect, 'y') + MARGIN,
       },
       data: {
         shapeType: 'rectangle',
@@ -154,29 +279,27 @@ export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
 
   // ── The boxes ─────────────────────────────────────────────
   for (const node of Array.from(root.querySelectorAll('g.node'))) {
-    const at = translationOf(node);
-    const rect = node.querySelector('rect');
-    if (!at || !rect) continue;
+    const shape = shapeOf(node);
+    if (!shape) continue;
 
-    // Mermaid puts a node's centre in the transform and its box around that
-    // centre; a board places the top-left corner.
-    const w = numberAttr(rect, 'width');
-    const h = numberAttr(rect, 'height');
-    const x = at[0] - w / 2 + MARGIN;
-    const y = at[1] - h / 2 + MARGIN;
+    // Mermaid places a node by its centre and draws the shape around that;
+    // a board places the top-left corner.
+    const [cx, cy] = placeOf(node);
+    const x = cx + shape.x + MARGIN;
+    const y = cy + shape.y + MARGIN;
 
     const id = nextId('shape');
-    boxes.set(keyOfNode(node.getAttribute('id') ?? '', svgId), { id, x, y, w, h });
+    boxes.set(keyOfNode(node.getAttribute('id') ?? '', svgId), { id, x, y, w: shape.w, h: shape.h });
     nodes.push({
       id,
       type: 'shape',
       position: { x, y },
       data: {
-        shapeType: 'rectangle',
+        shapeType: shape.shape,
         label: labelOf(node.querySelector('.label')),
         color: NODE_COLOUR,
-        width: w,
-        height: h,
+        width: shape.w,
+        height: shape.h,
       },
       updated: now,
     });

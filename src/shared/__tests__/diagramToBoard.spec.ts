@@ -118,6 +118,71 @@ describe('a name with an underscore in it', () => {
 });
 
 /**
+ * A subgraph is a `<g>` with a transform, and what is inside it is placed
+ * relative to that.
+ *
+ * Read as absolute, a real drawing of two data centres came across as three
+ * overlapping heaps: forty-four boxes, every one of them within a few pixels
+ * of the corner of whichever subgraph held it.
+ */
+describe('a box inside a subgraph', () => {
+  const svg =
+    '<svg id="s" xmlns="http://www.w3.org/2000/svg">' +
+    '<g class="cluster" id="s-DC"><rect x="1000" y="500" width="400" height="300"></rect>' +
+    '<g class="cluster-label"><foreignObject><div><p>DC</p></div></foreignObject></g></g>' +
+    '<g transform="translate(1000, 500)">' +
+    '<g class="node" id="s-flowchart-A-0" transform="translate(150, 100)">' +
+    '<rect x="-50" y="-25" width="100" height="50"></rect>' +
+    '<g class="label"><foreignObject><div><p>A</p></div></foreignObject></g></g></g></svg>';
+
+  it('is placed where the subgraph put it, not where its own transform says', () => {
+    const board = boardFromDiagram(svg);
+    const box = board.nodes.find(n => (n.data as { label: string }).label === 'A')!;
+    // 1000 + 150 - 50 + margin, 500 + 100 - 25 + margin.
+    expect(box.position).toEqual({ x: 1160, y: 635 });
+  });
+
+  /** And a line drawn to the subgraph itself lands on its frame. */
+  it('lets a line end on the subgraph', () => {
+    const withEdge = svg.replace('</svg>', '<path data-id="L_A_DC_0"></path></svg>');
+    const board = boardFromDiagram(withEdge);
+    const frame = board.nodes.find(n => (n.data as { label: string }).label === 'DC')!;
+    expect(board.edges).toHaveLength(1);
+    expect(board.edges[0].target).toBe(frame.id);
+  });
+});
+
+/**
+ * Mermaid draws a database as arcs, a junction as a polygon and a round node
+ * as a circle. Reading only rectangles dropped fourteen of one real drawing's
+ * forty-four boxes — and on a network diagram the databases are not the parts
+ * anybody is willing to lose.
+ */
+describe('the shapes that are not rectangles', () => {
+  const node = (id: string, inner: string) =>
+    `<g class="node" id="s-flowchart-${id}-0" transform="translate(200, 200)">${inner}` +
+    `<g class="label"><foreignObject><div><p>${id}</p></div></foreignObject></g></g>`;
+  const svg =
+    '<svg id="s" xmlns="http://www.w3.org/2000/svg">' +
+    node('DB', '<path d="M0,11 a53,11 0,0,0 107,0" transform="translate(-53.5, -36)"></path>') +
+    node('SW', '<polygon points="9,0 144,0 153,-19 144,-39 9,-39 0,-19" transform="translate(-76,19)"></polygon>') +
+    node('NET', '<circle r="50" cx="0" cy="0"></circle>') +
+    '</svg>';
+
+  it('come across as themselves', () => {
+    const board = boardFromDiagram(svg);
+    const shape = (label: string) =>
+      board.nodes.find(n => (n.data as { label: string }).label === label)?.data as {
+        shapeType: string; width: number; height: number;
+      };
+
+    expect(shape('DB')).toMatchObject({ shapeType: 'cylinder', width: 107, height: 72 });
+    expect(shape('SW')).toMatchObject({ shapeType: 'hexagon', width: 153, height: 39 });
+    expect(shape('NET')).toMatchObject({ shapeType: 'ellipse', width: 100, height: 100 });
+  });
+});
+
+/**
  * What gets written to the vault is a board file like any other.
  *
  * Not a new format, not a Syn-shaped one: the Whiteboard app opens it from the

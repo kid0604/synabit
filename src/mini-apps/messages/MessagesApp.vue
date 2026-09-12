@@ -1100,17 +1100,19 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 </div>
             </template>
         </div>
+
+        <!-- Beside the conversation, in the row rather than over it: the
+             picture is being arranged against what the answer said. -->
+        <BoardPane
+          v-if="arrangedBoard"
+          :vault-path="props.vaultPath"
+          :board="arrangedBoard"
+          @close="arrangedBoard = null"
+          @open="emit('open-node', arrangedBoard!.id, 'whiteboard')"
+        />
     </div>
 
     <!-- What Syn did, and what it was told -->
-    <BoardPane
-      v-if="arrangedBoard"
-      :vault-path="props.vaultPath"
-      :board="arrangedBoard"
-      @close="arrangedBoard = null"
-      @open="emit('open-node', arrangedBoard!.id, 'whiteboard')"
-    />
-
     <RunInspector
       v-if="showInspector"
       :vault-path="props.vaultPath"
