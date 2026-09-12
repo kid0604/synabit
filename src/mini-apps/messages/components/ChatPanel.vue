@@ -40,6 +40,8 @@ const emit = defineEmits<{
   'regenerate': [messageId: string];
   /** A drawn diagram, on its way to becoming a board. See `keepAsBoard`. */
   'arrange': [svg: string, title: string];
+  /** A board the answer names, opened beside the conversation. */
+  'open-board': [board: { id: string; path: string; title: string; data: any }];
   'notification-action': [notification: any];
   consent: [choice: ConsentAnswer];
   choice: [nodeId: string];
@@ -362,6 +364,7 @@ const handleStop = () => {
             @open-source="$emit('open-source', $event)"
             @regenerate="$emit('regenerate', msg.id)"
             @arrange="(svg, title) => $emit('arrange', svg, title)"
+            @open-board="(board) => $emit('open-board', board)"
           />
         </template>
 

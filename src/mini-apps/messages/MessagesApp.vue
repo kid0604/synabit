@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -160,6 +160,16 @@ const handleArrange = async (svg: string, title: string) => {
   } catch (e) {
     logger.error('MessagesApp: could not turn the diagram into a board', e as string);
   }
+};
+
+/**
+ * A board the answer showed, opened beside the conversation.
+ *
+ * The same pane the arranging button opens, on a board that already exists in
+ * the vault — nothing is written, because nothing new was made.
+ */
+const handleOpenBoard = (board: KeptBoard) => {
+  arrangedBoard.value = board;
 };
 
 const handleNotificationAction = (notification: any) => {
@@ -460,11 +470,35 @@ const sidebar = useSidebarResize({ left: { initial: 320, min: 240, max: 560 } })
  * is kept alive behind `<keep-alive>`, so `onDeactivated` is what "not showing"
  * looks like here, and `onUnmounted` would never fire.
  */
-watch([sidebar.leftWidth, isMobile], ([width, mobile]) => {
+/**
+ * Whether the list of conversations is on screen.
+ *
+ * It is a third of the window, and reading a long answer — or arranging a
+ * board beside one — is the moment somebody wants that third back. Remembered,
+ * because a panel that reappears on every restart is a panel nobody trusts
+ * closing.
+ *
+ * Desktop only: below `md` the list *is* the screen, and the way back to it is
+ * the back button that is already there.
+ */
+const SIDEBAR_KEY = 'syn.conversations.shown';
+const sidebarShown = ref(localStorage.getItem(SIDEBAR_KEY) !== 'no');
+const roomForSidebar = computed(() => (sidebarShown.value ? sidebar.leftWidth.value : 0));
+const toggleSidebar = () => {
+  sidebarShown.value = !sidebarShown.value;
+  try {
+    localStorage.setItem(SIDEBAR_KEY, sidebarShown.value ? 'yes' : 'no');
+  } catch {
+    // A browser with storage switched off still gets the toggle, just not the
+    // memory of it.
+  }
+};
+
+watch([roomForSidebar, isMobile], ([width, mobile]) => {
   sidebarRoom.value = mobile ? 0 : width;
 }, { immediate: true });
 
-onActivated(() => { sidebarRoom.value = isMobile.value ? 0 : sidebar.leftWidth.value; });
+onActivated(() => { sidebarRoom.value = isMobile.value ? 0 : roomForSidebar.value; });
 onDeactivated(() => { sidebarRoom.value = 0; });
 
 onMounted(() => {
@@ -854,9 +888,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
     
     <!-- Sidebar -->
     <div
-        class="flex-shrink-0 h-full border-r border-border dark:border-border-dark z-20 relative"
+        class="flex-shrink-0 h-full border-r border-border dark:border-border-dark z-20 relative overflow-hidden"
         :class="[isMobile ? (selection ? 'hidden' : 'w-full') : '', sidebar.isDraggingLeft.value ? '' : 'transition-[width] duration-300']"
-        :style="isMobile ? undefined : { width: `${sidebar.leftWidth.value}px` }"
+        :style="isMobile ? undefined : { width: `${roomForSidebar}px` }"
+        :inert="!isMobile && !sidebarShown"
     >
         <!--
           The edge, draggable, the same way Notes and Things have always been.
@@ -905,6 +940,19 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             <div class="flex items-center gap-3">
                 <button v-if="isMobile" @click="selection = null" class="p-1.5 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 cursor-pointer" :aria-label="t('syn.back_to_list')">
                     <ChevronLeft class="w-5 h-5" />
+                </button>
+
+                <!-- The conversation list, out of the way and back again. -->
+                <button
+                    v-else
+                    @click="toggleSidebar"
+                    class="p-1.5 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 cursor-pointer"
+                    :title="sidebarShown ? t('syn.hide_conversations') : t('syn.show_conversations')"
+                    :aria-label="sidebarShown ? t('syn.hide_conversations') : t('syn.show_conversations')"
+                    :aria-expanded="sidebarShown"
+                >
+                    <PanelLeftClose v-if="sidebarShown" class="w-4 h-4" />
+                    <PanelLeftOpen v-else class="w-4 h-4" />
                 </button>
                 
                 <template v-if="selection?.kind === 'conversation'">
@@ -1055,6 +1103,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @stop="stopGeneration"
                   @open-source="handleOpenSource"
                   @arrange="handleArrange"
+                  @open-board="handleOpenBoard"
                   @regenerate="handleRegenerate"
                   @notification-action="handleNotificationAction"
                   @consent="onConsent"

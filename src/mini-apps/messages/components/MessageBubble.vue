@@ -28,6 +28,8 @@ import FootingMark from './FootingMark.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { useNodeService } from '../../../composables/useNodeService';
+import { boardPreview } from '../../../shared/boardPreview';
+import type { WhiteboardData } from '../../whiteboard/boardFile';
 import { useEventBus } from '../../../composables/useEventBus';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
@@ -141,6 +143,8 @@ const emit = defineEmits<{
   'regenerate': [];
   /** The drawn diagram, to be arranged by hand. See `keepAsBoard`. */
   'arrange': [svg: string, title: string];
+  /** A board the answer names, opened beside the conversation. */
+  'open-board': [board: { id: string; path: string; title: string; data: WhiteboardData }];
 }>();
 
 const copied = ref(false);
@@ -287,6 +291,72 @@ const renderMermaid = async () => {
   }
 };
 
+/**
+ * A board the answer mentions, shown rather than linked to.
+ *
+ * # Why the picture goes in the bubble
+ *
+ * Because "I drew you a board" followed by a link is three actions before
+ * anybody sees it: click, wait for the Whiteboard app to mount, come back.
+ * The file is a few kilobytes and the picture is rectangles and lines — it
+ * costs about what an image costs, and the answer stops being a promise.
+ *
+ * At most two per message, and resolved one at a time: each name is a lookup,
+ * and an answer that listed a dozen boards would otherwise spend a dozen
+ * round trips before it could be read.
+ */
+const PREVIEWED = 2;
+const boardsShown = new Set<string>();
+
+const showBoards = async () => {
+  if (!messageEl.value || props.isStreaming) return;
+  const links = Array.from(
+    messageEl.value.querySelectorAll<HTMLElement>('a.wikilink[data-wikilink]'),
+  ).slice(0, PREVIEWED);
+  if (!links.length) return;
+
+  for (const link of links) {
+    const name = link.dataset.wikilink ?? '';
+    if (!name || boardsShown.has(name)) continue;
+    boardsShown.add(name);
+
+    // The same lookup a click on the link would do — by title, because that is
+    // all a `[[link]]` carries.
+    const found = await invoke<{ results: Array<{ id: string; item_type: string; title: string }> }>(
+      'search_nexus',
+      { vaultPath: props.vaultPath || '', query: `in:title "${name}"` },
+    ).catch(() => null);
+    const node = found?.results?.find(r => r.item_type === 'whiteboard');
+    if (!node) continue;
+
+    const whole = await nodes.getNode(node.id).catch(() => null);
+    let data: WhiteboardData | null = null;
+    try {
+      data = JSON.parse(whole?.content ?? '') as WhiteboardData;
+    } catch {
+      data = null;
+    }
+    if (!data) continue;
+
+    const picture = boardPreview(data);
+    if (!picture) continue;
+
+    boards.set(node.id, { id: node.id, path: node.id, title: node.title, data });
+    const card = document.createElement('div');
+    card.className = 'board-card';
+    card.innerHTML =
+      `<div class="board-picture" data-board="${node.id}" role="button" tabindex="0"` +
+      ` title="${t('syn.board_arrange_here')}">${picture}</div>` +
+      `<div class="board-actions"><span>${node.title}</span>` +
+      `<button type="button" data-act="board-app" data-for="${node.id}">` +
+      `${t('syn.board_open_in_app')}</button></div>`;
+    messageEl.value.appendChild(card);
+  }
+};
+
+/** The boards shown under this message, by node id. */
+const boards = new Map<string, { id: string; path: string; title: string; data: WhiteboardData }>();
+
 /** Draw one, when it is worth drawing. */
 const drawDiagram = async (el: HTMLElement) => {
   {
@@ -383,7 +453,10 @@ const renderMath = async () => {
 watch(renderedContent, () => {
   if (props.message.role !== 'assistant') return;
   renderMath();
-  if (!props.isStreaming) renderMermaid();
+  if (!props.isStreaming) {
+    renderMermaid();
+    void showBoards();
+  }
 });
 
 // Also render when streaming finishes
@@ -391,6 +464,7 @@ watch(() => props.isStreaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming) {
     renderMath();
     renderMermaid();
+    void showBoards();
   }
 });
 
@@ -398,6 +472,7 @@ onMounted(() => {
   if (props.message.role === 'assistant' && !props.isStreaming) {
     renderMath();
     renderMermaid();
+    void showBoards();
   }
 });
 
@@ -544,6 +619,23 @@ const handleContentClick = async (e: MouseEvent) => {
   // diagram. Clicking it opens the one you can read.
   if (showDiagramUnder(target)) {
     e.preventDefault();
+    return;
+  }
+
+  // A board shown under the answer: the picture opens it beside the
+  // conversation, the button hands it to the Whiteboard app.
+  const picture = target.closest('[data-board]') as HTMLElement | null;
+  if (picture) {
+    e.preventDefault();
+    const board = boards.get(picture.dataset.board ?? '');
+    if (board) emit('open-board', board);
+    return;
+  }
+  const toApp = target.closest('[data-act="board-app"]') as HTMLElement | null;
+  if (toApp) {
+    e.preventDefault();
+    const board = boards.get(toApp.dataset.for ?? '');
+    if (board) emit('open-source', { id: board.id, title: board.title, node_type: 'whiteboard' });
     return;
   }
 
@@ -1074,6 +1166,45 @@ const copyContent = async () => {
   every picture below the fold. The height keeps the transcript from jumping
   as each one lands.
 */
+/* A board the answer named, shown under it. */
+:deep(.board-card) {
+  margin: 0.75rem 0 0.25rem;
+  border: 1px solid rgba(124, 58, 237, 0.15);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+:deep(.board-picture) {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem;
+  cursor: zoom-in;
+}
+
+:deep(.board-actions) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid rgba(124, 58, 237, 0.1);
+  font-size: 12px;
+  color: #6b7280;
+}
+
+:deep(.board-actions button) {
+  font-size: 11px;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.5rem;
+  color: #7c3aed;
+  cursor: pointer;
+}
+
+:deep(.board-actions button:hover) {
+  background: rgba(124, 58, 237, 0.08);
+}
+
 :deep(pre.mermaid[data-processed="waiting"]) {
   min-height: 140px;
   color: transparent;

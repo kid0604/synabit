@@ -1667,6 +1667,8 @@
     "nothing_selected": "Chưa chọn gì",
     "pick_something": "Chọn một thread, một hội thoại, hoặc mở cái mới.",
     "back_to_list": "Quay lại",
+    "hide_conversations": "Ẩn danh sách hội thoại",
+    "show_conversations": "Hiện danh sách hội thoại",
     "status_connected": "Đã kết nối",
     "status_disconnected": "Ollama chưa kết nối",
     "thread_just_started": "vừa tạo",
@@ -2024,7 +2026,8 @@
     "model_search": "Gõ để tìm model…",
     "model_none_match": "Không có gì khớp “{query}”.",
     "model_hidden": "Ẩn {n} cái — chúng không trả lời chat được. Vẫn hiện ra",
-    "cap_browse": "Dùng trình duyệt"
+    "cap_browse": "Dùng trình duyệt",
+    "board_arrange_here": "Mở cạnh khung chat"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

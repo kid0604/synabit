@@ -1667,6 +1667,8 @@
     "nothing_selected": "Nothing selected",
     "pick_something": "Pick a thread, a conversation, or start one.",
     "back_to_list": "Back",
+    "hide_conversations": "Hide conversations",
+    "show_conversations": "Show conversations",
     "status_connected": "Connected",
     "status_disconnected": "Ollama disconnected",
     "thread_just_started": "just started",
@@ -2024,7 +2026,8 @@
     "model_search": "Type to find a model…",
     "model_none_match": "Nothing matches “{query}”.",
     "model_hidden": "{n} hidden — they cannot answer a chat. Show them anyway",
-    "cap_browse": "Uses the browser"
+    "cap_browse": "Uses the browser",
+    "board_arrange_here": "Open beside the conversation"
   },
   "update": {
     "available": "Synabit {version} is available!",
