@@ -16,6 +16,8 @@ import NotificationCard from './components/NotificationCard.vue';
 import ModelSelector from './components/ModelSelector.vue';
 import SynSettings from './components/SynSettings.vue';
 import RunInspector from './components/RunInspector.vue';
+import BoardPane from './components/BoardPane.vue';
+import { keepAsBoard, type KeptBoard } from './keepAsBoard';
 import ThreadPanel from './components/ThreadPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import InstructionsPanel from './components/InstructionsPanel.vue';
@@ -140,6 +142,24 @@ const handleOpenSource = (source: { id: string; title: string; node_type: string
     return;
   }
   emit('open-node', source.id, route);
+};
+
+/**
+ * A diagram, opened beside the conversation with its boxes loose.
+ *
+ * The board is written to the vault first and the pane edits that — not a
+ * copy of it. So the thing being dragged is the same thing the Whiteboard app
+ * opens from the button in the pane's header, and closing the pane loses
+ * nothing.
+ */
+const arrangedBoard = ref<KeptBoard | null>(null);
+
+const handleArrange = async (svg: string, title: string) => {
+  try {
+    arrangedBoard.value = await keepAsBoard(props.vaultPath, svg, title);
+  } catch (e) {
+    logger.error('MessagesApp: could not turn the diagram into a board', e as string);
+  }
 };
 
 const handleNotificationAction = (notification: any) => {
@@ -1034,6 +1054,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @send="handleSendMessage"
                   @stop="stopGeneration"
                   @open-source="handleOpenSource"
+                  @arrange="handleArrange"
                   @regenerate="handleRegenerate"
                   @notification-action="handleNotificationAction"
                   @consent="onConsent"
@@ -1082,6 +1103,14 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
     </div>
 
     <!-- What Syn did, and what it was told -->
+    <BoardPane
+      v-if="arrangedBoard"
+      :vault-path="props.vaultPath"
+      :board="arrangedBoard"
+      @close="arrangedBoard = null"
+      @open="emit('open-node', arrangedBoard!.id, 'whiteboard')"
+    />
+
     <RunInspector
       v-if="showInspector"
       :vault-path="props.vaultPath"

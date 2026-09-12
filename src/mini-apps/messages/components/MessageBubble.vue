@@ -139,6 +139,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open-source': [source: SourceRef];
   'regenerate': [];
+  /** The drawn diagram, to be arranged by hand. See `keepAsBoard`. */
+  'arrange': [svg: string, title: string];
 }>();
 
 const copied = ref(false);
@@ -270,7 +272,12 @@ const renderMermaid = async () => {
       const opened =
         `<div class="mermaid-rendered" data-diagram="${id}" role="button" tabindex="0"` +
         ` title="${t('syn.diagram_open')}">${svg}</div>` +
-        `<div class="mermaid-actions"><button type="button" data-act="keep"` +
+        `<div class="mermaid-actions">` +
+        // Arranging comes first: it is what somebody does with a drawing that
+        // is nearly right, and keeping is what they do when it already is.
+        `<button type="button" data-act="arrange"` +
+        ` data-for="${id}">${t('syn.arrange_by_hand')}</button>` +
+        `<button type="button" data-act="keep"` +
         ` data-for="${id}">${t('syn.keep_as_note')}</button></div>`;
       const container = el.parentElement;
       if (container && container.classList.contains('mermaid-container')) {
@@ -384,6 +391,16 @@ const runBlockAction = async (button: HTMLElement) => {
     }
 
     emit('open-source', kept);
+    return;
+  }
+
+  if (button.dataset.act === 'arrange') {
+    // The picture, not the source: Mermaid has worked out where everything
+    // goes by now, and those positions are the whole point of arranging.
+    const svg = diagrams.get(id);
+    const code = sources.get(id);
+    if (!svg || !code) return;
+    emit('arrange', svg, titleFor(code, props.message.content ?? '', t('syn.keep_untitled')));
     return;
   }
 

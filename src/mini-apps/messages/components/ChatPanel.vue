@@ -38,6 +38,8 @@ const emit = defineEmits<{
   stop: [];
   'open-source': [source: SourceRef];
   'regenerate': [messageId: string];
+  /** A drawn diagram, on its way to becoming a board. See `keepAsBoard`. */
+  'arrange': [svg: string, title: string];
   'notification-action': [notification: any];
   consent: [choice: ConsentAnswer];
   choice: [nodeId: string];
@@ -359,6 +361,7 @@ const handleStop = () => {
             :vault-path="vaultPath"
             @open-source="$emit('open-source', $event)"
             @regenerate="$emit('regenerate', msg.id)"
+            @arrange="(svg, title) => $emit('arrange', svg, title)"
           />
         </template>
 
