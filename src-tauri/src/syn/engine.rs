@@ -1670,15 +1670,20 @@ fn assemble(
         content: reply.content,
         model: Some(model.to_string()),
         timestamp: chrono::Utc::now().to_rfc3339(),
-        // What the whole turn was charged, not what it wrote. Input is most of
-        // it — the prompt, the tool declarations, the conversation and every
-        // page read into it, all re-sent on every iteration — and until now the
-        // number under an answer counted only the reply.
-        tokens: reply.usage.charged().filter(|n| *n > 0),
+        // What the whole run was charged, not what the last round was. Input
+        // is most of it — the prompt, the tool declarations, the conversation
+        // and every page read into it, all re-sent on every round — and this
+        // counted one round of it. A turn that browsed four pages showed
+        // 39,915 tokens under an answer that had cost 119,868, and a turn that
+        // collected links showed 34,806 of 236,652.
+        tokens: Some(run.spent.tokens).filter(|n| *n > 0),
+        // And how long the person waited, for the same reason. The provider's
+        // own timing measures one generation — 6.1 seconds of a turn that took
+        // 25.1 — so it is worth having only while it is the larger of the two,
+        // which is to say while a run is one round and the wall clock is all
+        // queue.
         duration_ms: Some(
-            reply
-                .duration_ms
-                .unwrap_or_else(|| started.elapsed().as_millis() as u64),
+            (started.elapsed().as_millis() as u64).max(reply.duration_ms.unwrap_or(0)),
         ),
         sources: Some(cited).filter(|c| !c.is_empty()),
         footing: None,
@@ -1718,6 +1723,53 @@ mod tests {
             tool_call_id: id.map(str::to_string),
             images: None,
         }
+    }
+
+    /// The figure under an answer is what the turn cost, not what the last
+    /// round of it cost.
+    ///
+    /// Measured on two real turns: one that browsed four pages showed 39,915
+    /// tokens under an answer that had cost 119,868, and one that collected
+    /// links showed 34,806 of 236,652. Most of a run is the rounds that only
+    /// reach for a tool, and those were the rounds it left out.
+    #[test]
+    fn the_answer_carries_what_the_whole_turn_cost() {
+        let settings = crate::models::syn::SynSettings::default();
+        let mut run = Run::new(
+            "một câu hỏi",
+            Some("conv-1".into()),
+            crate::syn::run::Budget::from_settings(&settings),
+        );
+        let spent_on = |n: u64| crate::syn::provider::Usage { input: Some(n), ..Default::default() };
+        run.charge(spent_on(20_000), 4_000);
+        run.record_tool(
+            0,
+            "browse",
+            serde_json::json!({}),
+            true,
+            crate::syn::registry::Reversal::Nothing,
+            "một trang",
+            700,
+        );
+        run.record_assistant(1, "câu trả lời", spent_on(30_000), 6_000);
+
+        let last = ChatReply {
+            content: "câu trả lời".into(),
+            tool_calls: Vec::new(),
+            usage: spent_on(30_000),
+            duration_ms: Some(6_000),
+        };
+        let started = std::time::Instant::now() - std::time::Duration::from_millis(25_000);
+
+        let message =
+            assemble("m1", "gemini-3.8-flash", last, started, Vec::new(), Vec::new(), &mut run);
+
+        assert_eq!(message.tokens, Some(50_000), "both rounds, not the last one");
+        assert!(
+            message.duration_ms.is_some_and(|ms| ms >= 25_000),
+            "and how long the person waited: {:?}",
+            message.duration_ms
+        );
     }
 
     /// The part handed back is the part's words *and* the part's addresses.

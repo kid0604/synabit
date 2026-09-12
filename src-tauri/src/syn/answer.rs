@@ -62,6 +62,11 @@ pub fn addresses_in(text: &str) -> Vec<String> {
         while let Some(last) = url.chars().last() {
             let bare = match last {
                 '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '”' | '’' => true,
+                // Markdown emphasis closing around a link: `**[text](url)**`.
+                // Without this the address read as `…/668/)**`, matched
+                // nothing that had been read, and the answer carried a warning
+                // that the one real link in it might not exist.
+                '*' => true,
                 ')' => !url.contains('('),
                 ']' => !url.contains('['),
                 _ => false,
@@ -168,6 +173,21 @@ mod tests {
             addresses_in(text),
             ["https://en.wikipedia.org/wiki/Rust_(programming_language)"]
         );
+    }
+
+    /// A bold link is still a link.
+    ///
+    /// The answer said `👉 **[This Week in Rust 668](https://…/668/)**`, and the
+    /// address came out as `https://…/668/)**`. Nothing read had been at that
+    /// address — nothing ever is — so the one real link in the answer was
+    /// handed to the person with a warning that it might not exist.
+    #[test]
+    fn markdown_emphasis_is_not_part_of_the_address() {
+        let bold = "👉 **[This Week in Rust 668](https://this-week-in-rust.org/blog/668/)**";
+        assert_eq!(addresses_in(bold), ["https://this-week-in-rust.org/blog/668/"]);
+
+        let read = ["đã đọc https://this-week-in-rust.org/blog/668/ hôm nay".to_string()];
+        assert!(invented(bold, &read).is_empty(), "and it counts as read");
     }
 
     #[test]
