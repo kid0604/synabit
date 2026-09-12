@@ -3624,7 +3624,23 @@ fn tool_read_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
     let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
     let board = read_board_file(&path)?;
-    Ok(crate::syn::board::describe(&board))
+    // The path first, because a name is how a person says which board and a
+    // path is how everything else says it: `edit_board` takes either, and the
+    // conversation shows the picture by finding this line. Without it the
+    // model went looking for the file it had just read — `get_node` on a made
+    // up `Whiteboards/Diagram from Syn.md`, then a `query_nodes` to find the
+    // real one.
+    Ok(format!("{}\n{}", rel_board_path(ctx, &path), crate::syn::board::describe(&board)))
+}
+
+/// Where a board sits in the vault, as the rest of the app names it.
+fn rel_board_path<R: tauri::Runtime>(ctx: &ToolContext<R>, path: &std::path::Path) -> String {
+    let rel = path
+        .strip_prefix(ctx.vault_path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    format!("File: {rel}")
 }
 
 fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
@@ -3676,7 +3692,8 @@ fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     save_board_file(ctx, &path, &board)?;
 
     Ok(serde_json::json!({
-        "board": board.title,
+        "board": rel_board_path(ctx, &path).trim_start_matches("File: "),
+        "title": board.title,
         "did": done,
         "note": "Only what was asked for moved. Everything else is where the person left it.",
     })
@@ -4349,6 +4366,10 @@ mod tests {
         // Read back by title, the way a conversation would name it.
         let said = call("read_board", serde_json::json!({ "board": "PSS" }));
         assert!(said.contains("5 boxes"), "{said}");
+        assert!(
+            said.contains(&format!("File: {rel}")),
+            "a reading says which file it read, so the answer can show it: {said}"
+        );
         assert!(said.contains("TCTV → Kong 1 (MPLS)"), "{said}");
 
         // And changed by name, without touching anything else.
@@ -4365,6 +4386,7 @@ mod tests {
         ))
         .expect("JSON");
         assert_eq!(changed["did"].as_array().expect("did").len(), 2);
+        assert_eq!(changed["board"], rel, "a change says which file it changed");
 
         let after = std::fs::read_to_string(vault.join(rel)).expect("read");
         assert!(after.contains("Keycloak"), "the change reached the file");

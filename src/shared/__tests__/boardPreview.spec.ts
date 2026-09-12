@@ -90,3 +90,52 @@ describe('a board, small, under the answer', () => {
     expect(boardPreview(board([scribble]))).toContain('<polyline');
   });
 });
+
+/**
+ * Finding the board an answer worked on.
+ *
+ * The first version read the `[[link]]` in the prose and looked the title up.
+ * On the first real answer that failed: the board was called
+ * "Kiến trúc 2 Data Center (DC 1 - DC 2)", and a title with brackets and
+ * dashes in it did not come back from the search. The tools name their file,
+ * which needs no lookup.
+ */
+describe('which board an answer touched', () => {
+  it('reads the file out of what the tools reported', async () => {
+    const { boardsTouchedBy } = await import('../../mini-apps/messages/keepAsBoard');
+    const log = [
+      { tool_name: 'query_nodes', result_preview: '{"results":[{"id":"Notes/a.md"}]}' },
+      {
+        tool_name: 'read_board',
+        result_preview: 'File: Whiteboards/whiteboard-1789222191991.whiteboard.json\nBoard "x" 7 boxes',
+      },
+      {
+        tool_name: 'edit_board',
+        result_preview: '{"board":"Whiteboards/whiteboard-1789223138862.whiteboard.json","did":["added \\"F5\\""]}',
+      },
+    ];
+
+    expect(boardsTouchedBy(log)).toEqual([
+      'Whiteboards/whiteboard-1789222191991.whiteboard.json',
+      'Whiteboards/whiteboard-1789223138862.whiteboard.json',
+    ]);
+  });
+
+  it('keeps the last few rather than the first', async () => {
+    const { boardsTouchedBy } = await import('../../mini-apps/messages/keepAsBoard');
+    const log = ['a', 'b', 'c'].map(n => ({
+      tool_name: 'draw_board',
+      result_preview: `{"board":"Whiteboards/${n}.whiteboard.json"}`,
+    }));
+    expect(boardsTouchedBy(log, 2)).toEqual([
+      'Whiteboards/b.whiteboard.json',
+      'Whiteboards/c.whiteboard.json',
+    ]);
+  });
+
+  it('has nothing to show for an answer that touched none', async () => {
+    const { boardsTouchedBy } = await import('../../mini-apps/messages/keepAsBoard');
+    expect(boardsTouchedBy([{ tool_name: 'browse', result_preview: 'a page' }])).toEqual([]);
+    expect(boardsTouchedBy(null)).toEqual([]);
+  });
+});

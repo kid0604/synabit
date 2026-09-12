@@ -84,3 +84,31 @@ export const saveBoard = async (
     content: JSON.stringify(data, null, 2),
   });
 };
+
+/**
+ * Which boards an answer touched, read off what its tools reported doing.
+ *
+ * # Why not the link in the prose
+ *
+ * That was the first attempt, and it failed on the first real answer. A
+ * `[[link]]` carries a title; a title has to be looked up; and the title in
+ * question was "Kiến trúc 2 Data Center (DC 1 - DC 2)", with brackets and
+ * dashes that the search did not match. Meanwhile `draw_board`, `edit_board`
+ * and `read_board` each name the file they worked on, which needs no lookup
+ * and cannot be ambiguous.
+ *
+ * The last few, not the first: an answer that read one board and then wrote
+ * another should show what it left behind.
+ */
+export const boardsTouchedBy = (
+  log: Array<{ tool_name?: string; result_preview?: string }> | null | undefined,
+  limit = 2,
+): string[] => {
+  const found: string[] = [];
+  for (const call of log ?? []) {
+    if (!/^(draw|edit|read)_board$/.test(call.tool_name ?? '')) continue;
+    const path = /Whiteboards\/[^"'\s\\]+\.whiteboard\.json/.exec(call.result_preview ?? '');
+    if (path && !found.includes(path[0])) found.push(path[0]);
+  }
+  return found.slice(-limit);
+};

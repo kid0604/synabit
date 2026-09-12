@@ -27,6 +27,7 @@ import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
+import { boardsTouchedBy } from '../keepAsBoard';
 import { useNodeService } from '../../../composables/useNodeService';
 import { boardPreview } from '../../../shared/boardPreview';
 import type { WhiteboardData } from '../../whiteboard/boardFile';
@@ -310,26 +311,12 @@ const boardsShown = new Set<string>();
 
 const showBoards = async () => {
   if (!messageEl.value || props.isStreaming) return;
-  const links = Array.from(
-    messageEl.value.querySelectorAll<HTMLElement>('a.wikilink[data-wikilink]'),
-  ).slice(0, PREVIEWED);
-  if (!links.length) return;
 
-  for (const link of links) {
-    const name = link.dataset.wikilink ?? '';
-    if (!name || boardsShown.has(name)) continue;
-    boardsShown.add(name);
+  for (const path of boardsTouchedBy(props.message.tool_calls_log)) {
+    if (boardsShown.has(path)) continue;
+    boardsShown.add(path);
 
-    // The same lookup a click on the link would do — by title, because that is
-    // all a `[[link]]` carries.
-    const found = await invoke<{ results: Array<{ id: string; item_type: string; title: string }> }>(
-      'search_nexus',
-      { vaultPath: props.vaultPath || '', query: `in:title "${name}"` },
-    ).catch(() => null);
-    const node = found?.results?.find(r => r.item_type === 'whiteboard');
-    if (!node) continue;
-
-    const whole = await nodes.getNode(node.id).catch(() => null);
+    const whole = await nodes.getNode(path).catch(() => null);
     let data: WhiteboardData | null = null;
     try {
       data = JSON.parse(whole?.content ?? '') as WhiteboardData;
@@ -341,15 +328,18 @@ const showBoards = async () => {
     const picture = boardPreview(data);
     if (!picture) continue;
 
-    boards.set(node.id, { id: node.id, path: node.id, title: node.title, data });
+    const title = data.title || whole?.title || path;
+    boards.set(path, { id: path, path, title, data });
     const card = document.createElement('div');
     card.className = 'board-card';
     card.innerHTML =
-      `<div class="board-picture" data-board="${node.id}" role="button" tabindex="0"` +
+      `<div class="board-picture" data-board="${path}" role="button" tabindex="0"` +
       ` title="${t('syn.board_arrange_here')}">${picture}</div>` +
-      `<div class="board-actions"><span>${node.title}</span>` +
-      `<button type="button" data-act="board-app" data-for="${node.id}">` +
+      `<div class="board-actions"><span></span>` +
+      `<button type="button" data-act="board-app" data-for="${path}">` +
       `${t('syn.board_open_in_app')}</button></div>`;
+    const name = card.querySelector('.board-actions span');
+    if (name) name.textContent = title;
     messageEl.value.appendChild(card);
   }
 };
