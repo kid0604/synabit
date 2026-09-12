@@ -589,6 +589,9 @@ pub struct Pending {
     /// which is what a person does with a long article and what Syn had no way
     /// of doing at all.
     pub reading: Option<crate::syn::web::Page>,
+    /// Its links, placed in its text, so a part of it can be handed over with
+    /// the addresses that are in that part. See `web::place_links`.
+    pub links: Vec<crate::syn::web::Link>,
     /// How far into it has been sent so far.
     ///
     /// Separate from the page, because the page kept here is the **whole** one
@@ -648,10 +651,25 @@ pub fn offered_link(waiting: &Waiting, what: &str) -> Option<crate::syn::web::Li
 /// `whole` is the page before any cut; `sent` is the slice the model was given.
 /// Both are needed and neither can be derived from the other: the first is what
 /// reading on reads, the second is where reading on starts.
-pub fn note_reading(waiting: &Waiting, whole: &crate::syn::web::Page, sent: &crate::syn::web::Page) {
+pub fn note_reading(
+    waiting: &Waiting,
+    whole: &crate::syn::web::Page,
+    sent: &crate::syn::web::Page,
+    links: &[crate::syn::web::Link],
+) {
     let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
     pending.read_to = sent.from + sent.text.chars().count();
     pending.reading = Some(whole.clone());
+    pending.links = links.to_vec();
+}
+
+/// The links inside a slice of the page in hand.
+///
+/// Which is what makes "go to that part" worth doing: the part arrives with
+/// the addresses that are in it, rather than with its prose and nothing else.
+pub fn links_in(waiting: &Waiting, from: usize, to: usize) -> Vec<crate::syn::web::Link> {
+    let pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
+    crate::syn::web::in_part(&pending.links, from, to)
 }
 
 /// Move the mark, the page in hand being unchanged.
@@ -673,6 +691,7 @@ pub fn nothing_in_hand(waiting: &Waiting) {
     let mut pending = waiting.lock().unwrap_or_else(|e| e.into_inner());
     pending.reading = None;
     pending.read_to = 0;
+    pending.links.clear();
 }
 
 /// What `browse` was asked to do with the page already in hand, if anything.
@@ -719,6 +738,19 @@ pub fn onwards(waiting: &Waiting, what: &str) -> Option<Onwards> {
             heading == asked || heading.starts_with(&asked) || asked.starts_with(&heading)
         })
         .map(|h| Onwards::Part(h.at))
+}
+
+/// Whether this is the word for reading on, with no page in hand to read.
+///
+/// The pair that made this worth naming: a run collecting links from a
+/// newsletter searched the web for the word *more* and read the Cambridge
+/// dictionary's entry for it, because "more" with nothing in hand fell through
+/// to the search below it.
+pub fn nothing_to_read_on(waiting: &Waiting, what: &str) -> bool {
+    if !what.trim().eq_ignore_ascii_case(READ_ON) {
+        return false;
+    }
+    waiting.lock().unwrap_or_else(|e| e.into_inner()).reading.is_none()
 }
 
 /// The page in hand, sliced as asked.
@@ -1464,13 +1496,82 @@ mod tests {
         );
         let sent = page.clone().trimmed_to(20);
         let waiting = Waiting::default();
-        note_reading(&waiting, &page, &sent);
+        note_reading(&waiting, &page, &sent, &[]);
         waiting
     }
 
     /// A long page used to have an unreachable second half: `browse` on the
     /// same address returned the same opening, so Syn summarised what it had
     /// and called it the article.
+    /// A newsletter: prose in sections, every address inside one of them.
+    fn a_newsletter_in_hand() -> (Waiting, crate::syn::web::Page) {
+        let html = format!(
+            r#"<html><body><article><h1>This Week in Rust 668</h1><p>{intro}</p>
+               <h3>Observations/Thoughts</h3><ul>
+                 <li><a href="https://pid7.com/blog/simd/">Searching through 150 GiB of Text</a></li>
+                 <li><a href="https://lwn.net/never/">Stabilizing Rust's never type</a></li>
+               </ul><p>{filler}</p>
+               <h3>Rust Walkthroughs</h3><ul>
+                 <li><a href="https://bamburac.com/chess/">Safely generating legal chess moves</a></li>
+               </ul><p>{filler}</p></article></body></html>"#,
+            intro = "Đầu thư ".repeat(40),
+            filler = "chữ đệm ".repeat(40),
+        );
+        let page = crate::syn::web::reduce(&html, "https://this-week-in-rust.org/668/");
+        let mut links = crate::syn::web::links_on(&html, &page.url);
+        crate::syn::web::place_links(&mut links, &page.text);
+
+        let sent = page.clone().trimmed_to(40);
+        let waiting = Waiting::default();
+        note_reading(&waiting, &page, &sent, &links);
+        (waiting, page)
+    }
+
+    /// The part you jumped to hands over the addresses that are in it.
+    ///
+    /// Without this, jumping to `Rust Walkthroughs` — which is what a person
+    /// does — returned the section's prose with every address stripped out,
+    /// and the run went looking on the web for links it was already holding.
+    #[test]
+    fn a_part_of_the_page_carries_the_links_that_are_in_it() {
+        let (waiting, page) = a_newsletter_in_hand();
+        let part = |name: &str| {
+            let Some(Onwards::Part(at)) = onwards(&waiting, name) else {
+                panic!("`{name}` is a part of the page");
+            };
+            let slice = read_on(&waiting, &Onwards::Part(at), 400).expect("the part");
+            let to = slice.from + slice.text.chars().count();
+            links_in(&waiting, slice.from, to)
+        };
+
+        let walkthroughs: Vec<String> =
+            part("Rust Walkthroughs").into_iter().map(|l| l.url).collect();
+        assert_eq!(walkthroughs, ["https://bamburac.com/chess/"], "{page:?}");
+
+        let observations: Vec<String> =
+            part("Observations/Thoughts").into_iter().map(|l| l.url).collect();
+        assert_eq!(
+            observations,
+            ["https://pid7.com/blog/simd/", "https://lwn.net/never/"]
+        );
+    }
+
+    /// "more" is a page turn, and a page turn with nothing in hand is nothing.
+    ///
+    /// It used to fall through to the search below it: half-way through
+    /// collecting links from a newsletter, Syn searched the web for the word
+    /// *more*, read the Cambridge dictionary entry for it, and cited it.
+    #[test]
+    fn more_with_no_page_in_hand_is_not_a_search() {
+        let empty = Waiting::default();
+        assert!(nothing_to_read_on(&empty, "more"));
+        assert!(nothing_to_read_on(&empty, "  More "));
+        assert!(!nothing_to_read_on(&empty, "more about rust"), "a question is not a page turn");
+
+        let (held, _) = a_newsletter_in_hand();
+        assert!(!nothing_to_read_on(&held, "more"), "with a page in hand it turns the page");
+    }
+
     #[test]
     fn more_reads_on_from_where_the_last_slice_stopped() {
         let waiting = a_page_in_hand();
@@ -1578,6 +1679,7 @@ mod tests {
                 url: (*u).to_string(),
                 region: crate::syn::web::Region::Content,
                 heading: Some(3),
+                at: 0,
             })
             .collect();
         note_offered(&waiting, "https://genk.vn/", &links);

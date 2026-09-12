@@ -823,6 +823,15 @@ pub const DATE_RULE: &str =
 /// the model is already looking instead of competing with eleven other sections
 /// for attention on every turn.
 pub fn wrap(page: &Page) -> String {
+    wrap_with(page, &[])
+}
+
+/// The same, for a page whose links are in hand.
+///
+/// The links are not printed here — `wrap_links` does that — but the parts
+/// list says how many sit under each heading, which is what tells a model that
+/// jumping to a part is how to reach them.
+pub fn wrap_with(page: &Page, links: &[Link]) -> String {
     let cut = if page.truncated {
         format!(
             "\n\n(You have read characters {from} to {to} of {whole}. This is not the whole \
@@ -872,7 +881,7 @@ pub fn wrap(page: &Page) -> String {
         shape = page.shape.said(),
         title = page.title,
         published = published,
-        parts = parts_of(page),
+        parts = parts_of(page, links),
         text = page.text,
     )
 }
@@ -892,22 +901,36 @@ pub fn wrap(page: &Page) -> String {
 /// price the entire article is arguing about. It was past the cut, Syn wrote
 /// "the article's conclusion" without it, and 138 characters would have said
 /// that a fourth part existed.
-fn parts_of(page: &Page) -> String {
+fn parts_of(page: &Page, links: &[Link]) -> String {
     if page.outline.is_empty() {
         return String::new();
     }
 
     let read_to = page.from + page.text.chars().count();
+    let ends_at = |i: usize| {
+        page.outline.get(i + 1).map(|next: &Heading| next.at).unwrap_or(page.whole)
+    };
     let listed = page
         .outline
         .iter()
-        .map(|h| {
+        .enumerate()
+        .map(|(i, h)| {
             let unread = h.at >= read_to || h.at < page.from;
+            // How many addresses are under this heading. A count, not a
+            // sentence: the model is told what is there and decides for
+            // itself, the way the arrow says which parts are still unread.
+            let links_here = in_part(links, h.at, ends_at(i)).len();
+            let links_here = match links_here {
+                0 => String::new(),
+                1 => " (1 link)".to_string(),
+                n => format!(" ({n} links)"),
+            };
             format!(
-                "{} [h{}] {}",
+                "{} [h{}] {}{}",
                 if unread { "→" } else { " " },
                 h.level,
-                h.text
+                h.text,
+                links_here
             )
         })
         .collect::<Vec<_>>()
@@ -915,7 +938,8 @@ fn parts_of(page: &Page) -> String {
 
     format!(
         "\nThe parts of this page, in order. An arrow marks one you have not read; \
-         call `browse` with its words to go there.\n{listed}\n"
+         call `browse` with its words to go there, and the links in it come with it.\n\
+         {listed}\n"
     )
 }
 
@@ -1161,6 +1185,11 @@ pub struct Link {
     /// is the section label on the card. It is what separates the three links
     /// pointing at the same VnExpress article from each other.
     pub heading: Option<u8>,
+    /// Where its words sit in the page's readable text. See `place_links`.
+    ///
+    /// Zero until something places them, which is right for a link nobody has
+    /// located: the top of the page is where a reader meets it.
+    pub at: usize,
 }
 
 impl Link {
@@ -1261,7 +1290,7 @@ pub fn links_on(html: &str, base: &str) -> Vec<Link> {
             continue;
         }
 
-        found.push(Link { text, url, region, heading });
+        found.push(Link { text, url, region, heading, at: 0 });
     }
 
     found
@@ -1311,6 +1340,47 @@ fn whereabouts(element: &scraper::ElementRef<'_>) -> (Region, Option<u8>) {
     (region.unwrap_or(Region::Unsaid), heading)
 }
 
+/// Say where each link's words sit in the page's readable text.
+///
+/// # Why a link needs a place at all
+///
+/// Because a long page is read a part at a time, and until now the addresses
+/// only ever came with the first slice. *This Week in Rust* is the case: Syn
+/// opened it, jumped to `Rust Walkthroughs` — which is what a person does —
+/// and got the section's prose with every address stripped out of it. It then
+/// spent five rounds searching the web for articles whose addresses were on
+/// the page in its hand.
+///
+/// Matched by walking the text once, in the order the links appear, so a word
+/// that occurs twice is not counted twice. A link whose words are not in the
+/// readable text at all — an icon, a menu the extraction dropped — keeps the
+/// place of the last one found, which puts it with the part it was nearest to.
+pub fn place_links(links: &mut [Link], text: &str) {
+    let mut cursor = 0usize;
+    // A byte offset walking in step with `cursor`, so the search does not
+    // restart from the top of a hundred-kilobyte page for every link.
+    let mut byte = 0usize;
+    for link in links.iter_mut() {
+        let needle = link.text.trim();
+        let found = (!needle.is_empty()).then(|| text[byte..].find(needle)).flatten();
+        match found {
+            Some(ahead) => {
+                cursor += text[byte..byte + ahead].chars().count();
+                link.at = cursor;
+                // Past this one, so the same words used twice are two places.
+                cursor += needle.chars().count();
+                byte += ahead + needle.len();
+            }
+            None => link.at = cursor,
+        }
+    }
+}
+
+/// The links inside one part of a page — the slice from `from` to `to`.
+pub fn in_part(links: &[Link], from: usize, to: usize) -> Vec<Link> {
+    links.iter().filter(|l| l.at >= from && l.at < to).cloned().collect()
+}
+
 /// The links worth the budget: the page's stories first, then the rest of its
 /// content, each in the order the page puts them.
 ///
@@ -1353,6 +1423,21 @@ pub fn worth_offering(links: &[Link]) -> Vec<Link> {
 /// Empty for a page with none, and empty is right: a block headed "links on
 /// this page" with nothing under it is a line of budget saying nothing.
 pub fn wrap_links(links: &[Link], on_the_page: usize) -> String {
+    links_block(links, on_the_page, "on the page")
+}
+
+/// The same, for the links inside the part of a page being read.
+///
+/// Ordered as the part orders them and not re-ranked: on a first read the
+/// ranking decides which twenty of two hundred are worth the budget, and
+/// inside a part that question has already been answered — by the model,
+/// which said which part it wanted.
+pub fn wrap_links_in_part(links: &[Link]) -> String {
+    let shown: Vec<Link> = links.iter().take(MAX_LINKS).cloned().collect();
+    links_block(&shown, links.len(), "in this part")
+}
+
+fn links_block(links: &[Link], on_the_page: usize, whole: &str) -> String {
     if links.is_empty() {
         return String::new();
     }
@@ -1384,7 +1469,7 @@ pub fn wrap_links(links: &[Link], on_the_page: usize) -> String {
     // looking. Asked for "the links to the technical articles" while holding a
     // fifth of them, it wrote the rest from the titles.
     let of_how_many = if on_the_page > links.len() {
-        format!(" These are {} of the {on_the_page} links on the page.", links.len())
+        format!(" These are {} of the {on_the_page} links {whole}.", links.len())
     } else {
         String::new()
     };
@@ -2327,6 +2412,71 @@ mod tests {
         assert!(last_story < first_other, "a story must never come after a menu item");
     }
 
+    /// A link is where its words are, and the same words twice are two places.
+    #[test]
+    fn a_link_is_placed_where_its_words_are() {
+        let text = "Mở đầu\nRust Walkthroughs\nSafely generating legal chess moves\n\
+                    Observations\nSearching through 150 GiB\nSafely generating legal chess moves";
+        let mut links = vec![
+            Link {
+                text: "Safely generating legal chess moves".into(),
+                url: "https://bamburac.com/chess/".into(),
+                region: Region::Content,
+                heading: None,
+                at: 0,
+            },
+            Link {
+                text: "Searching through 150 GiB".into(),
+                url: "https://pid7.com/simd/".into(),
+                region: Region::Content,
+                heading: None,
+                at: 0,
+            },
+            Link {
+                text: "Safely generating legal chess moves".into(),
+                url: "https://bamburac.com/chess/".into(),
+                region: Region::Content,
+                heading: None,
+                at: 0,
+            },
+        ];
+        place_links(&mut links, text);
+
+        assert_eq!(links[0].at, text.chars().position(|c| c == 'S').expect("the first S"));
+        assert!(links[1].at > links[0].at, "in the order the page puts them");
+        assert!(links[2].at > links[1].at, "the second time those words appear");
+        assert_eq!(in_part(&links, links[1].at, links[2].at).len(), 1);
+    }
+
+    /// The parts list says how many addresses are under each heading.
+    ///
+    /// A count, not an instruction. It is what tells a model holding twenty of
+    /// a page's two hundred links that the twelve it wants are one jump away —
+    /// the same way the arrow tells it which parts it has not read.
+    #[test]
+    fn a_part_says_how_many_links_are_in_it() {
+        let html = format!(
+            r#"<html><body><article><h1>Bản tin</h1><p>{intro}</p>
+               <h3>Walkthroughs</h3><ul>
+                 <li><a href="https://a.test/1">Một bài rất dài về Rust</a></li>
+                 <li><a href="https://a.test/2">Hai bài rất dài về Rust</a></li>
+               </ul><p>{filler}</p>
+               <h3>Quote of the Week</h3><p>{filler}</p></article></body></html>"#,
+            intro = "mở đầu ".repeat(40),
+            filler = "chữ đệm ".repeat(40),
+        );
+        let page = reduce(&html, "https://twir.test/668/");
+        let mut links = links_on(&html, &page.url);
+        place_links(&mut links, &page.text);
+
+        let said = wrap_with(&page, &links);
+        assert!(said.contains("[h3] Walkthroughs (2 links)"), "{said}");
+        assert!(said.contains("[h3] Quote of the Week\n"), "nothing said where there is nothing");
+        assert!(said.contains("the links in it come with it"), "{said}");
+
+        assert!(!wrap(&page).contains("(2 links)"), "and a page with no links in hand says none");
+    }
+
     #[test]
     fn a_page_says_how_many_links_it_has_when_it_shows_only_some() {
         let many: Vec<Link> = (0..5)
@@ -2335,6 +2485,7 @@ mod tests {
                 url: format!("https://x.test/{i}"),
                 region: Region::Content,
                 heading: None,
+                at: 0,
             })
             .collect();
 

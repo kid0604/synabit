@@ -1347,10 +1347,22 @@ async fn browse<R: tauri::Runtime>(
     if let Some(how) = browser::onwards(req.browser, what) {
         if let Some(page) = browser::read_on(req.browser, &how, cap) {
             browser::note_read_to(req.browser, &page);
-            return Ok((web::wrap(&page), vec![web::citation(&page)]));
+            return Ok((onward_in_hand(req.browser, &page), vec![web::citation(&page)]));
         }
         return Err(crate::error::AppError::General(
             "You have reached the end of that page. There is no more of it to read.".into(),
+        ));
+    }
+
+    // "more" means the page in hand, and there is none. Saying so beats what
+    // this did instead: it fell through to the search below, and Syn — halfway
+    // through collecting links from a newsletter — read the Cambridge
+    // dictionary's entry for the word *more*, and cited it.
+    if browser::nothing_to_read_on(req.browser, what) {
+        return Err(crate::error::AppError::General(
+            "There is no page in hand to read on from. `more` continues the page you last \
+             opened by address; open one first, or say what to look for."
+                .into(),
         ));
     }
 
@@ -1558,9 +1570,13 @@ fn onward(
     // reads the next slice out of what was kept, which is why a long article
     // is no longer a page with an unreachable second half.
     let sent = page.clone().trimmed_to(cap);
-    crate::syn::browser::note_reading(waiting, page, &sent);
 
-    let all = web::links_on(html, &page.url);
+    let mut all = web::links_on(html, &page.url);
+    // Placed before they are kept: a link with no place cannot be handed over
+    // with the part of the page it sits in.
+    web::place_links(&mut all, &page.text);
+    crate::syn::browser::note_reading(waiting, page, &sent, &all);
+
     let offered = web::worth_offering(&all);
     // Remembered before it is rendered, so the numbers the model reads are the
     // numbers this will answer to.
@@ -1568,9 +1584,39 @@ fn onward(
 
     let links = web::wrap_links(&offered, all.len());
     if links.is_empty() {
-        web::wrap(&sent)
+        web::wrap_with(&sent, &all)
     } else {
-        format!("{}\n\n{}", web::wrap(&sent), links)
+        format!("{}\n\n{}", web::wrap_with(&sent, &all), links)
+    }
+}
+
+/// A part of the page in hand, and the links that are in that part.
+///
+/// # Why the addresses have to come with the part
+///
+/// Because they were being stripped out of it. Asked for the links to the
+/// articles in *This Week in Rust*, Syn opened the page, jumped to
+/// `Rust Walkthroughs` — which is what a person does — and got the section's
+/// prose with every address removed. The addresses were in the markup it had
+/// already fetched. It spent five rounds searching the web for them, and the
+/// rule above ("every address you pass on must be one written here") is why it
+/// searched rather than guessing: it was doing as it was told, with nothing to
+/// do it with.
+fn onward_in_hand(
+    waiting: &crate::syn::browser::Waiting,
+    page: &crate::syn::web::Page,
+) -> String {
+    use crate::syn::web;
+
+    let to = page.from + page.text.chars().count();
+    let here = crate::syn::browser::links_in(waiting, page.from, to);
+    crate::syn::browser::note_offered(waiting, &page.url, &here);
+
+    let links = web::wrap_links_in_part(&here);
+    if links.is_empty() {
+        web::wrap_with(page, &here)
+    } else {
+        format!("{}\n\n{}", web::wrap_with(page, &here), links)
     }
 }
 
@@ -1672,6 +1718,43 @@ mod tests {
             tool_call_id: id.map(str::to_string),
             images: None,
         }
+    }
+
+    /// The part handed back is the part's words *and* the part's addresses.
+    ///
+    /// The run this comes from: asked for the links to the articles in a
+    /// newsletter it had just summarised, Syn opened the page, jumped to the
+    /// right section, and was handed prose with every address removed. It then
+    /// searched the web, one round per article, for addresses that were in the
+    /// markup it had already fetched.
+    #[test]
+    fn a_part_of_a_page_comes_with_the_links_in_it() {
+        let html = format!(
+            r#"<html><body><article><h1>This Week in Rust 668</h1><p>{intro}</p>
+               <h3>Rust Walkthroughs</h3><ul>
+                 <li><a href="https://bamburac.com/chess/">Safely generating legal chess moves</a></li>
+                 <li><a href="https://sofiabelen.github.io/vtables/">Visualizing Rust's Vtables</a></li>
+               </ul><p>{filler}</p></article></body></html>"#,
+            intro = "Đầu thư ".repeat(40),
+            filler = "chữ đệm ".repeat(40),
+        );
+        let page = crate::syn::web::reduce(&html, "https://this-week-in-rust.org/668/");
+        let waiting = crate::syn::browser::Waiting::default();
+        let first = onward(&waiting, &page, &html, 60);
+        assert!(
+            first.contains("[h3] Rust Walkthroughs (2 links)"),
+            "the first read says where they are: {first}"
+        );
+
+        let Some(how) = crate::syn::browser::onwards(&waiting, "Rust Walkthroughs") else {
+            panic!("the heading is a place to go");
+        };
+        let part = crate::syn::browser::read_on(&waiting, &how, 400).expect("the part");
+        let said = onward_in_hand(&waiting, &part);
+
+        assert!(said.contains("https://bamburac.com/chess/"), "{said}");
+        assert!(said.contains("https://sofiabelen.github.io/vtables/"), "{said}");
+        assert!(said.contains("WHERE THIS PAGE CAN TAKE YOU"), "{said}");
     }
 
     fn answered_from(pages: &[(&str, &str)]) -> SynMessage {
