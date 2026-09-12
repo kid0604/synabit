@@ -86,29 +86,48 @@ export const saveBoard = async (
 };
 
 /**
- * Which boards an answer touched, read off what its tools reported doing.
+ * Which board an answer is about, read off what its tools reported doing.
  *
  * # Why not the link in the prose
  *
  * That was the first attempt, and it failed on the first real answer. A
  * `[[link]]` carries a title; a title has to be looked up; and the title in
  * question was "Kiến trúc 2 Data Center (DC 1 - DC 2)", with brackets and
- * dashes that the search did not match. Meanwhile `draw_board`, `edit_board`
- * and `read_board` each name the file they worked on, which needs no lookup
- * and cannot be ambiguous.
+ * dashes that the search did not match. The tools name the file they worked
+ * on, which needs no lookup and cannot be ambiguous.
  *
- * The last few, not the first: an answer that read one board and then wrote
- * another should show what it left behind.
+ * # Why a reading is not enough to be shown
+ *
+ * Because the second attempt showed the wrong boards. An answer that changed
+ * one board had, on its way there, read two others while working out which
+ * board was which — and "the last two files mentioned" were those two. What
+ * somebody wants to see under an answer is what the answer *did*: a board it
+ * drew or changed. A board it only read is shown when the answer did nothing
+ * else, because then reading it was the point.
  */
 export const boardsTouchedBy = (
   log: Array<{ tool_name?: string; result_preview?: string }> | null | undefined,
   limit = 2,
 ): string[] => {
-  const found: string[] = [];
+  const path = (call: { result_preview?: string }): string | null =>
+    /Whiteboards\/[^"'\s\\]+\.whiteboard\.json/.exec(call.result_preview ?? '')?.[0] ?? null;
+
+  const written: string[] = [];
+  const read: string[] = [];
   for (const call of log ?? []) {
-    if (!/^(draw|edit|read)_board$/.test(call.tool_name ?? '')) continue;
-    const path = /Whiteboards\/[^"'\s\\]+\.whiteboard\.json/.exec(call.result_preview ?? '');
-    if (path && !found.includes(path[0])) found.push(path[0]);
+    const where = /^(draw|edit)_board$/.test(call.tool_name ?? '')
+      ? written
+      : call.tool_name === 'read_board'
+        ? read
+        : null;
+    const found = where && path(call);
+    if (!where || !found) continue;
+    // Kept once, at its last mention: a board drawn and then changed again is
+    // one board, and the order somebody reads it in is the order it was left.
+    const already = where.indexOf(found);
+    if (already !== -1) where.splice(already, 1);
+    where.push(found);
   }
-  return found.slice(-limit);
+
+  return (written.length ? written : read).slice(-limit);
 };
