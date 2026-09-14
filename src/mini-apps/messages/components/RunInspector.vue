@@ -454,7 +454,14 @@ const totalTokens = computed(() =>
  * user who raised `num_ctx` has already thought about it.
  */
 const SMALL_WINDOW = 8192;
-const overWindow = computed(() => totalTokens.value > SMALL_WINDOW * 0.6);
+/**
+ * Only for Ollama. A hosted model's window is around a million tokens, and this
+ * warning was on for every turn there while describing a machine the model does
+ * not run on — the mistake the settings screen's context picker made too.
+ */
+const overWindow = computed(
+  () => preview.value?.provider === 'ollama' && totalTokens.value > SMALL_WINDOW * 0.6,
+);
 
 const onKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') emit('close');

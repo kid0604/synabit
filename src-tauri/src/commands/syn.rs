@@ -1999,7 +1999,9 @@ pub async fn syn_preview_prompt(
         focus: focus.as_ref(), thread: None, counted: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
-    .into())
+    .into();
+    preview.provider = settings.provider;
+    Ok(preview)
 }
 
 // ═══════════════════════════════════════════════════════════════

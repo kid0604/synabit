@@ -778,6 +778,8 @@ describe('what one turn costs', () => {
   it('says when a turn has eaten a small local window', () => {
     expect(inspector).toContain('const SMALL_WINDOW = 8192');
     expect(inspector).toContain('overWindow');
+    // And only against Ollama, whose window it is — not a hosted model's million.
+    expect(inspector).toContain("provider === 'ollama'");
     for (const locale of [en, vi]) {
       expect(locale.syn).toHaveProperty('prompt_over_window');
     }

@@ -355,8 +355,13 @@ watch(() => props.vaultPath, () => {
                 />
               </div>
 
-              <!-- Context Window -->
-              <div>
+              <!-- Context Window
+                   Ollama only. `num_ctx` is sent to Ollama and to nothing else —
+                   the OpenAI provider leaves it out on purpose, and Gemini has no
+                   such knob — so for a hosted model this picker changed nothing,
+                   and its warning about RAM described a machine the model does
+                   not run on. -->
+              <div v-if="usingOllama">
                 <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
                   {{ t('syn.context_window') }}
                 </label>

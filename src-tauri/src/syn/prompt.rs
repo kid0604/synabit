@@ -646,6 +646,13 @@ pub struct PromptPreview {
     /// **Declaring the tools cost three times the entire fixed prompt**, and
     /// nothing had ever said so.
     pub tools: ToolPayload,
+    /// Which provider this vault answers with.
+    ///
+    /// So the screen can tell a cost from a wall. Its small-window warning is
+    /// about Ollama's default 8,192 tokens; shown for a hosted model with a
+    /// window of a million, it was on for every turn and true for none of them.
+    /// Set by `syn_preview_prompt`, which has the settings.
+    pub provider: crate::models::syn::SynProvider,
 }
 
 /// What the tool declarations cost, measured rather than estimated.
@@ -680,6 +687,7 @@ impl From<PromptPlan> for PromptPreview {
             budget_chars: plan.budget_chars(),
             sections: plan.breakdown(),
             tools: crate::syn::tools::payload_cost(),
+            provider: crate::models::syn::SynProvider::default(),
         }
     }
 }

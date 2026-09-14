@@ -303,6 +303,11 @@ export interface PromptPreview {
    * more than the whole fixed prompt. Mirrors `syn::prompt::ToolPayload`.
    */
   tools: ToolPayload;
+  /**
+   * Which provider this vault answers with. The small-window warning is about
+   * Ollama's default window and is shown for Ollama only.
+   */
+  provider: 'ollama' | 'open_ai_compat' | 'gemini';
 }
 
 export interface ToolPayload {
