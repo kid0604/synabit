@@ -272,11 +272,25 @@ const getCurrentItemTitle = (): string | undefined => {
     return note?.title || undefined;
 };
 
+/**
+ * The article open in Feeds.
+ *
+ * Not in `getItemIdForApp`: an article is not a vault node, and that function
+ * answers with paths the node tools take. Asked to "summarise this" in the
+ * reader, Syn was told only that the user was in Feeds, and asked them to open
+ * the article they were already reading.
+ */
+const getCurrentArticle = (): { id: string; title?: string } | undefined => {
+    if (activeTool.value !== 'feeds') return undefined;
+    return feedsAppRef.value?.currentArticle?.() ?? undefined;
+};
+
 /** Where a question is being asked from, for `captureFocus`. */
 const askingFrom = (thread?: string) => ({
     app: activeTool.value,
     node: getCurrentItemId(),
     nodeTitle: getCurrentItemTitle(),
+    article: getCurrentArticle(),
     thread,
 });
 

@@ -359,12 +359,12 @@ fn in_clause(ids: &[String], first_idx: usize) -> String {
 const LIST_CONTENT_PREVIEW: usize = 400;
 
 /// Every column of one article, in the order `row_to_article` expects.
-const ARTICLE_COLUMNS: &str = "id, feed_source_id, guid, title, url, author, content, summary,
+pub(crate) const ARTICLE_COLUMNS: &str = "id, feed_source_id, guid, title, url, author, content, summary,
      published_at, fetched_at, thumbnail_url, word_count, read_time_minutes,
      content_type, is_read, is_starred, is_read_later, tags";
 
 /// Map a rusqlite row to a CachedArticle.
-fn row_to_article(row: &rusqlite::Row) -> rusqlite::Result<CachedArticle> {
+pub(crate) fn row_to_article(row: &rusqlite::Row) -> rusqlite::Result<CachedArticle> {
     Ok(CachedArticle {
         id: row.get(0)?,
         feed_source_id: row.get(1)?,

@@ -1014,6 +1014,7 @@ mod tests {
             selection: Some("per-seat cho team nhỏ".into()),
             thread: None,
             browsing: None,
+            article: None,
         };
         let rendered = PromptPlan::for_chat(ChatPrompt {
             context: "some context",
@@ -1043,6 +1044,7 @@ mod tests {
             selection: None,
             thread: Some("SynThreads/Pricing.md".into()),
             browsing: None,
+            article: None,
         };
         let rendered = PromptPlan::for_chat(ChatPrompt {
             context: "",
@@ -1107,6 +1109,7 @@ mod tests {
             selection: None,
             thread: None,
             browsing: None,
+            article: None,
         };
         let costs = PromptPlan::for_chat(ChatPrompt {
             context: "",

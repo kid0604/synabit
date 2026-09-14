@@ -478,6 +478,15 @@ pub fn reduce(html: &str, url: &str) -> Page {
            outline, whole, from: 0 }
 }
 
+/// A fragment of HTML as text, with its paragraphs kept apart.
+///
+/// For HTML that is already an article — a feed item's stored body — where
+/// `reduce`'s readability pass and page shape have nothing to add. The same
+/// reading `browse` does, so an article reads the same whichever way it came.
+pub(crate) fn text_of_html(html: &str) -> String {
+    read_out(&scraper::Html::parse_fragment(html)).0
+}
+
 /// Read a document out as text, noting where each heading falls.
 ///
 /// # Why one pass and not two

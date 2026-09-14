@@ -111,6 +111,22 @@ pub struct Focus {
     /// a search engine to look for the headline it had just written itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browsing: Option<crate::syn::pane::Showing>,
+    /// The feed article open in the reader.
+    ///
+    /// Not `node`: an article lives in the feed database, not the vault, and a
+    /// node tool handed its id would find nothing. Asked to summarise the essay
+    /// on screen, Syn was told only that the user was in Feeds, and asked them to
+    /// open the article they were reading. See `read_feed_article`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article: Option<ArticleOnScreen>,
+}
+
+/// A feed article, as the screen names it.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArticleOnScreen {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// Put the browsing pane into what is on screen.
@@ -179,6 +195,7 @@ impl Focus {
             && self.node.is_none()
             && self.selection.is_none()
             && self.browsing.is_none()
+            && self.article.is_none()
     }
 
     /// The prompt section, or `None` when there is nothing on screen.
@@ -212,6 +229,20 @@ impl Focus {
             (Some(app), None) => out.push_str(&format!("The user is in {app}.\n")),
             (None, Some(node)) => out.push_str(&format!("The user has {node} open.\n")),
             (None, None) => {}
+        }
+
+        // Right after where the user is: "summarise this" in the reader means
+        // this article, and the sentence says how to read it.
+        if let Some(article) = self.article.as_ref().filter(|a| !a.id.trim().is_empty()) {
+            let named = match article.title.as_deref().and_then(name) {
+                Some(title) => format!("\"{title}\" (feed article id `{}`)", article.id),
+                None => format!("feed article id `{}`", article.id),
+            };
+            out.push_str(&format!(
+                "They are reading the feed article {named}. \"This\", \"the article\" and \"this \
+                 post\" mean it. Read it with `read_feed_article` before summarising or answering \
+                 about it.\n"
+            ));
         }
 
         if let Some(selection) = self.selection.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -279,6 +310,21 @@ mod tests {
         opened.rsplit_once("\n---").expect("a closing fence").0
     }
 
+    /// Asked to summarise "this" in the reader, Syn is told which article, and
+    /// how to read it.
+    #[test]
+    fn an_open_feed_article_is_named_with_how_to_read_it() {
+        let reading = Focus {
+            app: "feeds".into(),
+            article: Some(ArticleOnScreen { id: "art-1".into(), title: Some("Penchants of the polymaths".into()) }),
+            ..Focus::default()
+        };
+        assert!(!reading.is_empty());
+        let block = reading.block().expect("a block");
+        assert!(block.contains("\"Penchants of the polymaths\" (feed article id `art-1`)"), "{block}");
+        assert!(block.contains("read_feed_article"), "{block}");
+    }
+
     fn focus(app: &str, node: Option<&str>, selection: Option<&str>) -> Focus {
         Focus {
             app: app.to_string(),
@@ -287,6 +333,7 @@ mod tests {
             selection: selection.map(str::to_string),
             thread: None,
             browsing: None,
+            article: None,
         }
     }
 
@@ -325,6 +372,7 @@ mod tests {
             selection: None,
             thread: None,
             browsing: None,
+            article: None,
         };
         let block = f.block().expect("a block");
 
@@ -343,6 +391,7 @@ mod tests {
             selection: None,
             thread: None,
             browsing: None,
+            article: None,
         };
         let block = f.block().expect("a block");
         assert!(!block.contains("Some note"), "{block}");

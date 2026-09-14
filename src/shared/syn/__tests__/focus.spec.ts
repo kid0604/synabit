@@ -162,3 +162,23 @@ describe('what the bar shows about it', () => {
     expect(describeFocus(undefined)).toEqual({});
   });
 });
+
+/**
+ * An article in the Feeds reader is not a vault node, so it travels in its own
+ * field — and the bar names it, where it used to say nothing was selected.
+ */
+describe('the article open in Feeds', () => {
+  it('travels by id with its title, and the bar names it', () => {
+    const focus = buildFocus(
+      { app: 'feeds', article: { id: 'art-1', title: 'Penchants of the polymaths' } },
+      undefined,
+    );
+    expect(focus).toEqual({ app: 'feeds', article: { id: 'art-1', title: 'Penchants of the polymaths' } });
+    expect(focus?.node).toBeUndefined();
+    expect(describeFocus(focus).node).toBe('Penchants of the polymaths');
+  });
+
+  it('is left out when there is no article', () => {
+    expect(buildFocus({ app: 'feeds', article: undefined }, undefined)).toEqual({ app: 'feeds' });
+  });
+});

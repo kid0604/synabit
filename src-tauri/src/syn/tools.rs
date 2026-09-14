@@ -985,6 +985,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "read_feed_article".to_string(),
+                description: "Read one feed article in full: title, author, link, date and text. Takes an id from search_feed_articles or from the screen.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {
+                        "id": { "type": "string", "description": "The article id." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "update_feed_article".to_string(),
                 description: "Mark a feed article read, starred, or read-later. Only the flags you send change. Not a node — query_nodes and update_node cannot reach them.".to_string(),
                 parameters: serde_json::json!({
@@ -1122,6 +1136,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         // finance keeps its transactions inside a month node as an array,
         // which no node query can add up.
         "search_feed_articles" => tool_search_feed_articles(&*lock(ctx)?, args),
+        "read_feed_article" => tool_read_feed_article(&*lock(ctx)?, args),
         "search_files" => tool_search_files(&*lock(ctx)?, args),
         "read_file_text" => tool_read_file_text(&*lock(ctx)?, args),
         "update_feed_article" => tool_update_feed_article(ctx, args),
@@ -1693,6 +1708,52 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
         }
         None => Ok(serde_json::json!({"error": "Node not found", "node_id": node_id}).to_string()),
     }
+}
+
+/// One feed article, whole enough to summarise.
+///
+/// `search_feed_articles` hands back three hundred characters of each summary
+/// — a list to pick from, not something to read. Asked to summarise the essay
+/// open in the reader, Syn had nothing longer than that to stand on, even once
+/// it knew which article was meant.
+///
+/// The body is stored as HTML for the reader to draw, and is read out here as
+/// text the way `browse` reads a page (`web::text_of_html`). Cut at
+/// `MAX_CONTENT_CHARS`, and said so, because a summary of the first part of an
+/// essay presented as a summary of the essay is a small lie.
+fn tool_read_feed_article(db: &DbBridge, args: &Value) -> AppResult<String> {
+    let id = str_arg(args, "id")?;
+    let found = db.conn().query_row(
+        &format!("SELECT {} FROM feed_articles WHERE id = ?1", crate::commands::feeds::ARTICLE_COLUMNS),
+        rusqlite::params![id],
+        crate::commands::feeds::row_to_article,
+    );
+    let Ok(article) = found else {
+        return Ok(serde_json::json!({ "error": "No feed article has that id", "id": id }).to_string());
+    };
+
+    // Some feeds carry only a summary until the full article is fetched.
+    let body = if article.content.trim().is_empty() { &article.summary } else { &article.content };
+    let text = crate::syn::web::text_of_html(body);
+    let total = text.chars().count();
+    let cut = total > MAX_CONTENT_CHARS;
+
+    let mut result = serde_json::json!({
+        "id": article.id,
+        "title": article.title,
+        "author": article.author,
+        "url": article.url,
+        "published_at": article.published_at,
+        "word_count": article.word_count,
+        "text": text.chars().take(MAX_CONTENT_CHARS).collect::<String>(),
+        "truncated": cut,
+    });
+    if cut {
+        result["_note"] = serde_json::json!(format!(
+            "The first {MAX_CONTENT_CHARS} of {total} characters. Say that a summary covers only this part."
+        ));
+    }
+    Ok(result.to_string())
 }
 
 /// 3. get_active_tasks_and_events — Upcoming deadlines
@@ -4260,6 +4321,7 @@ mod tests {
         // never do here. See `syn::board`.
         let specialised = [
             "search_feed_articles",
+            "read_feed_article",
             "update_feed_article",
             "search_files",
             "read_file_text",
@@ -4424,6 +4486,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The essay open in the reader can be read whole, as text, paragraphs apart.
+    #[test]
+    fn a_feed_article_is_read_as_text_by_its_id() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        db.conn()
+            .execute(
+                "INSERT INTO feed_articles (id, feed_source_id, guid, title, url, author, content, summary, published_at, word_count)
+                 VALUES ('art-1', 'src-1', 'g-1', 'Penchants of the polymaths', 'https://aeon.co/x', 'Mariam Sabri',
+                         '<p>This semester, my students are learning.</p><p>Breadth &amp; depth.</p>', 'short', '2026-09-11', 3492)",
+                [],
+            )
+            .expect("seeded");
+
+        let read: Value = serde_json::from_str(
+            &tool_read_feed_article(&db, &serde_json::json!({ "id": "art-1" })).expect("runs"),
+        )
+        .expect("json");
+        assert_eq!(read["title"], "Penchants of the polymaths");
+        let text = read["text"].as_str().expect("text");
+        assert!(text.contains("my students are learning.\n"), "paragraphs kept apart: {text:?}");
+        assert!(text.contains("Breadth & depth."), "entities decoded: {text:?}");
+        assert!(!text.contains("<p>"), "{text:?}");
+        assert_eq!(read["truncated"], false);
+
+        let missing: Value = serde_json::from_str(
+            &tool_read_feed_article(&db, &serde_json::json!({ "id": "nope" })).expect("runs"),
+        )
+        .expect("json");
+        assert!(missing.get("error").is_some(), "{missing}");
+    }
+
+    /// The record that was lost: a job as a sentence, a relationship as a string.
+    #[test]
+    fn a_person_is_written_the_way_the_people_app_reads_it() {
+        let object = |value: serde_json::Value| value.as_object().cloned().expect("an object");
+
+        let mut sentence = object(serde_json::json!({
+            "experiences": ["Đang làm ở MDP từ tháng 9/2026"],
+            "relationship_type": "đồng nghiệp",
+        }));
+        let refused = normalise_person_properties(&mut sentence).expect_err("a sentence is not a job");
+        assert!(refused.contains("company"), "{refused}");
+
+        let mut shaped = object(serde_json::json!({
+            "experiences": [{ "company": "MDP", "start": "2026-09", "current": true, "end": "2026-12" }],
+            "relationship_type": "Đồng Nghiệp, Bạn Đại Học",
+        }));
+        normalise_person_properties(&mut shaped).expect("a job with a company");
+        assert_eq!(shaped["relationship_type"], serde_json::json!(["Đồng Nghiệp", "Bạn Đại Học"]));
+        assert_eq!(
+            shaped["experiences"][0],
+            serde_json::json!({ "company": "MDP", "role": "", "start": "2026-09", "end": "", "current": true })
+        );
+
+        let mut nameless = object(serde_json::json!({ "experiences": [{ "role": "DBA" }] }));
+        assert!(normalise_person_properties(&mut nameless).is_err(), "the app drops a job with no company");
+
+        let mut cleared = object(serde_json::json!({ "experiences": null, "relationship_type": ["Bạn"] }));
+        assert!(normalise_person_properties(&mut cleared).is_ok(), "clearing them, or the list shape, is fine");
     }
 
     /// A kind the user invented has none, and must not.

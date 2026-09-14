@@ -700,7 +700,17 @@ const openArticleById = async (articleId: string) => {
   if (article) handleSelectArticle(article);
 };
 
-defineExpose({ openFeedById, openArticleById });
+/**
+ * The article being read, for Syn — asked to summarise "this", it has to know
+ * which. A function rather than a ref, so it is read at the moment a question
+ * is asked. See `getCurrentArticle` in App.vue.
+ */
+const currentArticle = () =>
+  selectedArticle.value
+    ? { id: selectedArticle.value.id, title: selectedArticle.value.title || undefined }
+    : null;
+
+defineExpose({ openFeedById, openArticleById, currentArticle });
 </script>
 
 <template>

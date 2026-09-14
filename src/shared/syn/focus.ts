@@ -38,6 +38,14 @@ export interface SynFocus {
    * the path, not instead of it — the path is what the tools take.
    */
   node_title?: string;
+  /**
+   * The feed article open in the reader, when there is one.
+   *
+   * Its own field rather than `node`: an article is not a vault node. It lives
+   * in the feed database, and every tool that takes a node path would be handed
+   * an id it cannot resolve. `read_feed_article` takes this one.
+   */
+  article?: { id: string; title?: string };
   /** Whatever is highlighted, anywhere on screen. */
   selection?: string;
   /**
@@ -109,6 +117,8 @@ export interface Where {
   node?: string;
   /** What that node is called, when the path does not say. */
   nodeTitle?: string;
+  /** The feed article open in the reader. */
+  article?: { id: string; title?: string };
   /** The thread the question belongs to. */
   thread?: string;
 }
@@ -123,14 +133,18 @@ export interface Where {
  */
 export function buildFocus(where: Where, selection: string | undefined): SynFocus | undefined {
   const app = where.app?.trim() ?? '';
-  const { node, nodeTitle, thread } = where;
-  if (!app && !node && !selection && !thread) return undefined;
+  const { node, nodeTitle, thread, article } = where;
+  if (!app && !node && !selection && !thread && !article?.id) return undefined;
   return {
     app,
     ...(node ? { node } : {}),
     // Only alongside a path. A title with nothing to address is a name the
     // tools cannot act on and the bar would show in place of one that works.
     ...(node && nodeTitle ? { node_title: nodeTitle } : {}),
+    // The same rule: an article travels by its id, with its title beside it.
+    ...(article?.id
+      ? { article: { id: article.id, ...(article.title ? { title: article.title } : {}) } }
+      : {}),
     ...(selection ? { selection } : {}),
     ...(thread ? { thread } : {}),
   };
@@ -160,7 +174,7 @@ export function describeFocus(focus: SynFocus | undefined): { node?: string; cha
   if (!focus) return {};
   // The title when there is one, because this line is read by a person. The
   // path still travels to the model, which needs something it can address.
-  const node = focus.node_title ?? focus.node;
+  const node = focus.node_title ?? focus.node ?? focus.article?.title ?? focus.article?.id;
   return {
     ...(node ? { node } : {}),
     ...(focus.selection ? { chars: focus.selection.length } : {}),
