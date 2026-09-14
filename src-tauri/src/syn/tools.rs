@@ -173,8 +173,41 @@ pub(crate) fn app_fields(node_type: &str) -> &'static [(&'static str, &'static s
 
 /// Maximum characters allowed in a single tool result.
 /// Results exceeding this are truncated with a marker.
-const MAX_RESULT_CHARS: usize = 8000;
-const MAX_CONTENT_CHARS: usize = 4000;
+///
+/// # Raised from 8,000 to 32,000 (2026-09-13)
+///
+/// 8,000 arrived with the first version of Syn and no reason was written down;
+/// it fits an Ollama model's default 8,192-token window, a quarter of it at four
+/// characters a token. The models in use now — GPT-5.6 Luna and Gemini 3.8 Flash
+/// — have windows of a million tokens, and 8,000 was cutting `list_schemas` off
+/// mid-JSON on a vault with many kinds.
+///
+/// Why not far more: a result stays in the run and is sent again every round.
+/// With every round returning a result at the ceiling, 32,000 characters (about
+/// 8K tokens) makes the last request of a twelve-round run about 105K tokens —
+/// under the 272K at which Luna bills the *whole* request at twice the input
+/// rate — and the run about 670K tokens in all. 128,000 would cross that line.
+///
+/// Shared by every provider. An Ollama model left at 8,192 tokens can now be
+/// handed a result larger than its window; lower this for one if that bites.
+///
+/// # Then to 40,000, the same day
+///
+/// `MAX_CONTENT_CHARS` went to 32,000 so an essay from a feed could be read
+/// whole. That content arrives *inside* a JSON result, where every newline and
+/// quote costs two characters and the other fields cost more, so a result
+/// ceiling equal to the content ceiling cut exactly the documents it was raised
+/// for — mid-string. 40,000 is the content plus that room. By the arithmetic
+/// above: about 10K tokens a result, a last request near 122K, still under 272K.
+const MAX_RESULT_CHARS: usize = 40_000;
+
+/// How much of one node's content a tool hands back.
+///
+/// Raised from 4,000 to 16,000 with the limit above: asked for what a note
+/// says, Syn is told to give it as written, and a note longer than this was one
+/// it had never seen the end of. Then to 32,000, for an essay from a feed —
+/// "Penchants of the polymaths", 3,492 words, is about 20,000 characters.
+const MAX_CONTENT_CHARS: usize = 32_000;
 
 /// Context passed to tool execution, providing access to DB, vault path, and app handle.
 /// Write tools need vault_path and app; read tools only need db.
@@ -1642,7 +1675,7 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
 
     match node {
         Some(n) => {
-            // Truncate content to 4000 chars to stay within tool result limits
+            // Cut at `MAX_CONTENT_CHARS` to stay within the tool result limit
             let content: String = n.content.chars().take(MAX_CONTENT_CHARS).collect();
             let content_truncated = content.len() < n.content.len();
 
