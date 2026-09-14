@@ -6,6 +6,7 @@ import { useNodeService } from '../../composables/useNodeService';
 import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight, Bell } from 'lucide-vue-next';
 import { normalizeRelationships, titleCase } from './composables/relationships';
 import { logger } from '../../utils/logger';
+import type { PersonMetadata } from './types';
 
 const props = defineProps<{
     vaultPath: string;
@@ -240,7 +241,7 @@ const savePerson = async () => {
         const validDetails = form.value.details.filter(d => d.value.trim());
         const findDetail = (label: string) => validDetails.find(d => d.label.toLowerCase().includes(label))?.value;
 
-        const properties: Record<string, any> = {
+        const properties = {
             avatar: form.value.avatar || null,
             nickname: form.value.nickname.trim() || null,
             display_name: form.value.display_name,
@@ -260,7 +261,7 @@ const savePerson = async () => {
             email: findDetail('email') || null,
             phone: findDetail('phone') || null,
             company: findDetail('company') || null,
-        };
+        } satisfies PersonMetadata;
 
         // Nothing else is listed. Interactions, gifts, last_contacted,
         // connections, relations and is_owner belong to other screens, and a

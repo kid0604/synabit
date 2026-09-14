@@ -153,6 +153,20 @@ pub(crate) fn app_fields(node_type: &str) -> &'static [(&'static str, &'static s
             ("recurrence_end_at", "Last date the series may fall on, `YYYY-MM-DD`. Empty for forever."),
             ("tags", "A list of strings, without the #."),
         ],
+        // As `PersonModal` writes them — see `normalise_person_properties` for
+        // the record that was lost for want of this.
+        "person" => &[
+            ("display_name", "fullname, nickname or custom: which name the People app shows. fullname unless told otherwise."),
+            ("nickname", "What they are called informally."),
+            ("custom_display", "The name shown when display_name is custom."),
+            ("relationship_type", "What they are to the user, as a list: [\"Đồng Nghiệp\"]. Reuse a label other people already have, spelled and capitalised the same."),
+            ("experiences", "Where they work or worked, as a list of {\"company\": \"MDP\", \"role\": \"DBA\", \"start\": \"2026-09\", \"end\": \"\", \"current\": true}. Months are YYYY-MM; end is empty while current. Never sentences."),
+            ("birthday", "`YYYY-MM-DD`."),
+            ("important_dates", "Other dates to remember: [{\"label\": \"Anniversary\", \"date\": \"YYYY-MM-DD\"}]."),
+            ("details", "Contact details: [{\"label\": \"Email\", \"value\": \"a@b.vn\", \"type\": \"email\"}]; type is text, email, phone or url."),
+            ("contact_frequency", "How often to keep in touch: weekly, biweekly, monthly, quarterly or yearly. Empty when not tracked."),
+            ("tags", "A list of strings, without the #."),
+        ],
         _ => &[],
     }
 }
@@ -1157,6 +1171,77 @@ fn normalise_event_properties(props: &mut serde_json::Map<String, Value>) -> Vec
     }
 
     consumed
+}
+
+/// A person the People app can read back without losing anything.
+///
+/// # Why
+///
+/// Asked to add a colleague "working at MDP since September", Syn wrote
+/// `experiences: ["Đang làm ở MDP từ tháng 9/2026"]` and
+/// `relationship_type: "đồng nghiệp"`. `list_schemas` had shown it an empty
+/// `experiences` and a comma-joined relationship from an old record, and
+/// nothing said what either should look like. The People form reads each
+/// experience's `company`, finds none in a sentence, shows an empty row, and
+/// drops it on save — the job was lost the first time anybody opened the
+/// person and pressed Save.
+///
+/// A relationship written as one comma-separated string is a shape the app
+/// still reads (`normalizeRelationships`), so it becomes the list the app now
+/// writes. An experience written as a sentence is refused rather than guessed
+/// at: turning "since September" into a company and a month is the model's
+/// job, and the error tells it the shape.
+fn normalise_person_properties(props: &mut serde_json::Map<String, Value>) -> Result<(), String> {
+    let joined = match props.get("relationship_type") {
+        Some(Value::String(joined)) => Some(joined.clone()),
+        _ => None,
+    };
+    if let Some(joined) = joined {
+        let labels: Vec<Value> = joined
+            .split(',')
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(|label| Value::String(label.to_string()))
+            .collect();
+        props.insert("relationship_type".to_string(), Value::Array(labels));
+    }
+
+    let shape = r#"{"company": "MDP", "role": "", "start": "2026-09", "end": "", "current": true}"#;
+    match props.get_mut("experiences") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(jobs)) => {
+            for job in jobs.iter_mut() {
+                let Value::Object(fields) = job else {
+                    return Err(format!(
+                        "`experiences` must be a list of objects like {shape}, not sentences. Nothing was written."
+                    ));
+                };
+                let has_company = fields
+                    .get("company")
+                    .and_then(Value::as_str)
+                    .is_some_and(|company| !company.trim().is_empty());
+                if !has_company {
+                    return Err(format!(
+                        "Every entry in `experiences` needs a `company`, like {shape} — the People app drops one \
+                         without it. Nothing was written."
+                    ));
+                }
+                for key in ["role", "start", "end"] {
+                    fields.entry(key.to_string()).or_insert_with(|| Value::String(String::new()));
+                }
+                let current = fields.get("current").and_then(Value::as_bool).unwrap_or(false);
+                fields.insert("current".to_string(), Value::Bool(current));
+                // Still there means no end, which is how the form saves one.
+                if current {
+                    fields.insert("end".to_string(), Value::String(String::new()));
+                }
+            }
+        }
+        Some(_) => {
+            return Err(format!("`experiences` must be a list of objects like {shape}. Nothing was written."));
+        }
+    }
+    Ok(())
 }
 
 /// A title for a memory, taken from the memory itself.
@@ -2727,6 +2812,16 @@ fn tool_create_node<R: tauri::Runtime>(
         normalise_event_properties(&mut properties);
     }
 
+    // And a person, for a failure that was not silent for long: see
+    // `normalise_person_properties`.
+    if node_type == "person" {
+        normalise_person_properties(&mut properties).map_err(AppError::General)?;
+        // How the People app names somebody unless told otherwise.
+        properties
+            .entry("display_name".to_string())
+            .or_insert_with(|| serde_json::json!("fullname"));
+    }
+
     let (id, created_title) = write_tool_node(
         ctx,
         &node_type,
@@ -2804,6 +2899,19 @@ fn tool_update_node<R: tauri::Runtime>(
             _ => serde_json::Map::new(),
         };
         normalise_event_properties(&mut fields);
+        Value::Object(fields)
+    } else {
+        patch
+    };
+
+    // A person is checked on the patch too: a sentence sent as an experience
+    // would be written, and then lost the next time the People form saved.
+    let patch = if node.node_type == "person" {
+        let mut fields = match &patch {
+            Value::Object(map) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        normalise_person_properties(&mut fields).map_err(AppError::General)?;
         Value::Object(fields)
     } else {
         patch
@@ -4253,6 +4361,7 @@ mod tests {
         let sources = [
             ("event", "../src/mini-apps/calendar/types.ts", "EventMetadata"),
             ("task", "../src/mini-apps/task/types.ts", "TaskMetadata"),
+            ("person", "../src/mini-apps/people/types.ts", "PersonMetadata"),
         ];
 
         for (node_type, path, interface) in sources {
