@@ -112,6 +112,18 @@ pub enum SectionKind {
     Rules,
     /// Today's date, which the model cannot know.
     Today,
+    /// Where the question was asked from, when that is not the app.
+    ///
+    /// Beside `Today` for the same reason `Focus` is: true right now, and not
+    /// something any tool can answer. Absent for the app. See `syn::surface`.
+    Surface,
+    /// Other questions in this conversation whose runs are still going.
+    ///
+    /// Absent almost always. Present when a phone sent something while a slow
+    /// answer was still being worked on — that question is not in the
+    /// conversation until its answer is, and this is the only place the model
+    /// can learn of it. See `engine::underway`.
+    Underway,
     /// Which screen the user is on and what they have highlighted.
     ///
     /// Beside `Today` because it is the same kind of fact: true right now,
@@ -149,6 +161,8 @@ impl SectionKind {
             SectionKind::Identity => "Identity",
             SectionKind::Rules => "Rules",
             SectionKind::Today => "Today",
+            SectionKind::Surface => "Where the question came from",
+            SectionKind::Underway => "Still being worked on",
             SectionKind::Focus => "What is on screen",
             SectionKind::Counted => "Already counted",
             SectionKind::Thread => "The work this belongs to",
@@ -283,13 +297,45 @@ fn web_line() -> &'static str {
 ///
 /// Local rather than UTC, because the question "what is due today" is asked
 /// about the day the user is having.
+///
+/// With the time as well as the date. "Nhắc tao 30 phút nữa" is a reminder,
+/// and a reminder is a task with a clock on it — without the clock, the model
+/// has to guess what "in thirty minutes" is from. The cost is that this line
+/// now changes every minute rather than every day, and a provider caching the
+/// prompt's prefix stops matching here instead of at the retrieved context. It
+/// is bounded — what follows is tool shape, skills and memory, a few thousand
+/// characters — and a reminder set for the wrong hour is not.
 fn today() -> String {
     let now = chrono::Local::now();
     format!(
-        "- Today's date: {} ({})\n\n",
+        "- Today's date: {} ({}), and the time is {}\n\n",
         now.format("%Y-%m-%d"),
-        now.format("%A")
+        now.format("%A"),
+        now.format("%H:%M")
     )
+}
+
+/// How many other questions still being worked on are named, at most.
+const MOST_UNDERWAY: usize = 3;
+
+/// How much of each is quoted.
+const UNDERWAY_CHARS: usize = 200;
+
+fn underway(goals: &[String]) -> Option<String> {
+    if goals.is_empty() {
+        return None;
+    }
+    let mut body = String::from(
+        "## Still being worked on\nEarlier in this conversation you were asked the following, and that work is still running. Its answer is sent on its own when it is ready:\n",
+    );
+    for goal in goals.iter().take(MOST_UNDERWAY) {
+        let line = goal.split_whitespace().collect::<Vec<_>>().join(" ");
+        let quoted: String = line.chars().take(UNDERWAY_CHARS).collect();
+        let cut = if quoted.len() < line.len() { "…" } else { "" };
+        body.push_str(&format!("- \"{quoted}{cut}\"\n"));
+    }
+    body.push_str("Do not start that work again. Asked about it, say it is still in progress.\n\n");
+    Some(body)
 }
 
 /// Retrieved chunks, wrapped in the instructions about how to read them.
@@ -323,7 +369,7 @@ Match the user's language and communication style. If they write in Vietnamese, 
 
 const RULES: &str = r#"Key rules:
 - When referencing vault data, ALWAYS use [[Title]] notation with the HUMAN-READABLE TITLE (not the file path or ID). Example: 'I found [[Ghi chú họp team]] which mentions...' WRONG: [[Notes/22440d7a-84c5-433b-982c-04b906591253.md]] — NEVER use file paths in links. RIGHT: [[Ghi chú họp team]] — always use the note/task/event title.
-- If information is not in the provided context, say so honestly — do not fabricate.
+- Do not fabricate. Say something is not in the vault only after searching for it: the provided context is only a sample.
 - Keep responses concise and actionable.
 - You can see the user's notes, tasks, events, contacts, feeds, and finances.
 - For tasks and events, pay attention to dates, priorities, and statuses.
@@ -350,6 +396,7 @@ const TOOL_SHAPE: &str = r#"Tool usage guidelines:
 - Almost everything in this vault is a node: notes, tasks, events, people, projects, and any type this user invented. `query_nodes` finds them and `get_node` reads one in full.
 - If you do not know what the user keeps, or are unsure a type or field exists, call `list_schemas` first. It tells you every type in this vault and the fields each one actually uses. Do this before inventing a field name.
 - Query syntax: `type:task status:todo sort:due_date`, `type:book rating:>3`, `#work due_date:<2026-09-01`, plus free words for full-text search. `limit:` caps results; check `total_matches` before saying how many there are.
+- If a search finds nothing that plainly matches, search again with fewer, more distinctive words — drop words like "bài" or "note", try a number both ways (7 / bảy) — before saying it is not there or offering a half match.
 - To create anything: `create_node` with the type, title and fields. Match the field names `list_schemas` reports for that type.
 - To change anything — mark a task done, set a due date, add a tag: `update_node`. Send only the fields that change; everything else is kept. Find the node with `query_nodes` first to get its id.
 - `get_linked_nodes` follows links out of and into a node. Use it for 'what else is related to this', which no query can express.
@@ -498,6 +545,44 @@ impl PromptPlan {
         let mut plan = Self { sections, dropped: Vec::new(), budget_chars };
         plan.fit();
         plan
+    }
+
+    /// The same plan, for a question asked somewhere other than the app.
+    ///
+    /// A method rather than a field of `ChatPrompt`: the app is every caller
+    /// but one, and each of them renders exactly what it rendered before — the
+    /// snapshots do not move.
+    pub fn with_surface(mut self, surface: crate::syn::surface::Surface) -> Self {
+        let Some(block) = surface.prompt_block() else {
+            return self;
+        };
+        let after_the_date = self
+            .sections
+            .iter()
+            .position(|s| s.kind == SectionKind::Today)
+            .map_or(self.sections.len(), |i| i + 1);
+        self.sections.insert(after_the_date, Section { kind: SectionKind::Surface, body: block });
+        self.fit();
+        self
+    }
+
+    /// The same plan, told what else in this conversation is still running.
+    ///
+    /// After where the question came from and before the screen: all three
+    /// describe the moment it was asked in. Nothing changes when nothing is
+    /// running, which is every question asked in the app today.
+    pub fn with_underway(mut self, goals: &[String]) -> Self {
+        let Some(body) = underway(goals) else {
+            return self;
+        };
+        let after = self
+            .sections
+            .iter()
+            .rposition(|s| matches!(s.kind, SectionKind::Today | SectionKind::Surface))
+            .map_or(self.sections.len(), |i| i + 1);
+        self.sections.insert(after, Section { kind: SectionKind::Underway, body });
+        self.fit();
+        self
     }
 
     /// Drop optional sections, largest first, until the whole thing fits.
@@ -720,6 +805,28 @@ mod tests {
         );
     }
 
+    /// Nothing running elsewhere changes nothing; something running is named,
+    /// after where the question came from and before anything else.
+    #[test]
+    fn a_question_is_told_what_else_in_its_conversation_is_still_running() {
+        let plan = || {
+            PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS })
+        };
+        assert_eq!(plan().with_underway(&[]).render(), plan().render());
+
+        let long = "tổng hợp ".repeat(40);
+        let told = plan()
+            .with_surface(crate::syn::surface::Surface::Telegram)
+            .with_underway(&["đọc hết feed tuần này rồi tổng hợp".to_string(), long])
+            .render();
+        let surface = told.find("## Where you are answering").expect("surface");
+        let underway = told.find("## Still being worked on").expect("underway");
+        let tools = told.find("Tool usage guidelines:").expect("tool shape");
+        assert!(surface < underway && underway < tools, "in the wrong place");
+        assert!(told.contains("- \"đọc hết feed tuần này rồi tổng hợp\""));
+        assert!(told.contains("…\""), "a long question is cut, and says so");
+    }
+
     /// The whole prompt, byte for byte, against text captured before it was
     /// broken into sections.
     ///
@@ -912,6 +1019,8 @@ mod tests {
             | SectionKind::Identity
             | SectionKind::Rules
             | SectionKind::Today
+            | SectionKind::Surface
+            | SectionKind::Underway
             | SectionKind::Focus
             | SectionKind::Counted
             | SectionKind::Thread
@@ -922,11 +1031,13 @@ mod tests {
         }
     }
 
-    const ALL: [SectionKind; 11] = [
+    const ALL: [SectionKind; 13] = [
         SectionKind::Custom,
         SectionKind::Identity,
         SectionKind::Rules,
         SectionKind::Today,
+        SectionKind::Surface,
+        SectionKind::Underway,
         SectionKind::Focus,
         SectionKind::Counted,
         SectionKind::Thread,

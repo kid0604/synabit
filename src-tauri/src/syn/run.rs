@@ -480,6 +480,13 @@ pub struct Run {
     pub goal: String,
     #[serde(default)]
     pub trigger: Trigger,
+    /// Where it was asked from, which decides what it may reach for. See
+    /// `syn::surface`.
+    ///
+    /// `#[serde(default)]` so every run written before there was anywhere but
+    /// the app reads back as asked in the app, which is where it was asked.
+    #[serde(default)]
+    pub surface: crate::syn::surface::Surface,
     pub state: RunState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -563,6 +570,7 @@ impl Run {
             thread: None,
             goal: goal.into(),
             trigger: Trigger::User,
+            surface: crate::syn::surface::Surface::App,
             state: RunState::Working,
             model: None,
             provider: None,
@@ -767,6 +775,7 @@ impl Run {
             conversation_id: self.conversation_id.clone(),
             goal: self.goal.chars().take(200).collect(),
             trigger: self.trigger,
+            surface: self.surface,
             state: self.state,
             model: self.model.clone(),
             step_count: self.steps.len(),
@@ -784,6 +793,10 @@ pub struct RunSummary {
     pub conversation_id: Option<String>,
     pub goal: String,
     pub trigger: Trigger,
+    /// So a list of runs can be counted by where they came from — the number
+    /// that says whether a surface is used at all.
+    #[serde(default)]
+    pub surface: crate::syn::surface::Surface,
     pub state: RunState,
     pub model: Option<String>,
     pub step_count: usize,

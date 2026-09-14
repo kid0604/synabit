@@ -275,6 +275,10 @@ fn lock<'a, R: tauri::Runtime>(
 /// optimisation, it is the condition for this being usable at all.
 pub const BROWSE_TOOL: &str = "browse";
 
+/// Keep what somebody sent, in QuickCap. Offered only to a surface that is not
+/// the app — see `syn::surface`.
+pub const CAPTURE_TOOL: &str = "capture";
+
 /// Searching Syn's own transcripts.
 ///
 /// # Why this is the one tool worth adding
@@ -459,7 +463,26 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 ///
 /// It leaves a hundred and thirty characters of headroom. That is deliberate:
 /// the next tool should have to make its own case, not inherit this one's.
-pub const PAYLOAD_BUDGET_CHARS: usize = 18_400;
+///
+/// # Raised to 18,850, for a tool the app is never sent
+///
+/// `capture` keeps what somebody sends from their phone, and costs about 430
+/// characters. The argument is the boards' argument taken one step further:
+/// `VaultTools::definitions` leaves it out of every question asked in the app
+/// (`Surface::offers`), so the app sends exactly what it sent before — this
+/// ceiling only moved because it measures the catalogue. A question from
+/// Telegram is sent `capture` and far fewer tools besides: reads and three writes.
+///
+/// # Raised to 19,300, for reading the article on screen
+///
+/// `read_feed_article` costs about 300 characters, and unlike `capture` it is
+/// sent everywhere — the app and Telegram both. Asked in the Feeds reader to
+/// summarise the essay open in it, Syn had no way to read more than the three
+/// hundred characters `search_feed_articles` returns of any article, so it
+/// asked the person to open what they were already reading. Measured at 19,147
+/// with it; the ceiling keeps the same small headroom as before, so the next
+/// tool still has to argue its own case.
+pub const PAYLOAD_BUDGET_CHARS: usize = 19_300;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -779,6 +802,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: CAPTURE_TOOL.to_string(),
+                description: "Keep what the person sent in QuickCap: words, a link, a photo, a file. A note with a type and fields is create_node.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "What to keep, in their words. Do not summarise it." },
+                        "attachments": { "type": "array", "items": { "type": "string" }, "description": "Ids from [attachment …] lines." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "remember".to_string(),
                 description: "Write down something about this person that should outlive this conversation. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. NOT for things that belong in the vault as notes or tasks — those are create_node.".to_string(),
                 parameters: serde_json::json!({
@@ -955,6 +992,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "read_feed_article".to_string(),
+                description: "Read one feed article in full: title, author, link, date and text. Takes an id from search_feed_articles or from the screen.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {
+                        "id": { "type": "string", "description": "The article id." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "search_files".to_string(),
                 description: "Search the vault's files by what is written inside them, by filename, extension, tag, or linked person. Use it whenever the user asks about files, images, documents or PDFs. Returns an 'excerpt' quoting the passage that matched.".to_string(),
                 parameters: serde_json::json!({
@@ -978,20 +1029,6 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "required": ["node_id"],
                     "properties": {
                         "node_id": { "type": "string", "description": "The file node's id, from search_files." }
-                    }
-                }),
-            },
-        },
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "read_feed_article".to_string(),
-                description: "Read one feed article in full: title, author, link, date and text. Takes an id from search_feed_articles or from the screen.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "required": ["id"],
-                    "properties": {
-                        "id": { "type": "string", "description": "The article id." }
                     }
                 }),
             },
@@ -1107,6 +1144,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         // that do one thing is what the collapse from twenty to twelve was
         // for, and the description above says which one to reach for.
         "remember" => tool_remember(ctx, args),
+        name if name == CAPTURE_TOOL => tool_capture(ctx, args),
         name if name == crate::syn::skill::LOAD_TOOL => tool_load_skill(&*lock(ctx)?, args),
         name if name == crate::syn::recipe::RUN_TOOL => tool_run_recipe(ctx, args),
         "recall" => tool_recall(&*lock(ctx)?, args),
@@ -1318,6 +1356,68 @@ fn memory_title(body: &str) -> String {
 /// opposite in August, which is right?" — and an assistant that silently
 /// changes its mind about somebody, and cannot say when or why, is the thing
 /// this whole feature is arranged to avoid.
+/// Keep something in QuickCap, through the same queue every other way in uses.
+///
+/// Queued rather than written here, for the reason `commands::capture` gives:
+/// the front end owns what a cap looks like — its title, its tags — and a cap
+/// Syn made must not be subtly different from one typed into the app.
+fn tool_capture<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use tauri::Emitter;
+
+    let text = args.get("text").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let ids: Vec<String> = args
+        .get("attachments")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+
+    // Files come from where the bot put them when the message arrived, and
+    // enter the vault only now — a photo nobody kept never touches it.
+    let (lines, moved) = if ids.is_empty() {
+        (Vec::new(), crate::syn::telegram::staging::Moved::default())
+    } else {
+        let dir = crate::syn::telegram::staging::dir(ctx.app)?;
+        crate::syn::telegram::staging::into_vault(ctx.vault_path, &dir, &ids)?
+    };
+    // So a note written later can still find them. See `staging::remember_assets`.
+    crate::syn::telegram::staging::remember_assets(&*lock(ctx)?, &moved.assets)?;
+
+    if text.is_empty() && lines.is_empty() {
+        return Err(AppError::General(if moved.missing.is_empty() {
+            "Nothing to keep: give `text`, `attachments`, or both".into()
+        } else {
+            format!("None of these attachments is here to keep: {}", moved.missing.join(", "))
+        }));
+    }
+
+    // What was written, then what came with it — the order QuickCap saves a
+    // draft in.
+    let body = std::iter::once(text)
+        .filter(|t| !t.is_empty())
+        .chain(lines)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let id = crate::commands::capture::enqueue(
+        &*lock(ctx)?,
+        &crate::commands::capture::QueuedCaptureInput { text: body, source: Some("syn".to_string()) },
+    )?;
+    // Told now, so the cap lands while the app is open rather than at its next
+    // launch — the same thing a deep link does.
+    if let Err(e) = ctx.app.emit("capture-queued", ()) {
+        log::warn!("[Syn Tools] Could not tell the window a capture is waiting: {e}");
+    }
+    Ok(serde_json::json!({
+        "kept": true,
+        "id": id,
+        "images": moved.images,
+        "audio": moved.audio,
+        "files": moved.files,
+        "missing": moved.missing,
+        "paths": moved.assets.iter().map(|(_, path)| path.as_str()).collect::<Vec<_>>(),
+    })
+    .to_string())
+}
+
 fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     use crate::syn::memory;
 
@@ -2889,6 +2989,22 @@ fn tool_create_node<R: tauri::Runtime>(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: title".into()))?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    // A file sent to the Telegram bot, named by its attachment id where a path
+    // belongs. Put where the file really is, or refused — never written as a
+    // broken image. See `staging::resolve_references`.
+    let resolved;
+    let content = if crate::syn::telegram::staging::mentions_attachment(content) {
+        let dir = crate::syn::telegram::staging::dir(ctx.app).ok();
+        resolved = crate::syn::telegram::staging::resolve_references(
+            ctx.vault_path,
+            dir.as_deref(),
+            &*lock(ctx)?,
+            content,
+        )?;
+        resolved.as_str()
+    } else {
+        content
+    };
 
     let mut properties = match args.get("properties") {
         Some(Value::Object(map)) => map.clone(),
@@ -3039,6 +3155,18 @@ fn tool_update_node<R: tauri::Runtime>(
     // A body only changes when one was sent. Omitting it is how a field-only
     // update says "leave what I wrote alone".
     let body = match args.get("content").and_then(|v| v.as_str()) {
+        // A file sent to the Telegram bot may be put into an existing note as
+        // well as a new one. Same rule as `create_node`: where the file really
+        // is, or refused. See `staging::resolve_references`.
+        Some(new_body) if crate::syn::telegram::staging::mentions_attachment(new_body) => {
+            let dir = crate::syn::telegram::staging::dir(ctx.app).ok();
+            crate::syn::telegram::staging::resolve_references(
+                ctx.vault_path,
+                dir.as_deref(),
+                &*lock(ctx)?,
+                new_body,
+            )?
+        }
         Some(new_body) => new_body.to_string(),
         None => existing_body(&full_path, &ext),
     };
@@ -4419,6 +4547,16 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Not for the app at all. `capture` keeps what somebody sent from a
+        // phone, and earns its place by being the only way that surface has to
+        // put something in QuickCap — the store behind it is the capture
+        // queue, which no generic tool writes. It costs the app nothing:
+        // `Surface::offers` leaves it out of every question asked there.
+        let elsewhere = [CAPTURE_TOOL];
+        for tool in elsewhere {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -4431,6 +4569,7 @@ mod tests {
             .chain(specialised)
             .chain(memory)
             .chain(outside)
+            .chain(elsewhere)
             .collect();
         for name in &names {
             assert!(

@@ -23,6 +23,8 @@ pub mod rag;
 pub mod registry;
 pub mod run;
 pub mod settings;
+pub mod surface;
+pub mod telegram;
 pub mod thread;
 pub mod web;
 pub mod tempo;

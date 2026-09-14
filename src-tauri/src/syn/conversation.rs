@@ -175,6 +175,73 @@ pub fn list_conversations(vault_path: &str) -> AppResult<Vec<SynConversation>> {
     Ok(conversations)
 }
 
+/// One lock per conversation that has a send in progress or waiting.
+type Held = std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>;
+
+static HELD: std::sync::LazyLock<std::sync::Mutex<Held>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Held::new()));
+
+/// One send at a time, per conversation.
+///
+/// # Why
+///
+/// A send reads the conversation, drives a run for as long as that takes —
+/// seconds, sometimes minutes — and writes the whole file back. Two sends on one
+/// conversation inside that window each write what *they* read plus their own
+/// turn, and whichever finishes second erases the other's.
+///
+/// From the app alone that was possible and did not happen, because a person
+/// types into one window at a time. A second surface makes it ordinary: the
+/// same conversation open on the desktop while a message arrives from a phone.
+///
+/// So a send reads under this, lets go for the run, and takes it again to put
+/// its turn into the file *as it is by then* — see [`place_turn`]. The first
+/// version held it across the run as well, which kept every turn and made a
+/// long answer hold up every message sent after it: from a phone, a question
+/// that took a minute meant a minute before "thanks" could even be read.
+///
+/// The guard frees the next send when it is dropped. An entry that nothing
+/// holds or waits on is swept out on the next call, so the map is only ever as
+/// large as the number of conversations busy at once.
+pub async fn hold(id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = {
+        let mut held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The map's own `Arc` is one; a guard or a waiter is another.
+        held.retain(|_, lock| std::sync::Arc::strong_count(lock) > 1);
+        held.entry(id.to_string()).or_default().clone()
+    };
+    lock.lock_owned().await
+}
+
+/// Put one finished turn into a conversation read back just now.
+///
+/// Two runs on one conversation can overlap, so what is in the file when an
+/// answer is ready may have grown since the question was read: a quick answer
+/// asked after a slow one is written first. Each turn goes in whole — question
+/// and answer side by side — so the model reading the conversation later never
+/// sees two questions in a row and one answer that could be either's.
+///
+/// `placeholder` is the empty assistant turn a run left when it stopped to ask
+/// permission. Carrying that run on answers the question above it, so the
+/// answer takes the placeholder's place rather than landing at the bottom,
+/// below turns that came after it.
+pub fn place_turn(
+    messages: &mut Vec<SynMessage>,
+    question: Option<SynMessage>,
+    answer: SynMessage,
+    placeholder: Option<&str>,
+) {
+    if let Some(at) = placeholder.and_then(|id| messages.iter().position(|m| m.id == id)) {
+        messages[at] = answer;
+        if let Some(question) = question {
+            messages.insert(at, question);
+        }
+        return;
+    }
+    messages.extend(question);
+    messages.push(answer);
+}
+
 /// Load a full conversation (metadata + messages) by ID.
 pub fn get_conversation(vault_path: &str, id: &str) -> AppResult<SynConversationFull> {
     let syn_dir = ensure_syn_dir(vault_path)?;
@@ -384,6 +451,102 @@ pub fn export_conversation_markdown(vault_path: &str, id: &str) -> AppResult<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn said(content: &str) -> SynMessage {
+        SynMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "user".to_string(),
+            content: content.to_string(),
+            model: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            tokens: None,
+            duration_ms: None,
+            sources: None,
+            footing: None,
+            tool_calls_log: None,
+            images: None,
+        }
+    }
+
+    /// Two sends on one conversation, overlapping, and both turns survive.
+    ///
+    /// Each send does what `send_message_inner` does — read the file, spend a
+    /// while, write the whole file back — and the pause is long enough for the
+    /// other to read the same file in between, were it allowed to. Without the
+    /// lock the second write erases the first turn.
+    #[tokio::test]
+    async fn two_sends_on_one_conversation_both_keep_their_turn() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let id = create_conversation(&vault, None).expect("created").id;
+
+        let send = |content: &'static str| {
+            let vault = vault.clone();
+            let id = id.clone();
+            async move {
+                let _held = hold(&id).await;
+                let mut conversation = get_conversation(&vault, &id).expect("read");
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                conversation.messages.push(said(content));
+                save_conversation(&vault, &conversation).expect("written");
+            }
+        };
+        tokio::join!(send("từ máy tính"), send("từ điện thoại"));
+
+        let kept: Vec<String> = get_conversation(&vault, &id)
+            .expect("read")
+            .messages
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+        assert_eq!(kept.len(), 2, "a turn was lost: {kept:?}");
+    }
+
+    fn answered(content: &str) -> SynMessage {
+        SynMessage { role: "assistant".to_string(), ..said(content) }
+    }
+
+    fn contents(messages: &[SynMessage]) -> Vec<(&str, &str)> {
+        messages.iter().map(|m| (m.role.as_str(), m.content.as_str())).collect()
+    }
+
+    /// A slow question asked first and answered last keeps its answer beside it
+    /// — as a pair after the quick one, never split around it.
+    #[test]
+    fn a_turn_finished_late_goes_in_whole_after_what_was_written_meanwhile() {
+        let mut messages = vec![said("nhanh"), answered("xong nhanh")];
+        place_turn(&mut messages, Some(said("chậm")), answered("xong chậm"), None);
+        assert_eq!(
+            contents(&messages),
+            [("user", "nhanh"), ("assistant", "xong nhanh"), ("user", "chậm"), ("assistant", "xong chậm")]
+        );
+    }
+
+    /// Carrying a stopped run on fills in the gap it left, wherever that is now.
+    #[test]
+    fn a_carried_on_answer_takes_the_place_of_the_turn_that_stopped() {
+        let stopped = answered("");
+        let placeholder = stopped.id.clone();
+        let mut messages = vec![said("xoá note A"), stopped, said("sau đó"), answered("ok")];
+        place_turn(&mut messages, None, answered("đã xoá"), Some(&placeholder));
+        assert_eq!(
+            contents(&messages),
+            [("user", "xoá note A"), ("assistant", "đã xoá"), ("user", "sau đó"), ("assistant", "ok")]
+        );
+
+        // Deleted from the app meanwhile: the answer still goes somewhere.
+        let mut messages = vec![said("xoá note A")];
+        place_turn(&mut messages, None, answered("đã xoá"), Some("gone"));
+        assert_eq!(contents(&messages), [("user", "xoá note A"), ("assistant", "đã xoá")]);
+    }
+
+    /// Different conversations do not wait on each other.
+    #[tokio::test]
+    async fn a_busy_conversation_does_not_hold_up_another() {
+        let _first = hold("conversation-a").await;
+        let other = tokio::time::timeout(std::time::Duration::from_millis(200), hold("conversation-b")).await;
+        assert!(other.is_ok(), "conversation-b waited on conversation-a");
+    }
 
     #[test]
     fn test_auto_title_short() {

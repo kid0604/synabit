@@ -74,6 +74,10 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             let subscribed = db.subscribed_events_to_remind().unwrap_or_default();
 
             let mut new_messages: Vec<ChatMessage> = Vec::new();
+            // What rang the computer, to be sent to a paired phone as well —
+            // handed over once the database lock is gone, since sending takes
+            // it again. See `syn::telegram::remind`.
+            let mut for_the_phone: Vec<reminders::PlannedReminder> = Vec::new();
             let sender = ChatSender {
                 id: "system".to_string(),
                 name: "Synabit System".to_string(),
@@ -167,6 +171,7 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                 {
                     log::error!("Failed to show notification: {}", e);
                 }
+                for_the_phone.push(due);
             }
 
             if !delivered.is_empty() {
@@ -219,6 +224,13 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                 let _ = db.prune_reminder_deliveries(now.timestamp());
             }
             drop(db);
+
+            // Every tick, with nothing new most of the time: that is also how
+            // a reminder the phone could not be sent last minute is tried again.
+            #[cfg(desktop)]
+            crate::syn::telegram::hand_over(&app_handle, &for_the_phone);
+            #[cfg(not(desktop))]
+            drop(for_the_phone);
 
             // The sweep itself, with the lock released: `list_runs` parses
             // every run file in the vault, and holding the database while

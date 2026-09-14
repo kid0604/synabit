@@ -145,6 +145,9 @@ export type RunState =
 
 export type RunTrigger = 'user';
 
+/** Where a run was asked from, which decides what it may reach for. */
+export type RunSurface = 'app' | 'telegram';
+
 /**
  * How heavy a turn was judged to be, before it ran. Mirrors `syn::tempo::Tempo`.
  *
@@ -228,6 +231,7 @@ export interface Run {
   conversation_id?: string | null;
   goal: string;
   trigger: RunTrigger;
+  surface: RunSurface;
   state: RunState;
   model?: string | null;
   provider?: string | null;
@@ -245,6 +249,7 @@ export interface RunSummary {
   conversation_id?: string | null;
   goal: string;
   trigger: RunTrigger;
+  surface: RunSurface;
   state: RunState;
   model?: string | null;
   step_count: number;
@@ -271,6 +276,8 @@ export type PromptSectionKind =
   | 'identity'
   | 'rules'
   | 'today'
+  | 'surface'
+  | 'underway'
   | 'focus'
   | 'counted'
   | 'thread'
@@ -453,6 +460,8 @@ export interface AuditEntry {
   about: string;
   outcome: 'allowed' | 'asked' | 'refused' | 'done' | 'failed';
   reversal?: string | null;
+  /** Where the run was asked from. Older lines read back as `app`. */
+  surface: RunSurface;
 }
 
 /**

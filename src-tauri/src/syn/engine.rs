@@ -37,6 +37,9 @@ struct Live {
     /// The conversation it belongs to, so that a stop aimed at a chat can find
     /// the run behind it. `None` for a run nobody is watching.
     conversation_id: Option<String>,
+    /// What it was asked, so a second run on the same conversation can be told
+    /// the first is still going. See [`underway`].
+    goal: String,
     stop: Arc<AtomicBool>,
 }
 
@@ -48,17 +51,36 @@ struct Live {
 static LIVE_RUNS: std::sync::LazyLock<RwLock<HashMap<String, Live>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
-fn register_run(run_id: &str, conversation_id: Option<String>) -> Arc<AtomicBool> {
+fn register_run(run_id: &str, conversation_id: Option<String>, goal: &str) -> Arc<AtomicBool> {
     let stop = Arc::new(AtomicBool::new(false));
     let mut live = LIVE_RUNS.write().unwrap_or_else(|e| e.into_inner());
     live.insert(
         run_id.to_string(),
         Live {
             conversation_id,
+            goal: goal.to_string(),
             stop: Arc::clone(&stop),
         },
     );
     stop
+}
+
+/// What is still being worked on in a conversation, by what it was asked.
+///
+/// A question from a phone no longer waits for the one before it to be
+/// answered, so the second run starts while the first is still going — and
+/// without being told, it knows nothing of the first: that question is not in
+/// the conversation until its answer is. Asked "is it done yet", it would say
+/// there was nothing; asked for something close, it would start the same work
+/// again. See `PromptPlan::with_underway`.
+pub fn underway(conversation_id: &str) -> Vec<String> {
+    LIVE_RUNS
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|live| live.conversation_id.as_deref() == Some(conversation_id))
+        .map(|live| live.goal.clone())
+        .collect()
 }
 
 fn unregister_run(run_id: &str) {
@@ -310,7 +332,7 @@ impl SynEngine {
         run: &mut Run,
         req: DriveRequest<'_, R>,
     ) -> AppResult<SynMessage> {
-        let stop = register_run(&run.id, run.conversation_id.clone());
+        let stop = register_run(&run.id, run.conversation_id.clone(), &run.goal);
         let started = std::time::Instant::now();
 
         run.model = Some(req.model.to_string());
@@ -394,6 +416,7 @@ impl SynEngine {
             db: req.db,
             vault_path: req.vault_path,
             app: req.app,
+            surface: run.surface,
         };
         let tools = req.registry.definitions(&ctx);
 
@@ -561,6 +584,51 @@ impl SynEngine {
                     continue;
                 }
 
+                // Where the question came from, before which one and before
+                // whether the user has agreed. A tool this surface is not
+                // offered is not a permission anybody can grant from here, and
+                // asking would park the run on a card on a screen nobody is
+                // looking at. The model was never told about it; this is for
+                // when it asks by name anyway. See `syn::surface`.
+                let reaching_for = req.registry.capability_of(&tc.function.name, &tc.function.arguments);
+                if !run.surface.offers(&tc.function.name, reaching_for.as_ref()) {
+                    run.note(
+                        iteration,
+                        format!(
+                            "Refused `{}`: not available from {}.",
+                            tc.function.name,
+                            run.surface.label()
+                        ),
+                    );
+                    if let Some(capability) = &reaching_for {
+                        crate::syn::audit::record_best_effort(
+                            req.vault_path,
+                            &run_id,
+                            &tc.function.name,
+                            capability,
+                            crate::syn::audit::Outcome::Refused,
+                            run.surface,
+                        );
+                    }
+                    working.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: serde_json::json!({
+                            "refused": format!(
+                                "`{}` is not available when the question comes from {}. Do not \
+                                 look for another way; say plainly that this has to be done in \
+                                 the app.",
+                                tc.function.name,
+                                run.surface.label()
+                            ),
+                        })
+                        .to_string(),
+                        tool_calls: None,
+                        tool_call_id: tc.id.clone(),
+                        images: None,
+                    });
+                    continue;
+                }
+
                 // Which one? Checked before the consent decision below,
                 // because this is not a permission question — running the
                 // ledger for it would file "may I write to the vault" in the
@@ -610,6 +678,7 @@ impl SynEngine {
                         &tc.function.name,
                         capability,
                         crate::syn::audit::outcome_of(&decision),
+                        run.surface,
                     );
 
                     match decision {
@@ -1693,6 +1762,23 @@ fn assemble(
 }
 #[cfg(test)]
 mod tests {
+
+    /// A second run on a conversation is told what the first was asked, and
+    /// nothing from anywhere else.
+    #[test]
+    fn what_is_underway_is_this_conversations_and_only_while_it_runs() {
+        let slow = format!("run-{}", uuid::Uuid::new_v4());
+        let elsewhere = format!("run-{}", uuid::Uuid::new_v4());
+        let conversation = format!("conversation-{}", uuid::Uuid::new_v4());
+        super::register_run(&slow, Some(conversation.clone()), "đọc hết feed tuần này");
+        super::register_run(&elsewhere, Some("another".into()), "chào");
+
+        assert_eq!(super::underway(&conversation), ["đọc hết feed tuần này"]);
+
+        super::unregister_run(&slow);
+        super::unregister_run(&elsewhere);
+        assert!(super::underway(&conversation).is_empty());
+    }
 
     fn asking(ids: &[Option<&str>]) -> ChatMessage {
         ChatMessage {
@@ -2807,6 +2893,90 @@ mod driving {
 
         assert_eq!(run.spent.tool_calls, 0, "nothing ran");
         assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
+    }
+
+    /// A question from Telegram cannot reach what Telegram is not offered, even
+    /// when the model asks for it by name.
+    ///
+    /// Two ways it could go wrong, and both are the same failure seen from a
+    /// phone. `delete_kind` running would send every note of a type to the
+    /// trash, from a screen too small to show the list it was confirmed
+    /// against. `browse` *asking* would be worse than running: the run would
+    /// park on a consent card in a window on a desk, and the person holding the
+    /// phone would get nothing back at all.
+    #[tokio::test]
+    async fn a_run_from_telegram_is_refused_what_telegram_is_not_offered() {
+        use crate::models::node::NodeMetadata;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+        bridge
+            .upsert_node(&NodeMetadata {
+                id: "Notes/keep.md".to_string(),
+                node_type: "note".to_string(),
+                title: "Giữ lại".to_string(),
+                content: "quan trọng".to_string(),
+                properties: serde_json::json!({}),
+                created_at: "2026-01-01 00:00:00".to_string(),
+                updated_at: "2026-01-01 00:00:00".to_string(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .expect("seed");
+        std::fs::create_dir_all(dir.path().join("Notes")).expect("dir");
+        std::fs::write(dir.path().join("Notes/keep.md"), "quan trọng").expect("file");
+
+        let db: crate::db::DbState = Mutex::new(bridge);
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut run = Run::new("dọn ghi chú rồi tìm tin", Some("conv-tg".into()), budget(12));
+        run.surface = crate::syn::surface::Surface::Telegram;
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("delete_kind", serde_json::json!({ "node_type": "note", "confirm_nodes": 1 })),
+                calls("browse", serde_json::json!({ "what": "tin tức hôm nay" })),
+                text("việc này phải làm trên máy"),
+            ],
+        )));
+
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("dọn ghi chú rồi tìm tin"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+
+        assert_eq!(run.state, RunState::Done, "answered, not parked: {:?}", run.steps);
+        assert!(run.pending_consent.is_none(), "no card for a screen nobody is watching");
+        assert_eq!(run.spent.tool_calls, 0, "nothing ran");
+        assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
+
+        // The refusal of the one that would have left the machine is on the
+        // record, with where it came from.
+        let audit = crate::syn::audit::read(&vault);
+        assert_eq!(audit.len(), 1, "{audit:?}");
+        assert_eq!(audit[0].tool, "browse");
+        assert_eq!(audit[0].outcome, crate::syn::audit::Outcome::Refused);
+        assert_eq!(audit[0].surface, crate::syn::surface::Surface::Telegram);
     }
 
     /// And with something actually read, the same call is refused.

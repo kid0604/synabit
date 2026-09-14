@@ -65,6 +65,14 @@ pub struct Entry {
     /// What it would take to undo, when there is anything to undo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reversal: Option<String>,
+    /// Where the run that did this was asked from. See `syn::surface`.
+    ///
+    /// On the line rather than looked up from the run: runs are pruned at
+    /// `run::KEEP_RUNS` and this file keeps ten times as many entries, so "was
+    /// this from my phone" has to outlive the transcript it came from. Lines
+    /// written before there was anywhere else read back as the app.
+    #[serde(default)]
+    pub surface: crate::syn::surface::Surface,
 }
 
 fn path(vault_path: &str) -> AppResult<std::path::PathBuf> {
@@ -112,6 +120,7 @@ pub fn record(
     tool: &str,
     capability: &Capability,
     outcome: Outcome,
+    surface: crate::syn::surface::Surface,
 ) -> AppResult<()> {
     if !worth_recording(capability) {
         return Ok(());
@@ -136,6 +145,7 @@ pub fn record(
             about: capability.describe(),
             outcome,
             reversal,
+            surface,
         },
     );
     entries.truncate(KEEP_ENTRIES);
@@ -156,8 +166,9 @@ pub fn record_best_effort(
     tool: &str,
     capability: &Capability,
     outcome: Outcome,
+    surface: crate::syn::surface::Surface,
 ) {
-    if let Err(e) = record(vault_path, run_id, tool, capability, outcome) {
+    if let Err(e) = record(vault_path, run_id, tool, capability, outcome, surface) {
         log::warn!("[Syn] Could not write to the audit log: {e}");
     }
 }
@@ -174,6 +185,7 @@ pub fn outcome_of(decision: &Decision) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syn::surface::Surface;
 
     fn vault() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().expect("temp vault");
@@ -202,7 +214,8 @@ mod tests {
             Capability::VaultStructural,
         ] {
             assert!(!worth_recording(&capability));
-            record(&vault, "run-1", "create_node", &capability, Outcome::Done).expect("no-op");
+            record(&vault, "run-1", "create_node", &capability, Outcome::Done, Surface::App)
+                .expect("no-op");
         }
         assert!(read(&vault).is_empty());
     }
@@ -212,8 +225,8 @@ mod tests {
     fn what_leaves_the_vault_is_written_down_newest_first() {
         let (_dir, vault) = vault();
 
-        record(&vault, "run-1", "send_test", &sending(), Outcome::Asked).expect("written");
-        record(&vault, "run-1", "send_test", &sending(), Outcome::Done).expect("written");
+        record(&vault, "run-1", "send_test", &sending(), Outcome::Asked, Surface::App).expect("written");
+        record(&vault, "run-1", "send_test", &sending(), Outcome::Done, Surface::App).expect("written");
 
         let entries = read(&vault);
         assert_eq!(entries.len(), 2);
@@ -235,11 +248,12 @@ mod tests {
     #[test]
     fn an_entry_says_what_undoing_it_would_take() {
         let (_dir, vault) = vault();
-        record(&vault, "run-1", "send_test", &sending(), Outcome::Done).expect("written");
+        record(&vault, "run-1", "send_test", &sending(), Outcome::Done, Surface::App).expect("written");
         let how = read(&vault)[0].reversal.clone().expect("something to say");
         assert!(how.contains("example.test"), "{how}");
 
-        record(&vault, "run-2", "run_code", &Capability::Execute, Outcome::Done).expect("written");
+        record(&vault, "run-2", "run_code", &Capability::Execute, Outcome::Done, Surface::App)
+            .expect("written");
         assert!(read(&vault)[0]
             .reversal
             .as_deref()
@@ -254,7 +268,7 @@ mod tests {
     #[test]
     fn being_stopped_is_also_worth_recording() {
         let (_dir, vault) = vault();
-        record(&vault, "run-1", "send_test", &sending(), Outcome::Refused).expect("written");
+        record(&vault, "run-1", "send_test", &sending(), Outcome::Refused, Surface::App).expect("written");
         assert_eq!(read(&vault)[0].outcome, Outcome::Refused);
     }
 
@@ -270,13 +284,14 @@ mod tests {
                 about: "send".into(),
                 outcome: Outcome::Done,
                 reversal: None,
+                surface: Surface::App,
             })
             .collect();
         entries.truncate(KEEP_ENTRIES + 20);
         let p = path(&vault).expect("a path");
         std::fs::write(&p, serde_json::to_string(&entries).expect("json")).expect("written");
 
-        record(&vault, "run-new", "send_test", &sending(), Outcome::Done).expect("written");
+        record(&vault, "run-new", "send_test", &sending(), Outcome::Done, Surface::App).expect("written");
         assert_eq!(read(&vault).len(), KEEP_ENTRIES);
         assert_eq!(read(&vault)[0].run_id, "run-new", "the newest survives");
     }
@@ -285,7 +300,7 @@ mod tests {
     #[test]
     fn the_log_is_somewhere_that_does_not_sync() {
         let (_dir, vault) = vault();
-        record(&vault, "run-1", "send_test", &sending(), Outcome::Done).expect("written");
+        record(&vault, "run-1", "send_test", &sending(), Outcome::Done, Surface::App).expect("written");
 
         let p = path(&vault).expect("a path");
         let relative = p.strip_prefix(&vault).expect("inside").to_str().expect("utf8");
@@ -294,5 +309,19 @@ mod tests {
             relative.split(['/', '\\']).any(|part| part.starts_with('.')),
             "two machines' histories must not merge into one list where neither is true"
         );
+    }
+
+    /// Where it was asked from is on the line, and a line written before there
+    /// was anywhere else reads back as the app.
+    #[test]
+    fn an_entry_says_where_it_was_asked_from() {
+        let (_dir, vault) = vault();
+        record(&vault, "run-1", "browse", &Capability::Browse, Outcome::Refused, Surface::Telegram)
+            .expect("written");
+        assert_eq!(read(&vault)[0].surface, Surface::Telegram);
+
+        let old = r#"{"at":"2026-09-05T00:00:00Z","run_id":"run-0","tool":"send_test","about":"send","outcome":"done"}"#;
+        let entry: Entry = serde_json::from_str(old).expect("an old line still reads");
+        assert_eq!(entry.surface, Surface::App);
     }
 }

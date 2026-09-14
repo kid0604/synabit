@@ -128,6 +128,9 @@ pub struct RunContext<'a, R: tauri::Runtime> {
     pub db: &'a crate::db::DbState,
     pub vault_path: &'a str,
     pub app: &'a tauri::AppHandle<R>,
+    /// Where the run was asked from, which narrows what it is offered. See
+    /// `syn::surface`.
+    pub surface: crate::syn::surface::Surface,
 }
 
 impl<R: tauri::Runtime> RunContext<'_, R> {
@@ -150,7 +153,8 @@ pub trait ToolProvider<R: tauri::Runtime>: Send + Sync {
 
     /// The tools this provider offers for the run described by `ctx`.
     ///
-    /// Takes the context so the list can differ per run. Nothing varies it yet.
+    /// Takes the context so the list can differ per run — today by where the
+    /// run was asked from. See `syn::surface`.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition>;
 
     /// What kind of power this call has, or `None` if this provider does not
@@ -207,6 +211,8 @@ impl VaultTools {
             // errs the other way and stays true.
             "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version"
             | "update_feed_article" | "create_transaction" | "remember" | "run_recipe"
+            // Enqueues a capture, which becomes a cap like any typed one.
+            | "capture"
             // A board is a vault node like any other; what makes these two
             // different is that the model must not decide where anything goes.
             // See `syn::board`.
@@ -269,6 +275,13 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         crate::syn::tools::get_tool_definitions_for(&settings)
             .into_iter()
             .filter(|definition| boards || !crate::syn::board::TOOLS.contains(&definition.function.name.as_str()))
+            // Where the question came from. Left out rather than refused at call
+            // time, for the reason above — and the engine refuses at call time
+            // as well, for a model that asks by name anyway.
+            .filter(|definition| {
+                let name = &definition.function.name;
+                ctx.surface.offers(name, Self::table(name, &Value::Null).as_ref())
+            })
             .filter(|definition| {
                 Self::table(&definition.function.name, &Value::Null)
                     .is_none_or(|c| !is_switched_off(&c, &ledger, &now))
@@ -283,6 +296,15 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
     fn execute(&self, ctx: &RunContext<R>, tool: &str, args: &Value) -> AppResult<ToolOutcome> {
         let capability = Self::table(tool, args)
             .ok_or_else(|| crate::error::AppError::General(format!("Unknown tool: {tool}")))?;
+
+        // The engine turns these away before they reach here. This is the same
+        // rule a second time, for any caller that is not the engine.
+        if !ctx.surface.offers(tool, Some(&capability)) {
+            return Err(crate::error::AppError::General(format!(
+                "`{tool}` is not available from {}",
+                ctx.surface.label()
+            )));
+        }
 
         let content = crate::syn::tools::execute_tool(&ctx.tools(), tool, args)?;
         Ok(ToolOutcome {
@@ -573,7 +595,7 @@ mod tests {
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
-            "read_board", "draw_board", "edit_board",
+            "read_board", "draw_board", "edit_board", "capture",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
         ];
@@ -818,6 +840,68 @@ mod tests {
     /// code through every rewrite of `table`, including the one that replaced
     /// the browsing arm. `cargo` did say so, in a warning, in a file with
     /// twenty-five others.
+    /// What a run is offered depends on where it was asked from, and the only
+    /// direction that can change is down.
+    ///
+    /// Through the real `definitions`, with a board in the vault so the board
+    /// tools are offered to the app — their absence from Telegram's list is then
+    /// the surface's doing rather than the empty vault's.
+    #[tokio::test]
+    async fn a_question_from_telegram_is_offered_a_subset_of_the_app() {
+        use crate::syn::surface::Surface;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let boards = dir.path().join(crate::syn::board::BOARDS_DIR);
+        std::fs::create_dir_all(&boards).expect("dir");
+        std::fs::write(boards.join("plan.whiteboard.json"), "{}").expect("a board");
+
+        let db: crate::db::DbState =
+            std::sync::Mutex::new(crate::db::DbBridge::new_in_memory_full().expect("schema"));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let registry = Registry::for_chat();
+
+        let offered = |surface| -> Vec<String> {
+            let ctx = RunContext {
+                run_id: "run-1",
+                db: &db,
+                vault_path: vault,
+                app: app.handle(),
+                surface,
+            };
+            registry.definitions(&ctx).into_iter().map(|d| d.function.name).collect()
+        };
+        let in_the_app = offered(Surface::App);
+        let from_telegram = offered(Surface::Telegram);
+
+        for name in ["draw_board", "delete_kind", "update_node", "trash_node"] {
+            assert!(in_the_app.iter().any(|n| n == name), "the app lost `{name}`");
+        }
+        // The one exception, on purpose: a tool for keeping what a phone sends,
+        // which the app is not charged for. See `Surface::offers`.
+        let capture = crate::syn::tools::CAPTURE_TOOL;
+        assert!(from_telegram.iter().any(|n| n == capture), "Telegram lost `{capture}`");
+        assert!(!in_the_app.iter().any(|n| n == capture), "the app is being sent `{capture}`");
+        for name in from_telegram.iter().filter(|n| *n != capture) {
+            assert!(in_the_app.contains(name), "Telegram was offered `{name}`, which the app is not");
+        }
+        for name in ["query_nodes", "get_node", "create_node", "remember", "update_node", "trash_node"] {
+            assert!(from_telegram.iter().any(|n| n == name), "Telegram lost `{name}`");
+        }
+        for name in [
+            crate::syn::tools::BROWSE_TOOL,
+            "draw_board",
+            "edit_board",
+            "run_recipe",
+            "delete_kind",
+            "rename_kind",
+        ] {
+            assert!(!from_telegram.iter().any(|n| n == name), "Telegram was offered `{name}`");
+        }
+    }
+
     #[test]
     fn a_name_nothing_claims_is_not_a_capability() {
         assert_eq!(VaultTools::table("send_email", &Value::Null), None);

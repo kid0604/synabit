@@ -439,6 +439,8 @@ pub fn run() {
         .manage(watcher::SourceWatcherState::default())
         // One page in flight at a time — one window, one thing to watch.
         .manage(syn::browser::Waiting::default())
+        // The Telegram bot's tasks and what they share. See `syn::telegram`.
+        .manage(syn::telegram::TelegramState::default())
         .manage(feeds::FeedSchedulerState::default())
         .on_window_event(|window, event| {
             // The browsing pane's top edge is a fixed number of pixels, not a
@@ -607,6 +609,14 @@ pub fn run() {
             // the system's own scheduler instead, and kept in step with the
             // vault. On a desktop this does nothing — see `scheduler`.
             calendar::scheduler::watch(app.handle().clone());
+
+            // The Telegram bot, on the computer whose keychain holds its token.
+            // Desktop only: a phone is what talks to it. With no token this
+            // waits, and asks nothing of the keychain — see `syn::telegram`.
+            #[cfg(desktop)]
+            {
+                syn::telegram::start(app.handle().clone());
+            }
 
             // App Lock
             app.manage(commands::app_lock::AppLockState::default());
@@ -873,6 +883,13 @@ pub fn run() {
             syn_commands::syn_save_settings,
             syn_commands::syn_set_api_key,
             syn_commands::syn_has_api_key,
+            commands::telegram::telegram_status,
+            commands::telegram::telegram_set_token,
+            commands::telegram::telegram_clear_token,
+            commands::telegram::telegram_start_pairing,
+            commands::telegram::telegram_unpair,
+            commands::telegram::telegram_retry,
+            commands::telegram::telegram_set_reminders,
             syn_commands::syn_pin_conversation,
             syn_commands::syn_export_conversation,
             syn_commands::syn_list_runs,

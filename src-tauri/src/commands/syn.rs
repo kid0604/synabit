@@ -44,7 +44,7 @@ const KEYCHAIN_PATIENCE: std::time::Duration = std::time::Duration::from_secs(8)
 /// a blocked thread must not become a blocked command. Answering `None` is the
 /// honest outcome: without a key the provider reports "not connected", which
 /// is a screen the user can act on, rather than a spinner that never resolves.
-async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> Option<String> {
+pub(crate) async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> Option<String> {
     let handle = app.clone();
     let read = tokio::task::spawn_blocking(move || {
         crate::secrets::SecretManager::get_syn_api_key(Some(&handle), slot)
@@ -214,7 +214,22 @@ pub async fn syn_save_settings(vault_path: String, settings: SynSettings) -> Res
 //  CHAT / STREAMING (with RAG + Settings)
 // ═══════════════════════════════════════════════════════════════
 
-/// Send a message and stream the AI response, with RAG vault context.
+/// Send a message from the app, and stream the answer back into it.
+///
+/// The app's door onto `send_message_inner`, and nothing more. The work lives
+/// in the function so that every surface goes through the same code — the
+/// switch, the prompt, the ceilings, the reflection — rather than a copy for
+/// each that drifts from the others. See `syn::surface`.
+#[tauri::command]
+pub async fn syn_send_message(
+    app: tauri::AppHandle,
+    vault_path: String,
+    request: SynChatRequest,
+) -> Result<SynMessage, AppError> {
+    send_message_inner(&app, &vault_path, request, crate::syn::surface::Surface::App).await
+}
+
+/// Answer one message, from wherever it was sent.
 ///
 /// Flow:
 /// 1. Load settings from vault
@@ -227,16 +242,22 @@ pub async fn syn_save_settings(vault_path: String, settings: SynSettings) -> Res
 /// 8. Save the conversation back to disk
 /// 9. Auto-generate a title if this is the first user message
 /// 10. Return the assistant's complete SynMessage
-#[tauri::command]
-pub async fn syn_send_message(
-    app: tauri::AppHandle,
-    vault_path: String,
+///
+/// The database and the browsing slot are taken from the app handle rather
+/// than passed in, because a caller that is not a command — a bot polling in
+/// the background — has no `State` to pass.
+pub async fn send_message_inner(
+    app: &tauri::AppHandle,
+    vault_path: &str,
     request: SynChatRequest,
-    state: tauri::State<'_, crate::db::DbState>,
-    browser_state: tauri::State<'_, crate::syn::browser::Waiting>,
+    surface: crate::syn::surface::Surface,
 ) -> Result<SynMessage, AppError> {
+    use tauri::Manager;
+    let state = app.state::<crate::db::DbState>();
+    let browser_state = app.state::<crate::syn::browser::Waiting>();
+
     // 1. Load settings (graceful fallback to defaults)
-    let settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+    let settings = crate::syn::settings::load_settings(vault_path).unwrap_or_default();
 
     // Off means off, and it has to be enforced here rather than only on the
     // screen. A switch that hides the composer while the command still answers
@@ -250,7 +271,15 @@ pub async fn syn_send_message(
     }
 
     // 2. Load existing conversation
-    let mut conv = conversation::get_conversation(&vault_path, &request.conversation_id)?;
+    //
+    // Under the conversation's lock, and only for the read: the run below may
+    // take minutes, and another message on this conversation — a phone sending
+    // "thanks" while a long question is still being worked on — must not wait
+    // for it. Step 10 reads the file again and puts this turn in beside
+    // whatever arrived meanwhile. See `conversation::hold`.
+    let held = conversation::hold(&request.conversation_id).await;
+    let mut conv = conversation::get_conversation(vault_path, &request.conversation_id)?;
+    drop(held);
 
     // Which model to use: what this send asked for, then what the conversation
     // has been using, then the vault default.
@@ -292,6 +321,10 @@ pub async fn syn_send_message(
     //    bubble in the conversation and hand the model a turn with nothing in
     //    it. See `syn_answer_consent`.
     let carrying_on = request.resume_run.as_deref();
+    // The empty turn a stopped run left, which this answer will replace.
+    let mut placeholder: Option<String> = None;
+    // The question as it goes into the file, when it is a new one.
+    let mut asked: Option<SynMessage> = None;
     let question = if carrying_on.is_some() {
         // The stopped run left an assistant turn with no words in it — that is
         // what `LoopEnd::NeedsConsent` assembles. Dropped rather than kept:
@@ -302,7 +335,7 @@ pub async fn syn_send_message(
             .last()
             .is_some_and(|m| m.role == "assistant" && m.content.trim().is_empty())
         {
-            conv.messages.pop();
+            placeholder = conv.messages.pop().map(|m| m.id);
         }
 
         let Some(asked) = conv.messages.iter().rev().find(|m| m.role == "user") else {
@@ -325,7 +358,8 @@ pub async fn syn_send_message(
             tool_calls_log: None,
             images: request.images.clone(),
         };
-        conv.messages.push(user_message);
+        conv.messages.push(user_message.clone());
+        asked = Some(user_message);
         request.message.clone()
     };
 
@@ -434,14 +468,21 @@ pub async fn syn_send_message(
     // prompt had already been built. They are a section of the plan now, so
     // there is one place that knows what the prompt is made of — and one place
     // that can report on it, which is what `syn_preview_prompt` reads.
-    let standing = standing_instructions(&vault_path, &settings);
+    let standing = standing_instructions(vault_path, &settings);
     // What is on screen includes the browsing pane, and the front end cannot
     // see it — it is a webview of the operating system's, beside the app rather
     // than inside it. Filled in here, where the app handle is.
-    let focus = crate::syn::focus::with_the_pane(
-        request.focus.clone(),
-        crate::syn::pane::showing(&app),
-    );
+    //
+    // Only for a question asked in the app. From anywhere else the pane is on a
+    // screen the person is not looking at, and telling the model what it shows
+    // would answer a question about a page they cannot see.
+    let focus = match surface {
+        crate::syn::surface::Surface::App => crate::syn::focus::with_the_pane(
+            request.focus.clone(),
+            crate::syn::pane::showing(app),
+        ),
+        _ => request.focus.clone(),
+    };
     let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
         context: &context_str,
         custom: standing.as_deref(),
@@ -451,6 +492,9 @@ pub async fn syn_send_message(
         thread: thread_block.as_deref(), counted: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
+    .with_surface(surface)
+    // Asked before this run registers, so it lists only the others.
+    .with_underway(&crate::syn::engine::underway(&request.conversation_id))
     .render();
 
     // 6. Build messages for LLM: system prompt + conversation history
@@ -498,7 +542,7 @@ pub async fn syn_send_message(
     // gave permission for. Read off that run rather than worked out again — see
     // `run::Run::pending_call` for the transcript that made this necessary.
     let resume_call = carrying_on
-        .and_then(|id| crate::syn::run::get_run(&vault_path, id).ok())
+        .and_then(|id| crate::syn::run::get_run(vault_path, id).ok())
         .and_then(|stopped| stopped.pending_call);
 
     let mut run = Run::new(
@@ -511,6 +555,8 @@ pub async fn syn_send_message(
     } else {
         crate::syn::tempo::Tempo::Working
     };
+    // Before `drive`, which is where it narrows the tools. See `syn::surface`.
+    run.surface = surface;
 
     // Said before the work starts, not after: somebody who is about to wait
     // should know they are about to wait.
@@ -526,23 +572,23 @@ pub async fn syn_send_message(
     // Which piece of work this served, so that "do threads do anything" is a
     // question the runs can answer. See `thread::usage`.
     run.thread = request.focus.as_ref().and_then(|f| f.thread.clone());
-    crate::syn::run::prune_runs(&vault_path);
+    crate::syn::run::prune_runs(vault_path);
 
-    let engine = SynEngine::new(provider_for(&app, &settings).await);
+    let engine = SynEngine::new(provider_for(app, &settings).await);
     let assistant_message_id = uuid::Uuid::new_v4().to_string();
 
     let mut assistant_message = engine
         .drive(
             &mut run,
             DriveRequest {
-                app: &app,
+                app,
                 message_id: &assistant_message_id,
                 history: &messages_for_llm,
                 model: &model,
                 temperature,
                 registry: &registry,
                 db: state.inner(),
-                vault_path: &vault_path,
+                vault_path,
                 num_ctx: settings.num_ctx,
                 max_history: settings.max_history_messages,
                 browser: &browser_state,
@@ -612,11 +658,33 @@ pub async fn syn_send_message(
         // history as unmeasured. `ENOUGH_TO_MEAN_ANYTHING` was therefore never
         // reached and the screen showed nothing, for ever, while looking like
         // it was working.
-        crate::syn::run::save_run_best_effort(&vault_path, &run);
+        crate::syn::run::save_run_best_effort(vault_path, &run);
     }
 
     // 10. Add the assistant response to the conversation
-    conv.messages.push(assistant_message.clone());
+    //
+    // Into the file as it is now, not as it was read at step 2: another turn
+    // may have been written while this one ran. Read back and written under
+    // the lock, so two answers finishing together cannot erase each other.
+    let held = conversation::hold(&request.conversation_id).await;
+    let mut conv = match conversation::get_conversation(vault_path, &request.conversation_id) {
+        Ok(mut latest) => {
+            conversation::place_turn(
+                &mut latest.messages,
+                asked,
+                assistant_message.clone(),
+                placeholder.as_deref(),
+            );
+            latest
+        }
+        // Gone meanwhile — deleted from the app. Written back as this run saw
+        // it, which is what every send did before turns could overlap.
+        Err(e) => {
+            log::warn!("[Syn] Writing the conversation back as it was read: {e}");
+            conv.messages.push(assistant_message.clone());
+            conv
+        }
+    };
 
     // Record what answered, so the conversation keeps using it — and record
     // the provider with it, since the name alone does not identify a model.
@@ -631,12 +699,19 @@ pub async fn syn_send_message(
     // Auto-generate title if this is the first user message
     // (message_count == 2 means: 1 user + 1 assistant, i.e., first exchange)
     let is_first_exchange = conv.messages.iter().filter(|m| m.role == "user").count() == 1;
-    if is_first_exchange {
+    // Only in the app. A conversation from another surface is one stream of
+    // everything sent from there, already named for it when it was made; its
+    // first message ("chào") would name nothing that follows.
+    if is_first_exchange && surface == crate::syn::surface::Surface::App {
         conv.meta.title = conversation::auto_title(&question);
     }
 
     // Save the conversation
-    conversation::save_conversation(&vault_path, &conv)?;
+    conversation::save_conversation(vault_path, &conv)?;
+    // Written, so the next send may write. Released here rather than at the
+    // end of the function: what follows is background work that never touches
+    // the conversation, and one piece of it can wait on the keychain.
+    drop(held);
 
     // 11. Look back at the exchange and propose what might be worth keeping.
     //
@@ -649,8 +724,8 @@ pub async fn syn_send_message(
     // evidence of anything, and reflecting on one would propose memories drawn
     // from work the user stopped.
     if settings.memory_reflection && run.state == crate::syn::run::RunState::Done {
-        let provider = provider_for(&app, &settings).await;
-        let vault = vault_path.clone();
+        let provider = provider_for(app, &settings).await;
+        let vault = vault_path.to_string();
         let model_name = model.clone();
         let asked = question.clone();
         let answered = assistant_message.content.clone();
@@ -733,8 +808,8 @@ pub async fn syn_send_message(
                 .filter(|s| s.pending_revision.is_none());
 
             if let Some(skill) = struggling {
-                let provider = provider_for(&app, &settings).await;
-                let vault = vault_path.clone();
+                let provider = provider_for(app, &settings).await;
+                let vault = vault_path.to_string();
                 let model_name = model.clone();
                 let num_ctx = settings.num_ctx;
                 let goal = run.goal.clone();
@@ -778,9 +853,9 @@ pub async fn syn_send_message(
         // across both languages and this is the wrong change to bundle it with.
         // Stated rather than hidden: turning off reflection turns off both.
         if let Some(chain) = crate::syn::skill::repeated_chain(&run) {
-            if !crate::syn::skill::already_proposed(&vault_path, &chain) {
-                let provider = provider_for(&app, &settings).await;
-                let vault = vault_path.clone();
+            if !crate::syn::skill::already_proposed(vault_path, &chain) {
+                let provider = provider_for(app, &settings).await;
+                let vault = vault_path.to_string();
                 let model_name = model.clone();
                 let goal = run.goal.clone();
                 let run_id_for_skill = run.id.clone();
@@ -1417,6 +1492,7 @@ pub async fn syn_answer_consent(
             crate::syn::consent::Answer::Never => crate::syn::audit::Outcome::Refused,
             _ => crate::syn::audit::Outcome::Allowed,
         },
+        run.surface,
     );
 
     // Written into the transcript, not only cleared — the same reason as
@@ -1991,7 +2067,7 @@ pub async fn syn_preview_prompt(
     };
 
     let standing = standing_instructions(&vault_path, &settings);
-    Ok(PromptPlan::for_chat(ChatPrompt {
+    let mut preview: PromptPreview = PromptPlan::for_chat(ChatPrompt {
         context: &context,
         custom: standing.as_deref(),
         skills: skill_index.as_deref(),

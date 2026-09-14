@@ -16,6 +16,7 @@ pub mod nodes;
 pub mod paste;
 pub mod people;
 pub mod syn;
+pub mod telegram;
 pub mod sync;
 pub mod tags;
 pub mod thumbnails;

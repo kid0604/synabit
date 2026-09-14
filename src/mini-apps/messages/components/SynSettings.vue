@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { X, RotateCcw, Save, Loader2 } from 'lucide-vue-next';
 import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
 import { useSynSettings } from '../composables/useSynSettings';
+import SynTelegramSettings from './SynTelegramSettings.vue';
 import type { ModelInfo } from '../types';
 
 const props = defineProps<{
@@ -516,6 +517,8 @@ watch(() => props.vaultPath, () => {
               </div>
             </div>
           </section>
+
+          <SynTelegramSettings />
 
           <!-- HOW WE WORK TOGETHER
                This used to be a three-voice picker and a textarea. Both are
