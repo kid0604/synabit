@@ -341,6 +341,38 @@ async function openDailyNote() {
     } catch(e) { logger.error("Failed to open daily note:", e); }
 }
 
+/*
+ * Daily notes written before `date:` existed carry their day only in the title,
+ * under whatever pattern was set at the time. Give each one its date once per
+ * vault on this device, before any note is loaded into a tab, so an open
+ * editor never saves over the line being added. The title is read in Rust,
+ * which skips any title two devices could read differently; see
+ * `src-tauri/src/utils/daily_note_date.rs`.
+ */
+const giveDailyNotesTheirDate = async () => {
+    if (!props.vaultPath) return;
+    const key = `daily-note-date-v1:${props.vaultPath}`;
+    try {
+        if (await invoke<string | null>('get_migration_flag', { key })) return;
+
+        const formatStr = isValidDailyFormat.value ? dailyNoteFormat.value : 'YYYY-MM-DD';
+        const report = await invoke<{ changed: number; unchanged: number; failed: number }>(
+            'migrate_daily_note_dates',
+            { vaultPath: props.vaultPath, formatStr },
+        );
+        logger.info(
+            `Daily note dates: ${report.changed} dated, ${report.unchanged} already current, ${report.failed} failed`,
+        );
+
+        // Only a clean pass is recorded, as with the other storage repairs.
+        if (report.failed === 0) {
+            await invoke('set_migration_flag', { key, value: new Date().toISOString() });
+        }
+    } catch (e) {
+        logger.error('Daily note dates failed', e);
+    }
+};
+
 const handleOpenDailyNote = async () => {
     await openDailyNote();
     if (window.innerWidth < 768) sidebar.showLeft.value = false;
@@ -386,6 +418,28 @@ const editorFullWidth = computed({
         }
     }
 });
+
+/**
+ * Seal or unseal a note. One key, on a patch of its own: a patch that does not
+ * name the body, the tags or `pinned` leaves them as they are on disk, so
+ * unlike pinning this never needs the body.
+ */
+const toggleSeal = async (id: string) => {
+    const note = notes.value.find(n => n.id === id);
+    if (!note) return;
+    const sealing = !note.sealed;
+    closeContextMenu();
+    try {
+        await ns.writeNode({
+            relPath: note.id,
+            title: note.title,
+            nodeType: 'note',
+            properties: { sealed: sealing ? true : null },
+        });
+        note.sealed = sealing;
+        scanVault();
+    } catch (e) { logger.error('Seal fail:', e); }
+};
 
 const togglePin = async (id: string) => {
     const note = notes.value.find(n => n.id === id);
@@ -448,6 +502,7 @@ async function scanVault() {
                 node_id: typeof n.properties?.node_id === 'string' ? n.properties.node_id : undefined,
                 created_at: n.created_at,
                 pinned: !!n.properties?.pinned, full_width: !!n.properties?.full_width,
+                sealed: !!n.properties?.sealed,
                 linked_projects: Array.isArray(n.properties?.linked_projects) ? n.properties.linked_projects : [],
                 summary: (n.preview || '').trim()
             };
@@ -571,6 +626,7 @@ onMounted(async () => {
         sidebar.showRight.value = false;
     }
 
+    if (props.vaultPath && !props.isFloatingView) { await giveDailyNotesTheirDate(); }
     if (props.vaultPath) { await scanVault(); }
 
     bus.on('note:updated-external', (data) => {
@@ -693,7 +749,7 @@ onMounted(async () => {
                  <NoteListItem v-for="note in search.topPinnedNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="true"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
+                    @pin="togglePin" @seal="toggleSeal" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
                  />
                  <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
                      {{ $t('note.show_more', { count: search.allPinnedNotes.value.length - 5 }) }}
@@ -732,7 +788,7 @@ onMounted(async () => {
                  <NoteListItem v-for="note in search.recentNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="false"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
+                    @pin="togglePin" @seal="toggleSeal" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
                  />
              </div>
              <div v-if="search.recentNotes.value.length === 0" class="p-8 text-center text-sm text-[#52525b] dark:text-[#a1a1aa]">
@@ -962,8 +1018,9 @@ onMounted(async () => {
                                      <button @click="(e) => toggleContext('manager_'+note.id, e)" class="p-1 rounded md:opacity-0 opacity-100 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
                                         <MoreVertical class="w-4 h-4 text-gray-500" />
                                      </button>
-                                     <NoteContextMenu v-if="activeContextMenu === 'manager_'+note.id" :note-id="note.id" :is-pinned="note.pinned" variant="manager"
+                                     <NoteContextMenu v-if="activeContextMenu === 'manager_'+note.id" :note-id="note.id" :is-pinned="note.pinned" :is-sealed="!!note.sealed" variant="manager"
                                         @pin="togglePin($event); activeContextMenu = null;"
+                                        @seal="toggleSeal($event); activeContextMenu = null;"
                                         @history="openHistory"
                                         @delete="deleteNote($event); activeContextMenu = null;"
                                      />

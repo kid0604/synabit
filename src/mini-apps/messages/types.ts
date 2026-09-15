@@ -280,6 +280,7 @@ export type PromptSectionKind =
   | 'underway'
   | 'focus'
   | 'counted'
+  | 'timeline'
   | 'thread'
   | 'tool_shape'
   | 'memory'

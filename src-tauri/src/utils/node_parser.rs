@@ -14,12 +14,10 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
     let created = metadata.created().unwrap_or(modified);
 
-    let mut created_at = chrono::DateTime::<chrono::Local>::from(created)
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
-    let mut updated_at = chrono::DateTime::<chrono::Local>::from(modified)
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let mut created_at =
+        crate::utils::timestamp::canonical(chrono::DateTime::<chrono::Utc>::from(created));
+    let mut updated_at =
+        crate::utils::timestamp::canonical(chrono::DateTime::<chrono::Utc>::from(modified));
     let timestamp = modified
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -136,12 +134,11 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
 
             // A board stamps every save with an RFC 3339 time, because sync
             // compares two copies of a board by that string and the two
-            // devices need not share a time zone. Every other date in the
-            // index is local time in the app's own format, and the block
-            // below copies this one straight over the top of it. Convert it
-            // here rather than let one node type put a second date format
-            // into lists that sort them as plain strings; a stamp that will
-            // not parse is dropped, which leaves the file's mtime standing.
+            // devices need not share a time zone. The block below copies it
+            // over the file's own time, so it has to be a time first: a stamp
+            // that will not parse is dropped, which leaves the file's mtime
+            // standing. Both end in the index's one shape; see
+            // `utils::timestamp`.
             let stamped = map
                 .get("updated_at")
                 .and_then(|v| v.as_str())
@@ -149,11 +146,10 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
             if let Some(stamped) = stamped {
                 match chrono::DateTime::parse_from_rfc3339(&stamped) {
                     Ok(parsed) => {
-                        let local = parsed
-                            .with_timezone(&chrono::Local)
-                            .format("%Y-%m-%d %H:%M:%S")
-                            .to_string();
-                        map.insert("updated_at".to_string(), Value::from(local));
+                        let stamp = crate::utils::timestamp::canonical(
+                            parsed.with_timezone(&chrono::Utc),
+                        );
+                        map.insert("updated_at".to_string(), Value::from(stamp));
                     }
                     Err(_) => {
                         map.remove("updated_at");
@@ -165,10 +161,10 @@ pub fn parse_file_to_node(vault_path: &str, file_path: &Path) -> Option<NodeMeta
 
     // Override dates from properties if available
     if let Some(c) = properties.get("created_at").and_then(|v| v.as_str()) {
-        created_at = c.to_string();
+        created_at = crate::utils::timestamp::normalize(c);
     }
     if let Some(u) = properties.get("updated_at").and_then(|v| v.as_str()) {
-        updated_at = u.to_string();
+        updated_at = crate::utils::timestamp::normalize(u);
     }
 
     // Extract blocks if markdown
@@ -470,8 +466,8 @@ mod tests {
 
         let node = parse_file_to_node(&vault_path, &path).expect("markdown should parse");
 
-        assert_eq!(node.created_at, "2020-01-01 00:00:00");
-        assert_eq!(node.updated_at, "2021-02-03 04:05:06");
+        assert_eq!(node.created_at, crate::utils::timestamp::normalize("2020-01-01 00:00:00"));
+        assert_eq!(node.updated_at, crate::utils::timestamp::normalize("2021-02-03 04:05:06"));
     }
 
     /// The node id is the vault-relative path, always forward-slashed. Every
@@ -519,7 +515,7 @@ mod tests {
     /// dates as plain strings, so the stamp has to reach the index in the same
     /// format the rest of them use.
     #[test]
-    fn a_boards_rfc3339_save_stamp_reaches_the_index_in_the_local_format() {
+    fn a_boards_rfc3339_save_stamp_reaches_the_index_in_its_one_shape() {
         let (_holder, vault_path) = vault();
         let path = write(
             &vault_path,
@@ -530,12 +526,7 @@ mod tests {
 
         let node = parse_file_to_node(&vault_path, &path).expect("board should parse");
 
-        let expected = chrono::DateTime::parse_from_rfc3339("2026-08-23T04:05:06Z")
-            .unwrap()
-            .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        assert_eq!(node.updated_at, expected);
+        assert_eq!(node.updated_at, "2026-08-23T04:05:06.000Z");
     }
 
     /// Dragging a note onto a board is a link from the board to that note, and
@@ -619,7 +610,7 @@ mod tests {
         let node = parse_file_to_node(&vault_path, &path).expect("board should parse");
 
         assert_ne!(node.updated_at, "last Tuesday");
-        // The mtime format, not the file's: %Y-%m-%d %H:%M:%S is 19 characters.
-        assert_eq!(node.updated_at.len(), 19);
+        // The file's own time, in the index's shape: 24 characters.
+        assert_eq!(node.updated_at.len(), 24);
     }
 }

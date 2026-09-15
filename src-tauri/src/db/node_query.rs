@@ -65,6 +65,14 @@ fn text(value: &str) -> rusqlite::types::Value {
 ///
 /// Dates stay text on purpose: `2026-09-01` compares correctly as a string,
 /// and there is nothing to gain by taking it apart.
+fn is_bare_day(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes.iter().enumerate().all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+}
+
 fn comparable(value: &str) -> rusqlite::types::Value {
     if let Ok(i) = value.parse::<i64>() {
         return rusqlite::types::Value::Integer(i);
@@ -248,7 +256,14 @@ impl DbBridge {
             };
             // The operator comes from a fixed set; only the value is a parameter.
             sql.push_str(&format!(" AND {read} {} ?{next}", range.op.as_sql()));
-            params.push(comparable(&range.value));
+            // The columns hold UTC instants, and `2026-09-01` means that day
+            // where the person is. Compared as text it would be Greenwich's.
+            let value = if matches!(read.as_str(), "created_at" | "updated_at") && is_bare_day(&range.value) {
+                crate::utils::timestamp::normalize(&range.value)
+            } else {
+                range.value.clone()
+            };
+            params.push(comparable(&value));
             next += 1;
         }
 
@@ -441,6 +456,18 @@ mod tests {
 
         assert_eq!(found.rows.len(), 1, "{:?}", found.rows);
         assert_eq!(found.rows[0].title, "mới");
+    }
+
+    #[test]
+    fn a_bare_day_in_a_query_is_the_local_day() {
+        use chrono::TimeZone;
+        let db = db();
+        let half_past_midnight = chrono::Local.with_ymd_and_hms(2026, 9, 1, 0, 30, 0).single().unwrap();
+        seed_at(&db, "early.md", "early", &crate::utils::timestamp::canonical(half_past_midnight.with_timezone(&chrono::Utc)));
+        let since = db.run_node_query(&parse_query("updated_at:>=2026-09-01")).expect("query runs");
+        assert_eq!(since.rows.len(), 1, "00:30 on the first is on the first, wherever UTC is");
+        let before = db.run_node_query(&parse_query("updated_at:<2026-09-01")).expect("query runs");
+        assert!(before.rows.is_empty(), "{:?}", before.rows);
     }
 
     #[test]

@@ -13,6 +13,7 @@ import FilesTabs, { type FileTab } from './components/FilesTabs.vue';
 import FilesInfoPanel from './components/FilesInfoPanel.vue';
 import type { NavEntry } from '../../stores/useNavigationStore';
 import { invoke } from '@tauri-apps/api/core';
+import { parseTimeFragment, type TimeFragment } from '../../shared/mediaTime';
 
 // ─── People Autocomplete ─────────────────────────────────────
 const getPersonName = (link: string) => {
@@ -82,16 +83,18 @@ const activeFileMetadata = computed(() => {
   return store.loadedFiles.value.find(f => f.id === activeTab.value!.id) || null;
 });
 
-const openFileInFocus = (file: FileMetadata, page?: number) => {
+const openFileInFocus = (file: FileMetadata, page?: number, time?: TimeFragment) => {
   if (activeTabId.value && activeTabId.value !== file.id && !skipNavPush) {
     pushNavigation?.({ app: 'file', itemId: activeTabId.value });
   }
   const existing = openTabs.value.find(t => t.id === file.id);
   if (existing) {
     existing.page = page;
+    // `at` makes the same moment asked for twice a new request, so it seeks again.
+    existing.time = time ? { ...time, at: Date.now() } : undefined;
     activeTabId.value = existing.id;
   } else {
-    const tab: FileTab = { id: file.id, filename: file.filename, extension: file.extension, path: file.path, page };
+    const tab: FileTab = { id: file.id, filename: file.filename, extension: file.extension, path: file.path, page, time: time ? { ...time, at: Date.now() } : undefined };
     openTabs.value.push(tab);
     activeTabId.value = tab.id;
   }
@@ -359,8 +362,10 @@ const openFileById = async (id: string, _skipNavPush = false, query?: string) =>
     pushNavigation?.({ app: 'file', itemId: activeTabId.value });
   }
 
+  // A moment in a recording, `t=192,230`, rather than words to find a page by.
+  const time = parseTimeFragment(query);
   let page: number | undefined;
-  if (query) {
+  if (query && !time) {
     try {
       page = (await invoke<number | null>('find_text_page', { nodeId: id, query })) ?? undefined;
     } catch (e) {
@@ -374,8 +379,15 @@ const openFileById = async (id: string, _skipNavPush = false, query?: string) =>
   const file = await store.findFile(id);
   if (!file) return;
   skipNavPush = true;
-  openFileInFocus(file, page);
+  openFileInFocus(file, page, time ?? undefined);
   skipNavPush = false;
+};
+
+/** What only some viewers take: a PDF's page, a recording's moment. */
+const viewerExtras = (tab: FileTab) => {
+  if (tab.extension.toLowerCase() === 'pdf') return { initialPage: tab.page };
+  if (tab.time) return { initialTime: tab.time.start, endTime: tab.time.end };
+  return {};
 };
 
 defineExpose({ openFileById, activeTabId });
@@ -971,8 +983,8 @@ onUnmounted(() => {
             :fileId="activeTab.id"
             :filePath="activeTab.path"
             :vaultPath="vaultPath"
-            v-bind="activeTab.extension.toLowerCase() === 'pdf' ? { initialPage: activeTab.page } : {}"
-            :key="activeTab.id"
+            v-bind="viewerExtras(activeTab)"
+            :key="activeTab.id + (activeTab.time ? '#' + activeTab.time.at : '')"
             class="flex-1 min-w-0"
           />
           <FilesInfoPanel

@@ -2,6 +2,7 @@
 import DOMPurify from 'dompurify';
 import { CalendarDays, Plus, Settings, ChevronDown, Link, FileText, Palette, File, Unlink } from 'lucide-vue-next';
 import { computed } from 'vue';
+import { localDay } from '../../../shared/localDay';
 import { type TaskMetadata, isOverdue } from '../types';
 
 const props = defineProps<{
@@ -103,11 +104,11 @@ const emit = defineEmits<{
                       </div>
                       <div class="flex items-center justify-between">
                           <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.created') }}</div>
-                          <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.created_at ? activeProject.created_at.substring(0, 10) : '--' }}</div>
+                          <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.created_at ? localDay(activeProject.created_at) : '--' }}</div>
                       </div>
                       <div class="flex items-center justify-between">
                           <div class="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{{ $t('task.updated') }}</div>
-                          <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.updated_at ? activeProject.updated_at.substring(0, 10) : '--' }}</div>
+                          <div class="text-xs text-gray-700 dark:text-gray-300">{{ activeProject.updated_at ? localDay(activeProject.updated_at) : '--' }}</div>
                       </div>
                   </div>
               </div>

@@ -3,9 +3,11 @@ import { ref, computed, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
-import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat } from 'lucide-vue-next';
+import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat, Briefcase, Link2, CalendarHeart, Flower2 } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
+import { useI18n } from 'vue-i18n';
+import { localDay } from '../../shared/localDay';
 
 const props = defineProps<{
     person: any;
@@ -19,6 +21,7 @@ const emit = defineEmits(['updated', 'open-linked-node']);
 
 const router = useRouter();
 const ns = useNodeService();
+const { t } = useI18n();
 
 const personRef = toRef(props, 'person');
 const { health } = useRelationshipHealth(personRef);
@@ -99,12 +102,31 @@ const unifiedTimeline = computed(() => {
         });
     }
 
+    // What the timeline holds about them that nothing above shows
+    for (const entry of timelineItems.value) {
+        items.push({
+            id: `timeline-${entry.id}`,
+            date: entry.happened_from,
+            sortDate: new Date(entry.happened_from).getTime(),
+            source: 'timeline',
+            type: entry.kind,
+            title: timelineTitle(entry),
+            span: entry.precision === 'range' ? spanText(entry) : '',
+        });
+    }
+
+    // A frontmatter date WKWebView cannot parse, such as `2026-08-15 23:54:33`,
+    // made `toISOString` throw and took the whole tab down with it. `localDay`
+    // reads every shape a vault holds.
     const getNodeDate = (node: any) => {
-        if (node.properties && node.properties.created_at) {
-            const dateStr = new Date(node.properties.created_at).toISOString().split('T')[0];
-            return { date: dateStr, sortDate: new Date(node.properties.created_at).getTime() };
+        const stamp = node.properties?.created_at || node.created_at;
+        if (stamp) {
+            const day = localDay(stamp);
+            const time = new Date(day).getTime();
+            return { date: day, sortDate: Number.isNaN(time) ? 0 : time };
         }
-        return { date: new Date(node.timestamp).toISOString().split('T')[0], sortDate: node.timestamp };
+        const time = Number(node.timestamp) || 0;
+        return { date: time ? localDay(new Date(time).toISOString()) : '', sortDate: time };
     };
 
     // Linked Tasks
@@ -190,6 +212,10 @@ const getTypeColor = (type: string) => {
         quickcap: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
         transaction: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
         debt: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+        experience: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+        connection: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+        important_date: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+        death: 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300',
         other: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
     };
     return colors[type] || colors.other;
@@ -200,6 +226,7 @@ const getTypeIcon = (type: string) => {
         meeting: Users, call: PhoneCall, message: MessageSquare,
         coffee: Coffee, gift: Gift, task: CheckSquare,
         note: FileText, quickcap: Zap, transaction: Repeat, debt: CreditCard, other: Clock,
+        experience: Briefcase, connection: Link2, important_date: CalendarHeart, death: Flower2,
     };
     return icons[type] || Clock;
 };
@@ -207,7 +234,11 @@ const getTypeIcon = (type: string) => {
 const getTypeLabel = (type: string) => {
     const found = interactionTypes.find(t => t.value === type);
     if (found) return found.label;
-    const labels: Record<string, string> = { task: 'Task', note: 'Note', quickcap: 'Quick Capture', transaction: 'Transaction', debt: 'Debt' };
+    const labels: Record<string, string> = {
+        task: 'Task', note: 'Note', quickcap: 'Quick Capture', transaction: 'Transaction', debt: 'Debt',
+        experience: t('people.timeline_work'), connection: t('people.timeline_relationship'),
+        important_date: t('people.timeline_important_date'), death: t('people.timeline_passed_away'),
+    };
     return labels[type] || type;
 };
 
@@ -265,6 +296,43 @@ const loadInteractions = async () => {
 
 watch(() => props.person?.id, loadInteractions, { immediate: true });
 
+/**
+ * What the timeline knows about this person that nothing else on this tab
+ * shows: where they worked, when a relationship began and ended, the dates
+ * that matter, and the day they died. Interactions are left to
+ * `person_interactions`, which carries their note and mood.
+ */
+const TIMELINE_KINDS = ['experience', 'connection', 'important_date', 'death'];
+const OPEN_END = '9999-12-31';
+const timelineItems = ref<any[]>([]);
+
+const loadTimeline = async () => {
+    if (!props.person?.id) { timelineItems.value = []; return; }
+    try {
+        const entries = await invoke<any[]>('timeline_about', { vaultPath: props.vaultPath, nodeId: props.person.id });
+        // A relationship written on both people arrives once, on this person's
+        // side, from `timeline_about`.
+        timelineItems.value = entries.filter(entry => TIMELINE_KINDS.includes(entry.kind));
+    } catch (e) {
+        logger.error('Failed to load the timeline', e);
+        timelineItems.value = [];
+    }
+};
+
+watch(() => props.person?.id, loadTimeline, { immediate: true });
+
+const timelineTitle = (entry: any) => {
+    switch (entry.kind) {
+        case 'death': return t('people.timeline_passed_away');
+        case 'experience': return entry.label || t('people.timeline_work');
+        case 'connection': return entry.label || t('people.timeline_relationship');
+        default: return entry.label || t('people.timeline_important_date');
+    }
+};
+
+const spanText = (entry: any) =>
+    `${formatDate(entry.happened_from)} – ${entry.happened_to === OPEN_END ? t('people.timeline_ongoing') : formatDate(entry.happened_to)}`;
+
 const saveInteraction = async () => {
     if (!newInteraction.value.note.trim()) return;
     const { type, date, mood, note } = newInteraction.value;
@@ -309,6 +377,9 @@ const deleteInteraction = async (id: string) => {
         logger.error('Failed to delete interaction', e);
     }
 };
+
+/** Rows that stand for another node, as opposed to facts kept on this tab. */
+const isOpenable = (item: any) => item.source !== 'interaction' && item.source !== 'timeline';
 
 const handleLinkedClick = (item: any) => {
     if (item.node) {
@@ -410,15 +481,15 @@ const handleLinkedClick = (item: any) => {
             <div class="absolute left-5 top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700"></div>
             <div class="space-y-4">
                 <div v-for="item in filteredTimeline" :key="item.id" class="relative flex gap-4 pl-1 group"
-                    :class="item.source !== 'interaction' ? 'cursor-pointer' : ''"
-                    @click="item.source !== 'interaction' && handleLinkedClick(item)">
+                    :class="isOpenable(item) ? 'cursor-pointer' : ''"
+                    @click="isOpenable(item) && handleLinkedClick(item)">
                     <!-- Dot -->
                     <div :class="['w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 z-10', getTypeColor(item.type)]">
                         <component :is="getTypeIcon(item.type)" class="w-4 h-4" />
                     </div>
                     <!-- Content -->
                     <div class="flex-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl p-4 min-w-0"
-                         :class="item.source !== 'interaction' ? 'hover:shadow-sm border-l-2 border-l-gray-300 dark:border-l-gray-600' : ''">
+                         :class="isOpenable(item) ? 'hover:shadow-sm border-l-2 border-l-gray-300 dark:border-l-gray-600' : ''">
                         <div class="flex items-start justify-between gap-2 mb-1">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span class="text-xs font-semibold uppercase tracking-wider flex-shrink-0"
@@ -438,6 +509,11 @@ const handleLinkedClick = (item: any) => {
                         </div>
                         <!-- Interaction note -->
                         <p v-if="item.source === 'interaction'" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ item.note }}</p>
+                        <!-- From the timeline -->
+                        <template v-else-if="item.source === 'timeline'">
+                            <p class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ item.title }}</p>
+                            <p v-if="item.span" class="text-xs text-gray-500 mt-1 tabular-nums">{{ item.span }}</p>
+                        </template>
                         <!-- Linked node -->
                         <template v-else-if="item.source !== 'finance'">
                             <p class="text-sm font-medium text-blue-600 dark:text-blue-400 truncate">{{ item.title }}</p>

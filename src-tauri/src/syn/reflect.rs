@@ -841,7 +841,7 @@ mod what_reflection_costs {
         let system = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: &"x".repeat(12_000),
             custom: None,
-            skills: None, memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)), focus: None, thread: None, counted: None,
+            skills: None, memory: Some(&"y".repeat(crate::syn::memory::MEMORY_BUDGET_CHARS)), focus: None, thread: None, counted: None, timeline: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();

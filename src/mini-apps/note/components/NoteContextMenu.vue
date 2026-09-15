@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { Pin, ExternalLink, Edit2, Trash2, Lock, Unlock, History } from 'lucide-vue-next';
+import { Pin, ExternalLink, Edit2, Trash2, Lock, Unlock, History, EyeOff } from 'lucide-vue-next';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 
 defineProps<{
   noteId: string;
   isPinned: boolean;
+  /** `sealed: true` in the note's frontmatter. See `src-tauri/src/timeline/seal.rs`. */
+  isSealed?: boolean;
   variant?: 'sidebar' | 'manager';
 }>();
 
 const emit = defineEmits<{
   (e: 'pin', id: string): void;
+  (e: 'seal', id: string): void;
   (e: 'open-window', id: string): void;
   (e: 'rename', id: string): void;
   (e: 'toggle-lock', id: string): void;
@@ -24,6 +27,9 @@ const appLockStore = useAppLockStore();
   <div class="absolute right-0 top-6 w-44 bg-white dark:bg-[#2c2c2c] shadow-lg rounded border border-gray-200 dark:border-gray-700 z-50 py-1 overflow-hidden">
     <button @click.stop="emit('pin', noteId)" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2">
       <Pin class="w-3 h-3" /> {{ isPinned ? $t('note.unpin') : $t('note.pin') }}
+    </button>
+    <button @click.stop="emit('seal', noteId)" :title="$t('note.seal_hint')" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2">
+      <EyeOff class="w-3 h-3" /> {{ isSealed ? $t('note.unseal') : $t('note.seal') }}
     </button>
     <template v-if="variant !== 'manager'">
       <button @click.stop="emit('open-window', noteId)" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2">

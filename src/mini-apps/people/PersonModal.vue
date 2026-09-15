@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
-import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight, Bell } from 'lucide-vue-next';
+import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Flower2, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight, Bell } from 'lucide-vue-next';
 import { normalizeRelationships, titleCase } from './composables/relationships';
 import { logger } from '../../utils/logger';
 import type { PersonMetadata } from './types';
@@ -29,6 +29,7 @@ const form = ref({
     relationships: [] as string[],
     contact_frequency: '',
     birthday: '',
+    died_on: '',
     tags: [] as string[],
     avatar: '',
     details: [] as DetailField[],
@@ -108,6 +109,7 @@ onMounted(() => {
         form.value.relationships = normalizeRelationships(p.relationship_type);
         form.value.contact_frequency = p.contact_frequency || '';
         form.value.birthday = p.birthday || '';
+        form.value.died_on = p.died_on || '';
         form.value.tags = [...(p.tags || [])];
         form.value.avatar = p.avatar || '';
         form.value.details = migrateLegacy(p);
@@ -129,7 +131,7 @@ onMounted(() => {
 
     // Auto-expand sections that have data
     if (form.value.experiences.length > 0) showExperiences.value = true;
-    if (form.value.birthday || form.value.important_dates.length > 0) showKeyDates.value = true;
+    if (form.value.birthday || form.value.died_on || form.value.important_dates.length > 0) showKeyDates.value = true;
 });
 
 const addTag = () => { const t = tagInput.value.trim().toLowerCase(); if (t && !form.value.tags.includes(t)) form.value.tags.push(t); tagInput.value = ''; };
@@ -251,6 +253,7 @@ const savePerson = async () => {
             relationship_type: form.value.relationships.length > 0 ? form.value.relationships : null,
             contact_frequency: form.value.contact_frequency || null,
             birthday: form.value.birthday || null,
+            died_on: form.value.died_on || null,
             tags: form.value.tags.length > 0 ? form.value.tags : null,
             important_dates: validDates.length > 0 ? validDates : null,
             experiences: validExperiences.length > 0 ? validExperiences : null,
@@ -552,7 +555,7 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <button @click="showKeyDates = !showKeyDates" class="w-full flex items-center gap-2 text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
                         <ChevronRight :class="['w-4 h-4 transition-transform', showKeyDates ? 'rotate-90' : '']" />
                         <Calendar class="w-4 h-4 text-blue-500" /> {{ $t('people.key_dates') }}
-                        <span v-if="form.birthday || form.important_dates.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ (form.birthday ? 1 : 0) + form.important_dates.length }}</span>
+                        <span v-if="form.birthday || form.died_on || form.important_dates.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ (form.birthday ? 1 : 0) + (form.died_on ? 1 : 0) + form.important_dates.length }}</span>
                     </button>
                     <div v-show="showKeyDates" class="mt-3">
                     <div class="mb-3">
@@ -560,6 +563,13 @@ const getDetailPlaceholder = (d: DetailField) => {
                         <div class="relative w-48">
                             <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input ref="birthdayInputRef" v-model="form.birthday" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.died_on') }}</label>
+                        <div class="relative w-48">
+                            <Flower2 class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input v-model="form.died_on" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                     </div>
                     <div v-for="(d, i) in form.important_dates" :key="i" class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">

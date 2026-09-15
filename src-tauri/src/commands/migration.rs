@@ -332,6 +332,67 @@ pub fn migrate_finance_storage(
     Ok(apply_writes(&db, &vault_path, &writes))
 }
 
+/// Give every daily note already in the vault the `date:` it is named after.
+///
+/// Reading a title is `utils::daily_note_date::date_from_title`, which dates a
+/// title only when no device could read it differently. That matters here more
+/// than anywhere: this path tells sync nothing, so each device runs it on its
+/// own copy and they converge only because they all compute the same bytes. A
+/// note that already has a `date`, or whose title is not a date, never reaches
+/// the writer, so a second run writes nothing.
+#[tauri::command]
+pub fn migrate_daily_note_dates(
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    format_str: String,
+) -> AppResult<MigrationReport> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let notes = db.get_nodes_by_type("note")?;
+    let (writes, unreadable) = daily_note_date_writes(&notes, &vault_path, &format_str);
+    log::info!(
+        "migration: {} of {} notes are daily notes without a date",
+        writes.len(),
+        notes.len()
+    );
+    let mut report = apply_writes(&db, &vault_path, &writes);
+    report.failed += unreadable;
+    Ok(report)
+}
+
+/// The writes [`migrate_daily_note_dates`] makes, without the lock around them.
+pub(crate) fn daily_note_date_writes(
+    notes: &[crate::models::node::NodeMetadata],
+    vault_path: &str,
+    pattern: &str,
+) -> (Vec<SilentWrite>, usize) {
+    use crate::utils::daily_note_date::{date_from_title, with_date};
+
+    let mut writes = Vec::new();
+    // A note that would be dated but could not be read. Counted, so the pass
+    // is not reported clean and marked done with that note still undated.
+    let mut unreadable = 0;
+    for note in notes.iter().filter(|note| note.properties.get("date").is_none()) {
+        let Some(date) = date_from_title(&note.title, pattern) else {
+            continue;
+        };
+        let read = path_utils::resolve_safe_path(vault_path, &note.id)
+            .map_err(|e| e.to_string())
+            .and_then(|path| std::fs::read_to_string(path).map_err(|e| e.to_string()));
+        match read {
+            Ok(current) => {
+                if let Some(content) = with_date(&current, date) {
+                    writes.push(SilentWrite { rel_path: note.id.clone(), content });
+                }
+            }
+            Err(e) => {
+                log::error!("migration: could not read '{}' to give it its date: {e}", note.id);
+                unreadable += 1;
+            }
+        }
+    }
+    (writes, unreadable)
+}
+
 /// What this device has already migrated, if anything.
 #[tauri::command]
 pub fn get_migration_flag(
@@ -357,6 +418,25 @@ pub fn set_migration_flag(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_daily_note_that_cannot_be_read_is_counted_as_failed() {
+        let note = crate::models::node::NodeMetadata {
+            id: "Notes/gone.md".into(),
+            node_type: "note".into(),
+            title: "2026-09-01".into(),
+            content: String::new(),
+            properties: serde_json::json!({}),
+            created_at: String::new(),
+            updated_at: String::new(),
+            timestamp: 0,
+            blocks: None,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (writes, unreadable) = daily_note_date_writes(&[note], &dir.path().to_string_lossy(), "YYYY-MM-DD");
+        assert!(writes.is_empty());
+        assert_eq!(unreadable, 1);
+    }
     use crate::db::DbBridge;
     use std::path::Path;
 
@@ -496,8 +576,47 @@ mod tests {
         );
 
         let node = db.get_nodes_by_type("quickcap").unwrap().remove(0);
-        assert_eq!(node.created_at, "2026-01-01 08:00:00");
-        assert_eq!(node.updated_at, "2026-02-02 09:30:00");
+        assert_eq!(node.created_at, crate::utils::timestamp::normalize("2026-01-01 08:00:00"));
+        assert_eq!(node.updated_at, crate::utils::timestamp::normalize("2026-02-02 09:30:00"));
+    }
+
+    /// A daily note gets the date it is named after, once, and not one other
+    /// byte of it changes. A note that is not named after a day is left alone.
+    #[test]
+    fn daily_notes_get_the_date_they_are_named_after_once() {
+        let dir = tempfile::tempdir().unwrap();
+        // Canonical, because the temp directory on macOS is a symlink and a
+        // vault path that disagrees with the resolved one gives the node a
+        // different id after the write.
+        let base = dir.path().canonicalize().unwrap();
+        let db = DbBridge::new_in_memory_full().unwrap();
+        let root = base.to_string_lossy().to_string();
+        std::fs::create_dir_all(base.join("Notes")).unwrap();
+
+        let daily = "---\nnode_id: d\ntitle: \"2026-02-12\"\ntype: \"note\"\n---\n\nHôm nay.\n";
+        let meeting = "---\nnode_id: m\ntitle: \"Họp nhóm\"\ntype: \"note\"\n---\n";
+        for (name, body) in [("Notes/d.md", daily), ("Notes/m.md", meeting)] {
+            let path = base.join(name);
+            std::fs::write(&path, body).unwrap();
+            db.upsert_node(&parse_file_to_node(&root, &path).unwrap()).unwrap();
+        }
+
+        // The pattern changed since these were written; the ISO title still reads.
+        let (writes, _) = daily_note_date_writes(&db.get_nodes_by_type("note").unwrap(), &root, "DD/MM/YYYY");
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].rel_path, "Notes/d.md");
+        assert_eq!(apply_writes(&db, &root, &writes).changed, 1);
+
+        let on_disk = std::fs::read_to_string(base.join("Notes/d.md")).unwrap();
+        assert_eq!(
+            on_disk,
+            "---\nnode_id: d\ntitle: \"2026-02-12\"\ntype: \"note\"\ndate: \"2026-02-12\"\n---\n\nHôm nay.\n"
+        );
+        let row = db.get_node("Notes/d.md").unwrap().unwrap();
+        assert_eq!(row.properties["date"], "2026-02-12");
+
+        let (again, _) = daily_note_date_writes(&db.get_nodes_by_type("note").unwrap(), &root, "DD/MM/YYYY");
+        assert!(again.is_empty(), "a second run has nothing to write");
     }
 
     /// The repair has to be visible to the app, or the user sees the old

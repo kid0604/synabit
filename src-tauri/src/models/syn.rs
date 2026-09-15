@@ -208,11 +208,17 @@ pub struct RagConfig {
     pub include_finance: bool,
     pub include_feeds: bool,
     pub graph_expansion_depth: u8,
+    /// What the person sealed, which retrieval must not bring into the
+    /// prompt. Filled in per message from `timeline::seal::current`; never
+    /// part of the settings file.
+    #[serde(skip)]
+    pub withheld: std::sync::Arc<crate::timeline::seal::Seals>,
 }
 
 impl Default for RagConfig {
     fn default() -> Self {
         Self {
+            withheld: Default::default(),
             enabled: true,
             max_context_chars: 12000,
             include_finance: true,

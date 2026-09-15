@@ -459,6 +459,13 @@ pub struct Run {
     /// the difference visible.
     #[serde(default)]
     pub footing: Option<crate::syn::footing::Footing>,
+    /// The notes retrieval put in front of the model, by id.
+    ///
+    /// Kept so an answer can be left out of `look_back` once one of them is
+    /// sealed: the transcript records tool calls, not what retrieval read.
+    /// `None` on a run from before this was recorded.
+    #[serde(default)]
+    pub retrieved: Option<Vec<String>>,
     /// The thread this run served, when it was asked inside one.
     ///
     /// Recorded because otherwise nothing can answer whether threads do
@@ -567,6 +574,7 @@ impl Run {
             conversation_id,
             tempo: crate::syn::tempo::Tempo::Working,
             footing: None,
+            retrieved: None,
             thread: None,
             goal: goal.into(),
             trigger: Trigger::User,

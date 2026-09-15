@@ -2202,3 +2202,158 @@ async fn a_list_inside_one_file_is_merged_by_character_not_by_entry() {
          should be revisited:\n{merged}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A seal is a decision, and a decision made on one device holds on the other
+// ---------------------------------------------------------------------------
+
+/// The gate for B2 in `docs/tua-lai-2026-09-14.md`: seal a note and a period
+/// on A, and B withholds them too; lift the period on A, and B lets it go.
+#[tokio::test]
+async fn a_seal_made_on_one_device_holds_on_the_other() {
+    use crate::timeline::seal;
+
+    const DIARY: &str = "Notes/diary.md";
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let vault_a = a.vault_path().to_string_lossy().to_string();
+    let vault_b = b.vault_path().to_string_lossy().to_string();
+
+    a.write(DIARY, "---\ntitle: Diary\ntype: note\n---\nwhat happened that year\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(b.exists(DIARY), "the note has to reach B before its seal can");
+
+    // Read back after the first sync, which gives the note its identity.
+    let sealed_text = a.read(DIARY).expect("A has it").replacen("---\n", "---\nsealed: true\n", 1);
+    a.write(DIARY, &sealed_text);
+    let period = seal::write_period(&vault_a, "2019-02", "2019-09").expect("sealed on A");
+    for _ in 0..2 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    let on_b = b.with_db(|db| seal::Seals::read(db, &vault_b)).expect("seals on B");
+    assert!(on_b.hides(DIARY), "B holds: {:?}", b.read(DIARY));
+    assert_eq!(on_b.periods().len(), 1, "the period reached B");
+
+    seal::remove_period(&vault_a, &period.id).expect("lifted on A");
+    for _ in 0..2 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+    assert!(seal::read_periods(&vault_b).is_empty(), "lifting the seal on A lifts it on B");
+}
+
+// ---------------------------------------------------------------------------
+// Evidence: each device keeps its own ledger, and they meet without a conflict
+// ---------------------------------------------------------------------------
+
+/// The gate for Nhát C in `docs/tua-lai-2026-09-14.md`: two devices write
+/// their ledgers in the same month, sync, and neither file becomes a conflict.
+/// Each device can then check both chains and read one history out of them.
+#[tokio::test]
+async fn two_devices_keep_their_own_ledgers_and_meet_without_a_conflict() {
+    use crate::timeline::{ledger, TimelineStore};
+
+    const EVIDENCE: &str = "Notes/evidence.md";
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let vault = |d: &HarnessDevice| d.vault_path().to_string_lossy().to_string();
+
+    a.write(EVIDENCE, "---\ntitle: Evidence\n---\nwhat was agreed\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(b.exists(EVIDENCE));
+
+    let now = chrono::Utc::now();
+    for device in [a, b] {
+        let store = TimelineStore::open_in_memory().expect("store");
+        ledger::sweep(store.conn(), &vault(device), &device.device_id, now).expect("swept");
+    }
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    for device in [a, b] {
+        let conflicts: Vec<String> = crate::sync::utils::collect_local_files(&vault(device))
+            .into_iter()
+            .filter(|path| path.contains("(conflict"))
+            .collect();
+        assert!(conflicts.is_empty(), "{}: {conflicts:?}", device.name);
+
+        let chains = ledger::verify(&vault(device));
+        assert_eq!(chains.len(), 2, "{} holds both ledgers: {chains:?}", device.name);
+        assert!(chains.iter().all(|c| c.intact), "{}: {chains:?}", device.name);
+    }
+
+    let history = ledger::history(&vault(b), EVIDENCE);
+    assert!(history.recorded && history.trusted, "{history:?}");
+    assert_eq!(history.times_changed, 0, "sync giving the note an identity is not an edit: {history:?}");
+}
+
+/// Gate for Nhát E: what one device read from a note, another does not read again.
+#[tokio::test]
+async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
+    use crate::timeline::{extract, seal::Seals, TimelineStore};
+    const DAILY: &str = "Notes/2024-06-02.md";
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let vault = |d: &HarnessDevice| d.vault_path().to_string_lossy().to_string();
+    let index = |d: &HarnessDevice| {
+        let node = crate::utils::node_parser::parse_file_to_node(&vault(d), &d.vault_path().join(DAILY))
+            .expect("a note");
+        d.with_db(|db| db.upsert_node(&node)).expect("indexed");
+    };
+    let config = extract::Config { enabled: true, ..extract::Config::default() };
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+    let plan = |d: &HarnessDevice, store: &TimelineStore| {
+        extract::load(store.conn(), &vault(d)).expect("loaded");
+        let inputs = d.with_db(|db| {
+            let seals = Seals::read(db, &vault(d)).expect("seals");
+            extract::inputs(db, &vault(d), &config, &seals, today, None).expect("inputs")
+        });
+        extract::plan(store.conn(), inputs).expect("plan")
+    };
+
+    a.write(DAILY, "---\ntitle: 2024-06-02\ndate: 2024-06-02\n---\nHôm qua đưa mẹ đi khám mắt ở bệnh viện Mắt, bác sĩ bảo phải mổ.\n");
+    index(a);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(b.exists(DAILY));
+
+    let store_a = TimelineStore::open_in_memory().unwrap();
+    let on_a = plan(a, &store_a);
+    assert_eq!(on_a.pending.len(), 1, "{on_a:?}");
+    let read = &on_a.pending[0];
+    let raw = extract::parse_reply(
+        r#"{"moments": [{"what": "Khám mắt cho mẹ", "when": "hôm qua", "people": [], "quote": "đưa mẹ đi khám mắt"}]}"#,
+    )
+    .unwrap();
+    let (items, dropped) = extract::settle(read, raw, &extract::People::default(), "scripted");
+    assert_eq!(items.len(), 1);
+    let now = chrono::Utc::now();
+    let run = extract::SourceRun::new(read, "scripted", &items, dropped.total(), 900, now);
+    extract::record(&vault(a), &a.device_id, run, &items, now).expect("recorded");
+
+    for _ in 0..3 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+    // After sync has given the note its identity in frontmatter, which is not
+    // a change to what it says.
+    index(b);
+
+    let store_b = TimelineStore::open_in_memory().unwrap();
+    let on_b = plan(b, &store_b);
+    assert_eq!((on_b.pending.len(), on_b.stale.len(), on_b.done), (0, 0, 1), "{on_b:?}");
+
+    for device in [a, b] {
+        let conflicts: Vec<String> = crate::sync::utils::collect_local_files(&vault(device))
+            .into_iter()
+            .filter(|path| path.contains("(conflict"))
+            .collect();
+        assert!(conflicts.is_empty(), "{}: {conflicts:?}", device.name);
+    }
+}

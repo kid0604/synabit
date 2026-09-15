@@ -34,6 +34,9 @@ pub enum NodeType {
     PdfDrawing,
     /// A saved search. Holds a query rather than content of its own.
     Filter,
+    /// A choice made, what was expected of it, and what happened. See
+    /// `timeline::reflect`.
+    Decision,
     /// Something Syn was told or worked out, kept between conversations.
     ///
     /// Storage in the sense `Schema` is: written by the app, read by the app,
@@ -93,6 +96,7 @@ impl NodeType {
         "pdf_highlight",
         "pdf_drawing",
         "filter",
+        "decision",
         "view",
         "syn_memory",
         "syn_skill",
@@ -120,6 +124,7 @@ impl NodeType {
             NodeType::PdfHighlight => "pdf_highlight",
             NodeType::PdfDrawing => "pdf_drawing",
             NodeType::Filter => "filter",
+            NodeType::Decision => "decision",
             NodeType::View => "view",
             NodeType::Memory => "syn_memory",
             NodeType::Skill => "syn_skill",
@@ -156,6 +161,7 @@ impl From<&str> for NodeType {
             "pdf_highlight" => NodeType::PdfHighlight,
             "pdf_drawing" => NodeType::PdfDrawing,
             "filter" => NodeType::Filter,
+            "decision" => NodeType::Decision,
             "view" => NodeType::View,
             "syn_memory" => NodeType::Memory,
             "syn_skill" => NodeType::Skill,

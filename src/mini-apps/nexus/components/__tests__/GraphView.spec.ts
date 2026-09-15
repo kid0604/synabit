@@ -3,6 +3,7 @@ import { nextTick } from 'vue';
 import { mount } from '@vue/test-utils';
 import GraphView from '../GraphView.vue';
 import { iconPartsFor } from '../nodeIcons';
+import type { TimeFrame } from '../../timeFrame';
 
 /**
  * The graph draws to a canvas, so what it did is only observable in the calls it
@@ -17,6 +18,10 @@ interface Frame {
   iconParts: number;
   /** Discs actually painted, as opposed to circle paths merely built. */
   discFills: number;
+  /** Link segments: only links draw with `lineTo`. */
+  links: number;
+  /** Rings stroked dashed, which only a person who has died is. */
+  dashed: number;
 }
 
 const last = (frames: Frame[]): Frame | undefined => frames[frames.length - 1];
@@ -26,10 +31,12 @@ const recorder = () => {
   let font = '';
   const ctx: any = {
     canvas: null as HTMLCanvasElement | null,
-    setTransform: (...t: number[]) => frames.push({ transform: t, circles: [], labels: [], iconParts: 0, discFills: 0 }),
+    setTransform: (...t: number[]) => frames.push({ transform: t, circles: [], labels: [], iconParts: 0, discFills: 0, links: 0, dashed: 0 }),
     clearRect: () => {}, translate: () => {}, scale: () => {},
     save: () => {}, restore: () => {}, beginPath: () => {},
-    moveTo: () => {}, lineTo: () => {},
+    moveTo: () => {},
+    lineTo: () => { const frame = last(frames); if (frame) frame.links += 1; },
+    setLineDash: (dash: number[]) => { const frame = last(frames); if (frame && dash.length) frame.dashed += 1; },
     // Only icons pass a path; links and dots stroke the current path.
     stroke: (path?: unknown) => { if (path) frames[frames.length - 1].iconParts += 1; },
     fill: (path?: unknown) => {
@@ -284,6 +291,77 @@ describe('GraphView', () => {
     expect(last(rec.frames)!.iconParts).toBe(0);
 
     wrapper.unmount();
+  });
+
+  describe('looking back', () => {
+    const life = () => ({
+      nodes: [
+        { id: 'me', item_type: 'person', title: 'Minh', tags: [] },
+        { id: 'ba', item_type: 'person', title: 'Bà', tags: [] },
+        { id: 'ha', item_type: 'person', title: 'Hà', tags: [] },
+        { id: 'quang', item_type: 'person', title: 'Quang', tags: [] },
+        { id: 'tag-family', item_type: 'tag', title: '#family', tags: [] },
+      ],
+      links: [
+        { source: 'me', target: 'ba' },
+        { source: 'me', target: 'ha' },
+        { source: 'me', target: 'quang' },
+        { source: 'ha', target: 'tag-family' },
+      ],
+    });
+    const frame = (): TimeFrame => ({
+      first_seen: { me: '2009-01-01', ba: '2009-01-01', ha: '2013-10-19', quang: '2014-07-01' },
+      died_on: { ba: '2017-11-22' },
+      links: [{ source: 'me', target: 'quang', since: '2014-07-01', until: '2018-07-31' }],
+      density: [],
+      earliest: '2009-01',
+    });
+    const mountLife = async (atDate: string | null) => {
+      const wrapper = mount(GraphView, { props: { graphData: life(), timeFrame: frame(), atDate } });
+      await wait(150);
+      return wrapper;
+    };
+
+    it('draws only who had arrived by the day being looked at', async () => {
+      const wrapper = await mountLife('2012-06-01');
+      expect(await drawnTitles(wrapper)).toEqual(['Bà', 'Minh']);
+
+      await wrapper.setProps({ atDate: '2016-05-14' });
+      await nextTick();
+      expect(await drawnTitles(wrapper)).toEqual(['#family', 'Bà', 'Hà', 'Minh', 'Quang']);
+
+      wrapper.unmount();
+    });
+
+    it('shows the present when no day is being looked at', async () => {
+      const wrapper = await mountLife(null);
+      expect(await drawnTitles(wrapper)).toEqual(['#family', 'Bà', 'Hà', 'Minh', 'Quang']);
+      expect(last(rec.frames)!.dashed).toBe(0);
+      wrapper.unmount();
+    });
+
+    it('draws someone who has died in a dashed ring, from that day on', async () => {
+      const wrapper = await mountLife('2016-05-14');
+      expect(last(rec.frames)!.dashed).toBe(0);
+
+      await wrapper.setProps({ atDate: '2018-01-01' });
+      await nextTick();
+      expect(last(rec.frames)!.dashed).toBe(1);
+
+      wrapper.unmount();
+    });
+
+    it('draws a relationship with dates only while it lasted', async () => {
+      const wrapper = await mountLife('2016-05-14');
+      const during = last(rec.frames)!.links;
+      expect(during).toBe(4);
+
+      await wrapper.setProps({ atDate: '2019-01-01' });
+      await nextTick();
+      expect(last(rec.frames)!.links).toBe(3);
+
+      wrapper.unmount();
+    });
   });
 
   it('lays out a graph that did change', async () => {

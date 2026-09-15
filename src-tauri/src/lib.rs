@@ -16,6 +16,7 @@ pub mod file_text;
 pub mod secrets;
 pub mod syn;
 pub mod sync;
+pub mod timeline;
 pub mod vault_archive;
 pub mod watcher;
 
@@ -527,6 +528,32 @@ pub fn run() {
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 
+            // The timeline lives in its own file beside the cache
+            // (docs/tua-lai-2026-09-14.md §4.5.2). Everything in it is derived
+            // from the cache, so a timeline that cannot be opened costs an
+            // in-memory one that fills on first use, not the app.
+            let timeline = crate::timeline::TimelineStore::open_in_app_data(app.handle())
+                .unwrap_or_else(|e| {
+                    log::error!("timeline.db unavailable, keeping the timeline in memory: {e}");
+                    crate::timeline::TimelineStore::open_in_memory()
+                        .expect("an in-memory timeline")
+                });
+            app.manage(std::sync::Mutex::new(timeline));
+
+            // The evidence ledger's own connection to the same file, so a long
+            // sweep does not hold the timeline's lock. See `ledger::LedgerDb`.
+            let ledger = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|dir| {
+                    crate::timeline::ledger::LedgerDb::open(&dir.join(crate::timeline::store::FILE_NAME))
+                        .map_err(|e| log::error!("ledger connection unavailable, keeping it in memory: {e}"))
+                        .ok()
+                })
+                .unwrap_or_else(crate::timeline::ledger::LedgerDb::in_memory);
+            app.manage(ledger);
+
             #[cfg(desktop)]
             {
                 if let Err(e) = build_quick_entry_window(app.handle()) {
@@ -791,6 +818,29 @@ pub fn run() {
             capture::drop_queued_capture,
             migration::get_migration_flag,
             migration::set_migration_flag,
+            migration::migrate_daily_note_dates,
+            commands::timeline::timeline_query,
+            commands::timeline::timeline_rebuild,
+            commands::timeline::timeline_frame,
+            commands::timeline::timeline_about,
+            commands::timeline::seal_period,
+            commands::timeline::remove_seal,
+            commands::timeline::ledger_sweep,
+            commands::timeline::ledger_history,
+            commands::timeline::ledger_verify,
+            commands::timeline::timeline_extract_status,
+            commands::timeline::timeline_extract_configure,
+            commands::timeline::timeline_extract_run,
+            commands::timeline::timeline_extract_review,
+            commands::timeline::reflect_overview,
+            commands::timeline::reflect_configure,
+            commands::timeline::reflect_create_decision,
+            commands::timeline::reflect_add_review,
+            commands::timeline::reflect_pattern,
+            commands::timeline::timeline_media_status,
+            commands::timeline::timeline_media_configure,
+            commands::timeline::timeline_media_run,
+            commands::timeline::timeline_media_moments,
             // Tags
             commands::tags::get_all_tags,
             commands::tags::rename_tag,
@@ -910,6 +960,7 @@ pub fn run() {
             syn_commands::syn_list_skills,
             syn_commands::syn_skill_usage,
             syn_commands::syn_skill_trial,
+            syn_commands::syn_narrate_person,
             syn_commands::syn_create_skill,
             syn_commands::syn_recipe_problems,
             syn_commands::syn_list_tools,

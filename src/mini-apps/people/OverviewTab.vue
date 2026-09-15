@@ -6,11 +6,13 @@ import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { daysUntilAnnual } from './composables/anniversaries';
 import { relationshipLabel } from './composables/relationships';
 import BriefCard from './BriefCard.vue';
+import SynNarrative from './SynNarrative.vue';
 
 const emit = defineEmits(['open-node']);
 
 const props = defineProps<{
     person: any;
+    vaultPath?: string;
 }>();
 
 const personRef = toRef(props, 'person');
@@ -58,6 +60,8 @@ const recentGifts = computed(() => gifts.value.slice(0, 5));
 // All notable dates (birthday + important_dates) with countdown
 const upcomingDates = computed(() => {
     const now = new Date();
+    // No countdown brings a sealed person's dates round again.
+    if (props.person?.properties?.sealed) return [];
     const dates: Array<{ label: string; date: string; daysUntil: number | null; isUpcoming: boolean }> = [];
 
     // Birthday
@@ -117,6 +121,14 @@ const hasOverviewContent = computed(() => {
     <div class="space-y-6">
         <!-- What to know before you see them, and what has passed between you -->
         <BriefCard :person="person" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
+
+        <!-- Told back by Syn, on request, every sentence resting on a record. Not for a sealed person. -->
+        <SynNarrative
+            v-if="vaultPath && !person?.properties?.sealed"
+            :person="person"
+            :vault-path="vaultPath"
+            @open-node="(id: string, type: string) => emit('open-node', id, type)"
+        />
 
         <!-- Relationship Strength Card -->
         <div v-if="health.status !== 'unknown'" :class="['rounded-2xl p-5 border', health.bgColor, health.status === 'overdue' ? 'border-red-200 dark:border-red-900/30' : health.status === 'due_soon' ? 'border-yellow-200 dark:border-yellow-900/30' : 'border-transparent']">

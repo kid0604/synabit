@@ -199,7 +199,7 @@ impl VaultTools {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
             | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
-            | "read_board"
+            | "read_board" | "timeline"
             | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL => {
                 VaultRead
             }
@@ -595,7 +595,7 @@ mod tests {
             "update_node", "trash_node", "restore_node", "restore_version",
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
-            "read_board", "draw_board", "edit_board", "capture",
+            "read_board", "draw_board", "edit_board", "capture", "timeline",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
         ];

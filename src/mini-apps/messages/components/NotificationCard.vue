@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CheckSquare, Calendar, Gift, MessageSquare, ArrowRight, Hourglass, Split, TriangleAlert } from 'lucide-vue-next';
+import { CheckSquare, Calendar, Gift, MessageSquare, ArrowRight, Hourglass, Split, TriangleAlert, Scale } from 'lucide-vue-next';
 
 const props = defineProps<{
   notification: any;
@@ -12,6 +12,7 @@ const getIcon = (type: string) => {
   if (type === 'task_due') return CheckSquare;
   if (type === 'event_upcoming') return Calendar;
   if (type === 'birthday_upcoming') return Gift;
+  if (type === 'decision_review') return Scale;
   // Things Syn noticed rather than things the calendar is announcing. The
   // subtypes come from `syn::notice::Kind::subtype`.
   if (type === 'syn_stuck_thread') return Hourglass;

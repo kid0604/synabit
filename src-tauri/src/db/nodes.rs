@@ -33,6 +33,10 @@ fn sample_for(json_type: &str, text: Option<String>) -> Value {
 impl DbBridge {
     pub fn upsert_node(&self, node: &crate::models::node::NodeMetadata) -> AppResult<()> {
         let properties_json = serde_json::to_string(&node.properties)?;
+        // One timestamp shape for every row, whichever path wrote it; see
+        // `utils::timestamp`.
+        let created_at = crate::utils::timestamp::normalize(&node.created_at);
+        let updated_at = crate::utils::timestamp::normalize(&node.updated_at);
         self.conn.execute(
             "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp, stable_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -44,7 +48,7 @@ impl DbBridge {
                 updated_at=excluded.updated_at,
                 timestamp=excluded.timestamp,
                 stable_id=excluded.stable_id",
-            params![node.id, node.node_type, node.title, node.content, properties_json, node.created_at, node.updated_at, node.timestamp, node.stable_id()],
+            params![node.id, node.node_type, node.title, node.content, properties_json, created_at, updated_at, node.timestamp, node.stable_id()],
         ).map_err(|e| AppError::General(format!("DB Upsert Node Error: {}", e)))?;
         Ok(())
     }
@@ -236,11 +240,16 @@ impl DbBridge {
     /// Keyed by the person's vault path, which is what the rest of the app
     /// calls a node. Only the kinds of node that mean contact are counted: a
     /// file attached to somebody is not a conversation.
+    /// The day each person was last written about, in this device's zone.
+    ///
+    /// `updated_at` is a UTC instant (`utils::timestamp`), so its first ten
+    /// characters are the UTC day; a note written at 06:00 in Hà Nội would count
+    /// as the day before. SQLite's `localtime` gives the day it was here.
     pub fn last_contact_by_person(&self) -> AppResult<std::collections::HashMap<String, String>> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT p.id, MAX(substr(n.updated_at, 1, 10))
+                "SELECT p.id, MAX(date(n.updated_at, 'localtime'))
                  FROM node_edges e
                  JOIN nodes n ON n.stable_id = e.source_id
                  JOIN nodes p ON p.stable_id = e.target_id
@@ -277,7 +286,7 @@ impl DbBridge {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_type, title, content, properties, created_at, updated_at, timestamp 
              FROM nodes 
-             WHERE node_type IN ('task', 'event', 'person', 'finance_debts') 
+             WHERE node_type IN ('task', 'event', 'person', 'finance_debts', 'decision') 
              AND (
                  (node_type = 'task' AND json_extract(properties, '$.status') NOT IN ('done', 'canceled') AND json_extract(properties, '$.due_date') IS NOT NULL AND json_extract(properties, '$.due_date') != '')
                  OR (node_type = 'event' AND json_extract(properties, '$.start_at') IS NOT NULL AND json_extract(properties, '$.start_at') != '')
@@ -286,6 +295,7 @@ impl DbBridge {
                      OR (json_extract(properties, '$.contact_frequency') IS NOT NULL AND json_extract(properties, '$.contact_frequency') != '')
                  ))
                  OR (node_type = 'finance_debts' AND json_array_length(json_extract(properties, '$.debts')) > 0)
+                 OR (node_type = 'decision' AND json_extract(properties, '$.review_on') IS NOT NULL AND json_extract(properties, '$.review_on') != '')
              )"
         ).map_err(|e| AppError::General(format!("DB Query Error (get_active_tasks_and_events): {}", e)))?;
 

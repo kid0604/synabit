@@ -137,6 +137,13 @@ pub enum SectionKind {
     /// search past*, which is the opposite of what an exact total is. Dropping
     /// it would leave a turn that has no tools and no answer.
     Counted,
+    /// What the timeline holds for a time the question named, looked up first.
+    ///
+    /// Required, like `Counted` and for the same reason: it is the answer's
+    /// ground, put there because waiting for the model to fetch it is the
+    /// shape `recall` failed in. Bounded by `timeline::asked::block`, which
+    /// lists forty items at most. See `timeline::asked`.
+    Timeline,
     /// The open piece of work this question belongs to.
     ///
     /// After `Focus` because it is the same situation described one level up:
@@ -165,6 +172,7 @@ impl SectionKind {
             SectionKind::Underway => "Still being worked on",
             SectionKind::Focus => "What is on screen",
             SectionKind::Counted => "Already counted",
+            SectionKind::Timeline => "From the timeline",
             SectionKind::Thread => "The work this belongs to",
             SectionKind::ToolShape => "Tools and vault shape",
             SectionKind::Memory => "What Syn remembers",
@@ -455,6 +463,8 @@ pub struct ChatPrompt<'a> {
     pub thread: Option<&'a str>,
     /// A count already run, from `tempo::block`.
     pub counted: Option<&'a str>,
+    /// The timeline for a time the question named, from `timeline::asked::block`.
+    pub timeline: Option<&'a str>,
     /// Which screen the user is on and what they have highlighted.
     ///
     /// Borrowed rather than owned like the rest, and `None` for every caller
@@ -489,6 +499,7 @@ impl PromptPlan {
             focus,
             thread,
             counted,
+            timeline,
             budget_chars,
         } = p;
         let mut sections = Vec::new();
@@ -512,6 +523,10 @@ impl PromptPlan {
 
         if let Some(counted) = counted.filter(|c| !c.trim().is_empty()) {
             sections.push(Section { kind: SectionKind::Counted, body: counted.to_string() });
+        }
+
+        if let Some(timeline) = timeline.filter(|t| !t.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Timeline, body: timeline.to_string() });
         }
 
         if let Some(thread) = thread.filter(|t| !t.trim().is_empty()) {
@@ -789,7 +804,7 @@ mod tests {
     /// has changed that premise, and should have to notice.
     #[test]
     fn the_fixed_sections_still_cost_what_the_budget_assumes() {
-        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
+        let fixed = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS }).chars();
 
         assert!(
             fixed <= FIXED_SECTIONS_CHARS,
@@ -810,7 +825,7 @@ mod tests {
     #[test]
     fn a_question_is_told_what_else_in_its_conversation_is_still_running() {
         let plan = || {
-            PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS })
+            PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS })
         };
         assert_eq!(plan().with_underway(&[]).render(), plan().render());
 
@@ -853,7 +868,7 @@ mod tests {
                     PromptPlan::for_chat(ChatPrompt {
                         context,
                         custom: None,
-                        skills: None, memory: None, focus: None, thread: None, counted: None,
+                        skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None,
                         budget_chars: DEFAULT_BUDGET_CHARS,
                     }).render();
                 let masked = today.replace_all(&rendered, "- Today's date: <DATE>");
@@ -902,7 +917,7 @@ mod tests {
     /// ordering, and moving it here must not move it on the page.
     #[test]
     fn a_custom_prompt_comes_first_and_is_followed_by_a_blank_line() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("Always answer in haiku."), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("Always answer in haiku."), skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.starts_with("Always answer in haiku.\n\nYou are Syn,"));
     }
@@ -913,7 +928,7 @@ mod tests {
     #[test]
     fn an_empty_custom_prompt_adds_no_section() {
         for empty in [Some(""), Some("   "), None] {
-            let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: empty, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+            let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: empty, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
             assert!(plan.render().starts_with("You are Syn,"), "{empty:?}");
             assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::Custom));
         }
@@ -921,14 +936,14 @@ mod tests {
 
     #[test]
     fn no_context_means_no_context_section() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
         assert!(!plan.render().contains("VAULT CONTEXT"));
         assert!(!plan.breakdown().iter().any(|c| c.kind == SectionKind::VaultContext));
     }
 
     #[test]
     fn context_is_wrapped_in_the_instructions_for_reading_it() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "a note about ducks", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let rendered = plan.render();
         assert!(rendered.contains("=== VAULT CONTEXT ==="));
         assert!(rendered.contains("a note about ducks"));
@@ -937,7 +952,7 @@ mod tests {
 
     #[test]
     fn the_breakdown_accounts_for_every_character_that_was_sent() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: Some("be brief"), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: Some("be brief"), skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let counted: usize = plan.breakdown().iter().filter(|c| !c.dropped).map(|c| c.chars).sum();
         assert_eq!(counted, plan.render().chars().count());
         assert_eq!(counted, plan.chars());
@@ -947,7 +962,7 @@ mod tests {
     /// search past, and never the rules.
     #[test]
     fn a_tight_budget_drops_context_and_keeps_the_rules() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: 6000 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: &"x".repeat(5000), custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: 6000 });
         let rendered = plan.render();
         assert!(!rendered.contains("VAULT CONTEXT"));
         assert!(rendered.contains("Key rules:"));
@@ -963,7 +978,7 @@ mod tests {
     /// to send an assistant that has forgotten how to cite a note.
     #[test]
     fn an_impossible_budget_goes_over_rather_than_cutting_what_matters() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: 10 });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "ctx", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: 10 });
         let rendered = plan.render();
         assert!(rendered.contains("Key rules:"));
         assert!(rendered.contains("Tool usage guidelines:"));
@@ -976,7 +991,7 @@ mod tests {
             custom: None,
             skills: None,
             memory,
-            focus: None, thread: None, counted: None,
+            focus: None, thread: None, counted: None, timeline: None,
             budget_chars: budget,
         })
     }
@@ -1023,6 +1038,7 @@ mod tests {
             | SectionKind::Underway
             | SectionKind::Focus
             | SectionKind::Counted
+            | SectionKind::Timeline
             | SectionKind::Thread
             | SectionKind::ToolShape
             | SectionKind::Memory
@@ -1031,7 +1047,7 @@ mod tests {
         }
     }
 
-    const ALL: [SectionKind; 13] = [
+    const ALL: [SectionKind; 14] = [
         SectionKind::Custom,
         SectionKind::Identity,
         SectionKind::Rules,
@@ -1040,6 +1056,7 @@ mod tests {
         SectionKind::Underway,
         SectionKind::Focus,
         SectionKind::Counted,
+        SectionKind::Timeline,
         SectionKind::Thread,
         SectionKind::ToolShape,
         SectionKind::Memory,
@@ -1132,7 +1149,7 @@ mod tests {
             custom: None,
             skills: None,
             memory: None,
-            focus: Some(&focus), thread: None, counted: None,
+            focus: Some(&focus), thread: None, counted: None, timeline: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1163,7 +1180,7 @@ mod tests {
             skills: None,
             memory: None,
             focus: Some(&focus),
-            thread: Some("\n=== THE WORK THIS BELONGS TO ===\nPricing\n"), counted: None,
+            thread: Some("\n=== THE WORK THIS BELONGS TO ===\nPricing\n"), counted: None, timeline: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1198,7 +1215,7 @@ mod tests {
                 memory: None,
                 focus: None,
                 thread: empty,
-                counted: None,
+                counted: None, timeline: None,
                 budget_chars: DEFAULT_BUDGET_CHARS,
             })
             .breakdown()
@@ -1227,7 +1244,7 @@ mod tests {
             custom: None,
             skills: None,
             memory: None,
-            focus: Some(&focus), thread: None, counted: None,
+            focus: Some(&focus), thread: None, counted: None, timeline: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .breakdown();
@@ -1289,7 +1306,7 @@ mod tests {
             context,
             custom: None,
             skills: Some(skills),
-            memory: Some(memory), focus: None, thread: None, counted: None,
+            memory: Some(memory), focus: None, thread: None, counted: None, timeline: None,
             budget_chars: budget,
         })
     }
@@ -1412,7 +1429,7 @@ mod tests {
     /// Vietnamese is where a byte-counting mistake would show up first.
     #[test]
     fn costs_are_counted_in_characters_not_bytes() {
-        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("đường"), skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: Some("đường"), skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
         let custom = plan
             .breakdown()
             .into_iter()

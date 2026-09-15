@@ -2,13 +2,19 @@
 import { ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, History, Scale } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
+import TimeStrip from './components/TimeStrip.vue';
+import ExtractTray from './components/ExtractTray.vue';
+import ReflectPanel from './components/ReflectPanel.vue';
+import MomentsPanel from './components/MomentsPanel.vue';
+import type { TimeFrame } from './timeFrame';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { logger } from '../../utils/logger';
+import { localDay } from '../../shared/localDay';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 
 const bus = useEventBus();
@@ -90,6 +96,73 @@ const totalCount = ref(0);
 const showSyntaxHints = ref(false);
 const caseSensitive = ref(false);
 const currentView = ref('graph_search'); // 'graph_search' | 'tag_manager'
+
+/**
+ * Looking back. Off until the reader asks: the graph is the present, and the
+ * frame that makes the past drawable is only fetched when it is wanted.
+ */
+const lookingBack = ref(false);
+const atDate = ref<string | null>(null);
+const timeFrame = ref<TimeFrame | null>(null);
+/** Sealed periods shown for this look only. Never saved; leaving seals them again. */
+const revealSealed = ref(false);
+
+const loadTimeFrame = async () => {
+    try {
+        timeFrame.value = await invoke<TimeFrame>('timeline_frame', {
+            vaultPath: props.vaultPath,
+            reveal: revealSealed.value,
+        });
+    } catch (e) {
+        logger.error('Failed to load the timeline frame', e);
+    }
+};
+
+const startLookingBack = async () => {
+    lookingBack.value = true;
+    await loadTimeFrame();
+};
+
+/** A decision to open the Chiêm nghiệm panel on, from a reminder. */
+const reflectFocus = ref<string | null>(null);
+
+/** Open the Chiêm nghiệm panel on one decision. Called by `App.vue` for route `decision`. */
+const openDecision = (id: string) => {
+    reflectFocus.value = null;
+    // A fresh value each time, so asking about the same decision twice opens it twice.
+    queueMicrotask(() => { reflectFocus.value = id; });
+};
+
+defineExpose({ openDecision });
+
+const stopLookingBack = () => {
+    lookingBack.value = false;
+    atDate.value = null;
+    revealSealed.value = false;
+};
+
+const sealPeriod = async (from: string, to: string) => {
+    try {
+        await invoke('seal_period', { vaultPath: props.vaultPath, from, to });
+        await loadTimeFrame();
+    } catch (e) {
+        logger.error('Failed to seal a period', e);
+    }
+};
+
+const removeSeal = async (id: string) => {
+    try {
+        await invoke('remove_seal', { vaultPath: props.vaultPath, id });
+        await loadTimeFrame();
+    } catch (e) {
+        logger.error('Failed to lift a seal', e);
+    }
+};
+
+const setRevealSealed = async (revealed: boolean) => {
+    revealSealed.value = revealed;
+    await loadTimeFrame();
+};
 
 const appLockStore = useAppLockStore();
 
@@ -186,6 +259,7 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
 const reload = () => {
     loadAllData();
     if (searchQuery.value.trim()) performSearch();
+    if (lookingBack.value) loadTimeFrame();
 };
 
 onMounted(() => {
@@ -209,6 +283,7 @@ const getTypeIcon = (type: string) => {
     if (type === 'tag') return Tag;
     if (type === 'whiteboard') return PenTool;
     if (type === 'person') return Users;
+    if (type === 'decision') return Scale;
     return FileText;
 };
 
@@ -221,6 +296,7 @@ const getTypeColor = (type: string) => {
     if (type === 'tag') return 'text-purple-600 bg-purple-100 dark:bg-purple-500/20 dark:text-purple-400';
     if (type === 'whiteboard') return 'text-violet-600 bg-violet-100 dark:bg-violet-500/20 dark:text-violet-400';
     if (type === 'person') return 'text-orange-600 bg-orange-100 dark:bg-orange-500/20 dark:text-orange-400';
+    if (type === 'decision') return 'text-amber-600 bg-amber-100 dark:bg-amber-500/20 dark:text-amber-400';
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
@@ -286,10 +362,51 @@ const cleanSnippet = (snippet: string) => {
             class="absolute inset-y-0 right-0 z-0"
             :class="searchQuery ? 'left-0 sm:left-[420px] lg:left-[480px]' : 'left-0'"
         >
-            <GraphView v-if="graphData" :graph-data="graphData" :match-ids="graphMatchIds" @node-click="openPreviewFromGraph" />
+            <GraphView
+                v-if="graphData"
+                :graph-data="graphData"
+                :match-ids="graphMatchIds"
+                :at-date="lookingBack ? atDate : null"
+                :time-frame="lookingBack ? timeFrame : null"
+                @node-click="openPreviewFromGraph"
+            />
             <div v-else class="w-full h-full flex items-center justify-center">
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
             </div>
+
+            <template v-if="graphData">
+                <TimeStrip
+                    v-if="lookingBack && timeFrame"
+                    v-model="atDate"
+                    class="absolute inset-x-0 bottom-0 z-20"
+                    :frame="timeFrame"
+                    :revealed="revealSealed"
+                    @update:revealed="setRevealSealed"
+                    @seal-period="sealPeriod"
+                    @remove-seal="removeSeal"
+                    @close="stopLookingBack"
+                >
+                    <template #actions>
+                        <MomentsPanel
+                            :vault-path="vaultPath"
+                            :at-date="atDate"
+                            @open="(id: string, route: string, query?: string) => emit('edit-item', id, route, query)"
+                        />
+                        <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" @changed="loadTimeFrame" />
+                        <ExtractTray :vault-path="vaultPath" @changed="loadTimeFrame" />
+                    </template>
+                </TimeStrip>
+                <div v-else-if="!lookingBack" class="absolute bottom-6 left-6 z-20 flex items-center gap-2">
+                    <button
+                        type="button"
+                        class="flex items-center gap-2 rounded-full border border-gray-200 bg-white/80 px-4 py-2 text-xs font-semibold text-gray-700 shadow-lg backdrop-blur-md transition-all hover:bg-gray-50 dark:border-[#3a3a3c] dark:bg-[#242426]/80 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
+                        @click.stop="startLookingBack"
+                    >
+                        <History class="h-4 w-4" /> {{ $t('nexus.time_travel') }}
+                    </button>
+                    <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" align="left" />
+                </div>
+            </template>
         </div>
 
         <!-- Header / Search OmniBar (Floating) -->
@@ -396,7 +513,7 @@ const cleanSnippet = (snippet: string) => {
                             <div class="flex items-start justify-between gap-4 mb-1">
                                 <h4 class="font-bold text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{{ item.title }}</h4>
                                 <span class="flex-shrink-0 text-[10px] font-bold text-gray-400 flex items-center gap-1 bg-gray-50 dark:bg-[#1a1a1c] px-2 py-0.5 rounded-md border border-gray-100 dark:border-[#2c2c2e]">
-                                    {{ item.date.split(' ')[0] }}
+                                    {{ localDay(item.date) }}
                                 </span>
                             </div>
                             

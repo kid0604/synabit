@@ -32,7 +32,8 @@ export type NodeType =
   | 'pdf_highlight' | 'pdf_drawing' | 'file' | 'filter' | 'view' | 'schema'
   | 'syn_memory'
   | 'syn_skill'
-  | 'syn_thread';
+  | 'syn_thread'
+  | 'decision';
 
 export interface WriteNodeParams {
   relPath: string;

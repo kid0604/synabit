@@ -269,8 +269,19 @@ pub fn get_nexus_graph_data(
     _vault_path: String,
 ) -> AppResult<GraphData> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    graph_data(&db)
+}
+
+/// The graph, from a plain connection so a test can build one.
+pub(crate) fn graph_data(db: &crate::db::DbBridge) -> AppResult<GraphData> {
     let items = db.get_all_nexus_items()?;
     let node_edges = db.get_all_node_edges()?;
+
+    // Edges name their ends by stable identity, a node's `node_id`, so that a
+    // link survives its file moving. The graph names nodes by path. Comparing
+    // the two directly dropped every edge out of a node that had an identity:
+    // on the vault this was measured on, 202 of 215 edges never reached Nexus.
+    let path_of = db.paths_by_stable_id()?;
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -349,8 +360,12 @@ pub fn get_nexus_graph_data(
 
     // 2. Build links from node_edges (already ID-based — no resolution needed)
     for edge in node_edges {
+        let source_id = path_of
+            .get(&edge.source_id)
+            .cloned()
+            .unwrap_or_else(|| edge.source_id.clone());
         // Skip edges where source is not in our graph
-        if !node_ids.contains(&edge.source_id) {
+        if !node_ids.contains(&source_id) {
             continue;
         }
 
@@ -373,18 +388,20 @@ pub fn get_nexus_graph_data(
                 );
             }
             ghost_id
-        } else if !node_ids.contains(&edge.target_id) {
-            continue; // Target node doesn't exist and isn't a ghost — skip
         } else {
-            edge.target_id.clone()
+            match path_of.get(&edge.target_id).cloned() {
+                Some(path) if node_ids.contains(&path) => path,
+                _ if node_ids.contains(&edge.target_id) => edge.target_id.clone(),
+                _ => continue, // Target node doesn't exist and isn't a ghost — skip
+            }
         };
 
-        if target_id != edge.source_id {
-            let link_key = format!("{}->{}", edge.source_id, target_id);
+        if target_id != source_id {
+            let link_key = format!("{}->{}", source_id, target_id);
             if !added_links.contains(&link_key) {
                 added_links.insert(link_key);
                 links.push(GraphLink {
-                    source: edge.source_id,
+                    source: source_id,
                     target: target_id,
                 });
             }
@@ -718,5 +735,58 @@ mod things_gate {
         // And the note is not swept in, which is the failure mode a dropped
         // type filter used to produce.
         assert!(!titles.contains(&"Ghi chú"));
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+    use crate::db::{DbBridge, NodeEdge};
+    use crate::models::node::NodeMetadata;
+    use serde_json::json;
+
+    fn node(id: &str, node_type: &str, title: &str, properties: serde_json::Value) -> NodeMetadata {
+        NodeMetadata {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            title: title.to_string(),
+            content: String::new(),
+            properties,
+            created_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            timestamp: 0,
+            blocks: None,
+        }
+    }
+
+    fn edge(source: &str, target: &str, edge_type: &str) -> NodeEdge {
+        NodeEdge {
+            id: format!("{source}->{target}"),
+            source_id: source.to_string(),
+            target_id: target.to_string(),
+            edge_type: edge_type.to_string(),
+            relation: None,
+            created_at: "2026-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
+    /// Edges are stored under a node's identity and the graph names nodes by
+    /// path. On a real vault, 202 of 215 edges were lost between the two.
+    #[test]
+    fn a_link_between_nodes_with_identities_reaches_the_graph() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.upsert_node(&node("Notes/a.md", "note", "A", json!({ "node_id": "uuid-a" }))).unwrap();
+        db.upsert_node(&node("People/b.md", "person", "B", json!({ "node_id": "uuid-b" }))).unwrap();
+        db.upsert_node(&node("Notes/old.md", "note", "Old", json!({}))).unwrap();
+        db.upsert_node_edge(&edge("uuid-a", "uuid-b", "person_link")).unwrap();
+        db.upsert_node_edge(&edge("Notes/old.md", "uuid-a", "wikilink")).unwrap();
+        db.upsert_node_edge(&edge("uuid-a", "ghost:Nowhere", "wikilink")).unwrap();
+
+        let graph = graph_data(&db).unwrap();
+        let has = |s: &str, t: &str| graph.links.iter().any(|l| l.source == s && l.target == t);
+
+        assert!(has("Notes/a.md", "People/b.md"), "identity to identity");
+        assert!(has("Notes/old.md", "Notes/a.md"), "a path to an identity");
+        assert!(has("Notes/a.md", "ghost-Nowhere"), "an identity to an unresolved link");
     }
 }

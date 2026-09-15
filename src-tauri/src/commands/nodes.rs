@@ -384,6 +384,11 @@ pub(crate) fn reindex_node_at(db: &crate::db::DbBridge, vault_path: &str, abs_pa
     let Some(node) = parse_file_to_node(vault_path, abs_path) else {
         return;
     };
+    // The scan and the watcher both skip `Timeline/`; a caller that arrives
+    // here directly must not index it either.
+    if crate::timeline::is_timeline_path(&node.id) {
+        return;
+    }
     logged("write node", &node.id, db.upsert_node(&node));
     sync_node_to_search(db, &node);
     let resolver = build_resolver(db);
@@ -418,12 +423,15 @@ fn is_disk_backed_id(id: &str) -> bool {
 /// from the scan for a reason that has nothing to do with whether its file is
 /// still there, and deleting it would be reading "not looked at" as "not there".
 pub(crate) fn is_in_unscanned_dir(rel_id: &str) -> bool {
-    rel_id.split(['/', '\\']).any(|name| {
-        (name.starts_with('.') && name != ".")
-            || name == "assets"
-            || name == "Files"
-            || name == "Syn"
-    })
+    // `Timeline/` holds what the timeline derived, never notes. Only at the
+    // vault root, so a user's own `Projects/Timeline/` is still theirs.
+    crate::timeline::is_timeline_path(rel_id)
+        || rel_id.split(['/', '\\']).any(|name| {
+            (name.starts_with('.') && name != ".")
+                || name == "assets"
+                || name == "Files"
+                || name == "Syn"
+        })
 }
 
 /// Drop nodes whose backing file is gone, along with everything keyed to them.
@@ -462,9 +470,13 @@ fn remove_orphaned_nodes(
         // left these behind once something else had wrongly created them.
         let is_trashed = n.id.starts_with(".trash/") || n.id.starts_with(".trash\\");
 
+        // Timeline results, likewise: derived files, never notes, and under a
+        // directory the guard below would otherwise protect.
+        let is_timeline = crate::timeline::is_timeline_path(&n.id);
+
         let is_orphan = is_disk_backed_id(&n.id) && !is_in_unscanned_dir(&n.id) && is_gone(&n.id);
 
-        if is_syn || is_trashed || is_orphan {
+        if is_syn || is_trashed || is_timeline || is_orphan {
             delete_node_edges_for(db, &n.id);
             logged("drop node", &n.id, db.delete_node(&n.id));
             logged("drop blocks", &n.id, db.delete_node_blocks(&n.id));
@@ -2601,7 +2613,15 @@ pub fn rename_node_file(
 ///
 /// Assigning it here does not make that write safe; it makes it unnecessary,
 /// which is the only version of safe available without a lock spanning both.
-fn new_note_frontmatter(title: &str, node_type: &str, tag: Option<&str>) -> String {
+///
+/// A note named after a day also says which day, as `date:`, in a form no
+/// setting can change later; see `utils::daily_note_date`.
+fn new_note_frontmatter(
+    title: &str,
+    node_type: &str,
+    tag: Option<&str>,
+    date: Option<chrono::NaiveDate>,
+) -> String {
     let created_at = chrono::Utc::now().to_rfc3339();
     let mut out = format!(
         "---\nnode_id: {}\ntitle: \"{}\"\ntype: \"{}\"\ncreated_at: \"{}\"\nupdated_at: \"{}\"\n",
@@ -2611,6 +2631,9 @@ fn new_note_frontmatter(title: &str, node_type: &str, tag: Option<&str>) -> Stri
         created_at,
         created_at
     );
+    if let Some(date) = date {
+        out.push_str(&format!("date: \"{}\"\n", date.format("%Y-%m-%d")));
+    }
     if let Some(tag) = tag.map(str::trim).filter(|t| !t.is_empty()) {
         out.push_str(&format!("tags:\n  - {}\n", tag));
     }
@@ -2640,9 +2663,10 @@ pub fn create_node_file(
         format!("Untitled {}", timestamp)
     };
 
-    let title = match date_format {
-        Some(fmt) => date_string_from_pattern(&fmt, chrono::Local::now()).unwrap_or_else(untitled),
-        None => untitled(),
+    let today = chrono::Local::now();
+    let (title, date) = match date_format.and_then(|fmt| date_string_from_pattern(&fmt, today)) {
+        Some(title) => (title, Some(today.date_naive())),
+        None => (untitled(), None),
     };
 
     let filename = format!("{}.md", uuid::Uuid::new_v4());
@@ -2650,7 +2674,7 @@ pub fn create_node_file(
     let path = dir_path.join(&filename);
 
     if !path.exists() {
-        let content = new_note_frontmatter(&title, &node_type, None);
+        let content = new_note_frontmatter(&title, &node_type, None, date);
         std::fs::write(&path, content)?;
 
         // Sync DB immediately
@@ -2709,21 +2733,10 @@ pub(crate) fn date_string_from_pattern(
     pattern: &str,
     now: chrono::DateTime<chrono::Local>,
 ) -> Option<String> {
-    let chrono_format = pattern
-        .replace("YYYY", "%Y")
-        .replace("YY", "%y")
-        .replace("MM", "%m")
-        .replace("M", "%-m")
-        .replace("DD", "%d")
-        .replace("D", "%-d");
-
-    let readable = !chrono::format::StrftimeItems::new(&chrono_format)
-        .into_iter()
-        .any(|item| matches!(item, chrono::format::Item::Error));
-    if !readable {
+    let Some(chrono_format) = crate::utils::daily_note_date::chrono_pattern(pattern) else {
         log::warn!("date format '{}' is not one chrono can read", pattern);
         return None;
-    }
+    };
 
     Some(now.format(&chrono_format).to_string())
 }
@@ -2757,7 +2770,7 @@ pub fn open_daily_note(
     let path = notes_dir.join(&filename);
 
     let title = date_str.clone();
-    let content = new_note_frontmatter(&title, "note", Some(&tag));
+    let content = new_note_frontmatter(&title, "note", Some(&tag), Some(today.date_naive()));
     std::fs::write(&path, content)?;
 
     // Sync DB immediately to avoid race condition with frontend scanVault
@@ -4119,6 +4132,24 @@ mod orphan_cleanup_tests {
         // A name that merely starts with a skipped one is a different directory.
         assert!(!is_in_unscanned_dir("assets-archive/a.md"));
     }
+
+    #[test]
+    fn the_timeline_folder_is_skipped_only_at_the_vault_root() {
+        assert!(is_in_unscanned_dir("Timeline/2016/2016-05.macbook.json"));
+        assert!(is_in_unscanned_dir("Timeline\\ledger\\macbook\\2026-09.json"));
+        assert!(!is_in_unscanned_dir("Projects/Timeline/plan.md"));
+        assert!(!is_in_unscanned_dir("Timeline.md"));
+    }
+
+    #[test]
+    fn a_note_named_after_a_day_says_which_day() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
+        let daily = new_note_frontmatter("14/09/2026", "note", Some("daily"), Some(date));
+        assert!(daily.contains("date: \"2026-09-14\"\n"), "{daily}");
+
+        let plain = new_note_frontmatter("Họp nhóm", "note", None, None);
+        assert!(!plain.contains("date:"), "{plain}");
+    }
 }
 
 #[cfg(test)]
@@ -4155,7 +4186,7 @@ mod new_note_identity_tests {
         let (_holder, dir) = unique_dir("synabit_new_note_identity");
         let path = dir.join("note.md");
 
-        let created = new_note_frontmatter("My note", "note", None);
+        let created = new_note_frontmatter("My note", "note", None, None);
         std::fs::write(&path, &created).unwrap();
 
         let resolved =
@@ -4177,8 +4208,8 @@ mod new_note_identity_tests {
     fn two_notes_created_in_the_same_moment_do_not_share_an_identity() {
         // Copied files sharing a node_id has already been a bug once. Minting at
         // creation must not reintroduce it by deriving the id from the clock.
-        let a = new_note_frontmatter("One", "note", None);
-        let b = new_note_frontmatter("Two", "note", None);
+        let a = new_note_frontmatter("One", "note", None, None);
+        let b = new_note_frontmatter("Two", "note", None, None);
         let id_of = |s: &str| {
             s.lines()
                 .find_map(|l| l.strip_prefix("node_id: "))
@@ -4194,14 +4225,14 @@ mod new_note_identity_tests {
 
     #[test]
     fn a_tag_is_carried_into_the_frontmatter_and_an_empty_one_is_not() {
-        let tagged = new_note_frontmatter("Daily", "note", Some("journal"));
+        let tagged = new_note_frontmatter("Daily", "note", Some("journal"), None);
         assert!(
             tagged.contains("tags:\n  - journal\n"),
             "the tag was dropped"
         );
 
         for empty in [Some(""), Some("   "), None] {
-            let plain = new_note_frontmatter("Daily", "note", empty);
+            let plain = new_note_frontmatter("Daily", "note", empty, None);
             assert!(
                 !plain.contains("tags:"),
                 "an empty tag should not produce a tags block: {empty:?}"

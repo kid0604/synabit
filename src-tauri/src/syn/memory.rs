@@ -810,7 +810,7 @@ mod through_the_tools {
         let rendered = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: "",
             custom: None,
-            skills: None, memory: Some(&block), focus: None, thread: None, counted: None,
+            skills: None, memory: Some(&block), focus: None, thread: None, counted: None, timeline: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1470,7 +1470,7 @@ mod does_memory_reach_the_model {
         let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt {
             context: "",
             custom: None,
-            skills: None, memory: Some(&block), focus: None, thread: None, counted: None,
+            skills: None, memory: Some(&block), focus: None, thread: None, counted: None, timeline: None,
             budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -1768,7 +1768,7 @@ mod memory_changes_the_answer {
                         custom: None,
                         skills: None,
                         memory,
-                        focus: None, thread: None, counted: None,
+                        focus: None, thread: None, counted: None, timeline: None,
                         budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS,
                     },
                 )

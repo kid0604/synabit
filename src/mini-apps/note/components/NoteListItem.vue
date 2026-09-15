@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { FileText, MoreVertical, Pin, Lock } from 'lucide-vue-next';
+import { FileText, MoreVertical, Pin, Lock, EyeOff } from 'lucide-vue-next';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 import NoteContextMenu from './NoteContextMenu.vue';
 
 defineProps<{
-  note: { id: string; title: string; tags: string[]; pinned: boolean };
+  note: { id: string; title: string; tags: string[]; pinned: boolean; sealed?: boolean };
   isActive: boolean;
   showContextMenu: boolean;
   isPinnedSection?: boolean;
@@ -14,6 +14,7 @@ const emit = defineEmits<{
   (e: 'select', id: string): void;
   (e: 'toggle-context', id: string, event: Event): void;
   (e: 'pin', id: string): void;
+  (e: 'seal', id: string): void;
   (e: 'open-window', id: string): void;
   (e: 'rename', id: string): void;
   (e: 'toggle-lock', id: string): void;
@@ -37,8 +38,10 @@ const appLockStore = useAppLockStore();
         v-if="showContextMenu"
         :note-id="note.id"
         :is-pinned="note.pinned"
+        :is-sealed="!!note.sealed"
         variant="sidebar"
         @pin="emit('pin', $event)"
+        @seal="emit('seal', $event)"
         @open-window="emit('open-window', $event)"
         @rename="emit('rename', $event)"
         @toggle-lock="emit('toggle-lock', $event)"
@@ -50,6 +53,7 @@ const appLockStore = useAppLockStore();
       <Pin v-if="isPinnedSection" class="w-3 h-3 text-orange-500 shrink-0 fill-orange-500/20" />
       <FileText v-else class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80" />
       <Lock v-if="appLockStore.isNoteProtected(note.id)" class="w-3 h-3 text-amber-500 shrink-0" />
+      <EyeOff v-if="note.sealed" class="w-3 h-3 text-stone-400 shrink-0" :aria-label="$t('note.sealed_badge')" />
       <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ note.title || $t('note.untitled_note') }}</span>
     </div>
     <div class="flex flex-wrap gap-1" v-if="note.tags.length">

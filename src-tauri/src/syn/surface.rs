@@ -240,7 +240,7 @@ mod tests {
             memory: None,
             focus: None,
             thread: None,
-            counted: None,
+            counted: None, timeline: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
     }

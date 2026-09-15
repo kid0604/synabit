@@ -71,6 +71,13 @@ mod desktop {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+        // The phone's schedule is made from the vault's settings, and the first
+        // plan may have run before there was a vault to read them from.
+        #[cfg(mobile)]
+        {
+            let handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move { crate::calendar::scheduler::reschedule_all(&handle); });
+        }
 
         // Save to KV store for background P2P Sync
         {
@@ -345,6 +352,13 @@ pub mod mobile_stub {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+        // The phone's schedule is made from the vault's settings, and the first
+        // plan may have run before there was a vault to read them from.
+        #[cfg(mobile)]
+        {
+            let handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move { crate::calendar::scheduler::reschedule_all(&handle); });
+        }
 
         // Save to KV store for background P2P Sync
         {

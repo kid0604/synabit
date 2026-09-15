@@ -47,6 +47,7 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "note" => "Notes".to_string(),
         "quickcap" => "QuickCaps".to_string(),
         "whiteboard" => "Whiteboards".to_string(),
+        "decision" => crate::timeline::reflect::FOLDER.to_string(),
         // Not `Memory`, which is where a user's own `memory` kind would land.
         "syn_memory" => crate::syn::memory::MEMORY_FOLDER.to_string(),
         // Nor `Skills`, for the same reason.
@@ -162,10 +163,19 @@ pub(crate) fn app_fields(node_type: &str) -> &'static [(&'static str, &'static s
             ("relationship_type", "What they are to the user, as a list: [\"Đồng Nghiệp\"]. Reuse a label other people already have, spelled and capitalised the same."),
             ("experiences", "Where they work or worked, as a list of {\"company\": \"MDP\", \"role\": \"DBA\", \"start\": \"2026-09\", \"end\": \"\", \"current\": true}. Months are YYYY-MM; end is empty while current. Never sentences."),
             ("birthday", "`YYYY-MM-DD`."),
+            ("died_on", "The day they died, `YYYY-MM-DD`. Leave it out while they are alive."),
             ("important_dates", "Other dates to remember: [{\"label\": \"Anniversary\", \"date\": \"YYYY-MM-DD\"}]."),
             ("details", "Contact details: [{\"label\": \"Email\", \"value\": \"a@b.vn\", \"type\": \"email\"}]; type is text, email, phone or url."),
             ("contact_frequency", "How often to keep in touch: weekly, biweekly, monthly, quarterly or yearly. Empty when not tracked."),
             ("tags", "A list of strings, without the #."),
+        ],
+        // As `timeline::reflect` reads them.
+        "decision" => &[
+            ("decided_on", "The day it was decided, `YYYY-MM-DD`."),
+            ("expected", "What the user expected to come of it, in their words."),
+            ("review_on", "The day to look at it again, `YYYY-MM-DD`. The app asks what actually happened on that day."),
+            ("reviews", "Each look back, as a list of {\"on\": \"YYYY-MM-DD\", \"happened\": \"what actually happened\", \"outcome\": \"as_expected\"}; outcome is as_expected, partly or otherwise. Written by the user, never guessed."),
+            ("tags", "A list of strings, without the #. Decisions that share a tag are compared when looking for a pattern."),
         ],
         _ => &[],
     }
@@ -482,7 +492,19 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// asked the person to open what they were already reading. Measured at 19,147
 /// with it; the ceiling keeps the same small headroom as before, so the next
 /// tool still has to argue its own case.
-pub const PAYLOAD_BUDGET_CHARS: usize = 19_300;
+///
+/// # Raised to 19,800, for the timeline
+///
+/// `timeline` costs about 500 characters and is sent everywhere. A question
+/// that names a time does not need it: the harness reads the time off the
+/// question and puts what the timeline holds in the prompt before the model
+/// is asked (`timeline::asked`). The tool is for everything the harness cannot
+/// see coming: a time Syn reaches for halfway through an answer, a time the
+/// question implies without naming, one person's side of a year. No other
+/// door reads `timeline.db`: its spans overlap rather than match, which
+/// `query_nodes` cannot express. Measured at 19,655 with it, after trimming
+/// its own words; the same small headroom as before.
+pub const PAYLOAD_BUDGET_CHARS: usize = 19_800;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -978,6 +1000,22 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "timeline".to_string(),
+                description: "What the vault dates to a time: notes, events, finished tasks, meetings, jobs, relationships, pictures. A question naming a time already has this in its prompt; call this for another time or one person.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["when"],
+                    "properties": {
+                        "when": { "type": "string", "description": "2016-05-14, 2016-05, 2016, from/to, or last year" },
+                        "about": { "type": "string", "description": "A person's node path, to narrow to them" },
+                "offset": { "type": "integer", "description": "Skip this many, for the next page" }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "search_feed_articles".to_string(),
                 description: "Search articles pulled in from the user's RSS feeds. These are not vault nodes and query_nodes cannot reach them.".to_string(),
                 parameters: serde_json::json!({
@@ -1125,6 +1163,24 @@ pub fn execute_tool<R: tauri::Runtime>(
 ) -> AppResult<String> {
     log::info!("[Syn Tools] Executing tool: {} with args: {}", name, args);
 
+    // What the person sealed is not the assistant's to read, count or name.
+    // Checked here once, for every tool, on the way in and on the way out; see
+    // `timeline::seal`. Seals that cannot be read refuse the call rather than
+    // let it through unchecked.
+    let seals = match lock(ctx).and_then(|db| crate::timeline::seal::current(&db, ctx.vault_path)) {
+        Ok(seals) => seals,
+        Err(e) => {
+            log::error!("[Syn Tools] Could not read seals: {}", e);
+            return Ok(serde_json::json!({
+                "error": "The vault's seals could not be read, so nothing was looked up."
+            })
+            .to_string());
+        }
+    };
+    if let Some(refused) = seals.refuse_argument(args) {
+        return Ok(refused);
+    }
+
     let result = match name {
         // Generic — these reach every type in the vault, including ones this
         // app has never heard of.
@@ -1177,6 +1233,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "read_feed_article" => tool_read_feed_article(&*lock(ctx)?, args),
         "search_files" => tool_search_files(&*lock(ctx)?, args),
         "read_file_text" => tool_read_file_text(&*lock(ctx)?, args),
+        "timeline" => tool_timeline(ctx, args),
         "update_feed_article" => tool_update_feed_article(ctx, args),
         "get_finance_summary" => tool_get_finance_summary(&*lock(ctx)?),
         "search_finance" => tool_search_finance(&*lock(ctx)?, args),
@@ -1188,7 +1245,7 @@ pub fn execute_tool<R: tauri::Runtime>(
 
     // Ensure the result is truncated to the size limit
     match result {
-        Ok(json_str) => Ok(truncate_result(&json_str)),
+        Ok(json_str) => Ok(truncate_result(&seals.withhold_results(name, json_str))),
         Err(e) => {
             log::error!("[Syn Tools] Tool '{}' failed: {}", name, e);
             Ok(serde_json::json!({"error": format!("{}", e)}).to_string())
@@ -2315,7 +2372,8 @@ where
 /// offering it back as though it were would be quoting itself on work the user
 /// stopped.
 fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
-    look_back(ctx.vault_path, args, ctx.run_id)
+    let seals = crate::timeline::seal::current(&*lock(ctx)?, ctx.vault_path)?;
+    look_back(ctx.vault_path, args, ctx.run_id, &seals)
 }
 
 /// The reading, without the runtime.
@@ -2323,7 +2381,12 @@ fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppR
 /// Split out because everything this does is `run::load_all` and a filter —
 /// neither needs an app handle or a database — and standing up a Tauri runtime
 /// to prove a `contains` is a test that measures the harness.
-fn look_back(vault_path: &str, args: &Value, this_run: Option<&str>) -> AppResult<String> {
+fn look_back(
+    vault_path: &str,
+    args: &Value,
+    this_run: Option<&str>,
+    seals: &crate::timeline::seal::Seals,
+) -> AppResult<String> {
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
@@ -2355,6 +2418,18 @@ fn look_back(vault_path: &str, args: &Value, this_run: Option<&str>) -> AppResul
         // what it is saying now, and returning it would have the model quoting
         // a half-written answer back at itself.
         .filter(|run| this_run != Some(run.id.as_str()))
+        // An earlier answer that read something since sealed would quote it
+        // back. The whole run is left out, not only the line that names it.
+        .filter(|run| {
+            seals.is_empty()
+                || (!seals.mentions(&serde_json::to_string(run).unwrap_or_default())
+                    && match &run.retrieved {
+                        Some(ids) => !ids.iter().any(|id| seals.hides(id)),
+                        // From before retrieval was recorded: what it read is
+                        // unknown, so only an answer that read nothing is safe.
+                        None => run.footing == Some(crate::syn::footing::Footing::Guessing),
+                    })
+        })
         .filter(|run| match &query {
             None => true,
             Some(q) => {
@@ -2387,6 +2462,89 @@ fn look_back(vault_path: &str, args: &Value, this_run: Option<&str>) -> AppResul
     Ok(serde_json::json!({
         "runs": found,
         "_note": "Your own earlier work, newest first. `footing` says what each answer stood on.",
+    })
+    .to_string())
+}
+
+/// What the vault dates to a time, from `timeline.db`.
+///
+/// A question that names a time already has this in its prompt, looked up by
+/// the harness (`timeline::asked`). This door is for a time the question did
+/// not name, and for one person's side of a time.
+fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use tauri::Manager;
+    let when_text = args
+        .get("when")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .ok_or_else(|| AppError::General("Missing required parameter: when".into()))?;
+    let today = chrono::Local::now().date_naive();
+    let span = crate::timeline::when::parse(when_text)
+        .or_else(|| crate::timeline::asked::span_in(when_text, today).map(|asked| asked.span))
+        .ok_or_else(|| {
+            AppError::General(format!(
+                "'{when_text}' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30, or words like \"last year\"."
+            ))
+        })?;
+    let about = args.get("about").and_then(Value::as_str).map(str::trim).filter(|a| !a.is_empty());
+
+    // The timeline's lock first, then the cache's, as everywhere else.
+    let state = ctx.app.state::<crate::timeline::TimelineState>();
+    let mut store = state.lock().unwrap_or_else(|e| e.into_inner());
+    crate::timeline::store::catch_up(ctx.db, &mut store)?;
+    let db = lock(ctx)?;
+    let seals = crate::timeline::seal::current(&db, ctx.vault_path)?;
+    let (from, to) = (crate::timeline::when::iso(span.from), crate::timeline::when::iso(span.to));
+    let mut items = match about {
+        Some(about) => {
+            let identity: Option<String> = db
+                .conn()
+                .query_row("SELECT stable_id FROM nodes WHERE id = ?1", [about], |r| r.get::<_, Option<String>>(0))
+                .ok()
+                .flatten();
+            let mut names = vec![about];
+            if let Some(identity) = identity.as_deref().filter(|id| *id != about) {
+                names.push(identity);
+            }
+            store
+                .about(&names, today)?
+                .into_iter()
+                .filter(|item| item.happened_from <= to && item.happened_to >= from)
+                .collect()
+        }
+        None => store.query(span, today)?,
+    };
+    items.retain(|item| !seals.hides_item(item));
+
+    let open = crate::timeline::when::iso(crate::timeline::when::open_end());
+    let total = items.len();
+    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let results: Vec<Value> = items
+        .iter()
+        .skip(offset)
+        .take(60)
+        .map(|item| {
+            serde_json::json!({
+                "node_id": item.node_id,
+                "type": item.node_type,
+                "kind": item.kind,
+                "title": item.title,
+                "label": item.label,
+                "from": item.happened_from,
+                "to": if item.happened_to == open { "now".to_string() } else { item.happened_to.clone() },
+                "precision": item.precision,
+                "related_id": item.related_id,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "from": from,
+        "to": to,
+        "results": results,
+        "total_matches": total,
+        "_returned": results.len(),
+        "next_offset": (offset + results.len() < total).then_some(offset + results.len()),
     })
     .to_string())
 }
@@ -3142,8 +3300,10 @@ fn tool_update_node<R: tauri::Runtime>(
     if node.node_type == "task" {
         if let Some(status) = patch.get("status").and_then(|v| v.as_str()) {
             if let Some(obj) = properties.as_object_mut() {
+                // The day it was done where the person is, as the Tasks views
+                // write it, not the day in Greenwich.
                 let stamp = if status == "done" {
-                    serde_json::json!(chrono::Utc::now().format("%Y-%m-%d").to_string())
+                    serde_json::json!(chrono::Local::now().format("%Y-%m-%d").to_string())
                 } else {
                     serde_json::json!("")
                 };
@@ -4059,7 +4219,10 @@ mod tests {
     }
 
     fn look_back_for_test(vault: &str, args: serde_json::Value) -> serde_json::Value {
-        serde_json::from_str(&look_back(vault, &args, None).expect("reads")).expect("json")
+        serde_json::from_str(
+            &look_back(vault, &args, None, &crate::timeline::seal::Seals::default()).expect("reads"),
+        )
+        .expect("json")
     }
 
     /// What the tool declarations cost, held to a ceiling.
@@ -4217,6 +4380,58 @@ mod tests {
         assert_eq!(runs.len(), 1, "{found}");
         assert_eq!(runs[0]["asked"], "cái hoá đơn FPT thế nào rồi");
         assert!(runs[0]["answered"].as_str().expect("text").contains("12/8"));
+    }
+
+    /// An earlier answer that read a note since sealed is not read back to
+    /// the assistant, however it is asked for.
+    #[test]
+    fn looking_back_leaves_out_an_answer_that_read_something_now_sealed() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut quoting = finished_run(vault, "note nhật ký nói gì");
+        quoting.record_assistant(1, "Theo Notes/sealed.md, năm đó rất khó.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &quoting).expect("saved");
+        let mut other = finished_run(vault, "hoá đơn FPT");
+        other.record_assistant(1, "Đã thanh toán.", Default::default(), 5);
+        other.retrieved = Some(Vec::new());
+        crate::syn::run::save_run(vault, &other).expect("saved");
+        // Retrieval read the diary, and the answer never names it.
+        let mut retrieved = finished_run(vault, "năm đó thế nào");
+        retrieved.record_assistant(1, "Năm đó rất khó.", Default::default(), 5);
+        retrieved.retrieved = Some(vec!["Notes/sealed.md#blk001".into()]);
+        crate::syn::run::save_run(vault, &retrieved).expect("saved");
+        // From before retrieval was recorded: what it read cannot be known.
+        let mut unrecorded = finished_run(vault, "chuyện cũ");
+        unrecorded.record_assistant(1, "Chuyện cũ rồi.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &unrecorded).expect("saved");
+
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Notes/sealed.md".into(),
+            node_type: "note".into(),
+            title: "Diary".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "sealed": true }),
+            created_at: "2026-01-01T12:00:00.000Z".into(),
+            updated_at: "2026-01-01T12:00:00.000Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("node");
+        let seals = crate::timeline::seal::Seals::read(&db, vault).expect("seals");
+
+        let found: Value = serde_json::from_str(
+            &look_back(vault, &serde_json::json!({}), None, &seals).expect("reads"),
+        )
+        .expect("json");
+        let asked: Vec<&str> = found["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .filter_map(|r| r["asked"].as_str())
+            .collect();
+        assert_eq!(asked, ["hoá đơn FPT"], "{found}");
     }
 
     /// The query reaches the answer as well as the question. Somebody asking
@@ -4460,6 +4675,11 @@ mod tests {
             "read_board",
             "draw_board",
             "edit_board",
+            // The timeline lives in `timeline.db`, which no node query reads:
+            // spans with a precision, compared by overlap, and a person's side
+            // of them. The harness also looks it up before the model is asked
+            // (`timeline::asked`); this is the door for any other time.
+            "timeline",
         ];
         for tool in specialised {
             assert!(names.contains(&tool), "{tool} is missing");
@@ -5295,7 +5515,7 @@ mod tests {
     /// assistant refusing to do its job.
     #[test]
     fn the_system_prompt_only_names_tools_that_exist() {
-        let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+        let prompt = crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
             .render();
         let names: Vec<String> = get_tool_definitions()
             .iter()
@@ -5425,3 +5645,75 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod sealed_tests {
+    use super::*;
+    use crate::db::DbBridge;
+    use crate::models::node::NodeMetadata;
+    use serde_json::json;
+    use tauri::Manager;
+
+    fn node(id: &str, node_type: &str, title: &str, properties: Value) -> NodeMetadata {
+        NodeMetadata {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            title: title.to_string(),
+            content: "pricing".to_string(),
+            properties,
+            created_at: "2026-01-01T12:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T12:00:00.000Z".to_string(),
+            timestamp: 0,
+            blocks: None,
+        }
+    }
+
+    /// The gate for B2: nothing sealed reaches the assistant through a tool,
+    /// whether it was sealed by its own flag, by its person or by its period.
+    #[test]
+    fn nothing_sealed_reaches_the_assistant_through_a_tool() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+        crate::timeline::seal::write_period(&vault_path, "2019-02", "2019-09").expect("sealed");
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        for n in [
+            node("Notes/open.md", "note", "Pricing plan", json!({})),
+            node("Notes/sealed.md", "note", "Pricing secret", json!({ "sealed": true })),
+            node("Notes/2019.md", "note", "2019-05-01", json!({ "date": "2019-05-01" })),
+            node("People/ex.md", "person", "Ex", json!({ "node_id": "uuid-ex", "sealed": true })),
+            node("People/Interactions/c.md", "interaction", "Coffee", json!({ "person_id": "uuid-ex", "date": "2024-01-01" })),
+        ] {
+            db.upsert_node(&n).expect("seeded");
+        }
+        handle.manage(crate::db::DbState::new(db));
+
+        let call = |tool: &str, args: Value| -> Value {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None };
+            serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs")).expect("json")
+        };
+
+        for hidden in ["Notes/sealed.md", "Notes/2019.md", "People/ex.md", "People/Interactions/c.md", "uuid-ex"] {
+            let read = call("get_node", json!({ "node_id": hidden }));
+            assert_eq!(read["error"], "Node not found", "{hidden}: {read}");
+            assert!(!read.to_string().contains("pricing"), "{hidden}: {read}");
+        }
+        assert_eq!(call("get_node", json!({ "node_id": "Notes/open.md" }))["title"], "Pricing plan");
+
+        let listed = call("query_nodes", json!({ "query": "type:note" }));
+        let ids: Vec<&str> = listed["results"]
+            .as_array()
+            .unwrap_or_else(|| panic!("results: {listed}"))
+            .iter()
+            .filter_map(|r| r["id"].as_str())
+            .collect();
+        assert_eq!(ids, ["Notes/open.md"], "{listed}");
+        assert_eq!(listed["total_matches"], 1, "a count that still includes the sealed says they exist");
+    }
+}

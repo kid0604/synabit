@@ -68,7 +68,7 @@ pub(crate) async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> O
     }
 }
 
-async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
+pub(crate) async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
     // Ollama has no key, and the keychain is not asked for one: a read can wait
     // on a macOS permission dialog, and nothing should wait on that for a
     // provider that would ignore the answer.
@@ -102,8 +102,110 @@ fn standing_instructions(vault_path: &str, settings: &SynSettings) -> Option<Str
         .and_then(crate::syn::instructions::block)
 }
 
-fn settings_for(vault_path: &str) -> SynSettings {
+pub(crate) fn settings_for(vault_path: &str) -> SynSettings {
     crate::syn::settings::load_settings(vault_path).unwrap_or_default()
+}
+
+/// "Syn kể lại" for one person: a few sentences, each resting on a record.
+///
+/// Every sentence the model writes without a record behind it is removed
+/// before this returns; see `syn::narrative`. Nothing is asked about a sealed
+/// person, and nothing sealed is put in front of the model.
+#[tauri::command]
+pub async fn syn_narrate_person(
+    app: tauri::AppHandle,
+    vault_path: String,
+    person_id: String,
+    locale: Option<String>,
+    state: tauri::State<'_, crate::db::DbState>,
+    timeline: tauri::State<'_, crate::timeline::TimelineState>,
+) -> Result<crate::syn::narrative::Narrative, AppError> {
+    use crate::syn::narrative::{self, Narrative};
+
+    let settings = settings_for(&vault_path);
+    if !settings.enabled {
+        return Err(AppError::General(SWITCHED_OFF.to_string()));
+    }
+    let model = settings
+        .default_model
+        .clone()
+        .ok_or_else(|| AppError::General("No model is configured".to_string()))?;
+    let today = chrono::Local::now().date_naive();
+
+    // The timeline's lock first, then the cache's, as everywhere else.
+    let (name, sources) = {
+        let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
+        crate::timeline::store::catch_up(state.inner(), &mut store)?;
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        let seals = crate::timeline::seal::current(&db, &vault_path)?;
+        if seals.hides(&person_id) {
+            return Ok(Narrative { withheld: true, ..Narrative::default() });
+        }
+        let person = db
+            .get_node(&person_id)?
+            .ok_or_else(|| AppError::General(format!("No person at {person_id}")))?;
+        let identity = person.stable_id().to_string();
+        let mut names = vec![person_id.as_str()];
+        if identity != person_id {
+            names.push(identity.as_str());
+        }
+        let items: Vec<_> = store
+            .about(&names, today)?
+            .into_iter()
+            .filter(|item| !seals.hides_item(item))
+            .collect();
+        let interactions: Vec<_> = db
+            .nodes_about_person(&person_id, "interaction")?
+            .into_iter()
+            .filter(|node| !seals.hides(&node.id))
+            .collect();
+        (person.title.clone(), narrative::sources_for(&items, &interactions))
+    };
+
+    if sources.is_empty() {
+        return Ok(Narrative::default());
+    }
+
+    let language = if locale.as_deref().unwrap_or("en").starts_with("vi") { "Vietnamese" } else { "English" };
+    let provider = provider_for(&app, &settings).await;
+    let messages = vec![crate::syn::provider::ChatMessage::new(
+        "user",
+        narrative::prompt(&name, &sources, language),
+    )];
+    let reply = provider
+        .chat(crate::syn::provider::ChatRequest {
+            model: &model,
+            messages: &messages,
+            temperature: Some(0.2),
+            num_ctx: settings.num_ctx,
+            tools: None,
+        })
+        .await
+        .map_err(|e| AppError::General(format!("Syn could not tell it: {e}")))?;
+
+    let (sentences, dropped) = narrative::cited_sentences(&reply.content, sources.len());
+    Ok(Narrative { sentences, sources, dropped, withheld: false })
+}
+
+/// How many sealed nodes a count matched beyond the rows its query returned.
+///
+/// The page stops at 500, and `withhold_query` can only take out what is on
+/// it: a sealed note at row 600 would still be in the total.
+fn sealed_past_the_page(
+    db: &crate::db::DbBridge,
+    seals: &crate::timeline::seal::Seals,
+    instant: &crate::syn::tempo::Instant,
+    on_page: &std::collections::HashSet<String>,
+) -> usize {
+    seals
+        .withheld()
+        .filter(|id| !on_page.contains(*id))
+        .filter_map(|id| db.get_node(id).ok().flatten())
+        .filter(|node| {
+            node.node_type == instant.node_type
+                && (!instant.unfinished || node.properties.get("status").and_then(|v| v.as_str()) != Some("done"))
+        })
+        .count()
 }
 
 /// What every Syn command says when the switch is off.
@@ -371,7 +473,8 @@ pub async fn send_message_inner(
             include_finance: settings.include_finance,
             include_feeds: settings.include_feeds,
             graph_expansion_depth: settings.graph_expansion_depth,
-            }
+            withheld: Default::default(),
+        }
     } else {
         RagConfig {
             enabled: false,
@@ -379,12 +482,40 @@ pub async fn send_message_inner(
         }
     };
 
+    // A question that names a time is answered from the timeline, looked up
+    // here, before the model is asked, rather than left for the model to think
+    // of a tool: `recall` went uncalled in fifteen runs of fifteen. Read before
+    // the vault cache is locked below, because the timeline's lock is always
+    // taken first. See `timeline::asked`.
+    let asked_about = crate::timeline::asked::span_in(&question, chrono::Local::now().date_naive());
+    let timeline_items: Option<Vec<crate::timeline::store::TimelineItem>> = asked_about.as_ref().and_then(|asked| {
+        use tauri::Manager;
+        let timeline = app.state::<crate::timeline::TimelineState>();
+        let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
+        crate::timeline::store::catch_up(&*state, &mut store)
+            .and_then(|_| store.query(asked.span, chrono::Local::now().date_naive()))
+            .map_err(|e| log::warn!("[Syn] Could not read the timeline: {e}"))
+            .ok()
+    });
+
     // Retrieval, memory and the skill index in one lock: they are all reads,
     // and the lock has to be gone before anything async below.
-    let (retrieval, context_str, remembered, skill_index, thread_block, counted) = {
+    let (retrieval, context_str, remembered, skill_index, thread_block, counted, seals, timeline_block) = {
         let db = state
             .lock()
             .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+
+        // What the person sealed reaches the prompt by none of the roads
+        // below: not retrieval, not the count, not the thread, not the screen.
+        // See `timeline::seal`. Seals that cannot be read stop the message
+        // rather than let it through unchecked.
+        let seals = crate::timeline::seal::current(&db, vault_path)?;
+
+        // What the timeline holds for the time asked about, less what is sealed.
+        let timeline_block = asked_about.as_ref().zip(timeline_items.as_ref()).map(|(asked, items)| {
+            let shown: Vec<_> = items.iter().filter(|item| !seals.hides_item(item)).cloned().collect();
+            crate::timeline::asked::block(asked, &shown)
+        });
 
         // What Syn remembers is not conditional on `rag_enabled`. That setting
         // is about searching the vault for this question; a pinned memory is
@@ -425,7 +556,13 @@ pub async fn send_message_inner(
             .ok()
             .and_then(|types| crate::syn::tempo::of(&question, &types))
             .and_then(|instant| {
-                let found = db.run_node_query(&crate::syn::tempo::query_for(&instant)).ok()?;
+                let mut found = db.run_node_query(&crate::syn::tempo::query_for(&instant)).ok()?;
+                let on_page: std::collections::HashSet<String> = found.rows.iter().map(|row| row.id.clone()).collect();
+                let past_the_page = found.total > found.rows.len();
+                seals.withhold_query(&mut found);
+                if past_the_page {
+                    found.total = found.total.saturating_sub(sealed_past_the_page(&db, &seals, &instant, &on_page));
+                }
                 let sample = crate::syn::tempo::sample(&found);
                 Some(crate::syn::tempo::block(&instant, found.total, &sample))
             });
@@ -438,14 +575,16 @@ pub async fn send_message_inner(
             .focus
             .as_ref()
             .and_then(|f| f.thread.as_deref())
+            .filter(|id| !seals.hides(id))
             .and_then(|id| crate::syn::thread::get(&db, id))
             .map(|t| t.block());
 
         if settings.rag_enabled {
+            let config = RagConfig { withheld: seals.clone(), ..config.clone() };
             let retrieval_result =
                 rag::retrieve_context(&db, &question, &conv.messages, &config)?;
             let context_str = rag::format_context(&retrieval_result);
-            (retrieval_result, context_str, remembered, skill_index, thread_block, counted)
+            (retrieval_result, context_str, remembered, skill_index, thread_block, counted, seals, timeline_block)
         } else {
             (
                 crate::models::syn::RetrievalResult {
@@ -458,6 +597,8 @@ pub async fn send_message_inner(
                 skill_index,
                 thread_block,
                 counted,
+                seals,
+                timeline_block,
             )
         }
     };
@@ -482,14 +623,20 @@ pub async fn send_message_inner(
             crate::syn::pane::showing(app),
         ),
         _ => request.focus.clone(),
-    };
+    }
+    .map(|focus| seals.withhold_focus(focus));
     let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
         context: &context_str,
         custom: standing.as_deref(),
         skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
         focus: focus.as_ref(),
-        thread: thread_block.as_deref(), counted: None,
+        thread: thread_block.as_deref(),
+        // Sent, at last. It was computed and dropped here since f39f99e while
+        // `instant` below still took the tools away, so a count question got
+        // one round with neither the number nor a way to find it.
+        counted: counted.as_deref(),
+        timeline: timeline_block.as_deref(),
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
     .with_surface(surface)
@@ -512,7 +659,8 @@ pub async fn send_message_inner(
         tool_calls_log: None,
         images: None,
     }];
-    messages_for_llm.extend(conv.messages.iter().cloned());
+    // What an earlier answer quoted from a note since sealed is not sent again.
+    messages_for_llm.extend(crate::timeline::seal::history_without_sealed(&conv.messages, &seals));
 
     // 7. Everything this run is allowed to reach.
     //
@@ -609,6 +757,7 @@ pub async fn send_message_inner(
     // when no tool was used, so asking the message afterwards would report zero
     // retrieved for precisely the runs that had the most to stand on.
     let retrieved = retrieval.sources.len();
+    let retrieved_ids: Vec<String> = retrieval.sources.iter().map(|source| source.id.clone()).collect();
 
     // And only under an answer. A run that stopped to ask permission has
     // nothing to stand on anything yet — the same test the footing below uses —
@@ -649,6 +798,7 @@ pub async fn send_message_inner(
 
         let footing = crate::syn::footing::of(&run, &crate::syn::footing::Evidence { retrieved });
         run.footing = Some(footing);
+        run.retrieved = Some(retrieved_ids);
         assistant_message.footing = Some(footing);
 
         // Written down, or it was never decided. `drive` saved the run for the
@@ -1216,7 +1366,7 @@ pub async fn syn_skill_trial(
             context: "",
             custom: standing.as_deref(),
             skills,
-            memory: remembered.as_deref(), focus: None, thread: None, counted: None,
+            memory: remembered.as_deref(), focus: None, thread: None, counted: None, timeline: None,
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .render();
@@ -2056,10 +2206,14 @@ pub async fn syn_preview_prompt(
                 include_finance: settings.include_finance,
                 include_feeds: settings.include_feeds,
                 graph_expansion_depth: settings.graph_expansion_depth,
-                };
+                withheld: Default::default(),
+            };
             let db = state
                 .lock()
                 .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            // The preview shows what Syn is told, so it is told the same
+            // thing: nothing sealed. See `timeline::seal`.
+            let config = RagConfig { withheld: crate::timeline::seal::current(&db, &vault_path)?, ..config };
             let retrieved = rag::retrieve_context(&db, message, &[], &config)?;
             rag::format_context(&retrieved)
         }
@@ -2072,7 +2226,7 @@ pub async fn syn_preview_prompt(
         custom: standing.as_deref(),
         skills: skill_index.as_deref(),
         memory: remembered.as_deref(),
-        focus: focus.as_ref(), thread: None, counted: None,
+        focus: focus.as_ref(), thread: None, counted: None, timeline: None,
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
     .into();
@@ -2342,4 +2496,35 @@ pub async fn syn_export_conversation(
     conversation_id: String,
 ) -> Result<String, AppError> {
     conversation::export_conversation_markdown(&vault_path, &conversation_id)
+}
+
+#[cfg(test)]
+mod sealed_count_tests {
+    use super::*;
+
+    #[test]
+    fn a_sealed_node_past_the_page_leaves_the_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_string_lossy().to_string();
+        let db = crate::db::DbBridge::new_in_memory_full().unwrap();
+        let task = |id: &str, properties: serde_json::Value| crate::models::node::NodeMetadata {
+            id: id.into(),
+            node_type: "task".into(),
+            title: id.into(),
+            content: String::new(),
+            properties,
+            created_at: String::new(),
+            updated_at: String::new(),
+            timestamp: 0,
+            blocks: None,
+        };
+        db.upsert_node(&task("Tasks/open.md", serde_json::json!({ "status": "todo" }))).unwrap();
+        db.upsert_node(&task("Tasks/sealed.md", serde_json::json!({ "status": "todo", "sealed": true }))).unwrap();
+        db.upsert_node(&task("Tasks/sealed-done.md", serde_json::json!({ "status": "done", "sealed": true }))).unwrap();
+        let seals = crate::timeline::seal::Seals::read(&db, &vault).unwrap();
+        let instant = crate::syn::tempo::Instant { node_type: "task".into(), unfinished: true };
+        assert_eq!(sealed_past_the_page(&db, &seals, &instant, &Default::default()), 1);
+        let on_page = std::iter::once("Tasks/sealed.md".to_string()).collect();
+        assert_eq!(sealed_past_the_page(&db, &seals, &instant, &on_page), 0, "already taken off the page");
+    }
 }

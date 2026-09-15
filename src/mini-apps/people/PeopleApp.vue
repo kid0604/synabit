@@ -5,7 +5,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download } from 'lucide-vue-next';
+import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download, EyeOff } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
 import GiftModal from './GiftModal.vue';
 import OverviewTab from './OverviewTab.vue';
@@ -19,7 +19,7 @@ import PeopleManager from './PeopleManager.vue';
 import ImportContactsModal from './ImportContactsModal.vue';
 
 import { contactPercent, contactDotClass, contactStatus } from './composables/useRelationshipHealth';
-import { linkRemovalPatches, namesFor, pointsAt, type Connection } from './composables/connections';
+import { withDates, linkRemovalPatches, namesFor, pointsAt, type Connection } from './composables/connections';
 import { parseAnnualDate } from './composables/anniversaries';
 import { relationshipsOf, relationshipLabel } from './composables/relationships';
 import { searchPeople } from './composables/search';
@@ -590,8 +590,32 @@ const openPersonById = async (id: string) => {
  * themselves — see `plan_birthday` — and `source_person_id` is what tells the
  * reminder engine not to say it twice.
  */
+/**
+ * Seal or unseal the open person: they stay in the contacts, but no reminder
+ * brings them back and Syn does not read about them. One key on its own
+ * patch. See `src-tauri/src/timeline/seal.rs`.
+ */
+const toggleSealPerson = async () => {
+    const person = selectedPerson.value;
+    if (!person) return;
+    const sealing = !person.properties?.sealed;
+    try {
+        await ns.writeNode({
+            relPath: person.id,
+            title: person.title,
+            nodeType: 'person',
+            properties: { sealed: sealing ? true : null },
+        });
+        person.properties = { ...(person.properties || {}), sealed: sealing || undefined };
+        await fetchPeople();
+    } catch (e) {
+        logger.error('Failed to seal person', e);
+    }
+};
+
 const syncBirthdaysToCalendar = async () => {
-    const withBirthdays = people.value.filter(p => parseAnnualDate(p.properties?.birthday ?? ''));
+    // A sealed person's birthday is not put on the calendar to come round again.
+    const withBirthdays = people.value.filter(p => !p.properties?.sealed && parseAnnualDate(p.properties?.birthday ?? ''));
     if (withBirthdays.length === 0) return;
 
     let synced = 0;
@@ -663,7 +687,7 @@ const closeLinkModal = () => {
     editLinkTargetId.value = undefined;
 };
 
-const linkPerson = async (targetPerson: any, relationType: string) => {
+const linkPerson = async (targetPerson: any, relationType: string, since = '', until = '') => {
     if (!selectedPerson.value) return;
     const src = selectedPerson.value;
     const srcProps = { ...(src.properties || {}) };
@@ -673,12 +697,12 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
     const targetNames = namesFor(targetPerson);
     const existingIdx = srcConns.findIndex(c => pointsAt(c, targetNames));
     if (existingIdx >= 0) {
-        srcConns[existingIdx].relation_type = relationType;
+        srcConns[existingIdx] = withDates({ ...srcConns[existingIdx], relation_type: relationType }, since, until);
     } else {
         // The other person's identity, not their path: a path breaks the
         // moment they are moved or renamed. No name is stored either — it is
         // read from their own node when the link is drawn.
-        srcConns.push({ person_id: identityOf(targetPerson), relation_type: relationType });
+        srcConns.push(withDates({ person_id: identityOf(targetPerson), relation_type: relationType }, since, until));
     }
     srcProps.connections = srcConns;
 
@@ -715,8 +739,18 @@ const linkPerson = async (targetPerson: any, relationType: string) => {
         
         const srcNames = namesFor(src);
         const tgtConns: Connection[] = [...(tgtProps.connections || [])];
-        if (!tgtConns.some(c => pointsAt(c, srcNames))) {
-            tgtConns.push({ person_id: identityOf(src), relation_type: reverseType });
+        const reverseIdx = tgtConns.findIndex(c => pointsAt(c, srcNames));
+        // One relationship has one span, whichever of the two it was entered
+        // on. The label on the other side stays theirs.
+        const reverseChanged = reverseIdx < 0
+            || (tgtConns[reverseIdx].since || '') !== since
+            || (tgtConns[reverseIdx].until || '') !== until;
+        if (reverseChanged) {
+            if (reverseIdx < 0) {
+                tgtConns.push(withDates({ person_id: identityOf(src), relation_type: reverseType }, since, until));
+            } else {
+                tgtConns[reverseIdx] = withDates({ ...tgtConns[reverseIdx] }, since, until);
+            }
             tgtProps.connections = tgtConns;
             tgtProps.relations = null;
             await ns.writeNode({
@@ -1063,6 +1097,9 @@ defineExpose({ openPersonById });
                             <button @click="showGiftModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-pink-500 hover:bg-pink-50 dark:hover:bg-pink-900/20 rounded-lg transition-colors">
                                 <Gift class="w-3.5 h-3.5" /> {{ $t('people.log_gift') }}
                             </button>
+                            <button @click="toggleSealPerson" :title="$t('people.seal_hint')" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800/40 rounded-lg transition-colors">
+                                <EyeOff class="w-3.5 h-3.5" /> {{ selectedPerson?.properties?.sealed ? $t('people.unseal') : $t('people.seal') }}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1070,7 +1107,7 @@ defineExpose({ openPersonById });
                 <!-- Tab Content -->
                 <div class="flex-1 overflow-y-auto hidden-scrollbar relative bg-surface dark:bg-surface-dark p-4 md:p-8">
                     <div class="max-w-3xl mx-auto">
-                        <OverviewTab v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
+                        <OverviewTab :vault-path="vaultPath" v-if="activeTab === 'overview'" :person="selectedPerson" @open-linked-node="openLinkedNode" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
                         <TimelineTab v-else-if="activeTab === 'timeline'" :person="selectedPerson" :vault-path="vaultPath" :linked-nodes="linkedNodes" :all-debts="allDebts" :all-transactions="allTransactions" @updated="handleTimelineUpdated" @open-linked-node="openLinkedNode" />
                         <NotesTab v-else-if="activeTab === 'notes'" :person="selectedPerson" :linked-nodes="linkedNodes" :loading-links="loadingLinks" @open-linked-node="openLinkedNode" />
                         <GraphTab v-else-if="activeTab === 'graph'" :person="selectedPerson" :all-people="people" :vault-path="vaultPath" @select-person="selectPerson" @unlink="unlinkPerson" @edit-link="openEditLink" />

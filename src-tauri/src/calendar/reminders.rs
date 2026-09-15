@@ -312,6 +312,7 @@ pub fn plan_with(
             "task" => plan_task(node, from, to, &mut out),
             "finance_debts" => plan_debts(node, from, to, &mut out),
             "person" => plan_person(node, from, to, scan_until, &mut out),
+            "decision" => plan_decision(node, from, to, &mut out),
             _ => {}
         }
     }
@@ -392,6 +393,68 @@ fn plan_event(
 /// The desktop announced birthdays from a second copy of this logic in
 /// `chat_engine`, and the phone — which is handed its reminders in advance
 /// and cannot run a loop of its own — announced none at all.
+/// When a decision asks what actually happened. See `timeline::reflect`.
+const DECISION_HOUR: &str = "09:00:00";
+
+/// A decision asks on the day it was to be looked at again, and a week later,
+/// and every week after, until a review written on or after that day answers.
+///
+/// Not daily: a question asked every morning is one people learn to swipe
+/// away, and this one is worth an unhurried answer. Not only once either: a
+/// machine asleep that morning would never ask at all.
+fn plan_decision(node: &NodeMetadata, from: NaiveDateTime, to: NaiveDateTime, out: &mut Vec<PlannedReminder>) {
+    let p = &node.properties;
+    if p.get("sealed").and_then(|v| v.as_bool()) == Some(true) {
+        return;
+    }
+    let Some(review_on) = p
+        .get("review_on")
+        .and_then(|v| v.as_str())
+        .and_then(|s| NaiveDate::parse_from_str(s.trim().get(..10)?, "%Y-%m-%d").ok())
+    else {
+        return;
+    };
+    let asked_on = review_on.format("%Y-%m-%d").to_string();
+    let answered = p
+        .get("reviews")
+        .and_then(|v| v.as_array())
+        .is_some_and(|reviews| {
+            reviews.iter().any(|r| r.get("on").and_then(|v| v.as_str()).is_some_and(|on| on.get(..10).unwrap_or(on) >= asked_on.as_str()))
+        });
+    if answered {
+        return;
+    }
+    // Not before it was written down: a decision made at three with today as
+    // its day to look again has nothing to look back on at nine that morning.
+    let written = chrono::DateTime::parse_from_rfc3339(&node.created_at)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Local).naive_local());
+    let mut day = from.date().max(review_on);
+    while day <= to.date() {
+        if (day - review_on).num_days() % 7 == 0 {
+            let date_str = day.format("%Y-%m-%d").to_string();
+            if let Some(trigger_at) = at(&date_str, DECISION_HOUR) {
+                if trigger_at >= from && trigger_at <= to && written.is_none_or(|written| trigger_at >= written) {
+                    out.push(PlannedReminder {
+                        target_id: node.id.clone(),
+                        target_type: "decision",
+                        title: node.title.clone(),
+                        offset: "review".to_string(),
+                        occurrence_date: date_str,
+                        trigger_at,
+                        subject_at: trigger_at,
+                        overdue: day > review_on,
+                    });
+                }
+            }
+        }
+        match day.succ_opt() {
+            Some(next) => day = next,
+            None => break,
+        }
+    }
+}
+
 fn plan_person(
     node: &NodeMetadata,
     from: NaiveDateTime,
@@ -399,6 +462,11 @@ fn plan_person(
     scan_until: NaiveDate,
     out: &mut Vec<PlannedReminder>,
 ) {
+    // A sealed person is not brought back, not on their birthday and not as
+    // someone to get in touch with. See `timeline::seal`.
+    if node.properties.get("sealed").and_then(|v| v.as_bool()) == Some(true) {
+        return;
+    }
     plan_birthday(node, from, to, scan_until, out);
     plan_keep_in_touch(node, from, to, scan_until, out);
 }
@@ -685,6 +753,17 @@ mod tests {
 
     fn keys(plan: &[PlannedReminder]) -> Vec<String> {
         plan.iter().map(|r| format!("{} @ {}", r.delivery_key(), r.trigger_at)).collect()
+    }
+
+    #[test]
+    fn a_sealed_person_is_not_brought_back_by_a_reminder() {
+        let open = node("People/mai.md", "person", json!({ "birthday": "03-02" }));
+        let sealed = node("People/ex.md", "person", json!({
+            "birthday": "03-02", "sealed": true, "contact_frequency": "monthly", "last_contacted": "2025-01-01"
+        }));
+        let planned = plan(&[open, sealed], dt("2026-03-02T00:00"), dt("2026-03-02T23:59"), "");
+        assert_eq!(planned.len(), 1, "{:?}", keys(&planned));
+        assert!(!keys(&planned).iter().any(|k| k.contains("ex.md")), "{:?}", keys(&planned));
     }
 
     /// The debts ledger is one file holding a list, so one node has to produce

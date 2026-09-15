@@ -12,6 +12,9 @@ const props = defineProps<{
 
 const emit = defineEmits(['select-person', 'updated']);
 
+// A sealed person is not brought back by a reminder. See `src-tauri/src/timeline/seal.rs`.
+const people = computed(() => props.people.filter(p => !p.properties?.sealed));
+
 // Answering the nudge without leaving the list. Anything that takes three
 // clicks to resolve gets dismissed instead of resolved.
 const keepInTouch = useKeepInTouch(useNodeService());
@@ -29,7 +32,7 @@ const answer = async (person: any, action: 'contacted' | 'snooze') => {
 // Soon" when opened.
 const byStatus = (status: string) => computed(() => {
     const now = Date.now();
-    return props.people
+    return people.value
         .filter(p => contactStatus(p, now) === status)
         .map(p => ({
             ...p,
@@ -50,7 +53,7 @@ const dueSoonContacts = computed(() =>
 // Birthdays within the next month, soonest first.
 const upcomingBirthdays = computed(() => {
     const now = new Date();
-    return props.people
+    return people.value
         .map(p => {
             const daysUntil = daysUntilAnnual(p.properties?.birthday ?? '', now);
             return daysUntil === null ? null : { ...p, daysUntil };

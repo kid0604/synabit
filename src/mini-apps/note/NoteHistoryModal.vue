@@ -13,6 +13,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { History, X, RotateCcw, Laptop } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
+import LedgerNote from './components/LedgerNote.vue';
 
 const props = defineProps<{
   vaultPath: string;
@@ -215,6 +216,12 @@ watch(selected, (version) => {
 });
 
 watch(() => props.noteId, loadVersions, { immediate: true });
+
+/** The oldest version the history holds, which is as near the original as the log reaches. */
+const showOriginal = () => {
+  const oldest = versions.value[versions.value.length - 1];
+  if (oldest) selectVersion(oldest.id);
+};
 </script>
 
 <template>
@@ -231,6 +238,8 @@ watch(() => props.noteId, loadVersions, { immediate: true });
           <X class="w-4 h-4" />
         </button>
       </div>
+
+      <LedgerNote :vault-path="vaultPath" :rel-path="noteId" @show-original="showOriginal" />
 
       <div class="flex-1 flex min-h-0 max-md:flex-col">
         <!-- Version list -->

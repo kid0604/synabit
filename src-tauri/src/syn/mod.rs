@@ -12,6 +12,7 @@ pub mod focus;
 pub mod footing;
 pub mod instructions;
 pub mod memory;
+pub mod narrative;
 pub mod notice;
 pub mod prompt;
 pub mod proposal;

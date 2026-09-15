@@ -2456,7 +2456,7 @@ mod gate_one {
             SynMessage {
                 id: "sys".into(),
                 role: "system".into(),
-                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
+                content: crate::syn::prompt::PromptPlan::for_chat(crate::syn::prompt::ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: crate::syn::prompt::DEFAULT_BUDGET_CHARS })
                 .render(),
                 model: None,
                 timestamp: String::new(),

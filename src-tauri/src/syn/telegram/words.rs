@@ -300,6 +300,9 @@ impl Words {
             ("person", _) => {
                 if vi { format!("🎂 Sinh nhật {title} vào {day}") } else { format!("🎂 {title}'s birthday is on {day}") }
             }
+            ("decision", _) => {
+                if vi { format!("🪞 Nhìn lại: {title} — điều gì đã thật sự xảy ra?") } else { format!("🪞 Look back: {title} — what actually happened?") }
+            }
             ("finance_debt", _) => {
                 if vi { format!("💸 Đến hạn {day}: {title}") } else { format!("💸 Due {day}: {title}") }
             }

@@ -5,6 +5,7 @@ import { Plus, Trash2, PenTool, PanelLeftClose, Search, FileText, GripVertical, 
 import { useAppStore } from '../../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
 import { logger } from '../../../utils/logger';
+import { localDay } from '../../../shared/localDay';
 
 const props = defineProps<{
   boards: any[];
@@ -182,7 +183,7 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
             <Trash2 class="w-3 h-3" />
           </button>
         </div>
-        <p class="text-[10px] opacity-40 mt-0.5 ml-5.5">{{ board.updated_at?.split(' ')[0] }}</p>
+        <p class="text-[10px] opacity-40 mt-0.5 ml-5.5">{{ localDay(board.updated_at) }}</p>
       </button>
 
       <div v-if="!boards.length" class="text-center text-xs text-muted dark:text-muted-dark py-8">

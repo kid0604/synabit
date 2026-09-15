@@ -20,6 +20,7 @@ pub mod telegram;
 pub mod sync;
 pub mod tags;
 pub mod thumbnails;
+pub mod timeline;
 pub mod trash;
 pub mod vault;
 pub mod vault_health;

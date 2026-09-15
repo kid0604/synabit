@@ -225,6 +225,8 @@ impl DbBridge {
                 .execute("DELETE FROM search_index WHERE rowid = ?1", params![rid]);
         }
 
+        // The same shape the `nodes` row holds; see `utils::timestamp`.
+        let date = crate::utils::timestamp::normalize(date);
         self.index_row(
             existing,
             item_id,
@@ -234,7 +236,7 @@ impl DbBridge {
             content,
             properties,
             status.unwrap_or(""),
-            date,
+            &date,
             path,
         );
     }

@@ -1,7 +1,7 @@
 import * as lucide from 'lucide-vue-next';
 import {
   FileText, CheckSquare, Calendar, Users, Zap, Palette, FolderOpen,
-  Wallet, Rss, Filter, Box,
+  Wallet, Rss, Filter, Box, Scale,
 } from 'lucide-vue-next';
 import { h, ref, render, watch, type Component } from 'vue';
 
@@ -30,6 +30,7 @@ const ICONS: Readonly<Record<string, Component>> = {
   finance_month: Wallet,
   feed_source: Rss,
   filter: Filter,
+  decision: Scale,
 };
 
 /**

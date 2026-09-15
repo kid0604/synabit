@@ -641,7 +641,7 @@ fn merge_scanned(
 /// now, which is what makes a phrase you remember find the file it is in, and
 /// what makes `snippet(search_index, 4, …)` — already wired up in
 /// `search_fts` — have something to quote.
-fn index_for_search(db: &crate::db::DbBridge, node_id: &str, meta: &FileMetadata) {
+pub(crate) fn index_for_search(db: &crate::db::DbBridge, node_id: &str, meta: &FileMetadata) {
     let body = db.file_text_joined(node_id).unwrap_or_default();
     let mut terms = meta.tags.clone();
     terms.extend(meta.people.iter().cloned());

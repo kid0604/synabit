@@ -3,6 +3,7 @@ import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
 import { iconPartsFor } from './nodeIcons';
+import { lensFor, nodeVisible, linkVisible, isDeceased, type TimeFrame, type TimeLens } from '../timeFrame';
 
 interface GraphNode {
     id: string;
@@ -30,6 +31,13 @@ const props = defineProps<{
      * drawn as an empty graph, not as no filter.
      */
     matchIds?: string[] | null;
+    /**
+     * Looking back: the day being looked at, `YYYY-MM-DD`, and when each thing
+     * entered the picture. Both null for the present, which is what the graph
+     * has always shown. See `TimeStrip.vue` and `timeline/frame.rs`.
+     */
+    atDate?: string | null;
+    timeFrame?: TimeFrame | null;
 }>();
 
 const emit = defineEmits<{
@@ -87,6 +95,19 @@ let currentNodes: SimNode[] = [];
 let currentLinks: SimLink[] = [];
 
 /**
+ * The lens a time frame is read through. Rebuilt when the frame or the graph
+ * changes, never per draw: a scrub redraws dozens of times a second and may
+ * only look things up.
+ */
+let lens: TimeLens | null = null;
+const rebuildLens = () => {
+    lens = props.timeFrame ? lensFor(props.timeFrame, props.graphData.links) : null;
+};
+/** The day being looked at, or null for the present. */
+const lookingAt = () => (lens && props.atDate ? props.atDate : null);
+const isShown = (id: string, at: string | null) => !at || nodeVisible(lens!, id, at);
+
+/**
  * How many nodes the last rebuild drew. Not the size of the match set: some
  * matches are of kinds the graph never shows, and tag and ghost nodes are
  * drawn without ever having matched anything.
@@ -127,6 +148,7 @@ const colorMap: Record<string, string> = {
     'tag': '#a855f7',      // purple
     'file': '#8b5cf6',     // violet
     'person': '#f97316',   // orange
+    'decision': '#d97706', // amber
     'ghost': '#9ca3af',    // gray
 };
 
@@ -354,7 +376,9 @@ const initCanvas = () => {
             const invX = transform.invertX(x);
             const invY = transform.invertY(y);
             const radiusSearch = 20 / transform.k;
-            const found = simulation.find(invX, invY, radiusSearch);
+            // A node not yet in the picture cannot be hovered or opened.
+            const hit = simulation.find(invX, invY, radiusSearch);
+            const found = hit && isShown(hit.id, lookingAt()) ? hit : undefined;
             if (found !== hoveredNode) {
                 hoveredNode = found || null;
                 draw();
@@ -373,7 +397,8 @@ const initCanvas = () => {
             const [x, y] = d3.pointer(e, canvas);
             const invX = transform.invertX(x);
             const invY = transform.invertY(y);
-            dragSubject = simulation.find(invX, invY, 20 / transform.k) || null;
+            const hit = simulation.find(invX, invY, 20 / transform.k);
+            dragSubject = hit && isShown(hit.id, lookingAt()) ? hit : null;
             return dragSubject;
         })
         .on("start", (e) => {
@@ -497,6 +522,7 @@ const draw = () => {
     ctx.scale(transform.k, transform.k);
 
     const isHovering = !!hoveredNode;
+    const at = lookingAt();
     const connectedNodes = new Set<string>();
     
     if (isHovering) {
@@ -510,6 +536,8 @@ const draw = () => {
     // Draw Links
     ctx.lineWidth = 1.5 * linkThickness.value;
     currentLinks.forEach(link => {
+        if (at && (!isShown(link.source.id, at) || !isShown(link.target.id, at)
+            || !linkVisible(lens!, link.source.id, link.target.id, at))) return;
         let alpha = 0.4;
         if (isHovering) {
             const connected = link.source.id === hoveredNode!.id || link.target.id === hoveredNode!.id;
@@ -527,6 +555,8 @@ const draw = () => {
 
     // Draw Nodes
     currentNodes.forEach(node => {
+        if (!isShown(node.id, at)) return;
+        const dead = !!at && isDeceased(lens!, node.id, at);
         let alpha = 1.0;
         if (isHovering && !connectedNodes.has(node.id)) {
             alpha = 0.2;
@@ -538,10 +568,21 @@ const draw = () => {
         ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI);
         
         ctx.fillStyle = colorMap[node.item_type] || '#999';
+        // Someone who has died stays in the picture they were part of, drawn
+        // as remembered: a paler disc inside a dashed ring.
+        const ringAlpha = alpha;
+        if (dead) alpha *= 0.45;
         if (alpha < 1) ctx.globalAlpha = alpha;
         ctx.fill();
         
-        if (node === hoveredNode) {
+        if (dead) {
+            ctx.globalAlpha = ringAlpha;
+            ctx.setLineDash([3, 3]);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = node === hoveredNode ? '#000' : '#6b7280';
+            ctx.stroke();
+            ctx.setLineDash([]);
+        } else if (node === hoveredNode) {
             ctx.lineWidth = 2;
             ctx.strokeStyle = '#000';
             ctx.stroke();
@@ -574,6 +615,7 @@ const draw = () => {
     };
 
     currentNodes.forEach(node => {
+        if (!isShown(node.id, at)) return;
         const r = node.val * 1.5 * nodeSize.value;
         const iconFade = Math.min(1, (r * k - ICON_MIN_PX) / (ICON_FULL_PX - ICON_MIN_PX));
         if (iconFade <= 0) return;
@@ -616,6 +658,7 @@ const draw = () => {
     // its own, which is the only one being asked for down there.
     const fade = Math.min(1, Math.max(0, (k - textFade.value) / 0.3));
     currentNodes.forEach(node => {
+        if (!isShown(node.id, at)) return;
         const isHovered = node === hoveredNode;
         if (!isHovered) {
             if (fade <= 0) return;
@@ -643,11 +686,17 @@ watch([showNotes, showTasks, showEvents, showTags, showFiles, showPeople, showOr
 // The query result arrives from the parent as a new array each time.
 watch(() => props.matchIds, () => rebuildGraph());
 
+// Looking back only redraws. Re-running the layout for every month would
+// reshuffle the picture under the reader's hand, and cost a layout per frame.
+watch(() => props.atDate, () => draw());
+watch(() => props.timeFrame, () => { rebuildLens(); draw(); });
+
 // A vault reload only matters if the graph actually changed.
 watch(() => props.graphData, (data) => {
     const signature = graphSignature(data);
     if (signature === lastSignature) return;
     lastSignature = signature;
+    rebuildLens();
     rebuildGraph();
 });
 
@@ -659,6 +708,7 @@ onMounted(() => {
     setTimeout(() => {
         if (!initCanvas()) return;
         lastSignature = graphSignature(props.graphData);
+        rebuildLens();
         rebuildGraph();
     }, 100);
 });

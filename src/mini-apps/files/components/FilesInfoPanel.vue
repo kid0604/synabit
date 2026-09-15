@@ -6,6 +6,7 @@ import type { FileMetadata, FileReference } from '../composables/useFileStore';
 import type { useFileStore } from '../composables/useFileStore';
 import { watch, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { localDay } from '../../../shared/localDay';
 
 // Helper to extract name from Tiptap internal link `[Name](synabit://...)`
 const getPersonName = (link: string) => {
@@ -183,8 +184,8 @@ const handlePeopleDropdownBlur = () => window.setTimeout(() => showPeopleDropdow
       <div class="p-3 rounded-xl bg-gray-50/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 space-y-2 text-xs">
         <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.type') }}</span><span class="font-medium uppercase text-gray-900 dark:text-white">{{ file.extension }}</span></div>
         <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.size_col') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ store.formatSize(file.size) }}</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.modified_col') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ file.modified_at.split(' ')[0] }}</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.created') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ file.created_at.split(' ')[0] }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.modified_col') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ localDay(file.modified_at) }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">{{ $t('file.created') }}</span><span class="font-medium text-gray-900 dark:text-white">{{ localDay(file.created_at) }}</span></div>
       </div>
 
       <!-- Location -->

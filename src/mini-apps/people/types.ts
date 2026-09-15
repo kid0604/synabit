@@ -45,6 +45,11 @@ export interface PersonMetadata {
   contact_frequency: string | null;
   /** `YYYY-MM-DD`. */
   birthday: string | null;
+  /**
+   * `YYYY-MM-DD`: the day they died. From then on Nexus draws them as
+   * remembered rather than removing them. Empty while they are alive.
+   */
+  died_on: string | null;
   tags: string[] | null;
   important_dates: Array<{ label: string; date: string }> | null;
   experiences: PersonExperience[] | null;

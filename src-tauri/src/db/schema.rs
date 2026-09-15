@@ -1028,6 +1028,55 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (sync_metrics): {}", e)))?;
 
+        // ─── One timestamp shape (2026-09-14) ───────────────────
+        //
+        // Rows written before `utils::timestamp` hold two formats, and an
+        // upsert never rewrites `created_at` on conflict, so reindexing alone
+        // would leave the old ones standing for good. Rewrite them once. The
+        // search index keeps its own copy of `updated_at` in `date`, so it is
+        // rebuilt from the corrected rows on this launch.
+        {
+            let done = conn
+                .query_row(
+                    "SELECT value FROM kv_store WHERE key = 'timestamps_normalized_v1'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .is_ok();
+            if !done {
+                let rows: Vec<(String, String, String)> = {
+                    let mut stmt = conn
+                        .prepare("SELECT id, created_at, updated_at FROM nodes")
+                        .map_err(|e| AppError::General(format!("DB Schema Error (timestamps read): {}", e)))?;
+                    let mapped = stmt
+                        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                        .map_err(|e| AppError::General(format!("DB Schema Error (timestamps map): {}", e)))?;
+                    mapped.flatten().collect()
+                };
+                let tx = conn
+                    .transaction()
+                    .map_err(|e| AppError::General(format!("DB Schema Error (timestamps tx): {}", e)))?;
+                for (id, created, updated) in rows {
+                    let created_now = crate::utils::timestamp::normalize(&created);
+                    let updated_now = crate::utils::timestamp::normalize(&updated);
+                    if created_now != created || updated_now != updated {
+                        tx.execute(
+                            "UPDATE nodes SET created_at = ?1, updated_at = ?2 WHERE id = ?3",
+                            rusqlite::params![created_now, updated_now, id],
+                        )
+                        .map_err(|e| AppError::General(format!("DB Schema Error (timestamps write): {}", e)))?;
+                    }
+                }
+                tx.execute_batch(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES ('fts_needs_reindex', '1');
+                     INSERT OR REPLACE INTO kv_store (key, value) VALUES ('timestamps_normalized_v1', '1');",
+                )
+                .map_err(|e| AppError::General(format!("DB Schema Error (timestamps flag): {}", e)))?;
+                tx.commit()
+                    .map_err(|e| AppError::General(format!("DB Schema Error (timestamps commit): {}", e)))?;
+            }
+        }
+
         // ─── Versioned Sync Schema Migrations ─────────────────────
         run_sync_schema_migrations(&mut conn)?;
 

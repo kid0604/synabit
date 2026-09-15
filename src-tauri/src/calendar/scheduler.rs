@@ -57,10 +57,17 @@ pub fn plan_for_schedule(app: &tauri::AppHandle) -> Vec<PlannedReminder> {
     let Some(db_state) = app.try_state::<DbState>() else {
         return Vec::new();
     };
+    let vault_path = app
+        .try_state::<crate::chat_engine::ChatEngineState>()
+        .and_then(|state| state.active_vault_path.lock().ok().and_then(|path| path.clone()));
     let (nodes, subscribed) = {
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         (
-            db.get_active_tasks_and_events().unwrap_or_default(),
+            crate::timeline::seal::without_sealed(
+                &db,
+                vault_path.as_deref().unwrap_or(""),
+                crate::timeline::reflect::keep_if_on(vault_path.as_deref(), db.get_active_tasks_and_events().unwrap_or_default()),
+            ),
             db.subscribed_events_to_remind().unwrap_or_default(),
         )
     };
@@ -80,6 +87,9 @@ pub fn headline(due: &PlannedReminder) -> (String, String) {
     if due.target_type == "task" {
         let title = if due.overdue { "Task Overdue" } else { "Task Due" };
         return (title.to_string(), due.title.clone());
+    }
+    if due.target_type == "decision" {
+        return ("Look back on a decision".to_string(), format!("{} — what actually happened?", due.title));
     }
     if due.target_type == "finance_debt" {
         let body = match due.offset.as_str() {

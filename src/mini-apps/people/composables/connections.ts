@@ -22,6 +22,14 @@ export interface Connection {
     person_id: string;
     relation_type: string;
     /**
+     * When the relationship began and, if it has, ended: `YYYY`, `YYYY-MM` or
+     * `YYYY-MM-DD`. Both optional. A link without `since` is timeless and is
+     * drawn in every year; one with `since` and no `until` is still going.
+     * Read by `timeline/derive.rs`.
+     */
+    since?: string;
+    until?: string;
+    /**
      * The name as it stood when the link was made.
      *
      * Only written by versions before names were resolved live. Read it as a
@@ -30,6 +38,16 @@ export interface Connection {
      * everybody else's graph after a rename.
      */
     name?: string;
+}
+
+/** `connection` with its span set; an empty date is removed, not stored as "". */
+export function withDates(connection: Connection, since: string, until: string): Connection {
+    const out: Connection = { ...connection };
+    delete out.since;
+    delete out.until;
+    if (since.trim()) out.since = since.trim();
+    if (until.trim()) out.until = until.trim();
+    return out;
 }
 
 /** The patch that takes `removedId` out of one person's links. */

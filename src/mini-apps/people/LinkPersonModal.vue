@@ -12,13 +12,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'close'): void;
-    (e: 'link', targetPerson: any, relationType: string): void;
+    (e: 'link', targetPerson: any, relationType: string, since: string, until: string): void;
 }>();
 
 const searchQuery = ref('');
 const selectedRelation = ref('');
 const customRelation = ref('');
 const selectedPerson = ref<any>(null);
+const since = ref('');
+const until = ref('');
 
 onMounted(() => {
     if (props.preselectedPersonId) {
@@ -34,6 +36,8 @@ onMounted(() => {
                     selectedRelation.value = 'custom';
                     customRelation.value = rt;
                 }
+                since.value = existingConn.since || '';
+                until.value = existingConn.until || '';
             }
         }
     }
@@ -71,7 +75,22 @@ const getInitials = (name: string) => {
     return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
 };
 
+/**
+ * `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, or nothing. A year alone is allowed on
+ * purpose: "friends since 2009" is how people remember it.
+ */
+const isDateOrEmpty = (value: string) =>
+    !value.trim() || /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(value.trim());
+/** Compared at the coarser of the two precisions: 2016 does not end before 2016-05. */
+const endsBeforeItStarts = (start: string, end: string) => {
+    const n = Math.min(start.length, end.length);
+    return n > 0 && end.slice(0, n) < start.slice(0, n);
+};
+const datesValid = computed(() => isDateOrEmpty(since.value) && isDateOrEmpty(until.value)
+    && !(since.value.trim() && until.value.trim() && endsBeforeItStarts(since.value.trim(), until.value.trim())));
+
 const canLink = computed(() => {
+    if (!datesValid.value) return false;
     if (!selectedPerson.value) return false;
     if (!selectedRelation.value) return false;
     if (selectedRelation.value === 'custom' && !customRelation.value.trim()) return false;
@@ -83,7 +102,7 @@ const handleLink = () => {
     const relationStr = selectedRelation.value === 'custom' 
         ? customRelation.value.trim() 
         : selectedRelation.value;
-    emit('link', selectedPerson.value, relationStr);
+    emit('link', selectedPerson.value, relationStr, since.value.trim(), until.value.trim());
 };
 
 onMounted(() => {
@@ -179,6 +198,20 @@ onMounted(() => {
                     <input v-model="customRelation" type="text" :placeholder="$t('people.custom_rel_ph')"
                         class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:ring-2 focus:ring-gray-500 outline-none transition-all" />
                 </div>
+
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <label class="block">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_since') }}</span>
+                        <input v-model="since" type="text" inputmode="numeric" :placeholder="$t('people.link_date_hint')"
+                            class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                    </label>
+                    <label class="block">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_until') }}</span>
+                        <input v-model="until" type="text" inputmode="numeric" :placeholder="$t('people.link_date_hint')"
+                            class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                    </label>
+                </div>
+                <p v-if="!datesValid" class="mt-1.5 text-[11px] text-red-500">{{ $t('people.link_date_invalid') }}</p>
             </div>
 
             <!-- Footer Actions -->

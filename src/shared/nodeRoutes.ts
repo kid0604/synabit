@@ -28,6 +28,8 @@ export const ROUTE_FOR_NODE_TYPE: Readonly<Record<string, string>> = {
   file: 'file',
   pdf: 'pdf',
   pdf_highlight: 'pdf_highlight',
+  // Opened in Nexus, in the Chiêm nghiệm panel beside the timeline it belongs to.
+  decision: 'decision',
   // A thread opens in Messages, beside every other thing Syn keeps — the
   // conversations, the runs, what it remembers. It is not an app of its own:
   // one family of features split across two sidebar entries is one too many.
@@ -81,6 +83,7 @@ const TYPE_FOR_DIRECTORY: Readonly<Record<string, string>> = {
   Notes: 'note',
   QuickCaps: 'quickcap',
   Whiteboards: 'whiteboard',
+  Decisions: 'decision',
   // Syn's own memory, prefixed and filed apart so that a user who wants a kind
   // called `memory` — for a language deck, for anything — can have one.
   SynMemory: 'syn_memory',

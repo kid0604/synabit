@@ -4,6 +4,8 @@ import { X } from 'lucide-vue-next';
 export interface FileTab {
   id: string;
   filename: string;
+  /** Where a recording or video starts, from a `#t=` citation. */
+  time?: { start: number; end?: number; at?: number };
   extension: string;
   path: string;
   /**

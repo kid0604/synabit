@@ -86,6 +86,18 @@ impl DbBridge {
         Ok(items)
     }
 
+    /// Every node's path, keyed by the identity edges name it by.
+    pub fn paths_by_stable_id(&self) -> AppResult<std::collections::HashMap<String, String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT stable_id, id FROM nodes WHERE stable_id IS NOT NULL")
+            .map_err(|e| AppError::General(format!("DB Nexus Query Error: {}", e)))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| AppError::General(format!("DB Nexus Map Error: {}", e)))?;
+        Ok(rows.flatten().collect())
+    }
+
     /// Fast single-item lookup: determines the correct table from the ID prefix
     /// and runs a targeted `WHERE id = ?` query instead of scanning all tables.
     pub fn get_nexus_item_by_id(&self, id: &str) -> AppResult<Option<NexusRow>> {

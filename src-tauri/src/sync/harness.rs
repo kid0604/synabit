@@ -528,6 +528,13 @@ impl HarnessDevice {
         &self.vault_root
     }
 
+    /// The device's own database, for a test that asks what this device knows.
+    pub fn with_db<T>(&self, read: impl FnOnce(&crate::db::DbBridge) -> T) -> T {
+        let state = self.handle.state::<DbState>();
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        read(&db)
+    }
+
     // ── Filesystem helpers ──────────────────────────────────
 
     pub fn write(&self, rel_path: &str, content: &str) {

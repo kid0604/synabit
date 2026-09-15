@@ -98,6 +98,10 @@ fn update_db_for_file<R: tauri::Runtime>(
     doc_id: &str,
 ) -> AppResult<()> {
     if let Some(node) = crate::utils::node_parser::parse_file_to_node(vault_path, local_path) {
+        // Timeline results arrive by sync like any other file, and are not notes.
+        if crate::timeline::is_timeline_path(&node.id) {
+            return Ok(());
+        }
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         db.upsert_node(&node)?;

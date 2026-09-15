@@ -342,6 +342,7 @@ const peopleAppRef = ref<any>(null);
 const financeAppRef = ref<any>(null);
 const feedsAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
+const nexusAppRef = ref<any>(null);
 
 const setAppRef = (el: any, name: string) => {
     if (!el) return;
@@ -355,6 +356,7 @@ const setAppRef = (el: any, name: string) => {
     else if (name === 'finance') financeAppRef.value = el;
     else if (name === 'feeds') feedsAppRef.value = el;
     else if (name === 'file') filesAppRef.value = el;
+    else if (name === 'nexus') nexusAppRef.value = el;
 };
 
 // ─── Floating Note (opened in new window) ─────────────────
@@ -621,6 +623,12 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
             id,
         );
     }
+    // A decision opens in Nexus, on the Chiêm nghiệm panel: a reminder to look
+    // back on one lands there. See `timeline/reflect.rs`.
+    else if (type === 'decision') {
+        activeTool.value = 'nexus';
+        callWhenReady(() => nexusAppRef.value, 'openDecision', id);
+    }
     else if (type === 'person') {
         activeTool.value = 'people';
         callWhenReady(() => peopleAppRef.value, 'openPersonById', id);
@@ -640,11 +648,14 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
     else if (type === 'pdf' || type === 'pdf_highlight' || type === 'file') {
         activeTool.value = 'file';
         // The query rides along so a hit inside a document opens on its page.
-        callWhenReady(() => filesAppRef.value, 'openFileById', id, false, query);
+        // A recording cited at a moment arrives as `Files/<hash>.md#t=192,230`.
+        const [fileId, fragment] = id.split('#');
+        callWhenReady(() => filesAppRef.value, 'openFileById', fileId, false, fragment ?? query);
     }
 };
 
 import { logger } from './utils/logger';
+import { i18n } from './i18n';
 import type { ScanReport } from './types/ipc';
 
 // ─── Notifications & Initial Scan ─────────────────────────
@@ -936,6 +947,9 @@ onMounted(async () => {
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
      scanVaultNodes().then(async () => {
+         // Record what changed while the app was closed. See `timeline/ledger.rs`.
+         invoke('ledger_sweep', { vaultPath: vaultPath.value }).catch(logger.error);
+         readNotesInBackground();
          await checkUnreadNotifications();
          await updateFeedsUnreadCount();
      }).catch(logger.error);
@@ -968,7 +982,42 @@ onMounted(async () => {
   bus.on('node:deleted', () => void refreshQuickCapCount());
   bus.on('vault:sync-completed', () => void refreshQuickCapCount());
 
+  // The evidence ledger looks again once a burst of file changes has settled.
+  // Not on every event: a note being typed saves every few seconds, and one
+  // record of where it ended up says as much as forty of how it got there.
+  // Reads a few settled notes into timeline proposals, when the person turned
+// that on. Never on a phone: a model call is battery. Rust refuses the same
+// and stays quiet about it. See `timeline/extract.rs`.
+let lastBackgroundRead = 0;
+const readNotesInBackground = () => {
+    if (isMobileOS.value || !vaultPath.value) return;
+    // At most every ten minutes. What it writes under `Timeline/` is a file
+    // event too, and without this each pass would start the next.
+    if (Date.now() - lastBackgroundRead < 10 * 60_000) return;
+    lastBackgroundRead = Date.now();
+    const vault = vaultPath.value;
+    // One after the other: both may use the same local model.
+    invoke('timeline_extract_run', { vaultPath: vault, scope: 'new', auto: true, limit: null })
+        .catch(logger.error)
+        .finally(() => invoke('timeline_media_run', { vaultPath: vault, auto: true, limit: null, locale: i18n.global.locale.value }).catch(logger.error));
+};
+let ledgerSweepTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleLedgerSweep = () => {
+      clearTimeout(ledgerSweepTimer);
+      ledgerSweepTimer = setTimeout(() => {
+          if (vaultPath.value) invoke('ledger_sweep', { vaultPath: vaultPath.value }).catch(logger.error);
+          readNotesInBackground();
+      }, 30_000);
+  };
+
+  /** Only the timeline's own files changed: nothing for the ledger or a reading to look at. */
+  const onlyTimeline = (payload: any) => {
+      const paths = (payload as string[] | undefined) || [];
+      return paths.length > 0 && paths.every(p => p.startsWith('Timeline/'));
+  };
+
   bus.on('vault:file-created-deleted', async (payload: any) => {
+      if (!onlyTimeline(payload)) scheduleLedgerSweep();
       void refreshQuickCapCount();
       if (noteAppRef.value) noteAppRef.value.scanVault();
       const paths = (payload as string[] | undefined) || [];
@@ -997,6 +1046,7 @@ onMounted(async () => {
   });
 
   bus.on('vault:file-modified', async (payload: any) => {
+      if (!onlyTimeline(payload)) scheduleLedgerSweep();
       if (noteAppRef.value) noteAppRef.value.scanVault();
       const paths = (payload as string[] | undefined) || [];
       if (paths && paths.length > 0) {
