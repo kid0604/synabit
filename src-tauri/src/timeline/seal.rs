@@ -70,6 +70,13 @@ const MOMENTS: &[&str] = &[
     "note",
     "interaction",
     "event",
+    // A relationship and an anniversary are claims about a day as much as a
+    // note is: "we met in May 2019" is exactly what sealing 2019 hides. The
+    // person stays — only the dated item goes. `birthday` and `experience` are
+    // deliberately not here: a birthday is not of that period, and a job that
+    // ran through it did not happen in it.
+    "connection",
+    "important_date",
     "moment",
     "decision",
     "decision_review",
@@ -618,6 +625,19 @@ pub fn current(db: &DbBridge, vault_path: &str) -> AppResult<Arc<Seals>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relationship_that_began_inside_a_sealed_period_is_not_brought_back() {
+        let seals = compute(vec![period("2019-02", "2019-09")], &[], &[]);
+        assert!(seals.hides_item(&item("connection", "People/a.md", Some("People/b.md"), "2019-05-01")));
+        assert!(seals.hides_item(&item("important_date", "People/a.md", None, "2019-05-01")));
+
+        // Older than the period, and still going: it did not happen in there.
+        assert!(!seals.hides_item(&item("connection", "People/a.md", Some("People/b.md"), "2016-01-01")));
+        // A birthday is not of the period it happens to fall in.
+        assert!(!seals.hides_item(&item("birthday", "People/a.md", None, "2019-05-01")));
+        assert!(!seals.hides_item(&item("experience", "People/a.md", None, "2019-05-01")));
+    }
 
     #[test]
     fn an_earlier_answer_from_something_since_sealed_is_not_sent_again() {
