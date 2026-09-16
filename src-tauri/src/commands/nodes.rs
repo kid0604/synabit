@@ -426,6 +426,11 @@ pub(crate) fn is_in_unscanned_dir(rel_id: &str) -> bool {
     // `Timeline/` holds what the timeline derived, never notes. Only at the
     // vault root, so a user's own `Projects/Timeline/` is still theirs.
     crate::timeline::is_timeline_path(rel_id)
+        // Feeds' per-device read state: one file per device, rewritten
+        // constantly, and of no interest to anybody reading the vault. Indexed,
+        // its hundreds of sync conflict copies crowded out real notes in the
+        // assistant's search results.
+        || rel_id.replace('\\', "/").starts_with("Feeds/state/")
         || rel_id.split(['/', '\\']).any(|name| {
             (name.starts_with('.') && name != ".")
                 || name == "assets"

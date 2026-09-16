@@ -453,6 +453,27 @@ fn is_media_node(file: &SnapshotNode) -> bool {
     }))
 }
 
+/// The node `name` means: its own path, its identity, or the exact title of a
+/// person. A name that is nobody and nothing is `None`, which is an answer.
+pub fn node_for(cache: &DbBridge, name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    cache
+        .conn()
+        .query_row(
+            "SELECT id FROM nodes
+             WHERE id = ?1 OR stable_id = ?1
+                OR (node_type = 'person' AND lower(title) = lower(?1))
+             ORDER BY (id = ?1) DESC, (node_type = 'person') DESC
+             LIMIT 1",
+            [name],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+}
+
 /// Catch the timeline up with the cache, reading the cache only if it changed.
 ///
 /// Locks the cache briefly, and never while the timeline writes.
@@ -587,6 +608,28 @@ fn place_media_by_note(tx: &Transaction, snapshot: &Snapshot) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_is_read_as_the_node_it_names_and_nothing_else() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        let person = crate::models::node::NodeMetadata {
+            id: "People/mai.md".into(),
+            node_type: "person".into(),
+            title: "Nguyễn Thu Mai".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "node_id": "uuid-mai" }),
+            created_at: String::new(),
+            updated_at: String::new(),
+            timestamp: 0,
+            blocks: None,
+        };
+        db.upsert_node(&person).unwrap();
+        assert_eq!(node_for(&db, "People/mai.md").as_deref(), Some("People/mai.md"));
+        assert_eq!(node_for(&db, "uuid-mai").as_deref(), Some("People/mai.md"));
+        assert_eq!(node_for(&db, "nguyễn thu mai").as_deref(), Some("People/mai.md"));
+        assert_eq!(node_for(&db, "nhà ông Thu"), None, "a description is not a node");
+        assert_eq!(node_for(&db, "  "), None);
+    }
     use crate::db::NodeEdge;
     use crate::models::node::NodeMetadata;
     use serde_json::json;

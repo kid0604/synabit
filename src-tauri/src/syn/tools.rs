@@ -2498,13 +2498,20 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
     let (from, to) = (crate::timeline::when::iso(span.from), crate::timeline::when::iso(span.to));
     let mut items = match about {
         Some(about) => {
+            // A name rather than a path is what a model reaches for first, and
+            // answering it with an empty list reads as "nothing happened then".
+            let node = crate::timeline::store::node_for(&db, about).ok_or_else(|| {
+                AppError::General(format!(
+                    "'{about}' is not a node in the vault. `about` takes a node path, such as People/mai.md, or the exact title of a person's note. Find it with query_nodes first, or leave `about` out to see everything in that time."
+                ))
+            })?;
             let identity: Option<String> = db
                 .conn()
-                .query_row("SELECT stable_id FROM nodes WHERE id = ?1", [about], |r| r.get::<_, Option<String>>(0))
+                .query_row("SELECT stable_id FROM nodes WHERE id = ?1", [node.as_str()], |r| r.get::<_, Option<String>>(0))
                 .ok()
                 .flatten();
-            let mut names = vec![about];
-            if let Some(identity) = identity.as_deref().filter(|id| *id != about) {
+            let mut names = vec![node.as_str()];
+            if let Some(identity) = identity.as_deref().filter(|id| *id != node.as_str()) {
                 names.push(identity);
             }
             store

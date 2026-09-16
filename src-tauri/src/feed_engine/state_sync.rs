@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 ///
 /// The field names are short because there is one of these per article and the
 /// whole map is a synced document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArticleState {
     #[serde(rename = "r")]
     pub is_read: bool,
@@ -57,6 +57,49 @@ fn state_key(source_id: &str, guid: &str) -> String {
 
 fn split_key(key: &str) -> Option<(&str, &str)> {
     key.split_once('|')
+}
+
+/// The article states in a file, ignoring anything else in it.
+///
+/// Sync writes `metadata` into every JSON document it carries, and a reader
+/// that insisted the whole file was article states would throw the file away
+/// the moment it arrived from another device.
+fn states_in(body: &str) -> StateMap {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(body) else {
+        return StateMap::new();
+    };
+    map.into_iter()
+        .filter(|(key, _)| key != "metadata")
+        .filter_map(|(key, value)| serde_json::from_value::<ArticleState>(value).ok().map(|state| (key, state)))
+        .collect()
+}
+
+/// This device's file as it should be on disk, and whether that differs from
+/// what is there now.
+///
+/// Whatever sync added to the file is carried across. Dropping it — which is
+/// what writing the bare map did — costs the document its identity, so the next
+/// sync sees a new document claiming a path another one already holds and sets
+/// the older aside as `(conflict …)`. One vault reached 303 copies of one file
+/// that way, and they crowded out real notes in search.
+fn document(states: &StateMap, existing: Option<&str>) -> (String, bool) {
+    let mut out = serde_json::Map::new();
+    if let Some(Ok(serde_json::Value::Object(before))) = existing.map(serde_json::from_str::<serde_json::Value>) {
+        if let Some(metadata) = before.get("metadata") {
+            out.insert("metadata".into(), metadata.clone());
+        }
+    }
+    for (key, state) in states {
+        if let Ok(value) = serde_json::to_value(state) {
+            out.insert(key.clone(), value);
+        }
+    }
+    let json = serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string());
+    // Only the decisions are compared: a file identical but for what sync
+    // stamped on it is not a change worth writing, and writing it would be one
+    // more thing for sync to carry.
+    let changed = existing.is_none_or(|body| states_in(body) != *states);
+    (json, changed)
 }
 
 /// Write this device's decisions to its own file.
@@ -98,15 +141,13 @@ pub fn publish(
         .map_err(|e| format!("Failed to create Feeds/state: {}", e))?;
     let path = dir.join(format!("{}.json", device_id));
 
-    let json = serde_json::to_string_pretty(&map)
-        .map_err(|e| format!("Failed to serialize read state: {}", e))?;
+    let existing = std::fs::read_to_string(&path).ok();
+    let (json, changed) = document(&map, existing.as_deref());
 
     // Writing an identical file would still be a vault change, and every vault
     // change is something for the sync layer to carry.
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        if existing == json {
-            return Ok(false);
-        }
+    if !changed {
+        return Ok(false);
     }
 
     std::fs::write(&path, json)
@@ -143,10 +184,7 @@ fn union_of_others(vault_path: &str, device_id: &str) -> (StateMap, String) {
 
         // One unreadable file — half-synced, or hand-edited — must not stop
         // the others from being applied.
-        let Ok(map) = serde_json::from_str::<StateMap>(body) else {
-            continue;
-        };
-        for (key, state) in map {
+        for (key, state) in states_in(body) {
             match union.get(&key) {
                 Some(existing) if existing.updated_at >= state.updated_at => {}
                 _ => {
@@ -218,6 +256,41 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state(at: &str) -> ArticleState {
+        ArticleState { is_read: true, is_starred: false, is_read_later: false, updated_at: at.to_string() }
+    }
+
+    /// What sync stamps on the file is what keeps it one document.
+    #[test]
+    fn rewriting_the_file_keeps_the_identity_sync_gave_it() {
+        let mut states = StateMap::new();
+        states.insert("src|guid".into(), state("2026-09-01T00:00:00Z"));
+        let (first, changed) = document(&states, None);
+        assert!(changed);
+        assert!(!first.contains("metadata"));
+
+        // As it comes back from another device, or from this one's own sync.
+        let synced = first.replacen('{', "{\n  \"metadata\": { \"node_id\": \"uuid-state\" },", 1);
+        let (again, changed) = document(&states, Some(&synced));
+        assert!(!changed, "the same decisions are not a change");
+        assert!(again.contains("uuid-state"), "the identity is carried across: {again}");
+
+        states.insert("src|other".into(), state("2026-09-02T00:00:00Z"));
+        let (grown, changed) = document(&states, Some(&synced));
+        assert!(changed);
+        assert!(grown.contains("uuid-state") && grown.contains("src|other"));
+    }
+
+    #[test]
+    fn a_file_carrying_sync_metadata_is_still_read() {
+        let body = r#"{ "metadata": { "node_id": "uuid-state", "updated_at": "2026-09-01T00:00:00Z" },
+                        "src|guid": { "r": true, "s": false, "l": false, "t": "2026-09-01T00:00:00Z" } }"#;
+        let states = states_in(body);
+        assert_eq!(states.len(), 1);
+        assert!(states["src|guid"].is_read);
+        assert!(states_in("not json at all").is_empty());
+    }
 
     #[test]
     fn a_key_survives_a_guid_that_is_a_url() {

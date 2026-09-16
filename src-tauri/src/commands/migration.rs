@@ -143,10 +143,26 @@ pub(crate) fn apply_writes(
             }
         }
 
+        // When the file was last edited, kept across the write. A migration
+        // repairs what the app wrote; it is not the person editing the note,
+        // and a new modified time would put every daily note at the top of
+        // "what changed this week" — `updated_at` is read from this stamp.
+        let edited_at = std::fs::metadata(&abs_path).and_then(|meta| meta.modified()).ok();
+
         if let Err(e) = std::fs::write(&abs_path, &write.content) {
             log::error!("migration: cannot write '{}': {}", write.rel_path, e);
             report.failed += 1;
             continue;
+        }
+
+        if let Some(edited_at) = edited_at {
+            if let Err(e) = std::fs::File::options()
+                .write(true)
+                .open(&abs_path)
+                .and_then(|file| file.set_modified(edited_at))
+            {
+                log::warn!("migration: '{}' kept its content but not its time: {e}", write.rel_path);
+            }
         }
 
         report.changed += 1;
@@ -418,6 +434,30 @@ pub fn set_migration_flag(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_migration_leaves_the_day_the_file_was_edited_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap().to_string_lossy().to_string();
+        std::fs::create_dir_all(dir.path().join("Notes")).unwrap();
+        let note = dir.path().join("Notes/2026-05-01.md");
+        std::fs::write(&note, "---\ntitle: 2026-05-01\n---\nĐi cắm trại.\n").unwrap();
+        let edited_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_777_000_000);
+        std::fs::File::options().write(true).open(&note).unwrap().set_modified(edited_at).unwrap();
+
+        let db = crate::db::DbBridge::new_in_memory_full().unwrap();
+        let report = apply_writes(
+            &db,
+            &root,
+            &[SilentWrite {
+                rel_path: "Notes/2026-05-01.md".into(),
+                content: "---\ntitle: 2026-05-01\ndate: \"2026-05-01\"\n---\nĐi cắm trại.\n".into(),
+            }],
+        );
+        assert_eq!(report.changed, 1);
+        assert!(std::fs::read_to_string(&note).unwrap().contains("date:"));
+        assert_eq!(std::fs::metadata(&note).unwrap().modified().unwrap(), edited_at);
+    }
 
     #[test]
     fn a_daily_note_that_cannot_be_read_is_counted_as_failed() {

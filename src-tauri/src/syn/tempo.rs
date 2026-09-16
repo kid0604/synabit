@@ -137,9 +137,9 @@ fn normalised(message: &str) -> String {
         .to_lowercase()
 }
 
-/// Whether the message asks for a count or a list.
-fn asks_for_a_count(text: &str) -> bool {
-    COUNTING.iter().any(|w| text.contains(w))
+/// Where the counting words start, if the message has any.
+fn counting_starts_at(text: &str) -> Option<usize> {
+    COUNTING.iter().filter_map(|word| text.find(word)).min()
 }
 
 /// The vault type this question names, if it names exactly one.
@@ -182,10 +182,15 @@ fn type_named<'a>(text: &str, types: &'a [String]) -> Option<&'a str> {
 /// have, and `syn_memory` is Syn's own bookkeeping.
 pub fn of(message: &str, types: &[String]) -> Option<Instant> {
     let text = normalised(message);
-    if !asks_for_a_count(&text) {
+    let Some(counted_from) = counting_starts_at(&text) else {
         return None;
-    }
-    let node_type = type_named(&text, types)?;
+    };
+    // The type has to come after the counting words: "bao nhiêu file" is a
+    // count, and "file dmg đang là version bao nhiêu" is a question about a
+    // version that happens to end in the same two words. Reading the second as
+    // a count answered it with the number of files in the vault, and took the
+    // tools away from the turn that could have looked.
+    let node_type = type_named(&text[counted_from..], types)?;
 
     Some(Instant {
         node_type: node_type.to_string(),
@@ -283,6 +288,21 @@ pub fn block(instant: &Instant, total: usize, sample: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_number_asked_for_at_the_end_is_not_a_count_of_anything() {
+        let types = vec!["file".to_string(), "task".to_string(), "note".to_string()];
+        assert_eq!(of("tìm trong folder xem file dmg đang là version bao nhiêu", &types), None);
+        assert_eq!(of("note này dài bao nhiêu chữ", &types), None);
+        assert_eq!(
+            of("trong vault có bao nhiêu file", &types),
+            Some(Instant { node_type: "file".into(), unfinished: false })
+        );
+        assert_eq!(
+            of("how many tasks are left to do", &types),
+            Some(Instant { node_type: "task".into(), unfinished: true })
+        );
+    }
 
     fn types() -> Vec<String> {
         ["note", "task", "event", "person", "project", "book", "finance_month"]
