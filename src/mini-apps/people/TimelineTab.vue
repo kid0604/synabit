@@ -8,6 +8,7 @@ import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
 import { useI18n } from 'vue-i18n';
 import { localDay } from '../../shared/localDay';
+import Worldline from '../../shared/components/Worldline.vue';
 
 const props = defineProps<{
     person: any;
@@ -302,7 +303,11 @@ watch(() => props.person?.id, loadInteractions, { immediate: true });
  * that matter, and the day they died. Interactions are left to
  * `person_interactions`, which carries their note and mood.
  */
-const TIMELINE_KINDS = ['experience', 'connection', 'important_date', 'death'];
+// What the vault dates to this person. `moment` and `event` are what the new
+// event model writes — without them the list stayed on the old four kinds and
+// showed nothing for the events the compose box had just written, while the
+// worldline above it counted them.
+const TIMELINE_KINDS = ['experience', 'connection', 'important_date', 'death', 'moment', 'event'];
 const OPEN_END = '9999-12-31';
 const timelineItems = ref<any[]>([]);
 
@@ -326,6 +331,8 @@ const timelineTitle = (entry: any) => {
         case 'death': return t('people.timeline_passed_away');
         case 'experience': return entry.label || t('people.timeline_work');
         case 'connection': return entry.label || t('people.timeline_relationship');
+        case 'moment':
+        case 'event': return entry.label || entry.title;
         default: return entry.label || t('people.timeline_important_date');
     }
 };
@@ -396,6 +403,10 @@ const handleLinkedClick = (item: any) => {
 
 <template>
     <div class="space-y-4">
+        <!-- When the vault says they were around. Worked out from events that
+             name them, not from anything declared. -->
+        <Worldline :vault-path="vaultPath" :node-id="person?.id ?? ''" />
+
         <!-- Health Banner -->
         <div v-if="health.status !== 'unknown'" :class="['flex items-center gap-3 px-4 py-3 rounded-xl border', health.bgColor, health.status === 'overdue' ? 'border-red-200 dark:border-red-900/30' : health.status === 'due_soon' ? 'border-yellow-200 dark:border-yellow-900/30' : 'border-transparent']">
             <!-- Progress Ring -->

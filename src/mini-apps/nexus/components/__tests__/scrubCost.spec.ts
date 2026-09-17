@@ -56,7 +56,7 @@ const aVault = () => {
   for (let i = 3; i < 250; i += 5) died_on[`n${i}`] = monthDay(Math.floor(random() * MONTHS));
   const timed = links.slice(0, 200).map(l => {
     const start = Math.floor(random() * MONTHS);
-    return { ...l, since: monthDay(start), until: monthDay(Math.min(MONTHS - 1, start + 24)) };
+    return { ...l, since: monthDay(start), until: monthDay(Math.min(MONTHS - 1, start + 24)), met: 0 };
   });
 
   const frame: TimeFrame = { first_seen, died_on, links: timed, density: [], earliest: '2009-01' };

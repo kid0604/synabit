@@ -312,7 +312,7 @@ describe('GraphView', () => {
     const frame = (): TimeFrame => ({
       first_seen: { me: '2009-01-01', ba: '2009-01-01', ha: '2013-10-19', quang: '2014-07-01' },
       died_on: { ba: '2017-11-22' },
-      links: [{ source: 'me', target: 'quang', since: '2014-07-01', until: '2018-07-31' }],
+      links: [{ source: 'me', target: 'quang', since: '2014-07-01', until: '2018-07-31', met: 0 }],
       density: [],
       earliest: '2009-01',
     });

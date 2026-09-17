@@ -13,9 +13,12 @@ import MomentsPanel from './components/MomentsPanel.vue';
 import type { TimeFrame } from './timeFrame';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
+import EventCompose from '../../shared/components/EventCompose.vue';
 import { logger } from '../../utils/logger';
 import { localDay } from '../../shared/localDay';
 import { useAppLockStore } from '../../stores/useAppLockStore';
+import { useAppStore } from '../../stores/useAppStore';
+import { storeToRefs } from 'pinia';
 
 const bus = useEventBus();
 
@@ -165,6 +168,7 @@ const setRevealSealed = async (revealed: boolean) => {
 };
 
 const appLockStore = useAppLockStore();
+const { dailyNoteFormat, dailyNoteTag } = storeToRefs(useAppStore());
 
 const hideSyntaxHints = () => {
     setTimeout(() => {
@@ -404,6 +408,12 @@ const cleanSnippet = (snippet: string) => {
                     >
                         <History class="h-4 w-4" /> {{ $t('nexus.time_travel') }}
                     </button>
+                    <EventCompose
+                        :vault-path="vaultPath"
+                        :format="dailyNoteFormat"
+                        :tag="dailyNoteTag"
+                        @changed="loadTimeFrame"
+                    />
                     <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" align="left" />
                 </div>
             </template>

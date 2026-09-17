@@ -27,3 +27,10 @@ export function localDay(stamp: string | null | undefined): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${moment.getFullYear()}-${pad(moment.getMonth() + 1)}-${pad(moment.getDate())}`;
 }
+
+/** Today, as the vault writes a day: `YYYY-MM-DD`, in the reader's own zone. */
+export function todayIso(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}

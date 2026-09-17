@@ -8,7 +8,7 @@ const frame = (earliest: string | null): TimeFrame => ({
   first_seen: {},
   died_on: {},
   links: [],
-  density: earliest ? [{ month: earliest, count: 3 }, { month: '2016-05', count: 1 }] : [],
+  density: earliest ? [{ month: earliest, count: 3, weight: 6 }, { month: '2016-05', count: 1, weight: 2 }] : [],
   earliest,
 });
 

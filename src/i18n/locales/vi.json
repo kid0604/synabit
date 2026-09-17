@@ -1187,7 +1187,6 @@
     "moments_no_surrogate": "Chưa có bản thế chỗ.",
     "moments_caption_by": "Mô tả bởi {model}, không phải bản ghi",
     "moments_transcript_by": "Nghe bởi {model}; có thể nghe nhầm",
-    "moments_open": "Mở",
     "moments_more": "còn {count} dòng",
     "media_title": "Ảnh và ghi âm",
     "media_explain": "Transcript cho ghi âm và mô tả ngắn cho ảnh, làm trên máy tính này để tìm được, Syn đọc được, và hiện được ở nơi không có tệp gốc.",
@@ -1208,7 +1207,19 @@
     "media_last_run": "Đã làm {read} · {failed} lỗi",
     "reveal": "Mở tạm",
     "hide_again": "Phong ấn lại",
-    "no_dates": "Vault này chưa có gì mang ngày tháng. Ngày đến từ daily note, event, task đã xong, những lần gặp và thông tin về người."
+    "no_dates": "Vault này chưa có gì mang ngày tháng. Ngày đến từ daily note, event, task đã xong, những lần gặp và thông tin về người.",
+    "compose_title": "Ghi lại một chuyện đã xảy ra",
+    "compose_placeholder": "hôm qua ăn trưa với Khánh",
+    "compose_add": "Ghi lại",
+    "compose_unknown_person": "chưa có người này — giữ nguyên chữ",
+    "compose_saved": "Đã ghi vào {note}",
+    "compose_ask": "{model} điền hộ, mày sửa lại",
+    "compose_no_model": "Chưa cấu hình model, nên tự điền vào đây",
+    "compose_field_title": "Chuyện gì",
+    "compose_field_from": "Từ",
+    "compose_field_to": "Đến",
+    "compose_field_people": "Với (ngăn cách bằng dấu phẩy)",
+    "compose_field_where": "Ở đâu"
   },
   "people": {
     "cancel": "Hủy",
@@ -1418,7 +1429,10 @@
     "due_in_days": "Đến hạn sau {days} ngày",
     "remaining": "Còn lại:",
     "overdue_count": "Quá hạn ({count})",
-    "due_soon_count": "Sắp đến hạn ({count})"
+    "due_soon_count": "Sắp đến hạn ({count})",
+    "worldline": "Có mặt",
+    "worldline_events": "{count} sự kiện",
+    "worldline_none": "Chưa có gì trong vault đặt người này vào dòng thời gian"
   },
   "finance": {
     "adjust_balance": "Điều chỉnh số dư",

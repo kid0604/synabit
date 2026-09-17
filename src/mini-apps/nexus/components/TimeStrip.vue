@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { todayIso } from '../../../shared/localDay';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Play, Pause, X, EyeOff } from 'lucide-vue-next';
@@ -38,11 +39,6 @@ const emit = defineEmits<{
 const { locale } = useI18n();
 
 const pad = (n: number) => String(n).padStart(2, '0');
-const todayIso = () => {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
-
 /** Every month from the first dated thing to this one, oldest first. */
 const months = computed<string[]>(() => {
     const now = todayIso().slice(0, 7);
@@ -59,7 +55,9 @@ const months = computed<string[]>(() => {
 });
 
 const counts = computed(() => {
-    const byMonth = new Map((props.frame?.density ?? []).map(d => [d.month, d.count]));
+    // Size, not tally: a month holding one wedding stands taller than a month
+    // of errands. Falls back to the tally for a frame from an older build.
+    const byMonth = new Map((props.frame?.density ?? []).map(d => [d.month, d.weight ?? d.count]));
     return months.value.map(m => byMonth.get(m) ?? 0);
 });
 const peak = computed(() => counts.value.reduce((max, n) => Math.max(max, n), 1));

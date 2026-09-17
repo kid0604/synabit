@@ -1187,7 +1187,6 @@
     "moments_no_surrogate": "Nothing stands in for it yet.",
     "moments_caption_by": "Described by {model}, not a record",
     "moments_transcript_by": "Heard by {model}; it may be wrong",
-    "moments_open": "Open",
     "moments_more": "{count} more lines",
     "media_title": "Pictures and recordings",
     "media_explain": "Transcripts for recordings and short descriptions for photos, made on this computer so they can be searched, read by Syn, and shown where the file is not.",
@@ -1208,7 +1207,19 @@
     "media_last_run": "Made {read} · {failed} failed",
     "reveal": "Show for now",
     "hide_again": "Seal again",
-    "no_dates": "Nothing in this vault has a date yet. Dates come from daily notes, events, finished tasks, interactions and the people you know."
+    "no_dates": "Nothing in this vault has a date yet. Dates come from daily notes, events, finished tasks, interactions and the people you know.",
+    "compose_title": "Write down something that happened",
+    "compose_placeholder": "yesterday lunch with Khánh",
+    "compose_add": "Write it down",
+    "compose_unknown_person": "no such person yet — kept as written",
+    "compose_saved": "Written into {note}",
+    "compose_ask": "{model} fills the form in; you correct it",
+    "compose_no_model": "No model is set up, so fill this in yourself",
+    "compose_field_title": "What happened",
+    "compose_field_from": "From",
+    "compose_field_to": "To",
+    "compose_field_people": "With (commas between names)",
+    "compose_field_where": "Where"
   },
   "people": {
     "cancel": "Cancel",
@@ -1418,7 +1429,10 @@
     "due_in_days": "Due in {days}d",
     "remaining": "Remaining:",
     "overdue_count": "Overdue ({count})",
-    "due_soon_count": "Due Soon ({count})"
+    "due_soon_count": "Due Soon ({count})",
+    "worldline": "Around",
+    "worldline_events": "{count} events",
+    "worldline_none": "Nothing in the vault places them in time yet"
   },
   "finance": {
     "adjust_balance": "Adjust Balance",

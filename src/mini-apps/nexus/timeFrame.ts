@@ -13,11 +13,15 @@ export interface TimedLink {
   target: string;
   since: string;
   until: string | null;
+  /** Events both ends were in. Zero when the relationship was declared, not met. */
+  met: number;
 }
 
 export interface MonthCount {
   month: string;
   count: number;
+  /** The month's events added up by size rather than counted one apiece. */
+  weight: number;
 }
 
 /** A period the person sealed. See `src-tauri/src/timeline/seal.rs`. */
