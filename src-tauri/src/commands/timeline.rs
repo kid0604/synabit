@@ -9,8 +9,8 @@ use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::timeline::frame::{self, TimeFrame};
 use crate::timeline::seal::{self, SealedPeriod, Seals};
-use crate::timeline::store::{self, CatchUp, Snapshot, TimelineItem};
-use crate::timeline::{extract, media, reflect, when, TimelineState};
+use crate::timeline::store::{self, CatchUp, Snapshot, Event};
+use crate::timeline::{extract, media, presence, reflect, when, TimelineState};
 
 fn seals_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Seals>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -28,7 +28,7 @@ pub fn timeline_query(
     timeline: tauri::State<'_, TimelineState>,
     vault_path: String,
     when: String,
-) -> AppResult<Vec<TimelineItem>> {
+) -> AppResult<Vec<Event>> {
     let span = when::parse(&when).ok_or_else(|| {
         AppError::General(format!(
             "'{when}' is not a time the timeline can read. Use 2016-05-14, 2016-05, 2016, \
@@ -37,7 +37,7 @@ pub fn timeline_query(
     })?;
 
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up(state.inner(), &mut timeline)?;
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
     let mut items = timeline.query(span, chrono::Local::now().date_naive())?;
     let seals = seals_of(state.inner(), &vault_path)?;
     items.retain(|item| !seals.hides_item(item));
@@ -82,7 +82,7 @@ pub fn timeline_frame(
     reveal: Option<bool>,
 ) -> AppResult<TimeFrame> {
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up(state.inner(), &mut timeline)?;
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
     let today = chrono::Local::now().date_naive();
     let items = timeline.all_items(today)?;
     let nodes = {
@@ -96,13 +96,13 @@ pub fn timeline_frame(
 /// A frame with what is sealed taken out of it, apart from the command so it
 /// can be tested without a runtime.
 pub(crate) fn sealed_frame(
-    items: Vec<TimelineItem>,
+    items: Vec<Event>,
     nodes: &[frame::FrameNode],
     today: chrono::NaiveDate,
     seals: &Seals,
     reveal: bool,
 ) -> TimeFrame {
-    let shown: Vec<TimelineItem> = if reveal {
+    let shown: Vec<Event> = if reveal {
         items
     } else {
         // Nothing dated inside a sealed period is drawn: not as density, not
@@ -136,9 +136,9 @@ pub fn timeline_about(
     timeline: tauri::State<'_, TimelineState>,
     vault_path: String,
     node_id: String,
-) -> AppResult<Vec<TimelineItem>> {
+) -> AppResult<Vec<Event>> {
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up(state.inner(), &mut timeline)?;
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
     let identity: Option<String> = {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         db.conn()
@@ -182,12 +182,12 @@ fn person_paths(db: &crate::db::DbBridge) -> AppResult<std::collections::HashMap
 /// own side of it is kept, with its own label; two different people over the
 /// same years stay two.
 pub(crate) fn one_side_of_each_relationship(
-    mut items: Vec<TimelineItem>,
+    mut items: Vec<Event>,
     names: &[&str],
     path_of: &std::collections::HashMap<String, String>,
-) -> Vec<TimelineItem> {
+) -> Vec<Event> {
     let resolve = |name: &str| path_of.get(name).cloned().unwrap_or_else(|| name.to_string());
-    let mine = |item: &TimelineItem| names.contains(&item.node_id.as_str());
+    let mine = |item: &Event| names.contains(&item.node_id.as_str());
     items.sort_by_key(|item| !mine(item));
     let mut seen = std::collections::HashSet::new();
     items.retain(|item| {
@@ -275,8 +275,8 @@ mod tests {
     use super::*;
     use crate::timeline::frame::FrameNode;
 
-    fn item(kind: &str, node_id: &str, from: &str) -> TimelineItem {
-        TimelineItem {
+    fn item(kind: &str, node_id: &str, from: &str) -> Event {
+        Event {
             id: format!("{node_id}#{kind}"),
             kind: kind.into(),
             node_id: node_id.into(),
@@ -284,6 +284,10 @@ mod tests {
             title: String::new(),
             label: None,
             related_id: None,
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: from.into(),
             happened_to: from.into(),
             precision: "day".into(),
@@ -631,6 +635,424 @@ pub fn timeline_extract_review(
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     extract::load(timeline.conn(), &vault_path)?;
     Ok(())
+}
+
+/// When a node was part of the life, in stretches. See `timeline::presence`.
+///
+/// Read off the events that name it, so a person nothing mentions comes back
+/// with nothing rather than with a guess. A stretch that begins inside a
+/// sealed period is not returned: the seal covers when somebody was there as
+/// much as what they did.
+#[tauri::command]
+pub fn timeline_presence(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    node_id: String,
+) -> AppResult<Vec<presence::Presence>> {
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+
+    let identity: Option<String> = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        db.conn()
+            .query_row("SELECT stable_id FROM nodes WHERE id = ?1", [&node_id], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten()
+    };
+    let mut names = vec![node_id.as_str()];
+    if let Some(identity) = identity.as_deref().filter(|id| *id != node_id) {
+        names.push(identity);
+    }
+
+    let seals = seals_of(state.inner(), &vault_path)?;
+    if names.iter().any(|name| seals.hides(name)) {
+        return Ok(Vec::new());
+    }
+
+    // From the events themselves, through the same seal filter every other
+    // read goes through: what is sealed never reaches the stretches, rather
+    // than being subtracted from them afterwards.
+    let today = chrono::Local::now().date_naive();
+    let events: Vec<_> = timeline
+        .about(&names, today)?
+        .into_iter()
+        .filter(|event| !seals.hides_item(event) && !seals.covers(&event.happened_from))
+        .collect();
+    let spans: Vec<(&str, &str)> = events
+        .iter()
+        .map(|event| (event.happened_from.as_str(), event.happened_to.as_str()))
+        .collect();
+    Ok(presence::merge(&spans, today))
+}
+
+// ─── Soạn một sự kiện (Bước 4) ───────────────────────────────────
+
+/// One line, as the app understood it. Shown before anything is written.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct ComposedView {
+    pub title: String,
+    pub happened_from: String,
+    pub happened_to: String,
+    pub precision: String,
+    /// False when the line named no time and the dates above are a guess.
+    pub dated: bool,
+    pub with: Vec<ComposedPerson>,
+    pub place: Option<String>,
+}
+
+/// A name the line gave, and the node it turned out to be, if any.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct ComposedPerson {
+    pub name: String,
+    pub node_id: Option<String>,
+}
+
+/// What the model made of a typed line, before anything is written.
+#[derive(Debug, Clone, Default, serde::Serialize, PartialEq)]
+pub struct ComposedReply {
+    /// What it understood. `None` when nothing could be read from the line.
+    pub read: Option<ComposedView>,
+    /// The model that read it. `None` means there is none to read with, and
+    /// the box asks the person for the fields itself rather than guessing.
+    pub model: Option<String>,
+    /// Why nothing came back, in words meant for a person.
+    pub refused: Option<String>,
+}
+
+/// Read one typed line as an event, and write nothing.
+///
+/// The reading is the model's, through the same guards the vault's own notes
+/// go through (`timeline::extract`): the model must quote the line back, a
+/// time it cannot read is refused rather than guessed, and something that has
+/// not happened yet is not history. A hand-written rule parser stood here
+/// first and was removed: `voi` and `với`, `tai` and `tại`, and a time at the
+/// end of a sentence were all beyond it, and each patch invited the next.
+#[tauri::command(async)]
+pub async fn timeline_read_line(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    line: String,
+) -> AppResult<ComposedReply> {
+    let line = line.trim().to_string();
+    let no_model = |why: Option<&str>| ComposedReply {
+        read: None,
+        model: None,
+        refused: why.map(String::from),
+    };
+
+    let settings = crate::commands::syn::settings_for(&vault_path);
+    if !settings.enabled {
+        return Ok(no_model(None));
+    }
+    let Some(model) = settings.default_model.clone() else {
+        return Ok(no_model(None));
+    };
+    // The same rule the vault's notes are read under: what you write stays on
+    // this machine unless this vault says otherwise.
+    if !media::runs_here(&settings) && !extract::read_config(&vault_path).allow_cloud {
+        return Ok(no_model(Some(
+            "What you write is read only by a model on this machine, unless sending it elsewhere is allowed for this vault",
+        )));
+    }
+
+    // An empty line is how the box asks whether there is a model at all,
+    // before it has anything to read.
+    if line.is_empty() {
+        return Ok(ComposedReply { read: None, model: Some(model), refused: None });
+    }
+
+    let today = chrono::Local::now().date_naive();
+    let input = extract::Input {
+        node_id: String::new(),
+        node_type: "note".into(),
+        title: when::iso(today),
+        recorded: today,
+        // A line with no time of its own happened today, which is what the
+        // person sees and can correct.
+        dated_by_day: true,
+        hash: blake3::hash(line.as_bytes()).to_hex().to_string(),
+        text: line,
+        person_id: None,
+    };
+    let people = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        extract::People::read(&db)?
+    };
+    let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
+
+    let (items, _) = extract::extract_one(
+        provider.as_ref(),
+        &model,
+        settings.num_ctx,
+        &input,
+        &people,
+        chrono::Utc::now(),
+    )
+    .await?;
+    let Some(item) = items.into_iter().next() else {
+        return Ok(ComposedReply {
+            read: None,
+            model: Some(model),
+            refused: Some("Nothing in that line reads as something that happened".into()),
+        });
+    };
+
+    let with = item
+        .payload
+        .people
+        .iter()
+        .map(|id| ComposedPerson { name: people.title(id).unwrap_or(id).to_string(), node_id: Some(id.clone()) })
+        .chain(item.payload.names.iter().map(|name| ComposedPerson { name: name.clone(), node_id: None }))
+        .collect();
+
+    let today_iso = when::iso(today);
+    Ok(ComposedReply {
+        read: Some(ComposedView {
+            title: item.payload.title,
+            dated: !(item.happened_from == today_iso && item.happened_to == today_iso),
+            happened_from: item.happened_from,
+            happened_to: item.happened_to,
+            precision: item.precision,
+            with,
+            place: item.payload.place,
+        }),
+        model: Some(model),
+        refused: None,
+    })
+}
+
+/// Write an event into the note for the day it happened on.
+///
+/// Into `moments[]` in that note's frontmatter, which is where a person's own
+/// moments already live (Nhát E) and what `derive::moments` reads. The note is
+/// made if the day has none. Returns the note it was written into.
+///
+/// Everything goes through `write_node_inner`, the one way a node reaches
+/// disk, which merges with what is on the file rather than with the cache —
+/// so a key somebody added by hand survives this.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn timeline_write_event(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    title: String,
+    happened_from: String,
+    happened_to: String,
+    precision: String,
+    with: Vec<String>,
+    place: Option<String>,
+    format_str: String,
+    tag: String,
+) -> AppResult<String> {
+    let written = write_event_inner(
+        &app_handle,
+        state.inner(),
+        &vault_path,
+        &title,
+        &happened_from,
+        &happened_to,
+        &precision,
+        &with,
+        place.as_deref(),
+        &format_str,
+        &tag,
+    )?;
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    Ok(written)
+}
+
+/// The writing itself, apart from the command so it can be tested.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_event_inner<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    state: &DbState,
+    vault_path: &str,
+    title: &str,
+    happened_from: &str,
+    happened_to: &str,
+    precision: &str,
+    with: &[String],
+    place: Option<&str>,
+    format_str: &str,
+    tag: &str,
+) -> AppResult<String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(AppError::General("An event needs something to call it by".into()));
+    }
+    let from = chrono::NaiveDate::parse_from_str(happened_from, "%Y-%m-%d")
+        .map_err(|_| AppError::General(format!("'{happened_from}' is not a day")))?;
+
+    let people: Vec<String> = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        with.iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+            .map(|name| store::node_for(&db, name).unwrap_or_else(|| name.to_string()))
+            .collect()
+    };
+
+    // What is sealed stays sealed, including from this side: an event about a
+    // sealed person would be written into the vault and then hidden from the
+    // person who wrote it.
+    let seals = seals_of(state, vault_path)?;
+    if let Some(hidden) = people.iter().find(|person| seals.hides(person)) {
+        return Err(AppError::General(format!("{hidden} is sealed")));
+    }
+
+    let mut moment = serde_json::Map::new();
+    moment.insert("title".into(), serde_json::Value::String(title.clone()));
+    moment.insert("happened".into(), serde_json::Value::String(happened(precision, happened_from, happened_to)));
+    if !people.is_empty() {
+        moment.insert("people".into(), serde_json::json!(people));
+    }
+    if let Some(place) = place.map(str::trim).filter(|p| !p.is_empty()) {
+        moment.insert("where".into(), serde_json::Value::String(place.to_string()));
+    }
+
+    let (id, note_title) = daily_note(state, vault_path, from, format_str)?;
+    let making_the_note = id.is_none();
+    let (moments, on_disk_title) = match &id {
+        Some(id) => {
+            let abs = crate::path_utils::resolve_safe_path(vault_path, id)
+                .map_err(|e| AppError::General(e.to_string()))?;
+            let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
+            let mut moments = on_disk
+                .get("moments")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            moments.push(serde_json::Value::Object(moment));
+            let title = on_disk
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .map(String::from)
+                .unwrap_or_else(|| note_title.clone());
+            (moments, title)
+        }
+        None => (vec![serde_json::Value::Object(moment)], note_title.clone()),
+    };
+
+    let rel_path = id.unwrap_or_else(|| format!("Notes/{}.md", uuid::Uuid::new_v4()));
+    let mut properties = serde_json::Map::new();
+    properties.insert("moments".into(), serde_json::Value::Array(moments));
+    // `date` and `tags` are the note's own, and `resolve_properties` replaces a
+    // key rather than merging inside it — so setting them on a note that
+    // already exists would take whatever the person had put there. They are
+    // only ours to write on a note this call is making.
+    if making_the_note {
+        properties.insert("date".into(), serde_json::Value::String(when::iso(from)));
+        if let Some(tag) = Some(tag.trim()).filter(|t| !t.is_empty()) {
+            properties.insert("tags".into(), serde_json::json!([tag]));
+        }
+    }
+    crate::commands::nodes::write_node_inner(
+        app_handle,
+        state,
+        vault_path.to_string(),
+        rel_path.clone(),
+        on_disk_title,
+        "note".to_string(),
+        serde_json::Value::Object(properties),
+        None,
+    )?;
+
+    // Somebody you had lunch with was contacted that day. The interaction form
+    // in People writes this; an event written here is the same fact coming in
+    // by another door, and keep-in-touch reads it. Without this, recording
+    // lunch through the new box left the person's ring saying "overdue".
+    if from <= chrono::Local::now().date_naive() {
+        for person in &people {
+            let Some(node) = ({
+                let db = state.lock().unwrap_or_else(|e| e.into_inner());
+                db.get_node(person)?
+            }) else {
+                continue;
+            };
+            if node.node_type != "person" {
+                continue;
+            }
+            let abs = crate::path_utils::resolve_safe_path(vault_path, person)
+                .map_err(|e| AppError::General(e.to_string()))?;
+            let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
+            let known = on_disk
+                .get("last_contacted")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if happened_from <= known {
+                continue;
+            }
+            crate::commands::nodes::write_node_inner(
+                app_handle,
+                state,
+                vault_path.to_string(),
+                person.clone(),
+                on_disk
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(String::from)
+                    .unwrap_or_else(|| node.title.clone()),
+                "person".to_string(),
+                serde_json::json!({ "last_contacted": happened_from }),
+                None,
+            )?;
+        }
+    }
+
+    Ok(rel_path)
+}
+
+/// `moments[].happened`, written the way `when::parse` reads it back.
+fn happened(precision: &str, from: &str, to: &str) -> String {
+    match precision {
+        "day" => from.to_string(),
+        "month" => from.get(..7).unwrap_or(from).to_string(),
+        "year" => from.get(..4).unwrap_or(from).to_string(),
+        _ if from == to => from.to_string(),
+        _ => format!("{from}/{to}"),
+    }
+}
+
+/// The note for a day, and what it would be called. `None` means no note has
+/// that name yet, and the caller makes one.
+fn daily_note(
+    state: &DbState,
+    vault_path: &str,
+    day: chrono::NaiveDate,
+    format_str: &str,
+) -> AppResult<(Option<String>, String)> {
+    let noon = day.and_hms_opt(12, 0, 0).unwrap_or_default();
+    let local = chrono::TimeZone::from_local_datetime(&chrono::Local, &noon)
+        .single()
+        .unwrap_or_else(chrono::Local::now);
+    // The person's own naming, the same one the Notes app opens a day with.
+    let named = crate::commands::nodes::date_string_from_pattern(format_str, local)
+        .unwrap_or_else(|| when::iso(day));
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let found = db
+        .get_nodes_by_type("note")
+        .unwrap_or_default()
+        .into_iter()
+        .find(|note| note.title == named)
+        // A row's id is the path inside the vault — but it is only ever as
+        // right as whatever wrote it, and everything below treats it as
+        // relative. One that is not is made so rather than believed.
+        .map(|note| {
+            let path = std::path::Path::new(&note.id);
+            if path.is_absolute() {
+                crate::path_utils::to_relative(path, vault_path)
+            } else {
+                note.id
+            }
+        });
+    Ok((found, named))
 }
 
 // ─── Chiêm nghiệm (Nhát F) ───────────────────────────────────────
@@ -1012,9 +1434,9 @@ pub fn timeline_media_moments(
     let span = when::parse(&when)
         .ok_or_else(|| AppError::General(format!("'{when}' is not a time the timeline can read")))?;
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up(state.inner(), &mut timeline)?;
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
     extract::load(timeline.conn(), &vault_path)?;
-    let items = timeline.query(span, chrono::Local::now().date_naive())?;
+    let items = timeline.including_folded(span, chrono::Local::now().date_naive())?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let seals = seal::current(&db, &vault_path)?;
     media::moments(timeline.conn(), &db, &seals, &items)
@@ -1025,8 +1447,8 @@ mod review_fixes {
     use super::*;
     use serde_json::json;
 
-    fn item(id: &str, kind: &str, node_id: &str, related: Option<&str>, from: &str) -> TimelineItem {
-        TimelineItem {
+    fn item(id: &str, kind: &str, node_id: &str, related: Option<&str>, from: &str) -> Event {
+        Event {
             id: id.into(),
             kind: kind.into(),
             node_id: node_id.into(),
@@ -1034,6 +1456,10 @@ mod review_fixes {
             title: node_id.into(),
             label: Some(format!("label of {id}")),
             related_id: related.map(String::from),
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: from.into(),
             happened_to: "9999-12-31".into(),
             precision: "month".into(),
@@ -1086,5 +1512,147 @@ mod review_fixes {
         assert!(frame.density.iter().all(|m| !m.month.starts_with("2019")), "{:?}", frame.density);
         assert!(frame.first_seen.values().all(|day| !day.starts_with("2019")), "{:?}", frame.first_seen);
         let _ = json!({});
+    }
+}
+
+/// The gate for Bước 4: what is written comes back the way it went in, and a
+/// key somebody added by hand is still there afterwards.
+#[cfg(test)]
+mod writing_an_event {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use serde_json::json;
+
+    use tauri::Manager;
+
+    use crate::db::DbBridge;
+    use crate::timeline::derive::{self, Link, NodeView};
+    use crate::timeline::when;
+
+    /// The mock app, already holding the cache. `write_node_inner` reaches for
+    /// managed state further down rather than only using what it is handed, so
+    /// a handle that manages nothing panics before anything is written.
+    fn app() -> tauri::App<tauri::test::MockRuntime> {
+        let cache: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().unwrap());
+        tauri::test::mock_builder()
+            .manage(cache)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("a mock app")
+    }
+
+    /// A tag the person put on their day is not this feature's to remove.
+    #[test]
+    fn an_event_written_keeps_the_tags_the_note_already_had() {
+        let app = app();
+        let vault = tempfile::tempdir().unwrap();
+        let vault_path = std::fs::canonicalize(vault.path()).unwrap().to_string_lossy().to_string();
+        let managed = app.state::<crate::db::DbState>();
+        let state = managed.inner();
+
+        let note = super::write_event_inner(
+            app.handle(), state, &vault_path, "Đám cưới", "2016-05-14", "2016-05-14",
+            "day", &[], None, "YYYY-MM-DD", "daily",
+        )
+        .expect("the first event");
+
+        // The person tags their own day, the way they would in the editor.
+        crate::commands::nodes::write_node_inner(
+            app.handle(), state, vault_path.clone(), note.clone(),
+            "2016-05-14".to_string(), "note".to_string(),
+            json!({ "tags": ["daily", "công-việc", "hà-nội"] }), None,
+        )
+        .expect("the person's tags");
+
+        super::write_event_inner(
+            app.handle(), state, &vault_path, "Ăn tối", "2016-05-14", "2016-05-14",
+            "day", &[], None, "YYYY-MM-DD", "daily",
+        )
+        .expect("the second event");
+
+        let abs = crate::path_utils::resolve_safe_path(&vault_path, &note).unwrap();
+        let tags = crate::commands::nodes::existing_properties(&abs, "md");
+        assert_eq!(
+            tags.get("tags"),
+            Some(&json!(["daily", "công-việc", "hà-nội"])),
+            "writing an event took the day's other tags with it"
+        );
+    }
+
+    #[test]
+    fn an_event_written_is_an_event_derived_and_nothing_else_is_lost() {
+        let app = app();
+        let vault = tempfile::tempdir().unwrap();
+        let vault_path = std::fs::canonicalize(vault.path())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let managed = app.state::<crate::db::DbState>();
+        let state = managed.inner();
+
+        let write = |title: &str, people: Vec<String>, place: Option<&str>| {
+            super::write_event_inner(
+                app.handle(),
+                state,
+                &vault_path,
+                title,
+                "2016-05-14",
+                "2016-05-14",
+                "day",
+                &people,
+                place,
+                "YYYY-MM-DD",
+                "",
+            )
+            .expect("the event was written")
+        };
+
+        let note = write("Đám cưới Tuấn và Thuỳ", vec!["Tuấn".into()], Some("Hà Nội"));
+        let abs = crate::path_utils::resolve_safe_path(&vault_path, &note).unwrap();
+        assert!(abs.exists(), "the day had no note, so one was made");
+
+        // A key this app has no meaning for, added the way a person would.
+        crate::commands::nodes::write_node_inner(
+            app.handle(),
+            state,
+            vault_path.clone(),
+            note.clone(),
+            "2016-05-14".to_string(),
+            "note".to_string(),
+            json!({ "mood": "tốt" }),
+            None,
+        )
+        .expect("the hand-added key");
+
+        let again = write("Ăn tối", Vec::new(), None);
+        assert_eq!(again, note, "the same day is the same note");
+
+        let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
+        assert_eq!(
+            on_disk.get("mood").and_then(serde_json::Value::as_str),
+            Some("tốt"),
+            "a key nobody here understands is still a key somebody wrote"
+        );
+        let moments = on_disk.get("moments").and_then(serde_json::Value::as_array).expect("moments");
+        assert_eq!(moments.len(), 2, "{moments:?}");
+        assert_eq!(moments[0]["title"], json!("Đám cưới Tuấn và Thuỳ"));
+        assert_eq!(moments[0]["happened"], json!("2016-05-14"));
+        assert_eq!(moments[0]["people"], json!(["Tuấn"]), "no such person yet, so the name stands");
+        assert_eq!(moments[0]["where"], json!("Hà Nội"));
+        assert!(moments[1].get("people").is_none(), "nobody was named: {:?}", moments[1]);
+
+        // And the timeline reads back what was written.
+        let properties = serde_json::Value::Object(on_disk.clone());
+        let derived = derive::derive(
+            &NodeView { id: &note, node_type: "note", title: "2016-05-14", properties: &properties },
+            &HashMap::new(),
+        );
+        let wedding = derived
+            .iter()
+            .find(|d| d.label.as_deref() == Some("Đám cưới Tuấn và Thuỳ"))
+            .expect("the event that was just written");
+        assert_eq!(wedding.kind, "moment");
+        assert_eq!(wedding.span, when::parse("2016-05-14").unwrap());
+        assert_eq!(wedding.links, vec![Link::with("Tuấn"), Link::at("Hà Nội")]);
     }
 }

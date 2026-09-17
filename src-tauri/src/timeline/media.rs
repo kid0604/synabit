@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::seal::Seals;
-use super::store::TimelineItem;
+use super::store::Event;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
 use crate::syn::provider::{ChatMessage, ChatProvider, ChatRequest};
@@ -785,7 +785,7 @@ pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaMoment> {
 }
 
 /// The moments among these timeline items, with what stands in for each file.
-pub fn moments(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[TimelineItem]) -> AppResult<Vec<MediaMoment>> {
+pub fn moments(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[Event]) -> AppResult<Vec<MediaMoment>> {
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     for item in items.iter().filter(|item| item.kind == "media") {

@@ -2621,7 +2621,7 @@ pub fn rename_node_file(
 ///
 /// A note named after a day also says which day, as `date:`, in a form no
 /// setting can change later; see `utils::daily_note_date`.
-fn new_note_frontmatter(
+pub(crate) fn new_note_frontmatter(
     title: &str,
     node_type: &str,
     tag: Option<&str>,

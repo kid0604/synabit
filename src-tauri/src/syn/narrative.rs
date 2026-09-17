@@ -19,7 +19,7 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::models::node::NodeMetadata;
-use crate::timeline::store::TimelineItem;
+use crate::timeline::store::{self, Event};
 use crate::timeline::when;
 
 /// The most records put in front of the model. The most recent are kept.
@@ -57,6 +57,7 @@ fn kind_words(kind: &str) -> &str {
     match kind {
         "experience" => "job",
         "connection" => "relationship",
+        "moment" => "happened",
         "important_date" => "date to remember",
         "death" => "died",
         "birthday" => "born",
@@ -68,7 +69,11 @@ fn kind_words(kind: &str) -> &str {
 ///
 /// Interactions come from their own notes rather than from the timeline,
 /// because the note holds what was said and the timeline only that it happened.
-pub fn sources_for(items: &[TimelineItem], interactions: &[NodeMetadata]) -> Vec<Source> {
+pub fn sources_for(
+    items: &[Event],
+    interactions: &[NodeMetadata],
+    names: &std::collections::HashMap<String, String>,
+) -> Vec<Source> {
     let open = when::iso(when::open_end());
     let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
 
@@ -80,10 +85,18 @@ pub fn sources_for(items: &[TimelineItem], interactions: &[NodeMetadata]) -> Vec
         } else {
             format!("{} → {}", item.happened_from, item.happened_to)
         };
-        let what = match item.label.as_deref().filter(|label| !label.is_empty()) {
+        let mut what = match item.label.as_deref().filter(|label| !label.is_empty()) {
             Some(label) => format!("{}: {label}", kind_words(&item.kind)),
             None => kind_words(&item.kind).to_string(),
         };
+        // Who else was in it, and where. A retelling that cannot name the
+        // people in a story has to write around them.
+        for (role, word) in [("with", "with"), ("where", "at")] {
+            let found = store::named(&item.links, role, names);
+            if !found.is_empty() {
+                what.push_str(&format!(" · {word} {}", found.join(", ")));
+            }
+        }
         rows.push((date, item.node_id.clone(), item.node_type.clone(), item.title.clone(), what));
     }
 
@@ -301,7 +314,7 @@ mod tests {
 
     #[test]
     fn records_are_numbered_oldest_first_and_interactions_carry_what_was_said() {
-        let item = |kind: &str, from: &str, to: &str, label: Option<&str>| TimelineItem {
+        let item = |kind: &str, from: &str, to: &str, label: Option<&str>| Event {
             id: format!("{kind}{from}"),
             kind: kind.into(),
             node_id: "People/tuan.md".into(),
@@ -309,6 +322,10 @@ mod tests {
             title: "Tuấn".into(),
             label: label.map(String::from),
             related_id: None,
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: from.into(),
             happened_to: to.into(),
             precision: "range".into(),
@@ -333,6 +350,7 @@ mod tests {
                 item("connection", "2009-09-01", "9999-12-31", Some("friend")),
             ],
             &[coffee],
+            &Default::default(),
         );
         assert_eq!(sources.len(), 3, "the interaction is read from its note, once");
         assert_eq!(sources[0].date, "2009-09-01 → now");

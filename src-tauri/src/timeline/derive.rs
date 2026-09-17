@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::when::{self, Precision, Span};
 use crate::calendar::recurrence::{date_part, EventSummary};
@@ -26,6 +26,31 @@ pub struct NodeView<'a> {
     pub properties: &'a Value,
 }
 
+/// A node an event names, and how it took part.
+///
+/// Four roles, from `docs/su-kien-2026-09-16.md` §3.2: `with` took part,
+/// `where` is the place, `about` is what it concerns, `evidence` is what shows
+/// it happened. A photograph does not attend a wedding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub node: String,
+    pub role: &'static str,
+    pub label: Option<String>,
+}
+
+impl Link {
+    pub fn with(node: impl Into<String>) -> Self {
+        Link { node: node.into(), role: "with", label: None }
+    }
+
+    /// Where it happened. Either a `Places/` node or the words the person
+    /// wrote: §3.2 allows both, and nothing here can tell which apart without
+    /// the vault. Resolving the words to a node is the editor's job, later.
+    pub fn at(node: impl Into<String>) -> Self {
+        Link { node: node.into(), role: "where", label: None }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Derived {
     pub kind: &'static str,
@@ -33,7 +58,14 @@ pub struct Derived {
     /// Where the date came from: `frontmatter`, `filename`, or `note`.
     pub time_source: &'static str,
     pub label: Option<String>,
-    pub related_id: Option<String>,
+    /// Everything this event names. A meeting has as many as were there.
+    pub links: Vec<Link>,
+    /// What the person wrote that this code has no meaning for, kept as
+    /// written. Rule 1 of §3.3: not understood is not the same as not wanted.
+    pub props: Value,
+    /// Whether a note wrote this event out rather than being it. A daily note
+    /// is the box several events came in.
+    pub container: bool,
 }
 
 fn item(kind: &'static str, span: Span) -> Derived {
@@ -42,7 +74,9 @@ fn item(kind: &'static str, span: Span) -> Derived {
         span,
         time_source: "frontmatter",
         label: None,
-        related_id: None,
+        links: Vec::new(),
+        props: Value::Null,
+        container: false,
     }
 }
 
@@ -69,16 +103,58 @@ fn moments(p: &Value) -> Vec<Derived> {
             Some(Derived {
                 time_source: "user",
                 label: text(moment, "title").map(String::from),
-                related_id: moment
-                    .get("people")
-                    .and_then(Value::as_array)
-                    .and_then(|people| people.first())
-                    .and_then(Value::as_str)
-                    .map(String::from),
+                links: cast(moment),
+                props: rest_of(moment),
+                // The note holding this frontmatter is the box, not the event.
+                container: true,
                 ..item("moment", span)
             })
         })
         .collect()
+}
+
+/// What the app understands about a moment. Everything else is kept in
+/// [`Derived::props`] rather than dropped.
+const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where"];
+
+/// Everyone and everywhere the moment names.
+///
+/// Keeping only the first person is how a wedding became a meeting with one
+/// person; see §1 of `docs/su-kien-2026-09-16.md`.
+fn cast(moment: &Value) -> Vec<Link> {
+    let names = |key: &str| -> Vec<String> {
+        match moment.get(key) {
+            Some(Value::String(one)) => vec![one.to_string()],
+            Some(Value::Array(many)) => many.iter().filter_map(Value::as_str).map(String::from).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let clean = |list: Vec<String>| {
+        list.into_iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let mut links: Vec<Link> = clean(names("people")).into_iter().map(Link::with).collect();
+    links.extend(clean(names("where")).into_iter().map(Link::at));
+    links
+}
+
+/// The keys this version has no meaning for, as they were written.
+fn rest_of(moment: &Value) -> Value {
+    let Some(fields) = moment.as_object() else {
+        return Value::Null;
+    };
+    let rest: Map<String, Value> = fields
+        .iter()
+        .filter(|(key, _)| !KNOWN_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if rest.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(rest)
+    }
 }
 
 /// A decision on the day it was made, and each day it was looked back on.
@@ -109,7 +185,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
         "note" => dated(p, "date").map(|span| item("note", span)).into_iter().collect(),
         "interaction" => dated(p, "date")
             .map(|span| Derived {
-                related_id: text(p, "person_id").map(String::from),
+                links: text(p, "person_id").map(Link::with).into_iter().collect(),
                 label: text(p, "interaction_type").map(String::from),
                 ..item("interaction", span)
             })
@@ -152,7 +228,7 @@ fn never_dated(node_type: &str) -> bool {
         || node_type.starts_with("pdf_")
         || matches!(
             node_type,
-            "quickcap" | "whiteboard" | "filter" | "view" | "schema" | "canvas" | "json"
+            "quickcap" | "whiteboard" | "filter" | "view" | "schema" | "canvas" | "json" | "place"
         )
 }
 
@@ -241,7 +317,7 @@ fn person(p: &Value) -> Vec<Derived> {
                 None => when::open_end(),
             };
             out.push(Derived {
-                related_id: Some(other.to_string()),
+                links: vec![Link::with(other)],
                 label: text(link, "relation_type").map(String::from),
                 ..item(
                     "connection",
@@ -414,6 +490,65 @@ fn prefix_is_a_label(prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_moment_keeps_where_it_was_and_what_this_version_cannot_read() {
+        let properties = json!({
+            "date": "2019-08-02",
+            "moments": [{
+                "title": "Đi chơi 3 ngày ở Tuần Châu",
+                "happened": "2019-08-02/2019-08-04",
+                "people": ["uuid-a"],
+                "where": "Tuần Châu",
+                "severity": "P1",
+                "downtime_minutes": 148
+            }]
+        });
+        let derived = derive(
+            &NodeView { id: "Notes/2019-08-02.md", node_type: "note", title: "2019-08-02", properties: &properties },
+            &HashMap::new(),
+        );
+        let moment = derived.iter().find(|d| d.kind == "moment").expect("a moment");
+        assert_eq!(moment.links, vec![Link::with("uuid-a"), Link::at("Tuần Châu")]);
+        assert_eq!(
+            moment.props,
+            json!({ "severity": "P1", "downtime_minutes": 148 }),
+            "a key this version has no meaning for is kept, not dropped"
+        );
+        assert!(moment.container, "the note is the box the moment came in");
+    }
+
+    #[test]
+    fn a_place_has_no_dates_of_its_own_to_put_on_the_timeline() {
+        let properties = json!({ "founded": "1010-01-01", "date": "2026-01-01" });
+        let derived = derive(
+            &NodeView { id: "Places/ha-noi.md", node_type: "place", title: "Hà Nội", properties: &properties },
+            &HashMap::new(),
+        );
+        assert!(derived.is_empty(), "a place is an object, not something that happened: {derived:?}");
+    }
+
+    #[test]
+    fn a_moment_names_everyone_who_was_there() {
+        let properties = json!({
+            "date": "2016-05-14",
+            "moments": [{
+                "title": "Đám cưới Tuấn và Thuỳ",
+                "happened": "2016-05-14",
+                "people": ["uuid-tuan", "uuid-thuy", " ", "uuid-ha"]
+            }]
+        });
+        let derived = derive(
+            &NodeView { id: "Notes/2016-05-14.md", node_type: "note", title: "2016-05-14", properties: &properties },
+            &HashMap::new(),
+        );
+        let moment = derived.iter().find(|d| d.kind == "moment").expect("a moment");
+        assert_eq!(
+            moment.links,
+            vec![Link::with("uuid-tuan"), Link::with("uuid-thuy"), Link::with("uuid-ha")],
+            "three people, not the first one"
+        );
+    }
     use serde_json::json;
 
     fn derive_one(node_type: &str, props: Value) -> Vec<Derived> {
@@ -448,7 +583,7 @@ mod tests {
             "interaction",
             json!({ "date": "2016-05-03", "person_id": "People/tuan.md", "interaction_type": "coffee" }),
         );
-        assert_eq!(items[0].related_id.as_deref(), Some("People/tuan.md"));
+        assert_eq!(items[0].links, vec![Link::with("People/tuan.md")]);
         assert_eq!(items[0].label.as_deref(), Some("coffee"));
     }
 
@@ -615,7 +750,7 @@ mod tests {
         );
         assert_eq!(items.len(), 2, "no start, or an end before the start, gives nothing");
         assert_eq!(items[0].kind, "connection");
-        assert_eq!(items[0].related_id.as_deref(), Some("uuid-ha"));
+        assert_eq!(items[0].links, vec![Link::with("uuid-ha")]);
         assert_eq!(items[0].label.as_deref(), Some("partner"));
         assert_eq!(items[0].span.to, when::open_end());
         assert_eq!((items[1].span.from, items[1].span.to), (day(2014, 7, 1), day(2018, 7, 31)));

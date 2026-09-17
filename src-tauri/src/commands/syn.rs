@@ -135,7 +135,7 @@ pub async fn syn_narrate_person(
     // The timeline's lock first, then the cache's, as everywhere else.
     let (name, sources) = {
         let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
-        crate::timeline::store::catch_up(state.inner(), &mut store)?;
+        crate::timeline::store::catch_up_in(state.inner(), &mut store, Some(&vault_path))?;
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let seals = crate::timeline::seal::current(&db, &vault_path)?;
         if seals.hides(&person_id) {
@@ -159,7 +159,8 @@ pub async fn syn_narrate_person(
             .into_iter()
             .filter(|node| !seals.hides(&node.id))
             .collect();
-        (person.title.clone(), narrative::sources_for(&items, &interactions))
+        let named = crate::timeline::store::names_in(&db, &items);
+        (person.title.clone(), narrative::sources_for(&items, &interactions, &named))
     };
 
     if sources.is_empty() {
@@ -488,11 +489,11 @@ pub async fn send_message_inner(
     // the vault cache is locked below, because the timeline's lock is always
     // taken first. See `timeline::asked`.
     let asked_about = crate::timeline::asked::span_in(&question, chrono::Local::now().date_naive());
-    let timeline_items: Option<Vec<crate::timeline::store::TimelineItem>> = asked_about.as_ref().and_then(|asked| {
+    let events: Option<Vec<crate::timeline::store::Event>> = asked_about.as_ref().and_then(|asked| {
         use tauri::Manager;
         let timeline = app.state::<crate::timeline::TimelineState>();
         let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
-        crate::timeline::store::catch_up(&*state, &mut store)
+        crate::timeline::store::catch_up_in(&*state, &mut store, Some(vault_path))
             .and_then(|_| store.query(asked.span, chrono::Local::now().date_naive()))
             .map_err(|e| log::warn!("[Syn] Could not read the timeline: {e}"))
             .ok()
@@ -512,9 +513,10 @@ pub async fn send_message_inner(
         let seals = crate::timeline::seal::current(&db, vault_path)?;
 
         // What the timeline holds for the time asked about, less what is sealed.
-        let timeline_block = asked_about.as_ref().zip(timeline_items.as_ref()).map(|(asked, items)| {
+        let timeline_block = asked_about.as_ref().zip(events.as_ref()).map(|(asked, items)| {
             let shown: Vec<_> = items.iter().filter(|item| !seals.hides_item(item)).cloned().collect();
-            crate::timeline::asked::block(asked, &shown)
+            let named = crate::timeline::store::names_in(&db, &shown);
+            crate::timeline::asked::block(asked, &shown, &named)
         });
 
         // What Syn remembers is not conditional on `rag_enabled`. That setting

@@ -24,7 +24,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
 use super::seal::SealedPeriod;
-use super::store::TimelineItem;
+use super::store::Event;
 use super::when;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -51,12 +51,20 @@ pub struct TimedLink {
     pub target: String,
     pub since: String,
     pub until: Option<String>,
+    /// How many events had both of them in it. Zero for a relationship that
+    /// was declared rather than met: `connections[]` is still read, but as one
+    /// more statement rather than the only source (§6).
+    pub met: u32,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct MonthCount {
     pub month: String,
     pub count: u32,
+    /// The month's events added up by size, not counted one apiece: a month
+    /// holding a wedding is not the same as one holding four errands, even
+    /// where the tally matches. See [`super::magnitude`].
+    pub weight: f64,
 }
 
 /// A node as the frame needs it.
@@ -68,6 +76,11 @@ pub struct FrameNode {
 
 /// Dates about a node that do not place it in the user's life.
 const NOT_AN_ARRIVAL: &[&str] = &["birthday", "important_date", "experience", "death"];
+
+/// How many times two people have to turn up at the same thing before the
+/// graph calls it a relationship. Three, the same threshold reflection uses
+/// before it will call anything a pattern.
+const MET_ENOUGH: u32 = 3;
 
 /// Dates that are not moments in the user's life either, and so do not make
 /// the strip start in 1932 because a grandmother was born then.
@@ -90,7 +103,7 @@ pub fn read_nodes(cache: &DbBridge) -> AppResult<Vec<FrameNode>> {
     Ok(rows.flatten().filter(|n| !super::is_timeline_path(&n.id)).collect())
 }
 
-pub fn build(items: &[TimelineItem], nodes: &[FrameNode], today: NaiveDate) -> TimeFrame {
+pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFrame {
     let today = when::iso(today);
     let open_end = when::iso(when::open_end());
 
@@ -110,20 +123,56 @@ pub fn build(items: &[TimelineItem], nodes: &[FrameNode], today: NaiveDate) -> T
         }
     }
 
+    // Two people at one event met. Counting that is how a relationship is
+    // read from what happened rather than from what was declared about it.
+    let mut together: HashMap<(String, String), (String, u32)> = HashMap::new();
     let mut died_on = HashMap::new();
     let mut links = Vec::new();
     let mut linked: HashSet<(String, String, String)> = HashSet::new();
-    let mut months: BTreeMap<String, u32> = BTreeMap::new();
+    // Pairs that said so themselves. A relationship somebody wrote down, with
+    // an end, must not be joined by a second edge that never ends.
+    let mut declared: HashSet<(String, String)> = HashSet::new();
+    let mut months: BTreeMap<String, (u32, f64)> = BTreeMap::new();
 
     for item in items {
         if item.happened_from > today {
             continue;
         }
         let kind = item.kind.as_str();
+        // Everyone the event says was there, under whatever name the vault
+        // used for them.
+        let there: Vec<String> = item
+            .links
+            .iter()
+            .filter(|link| link.role == "with")
+            .filter_map(|link| resolve(&link.node_id))
+            .collect();
 
         if !NOT_A_MOMENT.contains(&kind) {
             if let Some(month) = item.happened_from.get(..7) {
-                *months.entry(month.to_string()).or_default() += 1;
+                let month = months.entry(month.to_string()).or_default();
+                month.0 += 1;
+                month.1 += item.magnitude;
+            }
+        }
+
+        for (at, one) in there.iter().enumerate() {
+            for other in there.iter().skip(at + 1) {
+                if one == other {
+                    continue;
+                }
+                let pair = if one <= other {
+                    (one.clone(), other.clone())
+                } else {
+                    (other.clone(), one.clone())
+                };
+                let met = together
+                    .entry(pair)
+                    .or_insert_with(|| (item.happened_from.clone(), 0));
+                if item.happened_from < met.0 {
+                    met.0 = item.happened_from.clone();
+                }
+                met.1 += 1;
             }
         }
 
@@ -137,6 +186,11 @@ pub fn build(items: &[TimelineItem], nodes: &[FrameNode], today: NaiveDate) -> T
             if let Some(other) = &other {
                 earliest(&mut first_seen, other, &item.happened_from);
             }
+            // Everyone else who was there, too. `related_id` holds one name;
+            // a wedding with three guests used to place only the first.
+            for who in &there {
+                earliest(&mut first_seen, who, &item.happened_from);
+            }
         }
 
         if kind == "connection" {
@@ -148,15 +202,32 @@ pub fn build(items: &[TimelineItem], nodes: &[FrameNode], today: NaiveDate) -> T
             } else {
                 (other.clone(), item.node_id.clone(), item.happened_from.clone())
             };
+            declared.insert((pair.0.clone(), pair.1.clone()));
             if linked.insert(pair) {
                 links.push(TimedLink {
                     source: item.node_id.clone(),
                     target: other,
                     since: item.happened_from.clone(),
                     until: (item.happened_to != open_end).then(|| item.happened_to.clone()),
+                    met: 0,
                 });
             }
         }
+    }
+
+    // A pair seen together often enough to call it a relationship. Fewer than
+    // this is a coincidence of attendance, not a life shared.
+    for ((source, target), (since, met)) in together {
+        if met < MET_ENOUGH {
+            continue;
+        }
+        if declared.contains(&(source.clone(), target.clone())) {
+            // They already told us about this one, ending and all.
+            continue;
+        }
+        // No end: people met are not people parted, and saying when something
+        // stopped needs evidence that it stopped.
+        links.push(TimedLink { source, target, since, until: None, met });
     }
 
     TimeFrame {
@@ -167,7 +238,7 @@ pub fn build(items: &[TimelineItem], nodes: &[FrameNode], today: NaiveDate) -> T
         sealed: Vec::new(),
         density: months
             .into_iter()
-            .map(|(month, count)| MonthCount { month, count })
+            .map(|(month, (count, weight))| MonthCount { month, count, weight })
             .collect(),
     }
 }
@@ -196,8 +267,8 @@ pub(crate) fn local_day(stamp: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn item(kind: &str, node_id: &str, related: Option<&str>, from: &str, to: &str) -> TimelineItem {
-        TimelineItem {
+    fn item(kind: &str, node_id: &str, related: Option<&str>, from: &str, to: &str) -> Event {
+        Event {
             id: format!("{node_id}#{kind}#{from}"),
             kind: kind.to_string(),
             node_id: node_id.to_string(),
@@ -205,6 +276,10 @@ mod tests {
             title: String::new(),
             label: None,
             related_id: related.map(String::from),
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: from.to_string(),
             happened_to: to.to_string(),
             precision: "day".to_string(),
@@ -296,8 +371,8 @@ mod tests {
         assert_eq!(
             frame.density,
             vec![
-                MonthCount { month: "2015-08".into(), count: 1 },
-                MonthCount { month: "2017-11".into(), count: 1 },
+                MonthCount { month: "2015-08".into(), count: 1, weight: 0.0 },
+                MonthCount { month: "2017-11".into(), count: 1, weight: 0.0 },
             ]
         );
         assert_eq!(frame.died_on["People/ba.md"], "2017-11-22");

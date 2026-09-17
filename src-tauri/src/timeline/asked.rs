@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use regex::{Captures, Regex};
 
-use super::store::TimelineItem;
+use super::store::{self, Event};
 use super::when::{self, Precision, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +240,7 @@ pub fn span_in(question: &str, today: NaiveDate) -> Option<Asked> {
 
 fn kind_words(kind: &str) -> &str {
     match kind {
+        "moment" => "happened",
         "note" => "note",
         "event" => "event",
         "task_done" => "task finished",
@@ -260,13 +261,17 @@ fn kind_words(kind: &str) -> &str {
 const SHOWN: usize = 40;
 
 /// The prompt section for a question about a time.
-pub fn block(asked: &Asked, items: &[TimelineItem]) -> String {
+pub fn block(
+    asked: &Asked,
+    items: &[Event],
+    names: &std::collections::HashMap<String, String>,
+) -> String {
     let open = when::iso(when::open_end());
     // The first forty as given, which is the store's order: most precisely
     // known first. Sorted by date before the cut, a vault with fifty
     // relationships going on for years would fill the list with them and
     // leave out what happened on the days asked about.
-    let mut ordered: Vec<&TimelineItem> = items.iter().take(SHOWN).collect();
+    let mut ordered: Vec<&Event> = items.iter().take(SHOWN).collect();
     ordered.sort_by(|a, b| a.happened_from.cmp(&b.happened_from).then_with(|| a.title.cmp(&b.title)));
 
     let mut out = format!(
@@ -278,10 +283,10 @@ pub fn block(asked: &Asked, items: &[TimelineItem]) -> String {
     out.push_str(
         "Looked up before you were asked. This is every dated thing the vault holds for these \
          days: daily notes, events, finished tasks, meetings with people, jobs and relationships \
-         that were going on, pictures by their day. It is complete for what the vault dates to \
-         these days: if it is short or empty, say so plainly rather than filling the gap. Anything \
-         else the question needs may still come from the rest of the context. Cite what you use \
-         as [[Title]].\n",
+         that were going on, pictures by their day. Each line ends with who was there and where, \
+         when the vault says. It is complete for what the vault dates to these days: if it is \
+         short or empty, say so plainly rather than filling the gap. Anything else the question \
+         needs may still come from the rest of the context. Cite what you use as [[Title]].\n",
     );
     if ordered.is_empty() {
         out.push_str("The vault dates nothing to these days.\n");
@@ -300,10 +305,23 @@ pub fn block(asked: &Asked, items: &[TimelineItem]) -> String {
             .filter(|label| !label.is_empty())
             .map(|label| format!(" ({label})"))
             .unwrap_or_default();
+        // Who was there and where. This is the half that was missing: a
+        // question like "họp với ai hồi tháng 5" cannot be answered off a list
+        // that never says who was at anything.
+        let cast = |role: &str, word: &str| {
+            let found = store::named(&item.links, role, names);
+            if found.is_empty() {
+                String::new()
+            } else {
+                format!(" · {word} {}", found.join(", "))
+            }
+        };
         out.push_str(&format!(
-            "- {when_text} · {} · [[{}]]{label}\n",
+            "- {when_text} · {} · [[{}]]{label}{}{}\n",
             kind_words(&item.kind),
-            item.title
+            item.title,
+            cast("with", "with"),
+            cast("where", "at"),
         ));
     }
     if items.len() > SHOWN {
@@ -372,7 +390,7 @@ mod tests {
     #[test]
     fn the_list_keeps_the_days_asked_about_when_long_relationships_would_fill_it() {
         let asked = span_in("tuần trước", today()).unwrap();
-        let long = |n: usize| TimelineItem {
+        let long = |n: usize| Event {
             id: format!("c{n}"),
             kind: "connection".into(),
             node_id: format!("People/p{n}.md"),
@@ -380,13 +398,17 @@ mod tests {
             title: format!("Người {n}"),
             label: None,
             related_id: None,
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: "2009-09-01".into(),
             happened_to: "9999-12-31".into(),
             precision: "range".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
         };
-        let day_note = TimelineItem {
+        let day_note = Event {
             id: "n".into(),
             kind: "note".into(),
             node_id: "Notes/2026-09-09.md".into(),
@@ -394,6 +416,10 @@ mod tests {
             title: "Đi khám".into(),
             label: None,
             related_id: None,
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: "2026-09-09".into(),
             happened_to: "2026-09-09".into(),
             precision: "day".into(),
@@ -403,7 +429,7 @@ mod tests {
         // The store's order: the day first, then the long spans.
         let mut items = vec![day_note];
         items.extend((0..50).map(long));
-        let written = block(&asked, &items);
+        let written = block(&asked, &items, &Default::default());
         assert!(written.contains("[[Đi khám]]"), "{written}");
         assert!(written.contains("…and 11 more"), "{written}");
     }
@@ -417,9 +443,9 @@ mod tests {
     #[test]
     fn the_block_says_when_there_is_nothing_and_cites_by_title() {
         let asked = span_in("tháng 2/2017 có gì", today()).unwrap();
-        assert!(block(&asked, &[]).contains("The vault dates nothing to these days."));
+        assert!(block(&asked, &[], &Default::default()).contains("The vault dates nothing to these days."));
 
-        let item = TimelineItem {
+        let item = Event {
             id: "x".into(),
             kind: "note".into(),
             node_id: "Notes/d.md".into(),
@@ -427,15 +453,60 @@ mod tests {
             title: "Đám cưới".into(),
             label: None,
             related_id: None,
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: "2017-02-14".into(),
             happened_to: "2017-02-14".into(),
             precision: "day".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
         };
-        let written = block(&asked, &[item]);
+        let written = block(&asked, &[item], &Default::default());
         assert!(written.contains("- 2017-02-14 · note · [[Đám cưới]]"), "{written}");
         assert!(written.ends_with("=== END TIMELINE ===\n\n"));
+    }
+
+    /// The gate for Bước 6. "họp với ai hồi tháng 5" can only be answered off
+    /// a list that says who was at things — which, until the event model, it
+    /// never did: one meeting held one name, and most held none.
+    #[test]
+    fn the_block_says_who_was_there_and_where_it_was() {
+        let asked = span_in("họp với ai hồi tháng 5/2016", today()).expect("a time");
+        let meeting = Event {
+            id: "Notes/2016-05-14.md#moment#0".into(),
+            kind: "moment".into(),
+            node_id: "Notes/2016-05-14.md".into(),
+            node_type: "note".into(),
+            title: "2016-05-14".into(),
+            label: Some("Họp dự án".into()),
+            related_id: Some("uuid-khanh".into()),
+            links: vec![
+                store::EventLink { node_id: "uuid-khanh".into(), role: "with".into(), label: None },
+                store::EventLink { node_id: "uuid-hai".into(), role: "with".into(), label: None },
+                store::EventLink { node_id: "Tuần Châu".into(), role: "where".into(), label: None },
+            ],
+            happened_from: "2016-05-14".into(),
+            happened_to: "2016-05-14".into(),
+            precision: "day".into(),
+            time_source: "user".into(),
+            source: "derived".into(),
+            magnitude: 4.0,
+            container_node: Some("Notes/2016-05-14.md".into()),
+            props: serde_json::Value::Null,
+        };
+        let names = std::collections::HashMap::from([
+            ("uuid-khanh".to_string(), "Khánh".to_string()),
+            ("uuid-hai".to_string(), "Hải".to_string()),
+        ]);
+
+        let written = block(&asked, &[meeting], &names);
+        assert!(written.contains("with Khánh, Hải"), "{written}");
+        assert!(
+            written.contains("at Tuần Châu"),
+            "a place nobody made a node for is still a place: {written}"
+        );
     }
 
     /// What a question is about, if anything, and what counts as right.
@@ -633,7 +704,7 @@ mod tests {
             for (question, must, must_not) in CASES {
                 let asked = span_in(question, today).expect("every case names a time");
                 let items = store.query(asked.span, today).expect("query");
-                let timeline = block(&asked, &items);
+                let timeline = block(&asked, &items, &Default::default());
                 let system = PromptPlan::for_chat(ChatPrompt {
                     context: "",
                     custom: None,

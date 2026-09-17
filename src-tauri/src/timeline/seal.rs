@@ -42,7 +42,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::derive::{self, NodeView};
-use super::store::TimelineItem;
+use super::store::Event;
 use super::when::{self, Precision};
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -150,12 +150,15 @@ impl Seals {
     }
 
     /// Whether a timeline item must not be shown.
-    pub fn hides_item(&self, item: &TimelineItem) -> bool {
+    /// Whether a timeline item must not be shown.
+    ///
+    /// Anyone it names is enough: a meeting with three people is withheld when
+    /// any one of them is sealed, not only when the first is.
+    pub fn hides_item(&self, item: &Event) -> bool {
+        let named = |name: &str| self.people.contains(name) || self.hides(name);
         self.hides(&item.node_id)
-            || item
-                .related_id
-                .as_deref()
-                .is_some_and(|other| self.people.contains(other) || self.hides(other))
+            || item.related_id.as_deref().is_some_and(named)
+            || item.links.iter().any(|link| named(&link.node_id))
             || (MOMENTS.contains(&item.kind.as_str()) && self.in_period(&item.happened_from))
     }
 
@@ -625,6 +628,22 @@ pub fn current(db: &DbBridge, vault_path: &str) -> AppResult<Arc<Seals>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::store::EventLink;
+
+    #[test]
+    fn an_event_is_withheld_when_anyone_at_it_is_sealed() {
+        let sealed_person = node("People/ex.md", "person", serde_json::json!({ "sealed": true, "node_id": "uuid-ex" }), "");
+        let seals = compute(Vec::new(), &[sealed_person], &[]);
+        let mut meeting = item("moment", "Notes/day.md", None, "2026-05-01");
+        meeting.links = vec![
+            EventLink { node_id: "uuid-tuan".into(), role: "with".into(), label: None },
+            EventLink { node_id: "uuid-ex".into(), role: "with".into(), label: None },
+        ];
+        assert!(seals.hides_item(&meeting), "the second person at it is sealed");
+
+        meeting.links = vec![EventLink { node_id: "uuid-tuan".into(), role: "with".into(), label: None }];
+        assert!(!seals.hides_item(&meeting));
+    }
 
     #[test]
     fn a_relationship_that_began_inside_a_sealed_period_is_not_brought_back() {
@@ -748,8 +767,8 @@ mod tests {
         }
     }
 
-    fn item(kind: &str, node_id: &str, related: Option<&str>, from: &str) -> TimelineItem {
-        TimelineItem {
+    fn item(kind: &str, node_id: &str, related: Option<&str>, from: &str) -> Event {
+        Event {
             id: format!("{node_id}#{kind}"),
             kind: kind.into(),
             node_id: node_id.into(),
@@ -757,6 +776,10 @@ mod tests {
             title: String::new(),
             label: None,
             related_id: related.map(String::from),
+            links: Vec::new(),
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
             happened_from: from.into(),
             happened_to: from.into(),
             precision: "day".into(),

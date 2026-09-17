@@ -11,6 +11,12 @@
 //! - [`extract`] is tier 1: what a model reads out of the person's own
 //!   words, kept as proposals until the person accepts them (Nhát E).
 //! - [`reflect`] is decisions and looking back on them (Nhát F).
+//! - [`fold`] turns a day's note into the box its events came in, and its
+//!   pictures into evidence of them.
+//! - [`presence`] is when an object was around, read off the events that
+//!   name it: a worldline rather than a dated edge.
+//! - [`magnitude`] is how big an event was, read from its core alone
+//!   (`docs/su-kien-2026-09-16.md` §5).
 //! - [`media`] is transcripts and captions that stand in for recordings and
 //!   pictures, and pictures grouped into moments (Nhát G).
 //!
@@ -21,9 +27,12 @@
 pub mod asked;
 pub mod derive;
 pub mod extract;
+pub mod fold;
 pub mod frame;
 pub mod ledger;
+pub mod magnitude;
 pub mod media;
+pub mod presence;
 pub mod reflect;
 pub mod seal;
 pub mod store;

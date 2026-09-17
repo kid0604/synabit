@@ -2492,7 +2492,7 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
     // The timeline's lock first, then the cache's, as everywhere else.
     let state = ctx.app.state::<crate::timeline::TimelineState>();
     let mut store = state.lock().unwrap_or_else(|e| e.into_inner());
-    crate::timeline::store::catch_up(ctx.db, &mut store)?;
+    crate::timeline::store::catch_up_in(ctx.db, &mut store, Some(ctx.vault_path))?;
     let db = lock(ctx)?;
     let seals = crate::timeline::seal::current(&db, ctx.vault_path)?;
     let (from, to) = (crate::timeline::when::iso(span.from), crate::timeline::when::iso(span.to));
@@ -2524,6 +2524,10 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
     };
     items.retain(|item| !seals.hides_item(item));
 
+    // What to call everyone and everywhere the page names. One lookup, not one
+    // per event. See `timeline::store::names_in`.
+    let called = crate::timeline::store::names_in(&db, &items);
+
     let open = crate::timeline::when::iso(crate::timeline::when::open_end());
     let total = items.len();
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -2542,6 +2546,14 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
                 "to": if item.happened_to == open { "now".to_string() } else { item.happened_to.clone() },
                 "precision": item.precision,
                 "related_id": item.related_id,
+                // Everyone and everything the event names. One meeting can have
+                // three people in it; `related_id` only ever held the first.
+                // Ids and what to call them: the model answers with the name
+                // and can ask again with the id. A place that is only words
+                // the person typed answers for itself.
+                "with": crate::timeline::store::named(&item.links, "with", &called),
+                "where": crate::timeline::store::named(&item.links, "where", &called),
+                "evidence": crate::timeline::store::named(&item.links, "evidence", &called),
             })
         })
         .collect();

@@ -49,7 +49,8 @@ use serde_json::{json, Map, Value};
 
 use super::asked;
 use super::seal::Seals;
-use super::store::TimelineItem;
+use super::magnitude::{self, Signals};
+use super::store::Event;
 use super::when::{self, Precision, Span};
 use super::FOLDER;
 use crate::db::DbBridge;
@@ -59,7 +60,7 @@ use crate::syn::provider::{ChatMessage, ChatProvider, ChatRequest};
 /// Bump when the prompt or the reading of a reply changes enough that an old
 /// reading is worth replacing. Nothing is read again on its own when it does;
 /// the tray offers it (§4.5.3).
-pub const EXTRACTOR_VERSION: u32 = 1;
+pub const EXTRACTOR_VERSION: u32 = 2;
 
 /// Whether reading is on, for this vault. Synced, so it is decided once.
 pub const CONFIG_FILE: &str = "Timeline/extract.json";
@@ -471,12 +472,14 @@ Leave out: plans, intentions and anything that has not happened yet; to-do items
 knowledge and opinions; what happened only to someone else, told to them second-hand.\n\n\
 The entry is a {kind}, titled \"{title}\", written on {day} ({weekday}).\n\n\
 Reply with JSON only, in this shape:\n\
-{{\"moments\": [{{\"what\": \"a short title, in the entry's language\", \"when\": \"\", \"people\": [], \"quote\": \"\", \"confidence\": 0.0}}]}}\n\n\
+{{\"moments\": [{{\"what\": \"a short title, in the entry's language\", \"when\": \"\", \"people\": [], \"where\": \"\", \"quote\": \"\", \"confidence\": 0.0}}]}}\n\n\
 - when: the time as the entry gives it. Copy relative words exactly (\"hôm qua\", \"tuần trước\", \
 \"last week\"); they are counted from the day it was written. If the entry leaves the year \
 implied (\"tháng 4\" in an entry from 2024), you may complete it as \"2024-04\". Leave it \"\" \
 when the entry gives no time at all. Do not guess one.\n\
 - people: the others who took part, by the name the entry uses. Not the writer.\n\
+- where: the place, in the entry's own words. Leave it \"\" when the entry does not say. \
+Do not infer a place from what happened.\n\
 - quote: the words of the entry the moment rests on, copied exactly, one sentence at most.\n\
 - confidence: how sure you are it happened, 0 to 1.\n\
 - If nothing in it happened, reply {{\"moments\": []}}.\n\n\
@@ -497,6 +500,9 @@ pub struct RawMoment {
     pub when: String,
     #[serde(default)]
     pub people: Vec<String>,
+    /// Named `where` in the reply; a keyword here.
+    #[serde(default, rename = "where")]
+    pub place: String,
     #[serde(default)]
     pub quote: String,
     #[serde(default)]
@@ -619,6 +625,10 @@ pub struct Payload {
     /// Names the model gave that match nobody, kept as written.
     #[serde(default)]
     pub names: Vec<String>,
+    /// Where it happened, in the words the entry used. A node only if somebody
+    /// later decides it deserves one (§10, question 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
     #[serde(default)]
     pub quote: String,
 }
@@ -779,6 +789,7 @@ pub fn settle(input: &Input, raw: Vec<RawMoment>, people: &People, model: &str) 
                 title: title.to_string(),
                 people: ids,
                 names,
+                place: Some(moment.place.trim().to_string()).filter(|p| !p.is_empty()),
                 quote: moment.quote.trim().to_string(),
             },
             superseded_by: None,
@@ -1083,12 +1094,16 @@ pub fn happened_text(item: &Extracted) -> String {
 
 /// The `moments` entry an accepted proposal becomes. See `derive::moments`.
 pub fn moment_entry(item: &Extracted) -> Value {
-    json!({
+    let mut entry = json!({
         "title": item.payload.title,
         "happened": happened_text(item),
         "people": item.payload.people,
         "extract": item.id,
-    })
+    });
+    if let (Value::Object(fields), Some(place)) = (&mut entry, &item.payload.place) {
+        fields.insert("where".into(), Value::String(place.clone()));
+    }
+    entry
 }
 
 // ─── Tier 3 ──────────────────────────────────────────────────────
@@ -1182,10 +1197,11 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
         forget(&tx, &rel)?;
         for item in &file.items {
             tx.execute(
-                "INSERT OR REPLACE INTO timeline_items
+                "INSERT OR REPLACE INTO events
                     (id, kind, happened_from, happened_to, precision, time_source, recorded_at,
-                     node_id, node_type, title, label, related_id, source, confidence, evidence, month_file)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'extract', ?6, ?7, '', ?8, NULL, ?9, 'extract', ?10, ?11, ?12)",
+                     node_id, node_type, title, label, related_id, source, confidence, evidence, month_file,
+                     magnitude, container_node)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'extract', ?6, ?7, '', ?8, NULL, ?9, 'extract', ?10, ?11, ?12, ?13, ?7)",
                 // Per file: two devices, or a sync conflict copy, can hold the
                 // same item, and forgetting one file must not take the other's row.
                 params![
@@ -1201,9 +1217,43 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
                     item.confidence,
                     serde_json::to_string(item).unwrap_or_default(),
                     rel,
+                    magnitude::of(Signals {
+                        from: &item.happened_from,
+                        to: &item.happened_to,
+                        people: item.payload.people.len(),
+                        evidence: item.evidence.len(),
+                        text: &item.payload.title,
+                        source: "extract",
+                    }),
                 ],
             )
             .map_err(sql)?;
+            // Everyone it named, and what it was read from. See
+            // `docs/su-kien-2026-09-16.md` §3.2.
+            let row_id = format!("{}@{}", item.id, rel);
+            tx.execute("DELETE FROM event_links WHERE event_id = ?1", params![row_id])
+                .map_err(sql)?;
+            for person in &item.payload.people {
+                tx.execute(
+                    "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'with', NULL)",
+                    params![row_id, person],
+                )
+                .map_err(sql)?;
+            }
+            for evidence in &item.evidence {
+                tx.execute(
+                    "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'evidence', NULL)",
+                    params![row_id, evidence.node],
+                )
+                .map_err(sql)?;
+            }
+            if let Some(place) = &item.payload.place {
+                tx.execute(
+                    "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'where', NULL)",
+                    params![row_id, place],
+                )
+                .map_err(sql)?;
+            }
         }
         for run in &file.sources {
             tx.execute(
@@ -1265,7 +1315,13 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
     // Moments accepted from something with no frontmatter of its own. Few,
     // and read whole each time.
     tx.execute(
-        "DELETE FROM timeline_items WHERE source = 'user' AND time_source = 'review'",
+        "DELETE FROM event_links WHERE event_id IN
+            (SELECT id FROM events WHERE source = 'user' AND time_source = 'review')",
+        [],
+    )
+    .map_err(sql)?;
+    tx.execute(
+        "DELETE FROM events WHERE source = 'user' AND time_source = 'review'",
         [],
     )
     .map_err(sql)?;
@@ -1274,10 +1330,10 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
             continue;
         };
         tx.execute(
-            "INSERT OR REPLACE INTO timeline_items
+            "INSERT OR REPLACE INTO events
                 (id, kind, happened_from, happened_to, precision, time_source, recorded_at,
-                 node_id, node_type, title, label, related_id, source, confidence)
-             VALUES (?1, 'moment', ?2, ?3, ?4, 'review', ?5, ?6, 'syn_conversation', ?7, ?7, ?8, 'user', ?9)",
+                 node_id, node_type, title, label, related_id, source, confidence, magnitude, container_node)
+             VALUES (?1, 'moment', ?2, ?3, ?4, 'review', ?5, ?6, 'syn_conversation', ?7, ?7, ?8, 'user', ?9, ?10, ?6)",
             params![
                 format!("{}#accepted", moment.id),
                 moment.happened_from,
@@ -1288,9 +1344,44 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
                 moment.payload.title,
                 moment.payload.people.first(),
                 moment.confidence,
+                magnitude::of(Signals {
+                    from: &moment.happened_from,
+                    to: &moment.happened_to,
+                    people: moment.payload.people.len(),
+                    evidence: moment.evidence.len(),
+                    text: &moment.payload.title,
+                    source: "user",
+                }),
             ],
         )
         .map_err(sql)?;
+
+        // Everyone it named, not just the first. A moment kept from a
+        // conversation cannot be derived from the vault again, so this is the
+        // only place these links are written — and `Seals::hides_item` reads
+        // them to decide whether the moment may be shown at all.
+        let row_id = format!("{}#accepted", moment.id);
+        for person in &moment.payload.people {
+            tx.execute(
+                "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'with', NULL)",
+                params![row_id, person],
+            )
+            .map_err(sql)?;
+        }
+        for evidence in &moment.evidence {
+            tx.execute(
+                "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'evidence', NULL)",
+                params![row_id, evidence.node],
+            )
+            .map_err(sql)?;
+        }
+        if let Some(place) = &moment.payload.place {
+            tx.execute(
+                "INSERT OR REPLACE INTO event_links (event_id, node_id, role, label) VALUES (?1, ?2, 'where', NULL)",
+                params![row_id, place],
+            )
+            .map_err(sql)?;
+        }
     }
 
     tx.commit().map_err(sql)?;
@@ -1299,7 +1390,13 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
 
 fn forget(conn: &Connection, rel: &str) -> AppResult<()> {
     conn.execute(
-        "DELETE FROM timeline_items WHERE month_file = ?1 AND source = 'extract'",
+        "DELETE FROM event_links WHERE event_id IN
+            (SELECT id FROM events WHERE month_file = ?1 AND source = 'extract')",
+        params![rel],
+    )
+    .map_err(sql)?;
+    conn.execute(
+        "DELETE FROM events WHERE month_file = ?1 AND source = 'extract'",
         params![rel],
     )
     .map_err(sql)?;
@@ -1315,7 +1412,7 @@ pub fn item(conn: &Connection, id: &str) -> AppResult<Option<Extracted>> {
     ensure_schema(conn)?;
     let found = conn
         .query_row(
-            "SELECT evidence FROM timeline_items
+            "SELECT evidence FROM events
              WHERE substr(id, 1, length(?1) + 1) = ?1 || '@' AND source = 'extract'
              LIMIT 1",
             params![id],
@@ -1533,7 +1630,7 @@ pub fn proposals(
             {
                 continue;
             }
-            let as_item = TimelineItem {
+            let as_item = Event {
                 id: extracted.id.clone(),
                 kind: "moment".into(),
                 node_id: input.node_id.split('#').next().unwrap_or_default().to_string(),
@@ -1541,6 +1638,10 @@ pub fn proposals(
                 title: extracted.payload.title.clone(),
                 label: None,
                 related_id: extracted.payload.people.first().cloned(),
+                links: Vec::new(),
+                magnitude: 0.0,
+                container_node: None,
+                props: serde_json::Value::Null,
                 happened_from: extracted.happened_from.clone(),
                 happened_to: extracted.happened_to.clone(),
                 precision: extracted.precision.clone(),
@@ -1823,6 +1924,7 @@ mod tests {
             people: people.iter().map(|p| p.to_string()).collect(),
             quote: quote.into(),
             confidence: Some(0.8),
+            ..RawMoment::default()
         }
     }
 
@@ -2183,6 +2285,88 @@ mod tests {
         assert_eq!(moment.label.as_deref(), Some("Khám mắt cho mẹ"));
         assert_eq!(when::iso(moment.span.from), "2024-06-01");
         assert_eq!(moment.time_source, "user");
+    }
+
+    /// The place goes the whole way: out of the model, through the guards,
+    /// into the note's frontmatter, and back out as a `where` link.
+    #[test]
+    fn a_place_the_model_read_reaches_the_timeline_as_a_place() {
+        let read = input("note", "2024-06-02", true, DAILY);
+        let raw = vec![RawMoment {
+            what: "Khám mắt cho mẹ".into(),
+            when: "hôm qua".into(),
+            people: vec![],
+            place: "bệnh viện".into(),
+            quote: "Hôm qua đưa mẹ đi khám mắt ở bệnh viện".into(),
+            confidence: Some(0.9),
+        }];
+        let (items, dropped) = settle(&read, raw, &People::default(), "m");
+        assert_eq!(dropped.total(), 0, "{dropped:?}");
+        assert_eq!(items[0].payload.place.as_deref(), Some("bệnh viện"));
+
+        let entry = moment_entry(&items[0]);
+        assert_eq!(entry["where"], "bệnh viện");
+
+        let properties = json!({ "date": "2024-06-02", "moments": [entry] });
+        let derived = crate::timeline::derive::derive(
+            &crate::timeline::derive::NodeView {
+                id: "Notes/2024-06-02.md",
+                node_type: "note",
+                title: "2024-06-02",
+                properties: &properties,
+            },
+            &HashMap::new(),
+        );
+        let moment = derived.iter().find(|d| d.kind == "moment").expect("a moment");
+        assert!(
+            moment.links.contains(&crate::timeline::derive::Link::at("bệnh viện")),
+            "{:?}",
+            moment.links
+        );
+    }
+
+    /// A moment kept from a conversation cannot be derived from the vault
+    /// again, so the links it names are written when it is loaded. Sealing
+    /// reads those links: without them, a sealed person standing second in the
+    /// list is shown, because `related_id` only ever held the first.
+    #[test]
+    fn an_accepted_moment_names_everyone_it_named() {
+        let vault = tempfile::tempdir().unwrap();
+        let vault_path = vault.path().to_string_lossy().to_string();
+        let read = input("note", "2024-06-02", true, DAILY);
+        let (mut items, _) = settle(&read, parse_reply(REPLY).unwrap(), &People::default(), "m");
+        let mut moment = items.remove(0);
+        moment.payload.people = vec!["uuid-a".into(), "uuid-sealed".into(), "uuid-c".into()];
+
+        let now = Utc::now();
+        decide(
+            &vault_path,
+            "macbook",
+            Decision {
+                item: moment.id.clone(),
+                decision: "accepted".into(),
+                node: "Syn/chat.md".into(),
+                at: crate::utils::timestamp::canonical(now),
+                moment: Some(moment.clone()),
+            },
+            now,
+        )
+        .unwrap();
+
+        let timeline = crate::timeline::TimelineStore::open_in_memory().unwrap();
+        load(timeline.conn(), &vault_path).unwrap();
+
+        let row = format!("{}#accepted", moment.id);
+        let mut stmt = timeline
+            .conn()
+            .prepare("SELECT node_id FROM event_links WHERE event_id = ?1 AND role = 'with' ORDER BY node_id")
+            .unwrap();
+        let named: Vec<String> = stmt.query_map([&row], |r| r.get(0)).unwrap().flatten().collect();
+        assert_eq!(
+            named,
+            vec!["uuid-a", "uuid-c", "uuid-sealed"],
+            "everyone it named has to be a link, or the seal cannot see them"
+        );
     }
 
     /// The live half of the eval, on hand-labelled notes. Spends real credit.
