@@ -3,7 +3,7 @@
 //! Scrubbing the graph to a month asks, for every node, whether it was part of
 //! the user's life yet, and for every relationship with dates, whether it held.
 //! The answers are computed here once, so the graph only looks them up while
-//! it is dragged. See `docs/tua-lai-2026-09-14.md` §5 and Nhát B.
+//! it is dragged. See `docs/timeline-2026-09-17.md` §10.
 //!
 //! # When a node arrives
 //!
@@ -24,7 +24,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
 use super::seal::SealedPeriod;
-use super::store::Event;
+use super::store::{Event, EventLink};
 use super::when;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -53,7 +53,7 @@ pub struct TimedLink {
     pub until: Option<String>,
     /// How many events had both of them in it. Zero for a relationship that
     /// was declared rather than met: `connections[]` is still read, but as one
-    /// more statement rather than the only source (§6).
+    /// more statement rather than the only source (§9).
     pub met: u32,
 }
 
@@ -180,7 +180,8 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
             died_on.insert(item.node_id.clone(), item.happened_from.clone());
         }
 
-        let other = item.related_id.as_deref().and_then(resolve);
+        // Người kia của một quan hệ, từ chính link của sự kiện.
+        let other = there.first().cloned();
         if !NOT_AN_ARRIVAL.contains(&kind) {
             earliest(&mut first_seen, &item.node_id, &item.happened_from);
             if let Some(other) = &other {
@@ -274,9 +275,11 @@ mod tests {
             node_id: node_id.to_string(),
             node_type: String::new(),
             title: String::new(),
-            label: None,
-            related_id: related.map(String::from),
-            links: Vec::new(),
+            node_title: String::new(),
+            // Người kia nằm ở link, không còn ở một cột (§4.9).
+            links: related
+                .map(|node| vec![EventLink { node_id: node.to_string(), role: "with".into(), label: None }])
+                .unwrap_or_default(),
             magnitude: 0.0,
             container_node: None,
             props: serde_json::Value::Null,

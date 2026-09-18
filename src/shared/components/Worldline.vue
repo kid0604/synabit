@@ -5,7 +5,7 @@
  * Worked out from the events that name it, never declared — so a person the
  * vault says nothing about comes back with nothing, and this says so rather
  * than drawing an empty year. See `src-tauri/src/timeline/presence.rs` and
- * §6 of `docs/su-kien-2026-09-16.md`.
+ * §9 of `docs/timeline-2026-09-17.md`.
  */
 import { ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';

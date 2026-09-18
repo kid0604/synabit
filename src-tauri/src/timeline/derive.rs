@@ -3,8 +3,8 @@
 //! Every item here comes from a field that holds a date, read as written.
 //! There is no model and no guessing: a node whose dates are missing or
 //! unreadable gives no items, which is the truth about what it says. The list
-//! of sources, and of what is deliberately left out, is §4.7.A of
-//! `docs/tua-lai-2026-09-14.md`.
+//! of sources, and of what is deliberately left out, is §4.8.1 of
+//! `docs/timeline-2026-09-17.md`.
 //!
 //! This is a pure function of one node, plus the vault's schemas. The one
 //! source that needs two nodes, a picture dated by the note it sits in, is
@@ -28,13 +28,14 @@ pub struct NodeView<'a> {
 
 /// A node an event names, and how it took part.
 ///
-/// Four roles, from `docs/su-kien-2026-09-16.md` §3.2: `with` took part,
+/// Four roles, from `docs/timeline-2026-09-17.md` §4.2: `with` took part,
 /// `where` is the place, `about` is what it concerns, `evidence` is what shows
 /// it happened. A photograph does not attend a wedding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Link {
     pub node: String,
     pub role: &'static str,
+    /// Nhãn của vai: "cô dâu chú rể", "hệ thống".
     pub label: Option<String>,
 }
 
@@ -44,7 +45,7 @@ impl Link {
     }
 
     /// Where it happened. Either a `Places/` node or the words the person
-    /// wrote: §3.2 allows both, and nothing here can tell which apart without
+    /// wrote: §4.2 allows both, and nothing here can tell which apart without
     /// the vault. Resolving the words to a node is the editor's job, later.
     pub fn at(node: impl Into<String>) -> Self {
         Link { node: node.into(), role: "where", label: None }
@@ -57,11 +58,12 @@ pub struct Derived {
     pub span: Span,
     /// Where the date came from: `frontmatter`, `filename`, or `note`.
     pub time_source: &'static str,
-    pub label: Option<String>,
+    /// Tên của chính sự kiện. Node sinh ra nó có tên riêng (§4.3).
+    pub title: Option<String>,
     /// Everything this event names. A meeting has as many as were there.
     pub links: Vec<Link>,
     /// What the person wrote that this code has no meaning for, kept as
-    /// written. Rule 1 of §3.3: not understood is not the same as not wanted.
+    /// written. Rule 1 of §4.3: not understood is not the same as not wanted.
     pub props: Value,
     /// Whether a note wrote this event out rather than being it. A daily note
     /// is the box several events came in.
@@ -73,7 +75,7 @@ fn item(kind: &'static str, span: Span) -> Derived {
         kind,
         span,
         time_source: "frontmatter",
-        label: None,
+        title: None,
         links: Vec::new(),
         props: Value::Null,
         container: false,
@@ -102,7 +104,7 @@ fn moments(p: &Value) -> Vec<Derived> {
             let span = dated(moment, "happened")?;
             Some(Derived {
                 time_source: "user",
-                label: text(moment, "title").map(String::from),
+                title: text(moment, "title").map(String::from),
                 links: cast(moment),
                 props: rest_of(moment),
                 // The note holding this frontmatter is the box, not the event.
@@ -120,7 +122,7 @@ const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where"];
 /// Everyone and everywhere the moment names.
 ///
 /// Keeping only the first person is how a wedding became a meeting with one
-/// person; see §1 of `docs/su-kien-2026-09-16.md`.
+/// person; see §3 of `docs/timeline-2026-09-17.md`.
 fn cast(moment: &Value) -> Vec<Link> {
     let names = |key: &str| -> Vec<String> {
         match moment.get(key) {
@@ -162,7 +164,7 @@ fn rest_of(moment: &Value) -> Value {
 fn decision(p: &Value) -> Vec<Derived> {
     let mut out: Vec<Derived> = dated(p, "decided_on")
         .map(|span| Derived {
-            label: text(p, "expected").map(String::from),
+            title: text(p, "expected").map(String::from),
             ..item("decision", span)
         })
         .into_iter()
@@ -170,7 +172,7 @@ fn decision(p: &Value) -> Vec<Derived> {
     if let Some(Value::Array(reviews)) = p.get("reviews") {
         out.extend(reviews.iter().filter_map(|review| {
             dated(review, "on").map(|span| Derived {
-                label: text(review, "happened").map(|h| h.chars().take(120).collect()),
+                title: text(review, "happened").map(|h| h.chars().take(120).collect()),
                 ..item("decision_review", span)
             })
         }));
@@ -186,7 +188,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
         "interaction" => dated(p, "date")
             .map(|span| Derived {
                 links: text(p, "person_id").map(Link::with).into_iter().collect(),
-                label: text(p, "interaction_type").map(String::from),
+                title: text(p, "interaction_type").map(String::from),
                 ..item("interaction", span)
             })
             .into_iter()
@@ -211,7 +213,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
             .flatten()
             .filter_map(|key| {
                 dated(p, key).map(|span| Derived {
-                    label: Some(key.clone()),
+                    title: Some(key.clone()),
                     ..item("field", span)
                 })
             })
@@ -221,7 +223,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
 
 /// Types the app owns whose dates are not events in a life: storage, views,
 /// the assistant's own records, money (which reaches the timeline only as
-/// density, never as items; §4.7.A).
+/// density, never as items; §4.8.1).
 fn never_dated(node_type: &str) -> bool {
     node_type.starts_with("finance_")
         || node_type.starts_with("syn_")
@@ -292,7 +294,7 @@ fn person(p: &Value) -> Vec<Derived> {
                 .collect::<Vec<_>>()
                 .join(" · ");
             out.push(Derived {
-                label: (!label.is_empty()).then_some(label),
+                title: (!label.is_empty()).then_some(label),
                 ..item("experience", span)
             });
         }
@@ -318,7 +320,7 @@ fn person(p: &Value) -> Vec<Derived> {
             };
             out.push(Derived {
                 links: vec![Link::with(other)],
-                label: text(link, "relation_type").map(String::from),
+                title: text(link, "relation_type").map(String::from),
                 ..item(
                     "connection",
                     Span {
@@ -339,7 +341,7 @@ fn person(p: &Value) -> Vec<Derived> {
         for entry in dates {
             if let Some(span) = dated(entry, "date") {
                 out.push(Derived {
-                    label: text(entry, "label").map(String::from),
+                    title: text(entry, "label").map(String::from),
                     ..item("important_date", span)
                 });
             }
@@ -371,7 +373,7 @@ fn event(node: &NodeView) -> Option<Derived> {
     };
 
     Some(Derived {
-        label: (!event.location.trim().is_empty()).then(|| event.location.clone()),
+        title: (!event.location.trim().is_empty()).then(|| event.location.clone()),
         ..item("event", span)
     })
 }
@@ -400,7 +402,7 @@ fn media_by_filename(node: &NodeView) -> Option<Derived> {
     if !is_media(name) {
         return None;
     }
-    // The camera's own date first (§4.6), where this device has read it;
+    // The camera's own date first (§4.8.5), where this device has read it;
     // then a date in the name.
     if let Some(day) = text(node.properties, "shot_at")
         .and_then(|shot| shot.get(..10))
@@ -584,7 +586,7 @@ mod tests {
             json!({ "date": "2016-05-03", "person_id": "People/tuan.md", "interaction_type": "coffee" }),
         );
         assert_eq!(items[0].links, vec![Link::with("People/tuan.md")]);
-        assert_eq!(items[0].label.as_deref(), Some("coffee"));
+        assert_eq!(items[0].title.as_deref(), Some("coffee"));
     }
 
     #[test]
@@ -600,7 +602,7 @@ mod tests {
         );
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].span.to, when::open_end());
-        assert_eq!(items[0].label.as_deref(), Some("Founder · Mây"));
+        assert_eq!(items[0].title.as_deref(), Some("Founder · Mây"));
         assert_eq!((items[1].span.from, items[1].span.to), (day(2014, 7, 1), day(2018, 7, 31)));
         assert_eq!(items[2].span.precision, Precision::Year);
     }
@@ -613,7 +615,7 @@ mod tests {
         );
         let kinds: Vec<_> = items.iter().map(|i| i.kind).collect();
         assert_eq!(kinds, ["birthday", "important_date"]);
-        assert_eq!(items[1].label.as_deref(), Some("Ngày cưới"));
+        assert_eq!(items[1].title.as_deref(), Some("Ngày cưới"));
     }
 
     #[test]
@@ -624,7 +626,7 @@ mod tests {
         );
         assert_eq!(items.len(), 1);
         assert_eq!((items[0].span.from, items[0].span.to), (day(2016, 5, 14), day(2016, 5, 15)));
-        assert_eq!(items[0].label.as_deref(), Some("Hà Nội"));
+        assert_eq!(items[0].title.as_deref(), Some("Hà Nội"));
     }
 
     /// The gate in the doc: an event written before `start_at` existed.
@@ -670,7 +672,7 @@ mod tests {
         );
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].kind, "field");
-        assert_eq!(items[0].label.as_deref(), Some("vaccinated_at"));
+        assert_eq!(items[0].title.as_deref(), Some("vaccinated_at"));
 
         let unknown = json!({ "vaccinated_at": "2026-08-30" });
         let none = derive(
@@ -751,7 +753,7 @@ mod tests {
         assert_eq!(items.len(), 2, "no start, or an end before the start, gives nothing");
         assert_eq!(items[0].kind, "connection");
         assert_eq!(items[0].links, vec![Link::with("uuid-ha")]);
-        assert_eq!(items[0].label.as_deref(), Some("partner"));
+        assert_eq!(items[0].title.as_deref(), Some("partner"));
         assert_eq!(items[0].span.to, when::open_end());
         assert_eq!((items[1].span.from, items[1].span.to), (day(2014, 7, 1), day(2018, 7, 31)));
     }

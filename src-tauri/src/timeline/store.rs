@@ -3,7 +3,7 @@
 //! # Why a file of its own
 //!
 //! `vault_cache.db` is treated as rebuildable, and it already holds things
-//! that are not (§3.4 of `docs/tua-lai-2026-09-14.md`). The timeline is kept
+//! that are not (§4.7 of `docs/timeline-2026-09-17.md`). The timeline is kept
 //! apart so that losing the cache does not lose it, and losing it costs only
 //! a re-read of the cache: every item in this nhát is derived, so rebuilding
 //! is parsing, never a model call.
@@ -38,12 +38,15 @@ pub const FILE_NAME: &str = "timeline.db";
 /// Bump when [`derive`] would read an unchanged node differently, so every
 /// device derives its timeline again on the next launch.
 ///
+/// 6: `title` là tên của sự kiện chứ không phải tên node, `label` biến mất,
+/// `sealed` và `related_id` bị bỏ, và gộp khớp theo chồng lấn (§16 Bước 1).
+///
 /// 5: the event model settled — links for everyone an event names, a size, the
 /// free-form part, and folding as a mark rather than a deletion. A device that
 /// built its index under any of the versions in between holds rows derived by
 /// rules that no longer apply, and nothing else would ever ask it to look
 /// again: `node_sources` still matches, so every node looks unchanged.
-const DERIVE_VERSION: &str = "5";
+const DERIVE_VERSION: &str = "6";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct EventLink {
@@ -58,10 +61,10 @@ pub struct Event {
     pub kind: String,
     pub node_id: String,
     pub node_type: String,
+    /// Tên của **sự kiện** — thứ duy nhất hiện trên dải (§4.3).
     pub title: String,
-    pub label: Option<String>,
-    /// The first `with`, for readers that grew up asking for one name.
-    pub related_id: Option<String>,
+    /// Tên của node đã sinh ra nó, khi hai cái khác nhau.
+    pub node_title: String,
     /// Everyone and everything this event names.
     pub links: Vec<EventLink>,
     pub happened_from: String,
@@ -78,7 +81,7 @@ pub struct Event {
 }
 
 /// Every column an [`Event`] is read from, in the order [`read_event`] wants.
-const COLUMNS: &str = "id, kind, node_id, node_type, title, label, related_id, \
+const COLUMNS: &str = "id, kind, node_id, node_type, title, node_title, \
                        happened_from, happened_to, precision, time_source, source, \
                        magnitude, props, container_node";
 
@@ -206,7 +209,7 @@ impl TimelineStore {
 
         // `timeline_items` became `events` when the unit of the timeline became
         // a thing that happened rather than a node carrying a date
-        // (`docs/su-kien-2026-09-16.md` §7). This runs before the CREATE below:
+        // (`docs/timeline-2026-09-17.md` §13). This runs before the CREATE below:
         // the other order would make an empty `events` beside the full old
         // table, and every row anybody had would be stranded in it.
         let table = |name: &str| {
@@ -261,15 +264,13 @@ impl TimelineStore {
                 node_id        TEXT,
                 node_type      TEXT,
                 title          TEXT NOT NULL DEFAULT '',
-                label          TEXT,
-                related_id     TEXT,
+                node_title     TEXT,
                 source         TEXT NOT NULL,
                 confidence     REAL,
                 evidence       TEXT,
                 month_file     TEXT,
                 superseded_by  TEXT,
-                sealed         INTEGER NOT NULL DEFAULT 0,
-                -- The event model, §5. `props` is one JSON object rather than a
+                -- The event model, §4.8. `props` is one JSON object rather than a
                 -- table of (key, value): see the doc for why not EAV.
                 magnitude      REAL NOT NULL DEFAULT 0,
                 props          TEXT NOT NULL DEFAULT '{}',
@@ -283,7 +284,7 @@ impl TimelineStore {
              -- Everything an event names, and how it took part. One event has
              -- as many rows here as it has people, places and evidence; the
              -- `related_id` column above holds the first of them, for the
-             -- readers that still ask for one. See `docs/su-kien-2026-09-16.md`.
+             -- readers that still ask for one. See `docs/timeline-2026-09-17.md` §4.2.
              CREATE TABLE IF NOT EXISTS event_links (
                 event_id TEXT NOT NULL,
                 node_id  TEXT NOT NULL,
@@ -312,6 +313,7 @@ impl TimelineStore {
             ("props", "TEXT NOT NULL DEFAULT '{}'"),
             ("container_node", "TEXT"),
             ("folded_into", "TEXT"),
+            ("node_title", "TEXT"),
         ] {
             let present = conn
                 .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?1")
@@ -322,6 +324,36 @@ impl TimelineStore {
                     .map_err(sql)?;
             }
         }
+
+        // §4.9: `sealed` chưa từng được ai ghi, `related_id` đã được `event_links`
+        // thay. Bỏ khỏi cả những máy đã lỡ có chúng.
+        // Hàng của bản cũ giữ tên sự kiện ở `label`, còn `title` là tên node.
+        // Chuyển sang trước khi bỏ cột, nếu không thì một moment đã duyệt —
+        // thứ không dựng lại được từ field — mất luôn cái tên của nó.
+        let had_label = conn
+            .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'label'")
+            .and_then(|mut stmt| stmt.exists([]))
+            .unwrap_or(false);
+        if had_label {
+            conn.execute_batch(
+                "UPDATE events SET node_title = title
+                  WHERE label IS NOT NULL AND label <> '' AND title IS NOT NULL AND title <> '';
+                 UPDATE events SET title = label
+                  WHERE label IS NOT NULL AND label <> '';",
+            )
+            .ok();
+        }
+
+        for gone in ["sealed", "related_id", "label"] {
+            let present = conn
+                .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?1")
+                .and_then(|mut stmt| stmt.exists(params![gone]))
+                .unwrap_or(false);
+            if present {
+                conn.execute_batch(&format!("ALTER TABLE events DROP COLUMN {gone};")).ok();
+            }
+        }
+        conn.execute_batch("DROP INDEX IF EXISTS idx_events_rel;").ok();
 
         // A worldline is worked out when asked now, not kept — the stored one
         // could not pass through the seal filter. See `timeline::presence`.
@@ -334,7 +366,6 @@ impl TimelineStore {
              DROP INDEX IF EXISTS idx_timeline_rel;
              CREATE INDEX IF NOT EXISTS idx_events_range ON events(happened_from, happened_to);
              CREATE INDEX IF NOT EXISTS idx_events_node  ON events(node_id);
-             CREATE INDEX IF NOT EXISTS idx_events_rel   ON events(related_id);
              DROP INDEX IF EXISTS idx_events_mag;",
         )
         .map_err(sql)?;
@@ -481,7 +512,7 @@ impl TimelineStore {
     /// What overlaps `span`, up to `today`, most precisely known first.
     ///
     /// The question is cut off at today, because the timeline is history and a
-    /// plan is not (§4.7.C). So asking about next year finds nothing, not even
+    /// plan is not (§4.4). So asking about next year finds nothing, not even
     /// the job held now, whose span runs on to `open_end`; asking about this
     /// year finds that job, because it is still going.
     pub fn query(&self, span: Span, today: NaiveDate) -> AppResult<Vec<Event>> {
@@ -496,7 +527,7 @@ impl TimelineStore {
                     "SELECT {COLUMNS}
                      FROM events
                      WHERE happened_from <= ?1 AND happened_to >= ?2
-                       AND superseded_by IS NULL AND sealed = 0 AND source != 'extract' AND folded_into IS NULL
+                       AND superseded_by IS NULL AND source != 'extract' AND folded_into IS NULL
                      ORDER BY julianday(happened_to) - julianday(happened_from), happened_from, kind, id"
                 ),
             )
@@ -523,7 +554,7 @@ impl TimelineStore {
             "SELECT {COLUMNS}
              FROM events
              WHERE happened_from <= ?1 AND happened_to >= ?2
-               AND superseded_by IS NULL AND sealed = 0 AND source != 'extract'
+               AND superseded_by IS NULL AND source != 'extract'
              ORDER BY happened_from, kind, id"
         );
         let mut stmt = self.conn.prepare(&statement).map_err(sql)?;
@@ -555,7 +586,7 @@ impl TimelineStore {
         values.extend(names.iter().map(|name| name.to_string()));
         self.select(
             &format!(
-                "happened_from <= ?1 AND (node_id IN ({marks}) OR related_id IN ({marks}) \
+                "happened_from <= ?1 AND (node_id IN ({marks}) \
                  OR id IN (SELECT event_id FROM event_links WHERE node_id IN ({marks})))"
             ),
             values,
@@ -566,7 +597,7 @@ impl TimelineStore {
         let statement = format!(
             "SELECT {COLUMNS}
              FROM events
-             WHERE {condition} AND superseded_by IS NULL AND sealed = 0 AND source != 'extract' AND folded_into IS NULL AND folded_into IS NULL
+             WHERE {condition} AND superseded_by IS NULL AND source != 'extract' AND folded_into IS NULL AND folded_into IS NULL
              ORDER BY happened_from, kind, id"
         );
         let mut stmt = self.conn.prepare(&statement).map_err(sql)?;
@@ -616,20 +647,19 @@ fn read_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
         node_id: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
         node_type: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
         title: r.get(4)?,
-        label: r.get(5)?,
-        related_id: r.get(6)?,
+        node_title: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
         links: Vec::new(),
-        happened_from: r.get(7)?,
-        happened_to: r.get(8)?,
-        precision: r.get(9)?,
-        time_source: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
-        source: r.get(11)?,
-        magnitude: r.get::<_, Option<f64>>(12)?.unwrap_or_default(),
+        happened_from: r.get(6)?,
+        happened_to: r.get(7)?,
+        precision: r.get(8)?,
+        time_source: r.get::<_, Option<String>>(9)?.unwrap_or_default(),
+        source: r.get(10)?,
+        magnitude: r.get::<_, Option<f64>>(11)?.unwrap_or_default(),
         props: r
-            .get::<_, Option<String>>(13)?
+            .get::<_, Option<String>>(12)?
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or(Value::Null),
-        container_node: r.get(14)?,
+        container_node: r.get(13)?,
     })
 }
 
@@ -670,7 +700,7 @@ pub fn node_for(cache: &DbBridge, name: &str) -> Option<String> {
 /// The names an event's links go by in one role, ready to show.
 ///
 /// An id nothing is known about answers for itself: a place that is only the
-/// words somebody typed is already its own name (§3.2, and §10 question 4 —
+/// words somebody typed is already its own name (§4.2, and §14 question 4 —
 /// free text first, a node when it earns one).
 pub fn named(links: &[EventLink], role: &str, names: &HashMap<String, String>) -> Vec<String> {
     links
@@ -774,24 +804,22 @@ fn signature(node: &SnapshotNode, date_keys: Option<&Vec<String>>) -> String {
 fn insert_derived(tx: &Transaction, id: &str, node: &SnapshotNode, derived: &Derived) -> AppResult<()> {
     let (from, to) = (when::iso(derived.span.from), when::iso(derived.span.to));
     let played = |role: &str| derived.links.iter().filter(|link| link.role == role).count();
-    let text = match &derived.label {
-        Some(label) => format!("{} {label}", node.title),
-        None => node.title.clone(),
-    };
+    // Tên của sự kiện, và nếu nó không tự đặt tên thì mượn tên node.
+    let title = derived.title.clone().unwrap_or_else(|| node.title.clone());
     let size = magnitude::of(Signals {
         from: &from,
         to: &to,
         people: played("with"),
         evidence: played("evidence"),
-        text: &text,
+        text: &title,
         source: "derived",
     });
     tx.execute(
         "INSERT OR REPLACE INTO events
             (id, kind, happened_from, happened_to, precision, time_source,
-             node_id, node_type, title, label, related_id, source,
+             node_id, node_type, title, node_title, source,
              magnitude, props, container_node)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'derived', ?12, ?13, ?14)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'derived', ?11, ?12, ?13)",
         params![
             id,
             derived.kind,
@@ -801,9 +829,8 @@ fn insert_derived(tx: &Transaction, id: &str, node: &SnapshotNode, derived: &Der
             derived.time_source,
             node.id,
             node.node_type,
+            title,
             node.title,
-            derived.label,
-            derived.links.first().filter(|link| link.role == "with").map(|link| &link.node),
             size,
             props_text(&derived.props),
             derived.container.then(|| node.id.clone()),
@@ -908,8 +935,8 @@ fn place_media_by_note(tx: &Transaction, snapshot: &Snapshot) -> AppResult<()> {
         tx.execute(
             "INSERT OR REPLACE INTO events
                 (id, kind, happened_from, happened_to, precision, time_source,
-                 node_id, node_type, title, related_id, source, magnitude)
-             VALUES (?1, 'media', ?2, ?3, ?4, 'note', ?5, ?6, ?7, ?8, 'derived', ?9)",
+                 node_id, node_type, title, node_title, source, magnitude)
+             VALUES (?1, 'media', ?2, ?3, ?4, 'note', ?5, ?6, ?7, ?7, 'derived', ?8)",
             params![
                 format!("{file_id}#media#note"),
                 from,
@@ -918,7 +945,6 @@ fn place_media_by_note(tx: &Transaction, snapshot: &Snapshot) -> AppResult<()> {
                 file.id,
                 file.node_type,
                 file.title,
-                note_id,
                 magnitude::of(Signals {
                     from,
                     to,
@@ -1030,7 +1056,11 @@ mod tests {
             .find(|item| item.kind == "moment")
             .expect("the moment");
         assert_eq!(moment.links.len(), 3, "{:?}", moment.links);
-        assert_eq!(moment.related_id.as_deref(), Some("uuid-tuan"), "the old single name still answers");
+        assert!(
+            moment.links.iter().any(|link| link.node_id == "uuid-tuan" && link.role == "with"),
+            "{:?}",
+            moment.links
+        );
     }
 
     #[test]
@@ -1184,8 +1214,16 @@ mod tests {
             vec!["kept#accepted"],
             "what a person accepted is kept; what was derived is derived again"
         );
-        assert_eq!(kept[0].label.as_deref(), Some("Đám cưới Tuấn và Thuỳ"));
-        assert_eq!(kept[0].related_id.as_deref(), Some("uuid-tuan"), "the old column still reads");
+        assert_eq!(
+            kept[0].title, "Đám cưới Tuấn và Thuỳ",
+            "tên sự kiện của bản cũ nằm ở `label`, phải theo sang `title` chứ không được mất"
+        );
+        // Hàng này của bản cũ không có tên node nào để lui về: nó viết tên sự
+        // kiện vào `label` và để `title` trống.
+        assert_eq!(kept[0].node_title, "");
+        // Cột `related_id` của bản cũ bị bỏ cùng lược đồ (§4.9). Không mất ai:
+        // một moment đã duyệt được nạp lại từ file duyệt trong vault, và lần
+        // nạp đó ghi đủ link cho mọi người nó nhắc tới — chứ không phải một.
         assert_eq!(kept[0].magnitude, 0.0, "an old row has no size until it is written again");
         assert_eq!(kept[0].props, json!({}));
         assert!(
@@ -1290,7 +1328,7 @@ mod tests {
         );
     }
 
-    /// The same gate, on a real vault instead of a fixture. §8, Bước 3.
+    /// The same gate, on a real vault instead of a fixture. §13.
     ///
     /// ```text
     /// SYNABIT_CACHE=/tmp/copy/vault_cache.db \
@@ -1462,6 +1500,161 @@ mod tests {
             "the bump forgets every derived event"
         );
         assert_eq!(link_count(&reopened), 0, "and takes their links with them");
+    }
+
+    /// Một chuyến đi ba ngày nhận ảnh của cả ba ngày. Gộp phải khớp theo
+    /// **chồng lấn**, không phải theo ngày bằng nhau — nếu không thì đúng cái
+    /// ví dụ mở đầu tài liệu (§1) vẫn hỏng: 50 tấm ảnh của một chuyến đi.
+    #[test]
+    fn a_trip_takes_the_pictures_of_every_day_it_covers() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.upsert_node(&node(
+            "Notes/2019-08-02.md",
+            "note",
+            "2019-08-02",
+            json!({
+                "date": "2019-08-02",
+                "moments": [{ "title": "Đi chơi Tuần Châu", "happened": "2019-08-02/2019-08-04" }]
+            }),
+        ))
+        .unwrap();
+        for day in ["2019-08-02", "2019-08-03", "2019-08-04"] {
+            db.upsert_node(&node(
+                &format!("Files/{day} ảnh.jpg"),
+                "file",
+                &format!("{day} ảnh.jpg"),
+                json!({}),
+            ))
+            .unwrap();
+        }
+        let cache = Mutex::new(db);
+        let mut timeline = TimelineStore::open_in_memory().unwrap();
+        catch_up(&cache, &mut timeline).unwrap();
+
+        let shown = timeline.query(when::parse("2019-08").unwrap(), today()).unwrap();
+        assert_eq!(
+            shown.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(),
+            vec!["moment"],
+            "chỉ chuyến đi đứng lại: {shown:?}"
+        );
+        assert_eq!(
+            shown[0].links.iter().filter(|l| l.role == "evidence").count(),
+            3,
+            "ảnh của cả ba ngày phải thành bằng chứng của chuyến đi: {:?}",
+            shown[0].links
+        );
+    }
+
+    /// Ca đã hỏng thật trên vault: một quãng công việc ghi là "tháng 4/2026"
+    /// trải đúng 30 ngày, lọt qua trần độ dài, và nuốt ghi chép của bốn ngày.
+    #[test]
+    fn a_month_nobody_dated_to_a_day_is_not_where_a_day_belongs() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.upsert_node(&node(
+            "People/me.md",
+            "person",
+            "Minh",
+            json!({ "experiences": [{ "company": "MDP", "title": "DBA", "start": "2026-04", "end": "2026-04" }] }),
+        ))
+        .unwrap();
+        db.upsert_node(&node("Notes/2026-04-15.md", "note", "2026-04-15", json!({ "date": "2026-04-15" })))
+            .unwrap();
+        let cache = Mutex::new(db);
+        let mut timeline = TimelineStore::open_in_memory().unwrap();
+        catch_up(&cache, &mut timeline).unwrap();
+
+        let day = timeline.query(when::parse("2026-04-15").unwrap(), today()).unwrap();
+        assert!(
+            day.iter().any(|e| e.kind == "note"),
+            "ngày 15/4 có chữ viết và không được biến mất vào một quãng chỉ biết tới tháng: {day:?}"
+        );
+    }
+
+    /// …nhưng một công việc kéo dài nhiều năm thì không phải "hôm đó". Nó
+    /// chồng lấn mọi ngày trong khoảng của nó, và nếu gộp theo chồng lấn mà
+    /// không dè chừng thì nó nuốt sạch ghi chép của bốn năm.
+    #[test]
+    fn a_job_of_years_does_not_swallow_a_day_of_writing() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.upsert_node(&node(
+            "People/me.md",
+            "person",
+            "Minh",
+            json!({ "experiences": [{ "company": "MDP", "start": "2014-07", "end": "2019-01" }] }),
+        ))
+        .unwrap();
+        db.upsert_node(&node("Notes/2016-05-14.md", "note", "2016-05-14", json!({ "date": "2016-05-14" })))
+            .unwrap();
+        let cache = Mutex::new(db);
+        let mut timeline = TimelineStore::open_in_memory().unwrap();
+        catch_up(&cache, &mut timeline).unwrap();
+
+        let day = timeline.query(when::parse("2016-05-14").unwrap(), today()).unwrap();
+        assert!(
+            day.iter().any(|e| e.kind == "note"),
+            "ngày đó có chữ viết và phải còn trên dải: {day:?}"
+        );
+    }
+
+    /// §4.9: hai cột không còn nghĩa. `sealed` chưa từng được ai ghi — phong ấn
+    /// là quyết định của người, áp lúc đọc, từ vault (§4.7). `related_id` chỉ
+    /// giữ được một cái tên, và `event_links` đã thay nó.
+    #[test]
+    fn the_columns_that_stopped_meaning_anything_are_gone() {
+        let timeline = TimelineStore::open_in_memory().unwrap();
+        let columns: Vec<String> = {
+            let mut stmt = timeline
+                .conn
+                .prepare("SELECT name FROM pragma_table_info('events')")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.flatten().collect()
+        };
+        for gone in ["sealed", "related_id"] {
+            assert!(!columns.contains(&gone.to_string()), "cột `{gone}` vẫn còn: {columns:?}");
+        }
+    }
+
+    /// §4.3: `title` là tên của **sự kiện** — thứ duy nhất hiện trên dải. Trước
+    /// đây nó là tên của node, còn tên sự kiện nằm ở `label` và chỉ 8/245 hàng
+    /// có, nên phần lớn dải hiện tên node.
+    #[test]
+    fn an_event_is_called_by_its_own_name() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        db.upsert_node(&node(
+            "Notes/2016-05-14.md",
+            "note",
+            "2016-05-14",
+            json!({
+                "date": "2016-05-14",
+                "moments": [{ "title": "Đám cưới Tuấn và Thuỳ", "happened": "2016-05-14" }]
+            }),
+        ))
+        .unwrap();
+        db.upsert_node(&node("Tasks/ho-so.md", "task", "Nộp hồ sơ", json!({ "completed_at": "2016-05-30" })))
+            .unwrap();
+        let cache = Mutex::new(db);
+        let mut timeline = TimelineStore::open_in_memory().unwrap();
+        catch_up(&cache, &mut timeline).unwrap();
+
+        let all = timeline.all_items(today()).unwrap();
+        let wedding = all.iter().find(|e| e.kind == "moment").expect("đám cưới");
+        assert_eq!(wedding.title, "Đám cưới Tuấn và Thuỳ");
+        assert_eq!(wedding.node_title, "2016-05-14", "tên của note, ở cột riêng");
+
+        let task = all.iter().find(|e| e.kind == "task_done").expect("việc đã xong");
+        assert_eq!(task.title, "Nộp hồ sơ");
+
+        assert!(
+            all.iter().all(|event| !event.title.trim().is_empty()),
+            "không hàng nào được để trống tên"
+        );
+
+        let columns: Vec<String> = {
+            let mut stmt = timeline.conn.prepare("SELECT name FROM pragma_table_info('events')").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(0)).unwrap().flatten().collect()
+        };
+        assert!(!columns.contains(&"label".to_string()), "cột `label` vẫn còn: {columns:?}");
     }
 
     fn today() -> NaiveDate {

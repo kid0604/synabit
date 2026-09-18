@@ -4,7 +4,7 @@
 //! happened were written down. A photograph is not a thing that happened
 //! either; it is what shows one did. Listing all three side by side is why
 //! fifty pictures of one trip were fifty rows and the trip was none
-//! (`docs/su-kien-2026-09-16.md` §1).
+//! (`docs/timeline-2026-09-17.md` §3).
 //!
 //! # What this pass does, and what it refuses to do
 //!
@@ -60,13 +60,45 @@ pub const CONFIG_FILE: &str = "Timeline/timeline.json";
 /// The key the vault's answer is mirrored under, inside `timeline.db`.
 const MIRROR: &str = "fold_days";
 
+/// Phông nền, không phải một dịp.
+///
+/// Một công việc, một mối quan hệ, một ngày sinh mô tả một **trạng thái kéo
+/// dài**, không phải "chuyện xảy ra hôm đó". Đo trên vault thật: một quãng
+/// `experience` ghi là tháng 4/2026 nuốt sạch ghi chép của bốn ngày trong
+/// tháng. Trần độ dài không cứu được — quãng đó chỉ dài ba mươi ngày; và độ
+/// chính xác cũng không, vì khai cả `start` lẫn `end` thì nó thành một khoảng
+/// biết tới ngày.
+///
+/// Đây là chỗ rẽ nhánh theo `kind` mà §16 Bước 9 phải thay bằng vai và độ lớn.
+const NOT_AN_OCCASION: &str =
+    "'experience', 'connection', 'birthday', 'death', 'important_date'";
+
+/// Chỗ chứa phải là chuyện biết tới **ngày**, không phải một phông nền.
+///
+/// Đo trên vault thật: một quãng `experience` ghi là "tháng 4/2026" trải đúng 30
+/// ngày, lọt qua mọi cái trần theo độ dài, và nuốt sạch ghi chép của bốn ngày
+/// trong tháng đó. Thứ phân biệt không phải dài hay ngắn — mà là **biết tới
+/// ngày hay chỉ biết tới tháng**. Một công việc "hồi tháng 4" không phải là
+/// "hôm đó", dù nó chỉ dài ba mươi ngày.
+const DATED_TO_A_DAY: &str = "precision IN ('day', 'range')";
+
+/// Và kể cả khi biết tới ngày, một chuyện kéo dài hơn chừng này không còn là
+/// "hôm đó".
+///
+/// Gộp khớp theo chồng lấn, không theo ngày bằng nhau — nếu không thì ảnh ngày
+/// thứ hai và thứ ba của một chuyến đi ba ngày không tìm được chuyến đi. Nhưng
+/// chồng lấn trần trụi thì một công việc kéo bốn năm cũng chồng lấn mọi ngày
+/// trong bốn năm đó và sẽ nuốt sạch ghi chép của cả quãng. Nên chỗ chứa phải là
+/// thứ đủ ngắn để còn nghĩa là "hôm đó".
+const LONGEST_HOST_DAYS: i64 = 31;
+
 /// Rows that are not events of their own: what this pass folds away.
 const CONTAINERS: &str = "'note'";
 const EVIDENCE: &str = "'media'";
 
 /// Rows nothing folds into, and rows folding never reads: a proposal is not
 /// on the timeline until somebody accepts it.
-const VISIBLE: &str = "superseded_by IS NULL AND sealed = 0 AND source != 'extract'";
+const VISIBLE: &str = "superseded_by IS NULL AND source != 'extract'";
 
 fn sql(e: rusqlite::Error) -> AppError {
     AppError::General(format!("timeline fold: {e}"))
@@ -149,11 +181,17 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
         &format!(
             "UPDATE events SET container_node = (
                 SELECT n.node_id FROM events n
-                WHERE n.kind IN ({CONTAINERS}) AND n.happened_from = events.happened_from AND n.{VISIBLE}
-                ORDER BY n.id LIMIT 1)
-             WHERE kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND container_node IS NULL AND {VISIBLE}
+                WHERE n.kind IN ({CONTAINERS})
+                  AND n.happened_from BETWEEN events.happened_from AND events.happened_to
+                  AND n.{VISIBLE}
+                ORDER BY n.happened_from, n.id LIMIT 1)
+             WHERE kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND container_node IS NULL
+               AND {DATED_TO_A_DAY} AND kind NOT IN ({NOT_AN_OCCASION})
+               AND julianday(happened_to) - julianday(happened_from) <= {LONGEST_HOST_DAYS}
+               AND {VISIBLE}
                AND EXISTS (SELECT 1 FROM events n WHERE n.kind IN ({CONTAINERS})
-                           AND n.happened_from = events.happened_from AND n.{VISIBLE})"
+                           AND n.happened_from BETWEEN events.happened_from AND events.happened_to
+                           AND n.{VISIBLE})"
         ),
         [],
     )
@@ -164,13 +202,18 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
         &format!(
             "UPDATE events SET folded_into = (
                 SELECT e.id FROM events e
-                WHERE e.happened_from = events.happened_from
-                  AND e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE}
-                ORDER BY e.magnitude DESC, e.id LIMIT 1)
+                WHERE e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE}
+                  AND e.{DATED_TO_A_DAY} AND e.kind NOT IN ({NOT_AN_OCCASION})
+                  AND events.happened_from BETWEEN e.happened_from AND e.happened_to
+                  AND julianday(e.happened_to) - julianday(e.happened_from) <= {LONGEST_HOST_DAYS}
+                ORDER BY julianday(e.happened_to) - julianday(e.happened_from), e.magnitude DESC, e.id
+                LIMIT 1)
              WHERE kind IN ({CONTAINERS}) AND {VISIBLE}
                AND EXISTS (SELECT 1 FROM events e
-                           WHERE e.happened_from = events.happened_from
-                             AND e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE})"
+                           WHERE e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE}
+                             AND e.{DATED_TO_A_DAY} AND e.kind NOT IN ({NOT_AN_OCCASION})
+                             AND events.happened_from BETWEEN e.happened_from AND e.happened_to
+                             AND julianday(e.happened_to) - julianday(e.happened_from) <= {LONGEST_HOST_DAYS})"
         ),
         [],
     )
@@ -197,9 +240,13 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
             .query_row(
                 &format!(
                     "SELECT id FROM events
-                     WHERE happened_from = ?1 AND kind NOT IN ({EVIDENCE})
+                     WHERE ?1 BETWEEN happened_from AND happened_to
+                       AND {DATED_TO_A_DAY} AND kind NOT IN ({NOT_AN_OCCASION})
+                       AND julianday(happened_to) - julianday(happened_from) <= {LONGEST_HOST_DAYS}
+                       AND kind NOT IN ({EVIDENCE})
                        AND folded_into IS NULL AND {VISIBLE}
-                     ORDER BY magnitude DESC, id LIMIT 1"
+                     ORDER BY julianday(happened_to) - julianday(happened_from), magnitude DESC, id
+                     LIMIT 1"
                 ),
                 params![day],
                 |r| r.get(0),
@@ -232,18 +279,16 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
 /// The whole table, because it is small: 243 rows on the vault this was
 /// measured against. If it ever is not, narrow it to the days folding touched.
 fn resize(tx: &Transaction) -> AppResult<()> {
-    let rows: Vec<(String, String, String, String, Option<String>, String)> = {
+    let rows: Vec<(String, String, String, String, String)> = {
         let mut stmt = tx
-            .prepare("SELECT id, happened_from, happened_to, title, label, source FROM events")
+            .prepare("SELECT id, happened_from, happened_to, title, source FROM events")
             .map_err(sql)?;
         let found = stmt
-            .query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-            })
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .map_err(sql)?;
         found.flatten().collect()
     };
-    for (id, from, to, title, label, source) in rows {
+    for (id, from, to, title, source) in rows {
         let count = |role: &str| -> usize {
             tx.query_row(
                 "SELECT COUNT(*) FROM event_links WHERE event_id = ?1 AND role = ?2",
@@ -252,16 +297,13 @@ fn resize(tx: &Transaction) -> AppResult<()> {
             )
             .unwrap_or(0) as usize
         };
-        let text = match &label {
-            Some(label) => format!("{title} {label}"),
-            None => title.clone(),
-        };
+
         let size = magnitude::of(Signals {
             from: &from,
             to: &to,
             people: count("with"),
             evidence: count("evidence"),
-            text: &text,
+            text: &title,
             source: &source,
         });
         tx.execute("UPDATE events SET magnitude = ?2 WHERE id = ?1", params![id, size])

@@ -4,8 +4,8 @@
 //! university"*, *"around 2012"*. So a time on the timeline is always a span
 //! with a precision, and questions are answered by whether two spans overlap,
 //! never by whether two dates are equal. Asking about May 2016 finds
-//! `2016-05-14`, `2016-05` and `2016` alike. See `docs/tua-lai-2026-09-14.md`
-//! §4.3.
+//! `2016-05-14`, `2016-05` and `2016` alike. See `docs/timeline-2026-09-17.md`
+//! §4.4.
 //!
 //! | written | span | precision |
 //! | --- | --- | --- |

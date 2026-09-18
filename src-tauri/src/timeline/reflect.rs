@@ -1,6 +1,6 @@
 //! Chiêm nghiệm: a decision, what was expected of it, and what happened.
 //!
-//! The design is Nhát F of `docs/tua-lai-2026-09-14.md`. A decision is a note
+//! The design is §7.7 of `docs/timeline-2026-09-17.md`. A decision is a note
 //! of `type: decision` in `Decisions/`: the reasoning in its body, and in its
 //! frontmatter the day it was made (`decided_on`), what was expected
 //! (`expected`), the day to look at it again (`review_on`), and each time it

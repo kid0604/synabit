@@ -1,7 +1,7 @@
 //! "Syn kể lại": a few sentences about a relationship, every one resting on a
 //! record.
 //!
-//! The design is §6 of `docs/tua-lai-2026-09-14.md`: Syn tells, it is not the
+//! The design is §6 of `docs/timeline-2026-09-17.md`: Syn tells, it is not the
 //! source, and a memory it made up is worse than a gap.
 //!
 //! # The rule, enforced by code
@@ -85,9 +85,10 @@ pub fn sources_for(
         } else {
             format!("{} → {}", item.happened_from, item.happened_to)
         };
-        let mut what = match item.label.as_deref().filter(|label| !label.is_empty()) {
-            Some(label) => format!("{}: {label}", kind_words(&item.kind)),
-            None => kind_words(&item.kind).to_string(),
+        let mut what = if item.title.trim().is_empty() {
+            kind_words(&item.kind).to_string()
+        } else {
+            format!("{}: {}", kind_words(&item.kind), item.title)
         };
         // Who else was in it, and where. A retelling that cannot name the
         // people in a story has to write around them.
@@ -319,9 +320,8 @@ mod tests {
             kind: kind.into(),
             node_id: "People/tuan.md".into(),
             node_type: "person".into(),
-            title: "Tuấn".into(),
-            label: label.map(String::from),
-            related_id: None,
+            title: label.map(String::from).unwrap_or_default(),
+            node_title: "Tuấn".into(),
             links: Vec::new(),
             magnitude: 0.0,
             container_node: None,

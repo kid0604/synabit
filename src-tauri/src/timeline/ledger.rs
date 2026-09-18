@@ -1,7 +1,7 @@
 //! Sổ bằng chứng: when each file was first recorded, what it held, and every
 //! time that changed.
 //!
-//! The design is §7.3 of `docs/tua-lai-2026-09-14.md`, and this is Nhát C.
+//! The design is §8.3 of `docs/timeline-2026-09-17.md`.
 //!
 //! # What it is for
 //!
@@ -25,7 +25,7 @@
 //! entry. It cannot show that a whole chain was rewritten consistently from
 //! its first entry by someone holding the vault; that takes the chain's
 //! fingerprint kept somewhere outside the vault, such as an RFC 3161
-//! timestamp (§7.3), which is not done here.
+//! timestamp (§8.3), which is not done here.
 //!
 //! # What is fingerprinted
 //!

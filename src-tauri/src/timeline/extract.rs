@@ -1,6 +1,6 @@
 //! Tier 1: what a model reads out of the person's own words.
 //!
-//! The design is §4.5 and §4.7.B of `docs/tua-lai-2026-09-14.md`, and this is
+//! The design is §4.7 and §4.8.2 of `docs/timeline-2026-09-17.md`, and this is
 //! Nhát E of it. Derived items (`derive`) are what a field already says; these
 //! are what a sentence says — "hôm qua đưa mẹ đi khám mắt" — which no field
 //! holds and only a model can read.
@@ -25,7 +25,7 @@
 //!
 //! # What is read
 //!
-//! §4.7.B, and nothing else: daily notes, interactions, person notes, quick
+//! §4.8.2, and nothing else: daily notes, interactions, person notes, quick
 //! captures and events by default; other notes only by folder or tag; Syn
 //! conversations only when turned on, and then only what the person wrote,
 //! never what Syn answered. `timeline: false` in a note's frontmatter keeps it
@@ -59,7 +59,7 @@ use crate::syn::provider::{ChatMessage, ChatProvider, ChatRequest};
 
 /// Bump when the prompt or the reading of a reply changes enough that an old
 /// reading is worth replacing. Nothing is read again on its own when it does;
-/// the tray offers it (§4.5.3).
+/// the tray offers it (§4.8.2).
 pub const EXTRACTOR_VERSION: u32 = 2;
 
 /// Whether reading is on, for this vault. Synced, so it is decided once.
@@ -100,9 +100,25 @@ pub struct Config {
     /// and how often it was right (`docs/eval-timeline-extract-2026-09-15.md`).
     #[serde(default)]
     pub enabled: bool,
-    /// A cloud provider may read notes. Off unless chosen for this vault (§7.6).
+    /// A cloud provider may read notes. Off unless chosen for this vault (§8.6).
     #[serde(default)]
     pub allow_cloud: bool,
+    /// Model đọc nhật ký, khi nó khác model của trợ lý.
+    ///
+    /// §8.6 hứa hai điều cùng lúc: nhật ký chỉ được đọc bởi model mà vault này
+    /// đã chọn cho việc đọc, **và** câu hỏi thường ngày gửi trợ lý thì không
+    /// đổi gì. Hai vế đó chỉ đứng cùng nhau được nếu chỗ này có model riêng —
+    /// nếu không, muốn đổi model đọc nhật ký là phải đổi cả trợ lý theo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Model ấy chạy ở đâu. Bỏ trống thì dùng đúng provider của trợ lý.
+    ///
+    /// Tách khỏi `model` vì hai thứ đổi độc lập: đổi sang một model khác của
+    /// cùng nhà thì chỉ cần `model`, còn đọc nhật ký bằng máy này trong khi
+    /// trợ lý vẫn ở trên mây thì mới cần tới đây. Provider nào không chạy trên
+    /// máy này thì vẫn phải qua cửa `allow_cloud` như mọi khi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::models::syn::SynProvider>,
     /// Ordinary notes under these folders are read too.
     #[serde(default)]
     pub folders: Vec<String>,
@@ -115,6 +131,28 @@ pub struct Config {
     /// Whatever else the file holds, sync's `metadata` among it, kept as found.
     #[serde(flatten, default)]
     pub rest: Map<String, Value>,
+}
+
+/// Thiết lập để gọi model đọc nhật ký, và tên model đó.
+///
+/// Vault có thể chọn một model riêng cho việc đọc — tên model, nơi nó chạy,
+/// hoặc cả hai. Chỗ nào không chọn thì lấy đúng của trợ lý. Kết quả đi qua
+/// cùng một cửa như trước: `runs_here` hỏi model có chạy trên máy này không,
+/// và nếu không thì vault phải đã bật `allow_cloud` (§8.6).
+pub fn reader(
+    config: &Config,
+    settings: &crate::models::syn::SynSettings,
+) -> (crate::models::syn::SynSettings, Option<String>) {
+    let mut here = settings.clone();
+    if let Some(provider) = config.provider {
+        here.provider = provider;
+    }
+    if let Some(model) = config.model.clone().map(|m| m.trim().to_string()).filter(|m| !m.is_empty())
+    {
+        here.default_model = Some(model);
+    }
+    let model = here.default_model.clone();
+    (here, model)
 }
 
 pub fn read_config(vault_path: &str) -> Config {
@@ -199,7 +237,7 @@ fn never(node_type: &str) -> bool {
         )
 }
 
-/// §4.7.B, and the frontmatter switch that overrides it for one note.
+/// §4.8.2, and the frontmatter switch that overrides it for one note.
 pub fn wanted(node_type: &str, properties: &Value, id: &str, config: &Config) -> bool {
     if never(node_type) {
         return false;
@@ -372,7 +410,7 @@ pub fn inputs(
 ///
 /// Only `user` turns. What Syn said is not a fact about anybody's life, and
 /// reading it would put the assistant's guesses back in as the person's
-/// memories (§4.7, rule 3).
+/// memories (§4.8.2, rule 3).
 fn conversation_inputs(
     vault_path: &str,
     seals: &Seals,
@@ -626,14 +664,14 @@ pub struct Payload {
     #[serde(default)]
     pub names: Vec<String>,
     /// Where it happened, in the words the entry used. A node only if somebody
-    /// later decides it deserves one (§10, question 4).
+    /// later decides it deserves one (§14, question 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<String>,
     #[serde(default)]
     pub quote: String,
 }
 
-/// One proposed moment, as it is written in a month file (§4.5.1).
+/// One proposed moment, as it is written in a month file (§4.7).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Extracted {
     pub id: String,
@@ -1158,7 +1196,7 @@ pub struct Loaded {
 /// Bring `timeline.db` in line with the month files and reviews in the vault.
 ///
 /// Only a file whose bytes changed is read again, so a sync that brings one
-/// device's May costs one file (§4.5.2). No model is involved: losing
+/// device's May costs one file (§4.7). No model is involved: losing
 /// `timeline.db` costs this and nothing more.
 pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
     ensure_schema(conn)?;
@@ -1199,9 +1237,9 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
             tx.execute(
                 "INSERT OR REPLACE INTO events
                     (id, kind, happened_from, happened_to, precision, time_source, recorded_at,
-                     node_id, node_type, title, label, related_id, source, confidence, evidence, month_file,
+                     node_id, node_type, title, node_title, source, confidence, evidence, month_file,
                      magnitude, container_node)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'extract', ?6, ?7, '', ?8, NULL, ?9, 'extract', ?10, ?11, ?12, ?13, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'extract', ?6, ?7, '', ?8, '', 'extract', ?9, ?10, ?11, ?12, ?7)",
                 // Per file: two devices, or a sync conflict copy, can hold the
                 // same item, and forgetting one file must not take the other's row.
                 params![
@@ -1213,7 +1251,6 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
                     item.recorded,
                     item.evidence.first().map(|e| e.node.as_str()).unwrap_or(""),
                     item.payload.title,
-                    item.payload.people.first(),
                     item.confidence,
                     serde_json::to_string(item).unwrap_or_default(),
                     rel,
@@ -1229,7 +1266,7 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
             )
             .map_err(sql)?;
             // Everyone it named, and what it was read from. See
-            // `docs/su-kien-2026-09-16.md` §3.2.
+            // `docs/timeline-2026-09-17.md` §4.2.
             let row_id = format!("{}@{}", item.id, rel);
             tx.execute("DELETE FROM event_links WHERE event_id = ?1", params![row_id])
                 .map_err(sql)?;
@@ -1332,8 +1369,8 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
         tx.execute(
             "INSERT OR REPLACE INTO events
                 (id, kind, happened_from, happened_to, precision, time_source, recorded_at,
-                 node_id, node_type, title, label, related_id, source, confidence, magnitude, container_node)
-             VALUES (?1, 'moment', ?2, ?3, ?4, 'review', ?5, ?6, 'syn_conversation', ?7, ?7, ?8, 'user', ?9, ?10, ?6)",
+                 node_id, node_type, title, node_title, source, confidence, magnitude, container_node)
+             VALUES (?1, 'moment', ?2, ?3, ?4, 'review', ?5, ?6, 'syn_conversation', ?7, ?7, 'user', ?8, ?9, ?6)",
             params![
                 format!("{}#accepted", moment.id),
                 moment.happened_from,
@@ -1342,7 +1379,6 @@ pub fn load(conn: &Connection, vault_path: &str) -> AppResult<Loaded> {
                 moment.recorded,
                 decision.node,
                 moment.payload.title,
-                moment.payload.people.first(),
                 moment.confidence,
                 magnitude::of(Signals {
                     from: &moment.happened_from,
@@ -1636,8 +1672,7 @@ pub fn proposals(
                 node_id: input.node_id.split('#').next().unwrap_or_default().to_string(),
                 node_type: input.node_type.clone(),
                 title: extracted.payload.title.clone(),
-                label: None,
-                related_id: extracted.payload.people.first().cloned(),
+                node_title: String::new(),
                 links: Vec::new(),
                 magnitude: 0.0,
                 container_node: None,
@@ -2282,7 +2317,7 @@ mod tests {
             &HashMap::new(),
         );
         let moment = derived.iter().find(|d| d.kind == "moment").expect("a moment");
-        assert_eq!(moment.label.as_deref(), Some("Khám mắt cho mẹ"));
+        assert_eq!(moment.title.as_deref(), Some("Khám mắt cho mẹ"));
         assert_eq!(when::iso(moment.span.from), "2024-06-01");
         assert_eq!(moment.time_source, "user");
     }
@@ -2434,12 +2469,58 @@ mod tests {
                 labels: &[] },
         ];
 
+        /// Hỏi nhà cung cấp xem nó có những model nào, để đặt tên cho đúng.
+        #[tokio::test]
+        #[ignore = "needs a network and the vault's real key; run by hand"]
+        async fn which_models_does_the_provider_have() {
+            use crate::syn::provider::ChatProvider as _;
+            let vault_path = std::env::var("SYN_EVAL_VAULT")
+                .unwrap_or_else(|_| format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default()));
+            let settings =
+                crate::syn::settings::load_settings(&vault_path).expect("the real Syn settings");
+            let eval = Config {
+                provider: std::env::var("SYN_EVAL_PROVIDER")
+                    .ok()
+                    .and_then(|p| serde_json::from_value(serde_json::Value::from(p)).ok()),
+                ..Config::default()
+            };
+            let (settings, _) = reader(&eval, &settings);
+            let provider = crate::syn::provider::for_settings(
+                &settings,
+                crate::secrets::SecretManager::get_syn_api_key(None, settings.provider.key_slot()),
+            );
+            match provider.list_models().await {
+                Ok(models) => {
+                    eprintln!("\n═══ {} ═══", settings.provider.key_slot());
+                    for m in models {
+                        eprintln!("  {}", m.model);
+                    }
+                }
+                Err(e) => eprintln!("\ncould not ask: {e}"),
+            }
+        }
+
         #[tokio::test]
         #[ignore = "spends real API credit and needs a network; run by hand"]
         async fn precision_on_hand_labelled_notes() {
             let vault_path = std::env::var("SYN_EVAL_VAULT")
                 .unwrap_or_else(|_| format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default()));
-            let settings = crate::syn::settings::load_settings(&vault_path).expect("the real Syn settings");
+            let settings =
+                crate::syn::settings::load_settings(&vault_path).expect("the real Syn settings");
+            // Hai biến này là `Config::model` và `Config::provider` của `reader`,
+            // đặt từ dòng lệnh: cùng một cặp, nên con số đo được ở đây là con số
+            // của đúng thiết lập mà vault sẽ chạy.
+            //
+            //   SYN_EVAL_PROVIDER=ollama SYN_EVAL_MODEL=qwen3:14b   — đọc tại chỗ
+            //   SYN_EVAL_MODEL=gemini-flash-3.8                      — đổi model, giữ nhà
+            let eval = Config {
+                model: std::env::var("SYN_EVAL_MODEL").ok(),
+                provider: std::env::var("SYN_EVAL_PROVIDER")
+                    .ok()
+                    .and_then(|p| serde_json::from_value(serde_json::Value::from(p)).ok()),
+                ..Config::default()
+            };
+            let (settings, _) = reader(&eval, &settings);
             let model = settings.default_model.clone().expect("a default model must be configured");
             let provider = crate::syn::provider::for_settings(
                 &settings,

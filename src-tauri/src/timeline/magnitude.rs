@@ -1,7 +1,7 @@
 //! How big something was, from what the event itself says.
 //!
 //! The timeline has no lanes. "Work", "life", "admin" are not what separates a
-//! wedding from a lunch — size is (`docs/su-kien-2026-09-16.md` §2). So every
+//! wedding from a lunch — size is (`docs/timeline-2026-09-17.md` §4.1). So every
 //! event carries one number, computed when the index is built, and a view that
 //! wants only the large ones is a `WHERE`, not a filter over types.
 //!
@@ -10,9 +10,9 @@
 //! Only the core: how long it lasted, how many took part, how much evidence
 //! there is, how much was written, and whether a person wrote it down or the
 //! app worked it out. It may **not** read the free-form part of an event
-//! (§5). That is why the signals arrive here as a small struct of their own
+//! (§4.8). That is why the signals arrive here as a small struct of their own
 //! rather than as an event: a field like `severity` cannot reach this function
-//! without somebody first making it a core field, which is rule 4 of §3.3.
+//! without somebody first making it a core field, which is rule 4 of §4.3.
 //!
 //! # The weights are a first guess
 //!

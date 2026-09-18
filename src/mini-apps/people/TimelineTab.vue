@@ -329,11 +329,11 @@ watch(() => props.person?.id, loadTimeline, { immediate: true });
 const timelineTitle = (entry: any) => {
     switch (entry.kind) {
         case 'death': return t('people.timeline_passed_away');
-        case 'experience': return entry.label || t('people.timeline_work');
-        case 'connection': return entry.label || t('people.timeline_relationship');
+        case 'experience': return entry.title || t('people.timeline_work');
+        case 'connection': return entry.title || t('people.timeline_relationship');
         case 'moment':
-        case 'event': return entry.label || entry.title;
-        default: return entry.label || t('people.timeline_important_date');
+        case 'event': return entry.title;
+        default: return entry.title || t('people.timeline_important_date');
     }
 };
 

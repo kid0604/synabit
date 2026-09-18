@@ -7,7 +7,7 @@ import type { TimeFrame } from '../../timeFrame';
 /**
  * What looking back costs on a 2,000-node vault, measured rather than guessed.
  *
- * The gate for Nhát B in `docs/tua-lai-2026-09-14.md` is that dragging the
+ * The gate for the time strip, §10 of `docs/timeline-2026-09-17.md` is that dragging the
  * strip stays smooth on a vault of 2,000 nodes. Moving the strip never re-runs
  * the layout, so each step is one redraw: decide what is in the picture, then
  * issue every draw call for it. That is measured here, one step per month

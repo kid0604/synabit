@@ -1,6 +1,6 @@
 //! Tier 1 for pictures and recordings: words that stand in for them.
 //!
-//! The design is §4.6 and Nhát G of `docs/tua-lai-2026-09-14.md`. A recording
+//! The design is §4.8.5 of `docs/timeline-2026-09-17.md`. A recording
 //! gets a transcript with times; a photograph gets a sentence or two. Both are
 //! what make a picture findable, readable by Syn, and shown on a device that
 //! does not hold the file.
@@ -21,11 +21,11 @@
 //! the person runs on the same machine — any that speaks the OpenAI shape,
 //! `/v1/audio/transcriptions` — and an address that is not the machine itself
 //! is refused. Captions go to Ollama, and to nothing else. No library was added
-//! for either (§4.6: every crate is a size review for the Android build).
+//! for either (§4.8.5: every crate is a size review for the Android build).
 //!
 //! # No faces
 //!
-//! Nothing here, or anywhere in the app, detects or recognises a face (§7.2):
+//! Nothing here, or anywhere in the app, detects or recognises a face (§8.2):
 //! `tests::nothing_in_the_app_detects_or_recognises_a_face` looks. The caption
 //! prompt tells the model not to say who anyone is.
 
@@ -60,7 +60,7 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 pub const MAX_AUDIO_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
 
-/// Pictures further apart than this are two moments (§4.6).
+/// Pictures further apart than this are two moments (§4.8.5).
 pub const MOMENT_GAP_HOURS: i64 = 3;
 
 /// The most files one automatic pass reads.
@@ -109,7 +109,7 @@ pub fn write_config(vault_path: &str, config: &mut Config, now: DateTime<Utc>) -
 }
 
 /// Whether an address is this machine. Anything else would send a recording
-/// of somebody's life somewhere they did not see it go (§7.6).
+/// of somebody's life somewhere they did not see it go (§8.6).
 pub fn is_loopback(address: &str) -> bool {
     let Ok(url) = url::Url::parse(address.trim()) else {
         return false;
@@ -139,7 +139,7 @@ pub fn failure_key(input: &MediaInput) -> String {
 }
 
 /// Transcripts and captions are made on a computer. A phone shows what a
-/// computer made (§4.6).
+/// computer made (§4.8.5).
 pub fn refuse_on_phone(mobile: bool) -> AppResult<()> {
     if mobile {
         return Err(AppError::General(
@@ -696,7 +696,7 @@ pub struct MediaEntry {
     pub transcript: Option<TranscriptView>,
 }
 
-/// Pictures and recordings close together in time, shown as one (§4.6).
+/// Pictures and recordings close together in time, shown as one (§4.8.5).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MediaMoment {
     pub from: String,
@@ -1077,7 +1077,7 @@ mod tests {
             .collect()
     }
 
-    /// Gate: no call anywhere detects or recognises a face (§7.2).
+    /// Gate: no call anywhere detects or recognises a face (§8.2).
     #[test]
     fn nothing_in_the_app_detects_or_recognises_a_face() {
         // Written in halves so that this file does not match itself.

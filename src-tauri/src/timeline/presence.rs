@@ -4,7 +4,7 @@
 //! while, then they are not, and perhaps they come back. The same is true of a
 //! place, a system, a company. Those stretches are worked out from the events
 //! that name the object rather than declared anywhere, which is the whole
-//! point of `docs/su-kien-2026-09-16.md` §6: a relationship stops being a
+//! point of `docs/timeline-2026-09-17.md` §9: a relationship stops being a
 //! special kind of edge carrying dates and becomes **the shape of two
 //! worldlines running close together for a while**.
 //!
@@ -72,7 +72,7 @@ pub fn merge(spans: &[(&str, &str)], today: NaiveDate) -> Vec<Presence> {
         .filter_map(|(from, to)| {
             let from = day(from)?;
             // A date still to come is a plan, and the timeline is history
-            // (§4.7.C of the older doc). Nobody was anywhere in 2027 yet.
+            // (§4.4 of the older doc). Nobody was anywhere in 2027 yet.
             if from > today {
                 return None;
             }

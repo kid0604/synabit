@@ -4,7 +4,7 @@
 //! whatever pattern the user set (`dailyNoteFormat`, default `YYYY-MM-DD`).
 //! Anything that wanted to know which day a note was about had to parse the
 //! title back under the pattern in force *now*, so changing the setting quietly
-//! un-dated every note written before it. See `docs/tua-lai-2026-09-14.md` §3.1.
+//! un-dated every note written before it. See `docs/timeline-2026-09-17.md` §5.1.
 //!
 //! New daily notes are written with `date: "YYYY-MM-DD"` beside the title. The
 //! ones already in a vault are given it once, through the silent migration path.

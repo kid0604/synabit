@@ -5,7 +5,7 @@
  * Every row is a proposal: nothing here has reached a note until "Keep" is
  * pressed, and until then the timeline leaves it out of every answer. Reading
  * is off until turned on here, and turning it on says first what is sent where
- * (§7.6 of `docs/tua-lai-2026-09-14.md`). See `src-tauri/src/timeline/extract.rs`.
+ * (§8.6 of `docs/timeline-2026-09-17.md`). See `src-tauri/src/timeline/extract.rs`.
  */
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';

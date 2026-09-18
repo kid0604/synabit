@@ -299,12 +299,7 @@ pub fn block(
         } else {
             format!("{} → {}", item.happened_from, item.happened_to)
         };
-        let label = item
-            .label
-            .as_deref()
-            .filter(|label| !label.is_empty())
-            .map(|label| format!(" ({label})"))
-            .unwrap_or_default();
+
         // Who was there and where. This is the half that was missing: a
         // question like "họp với ai hồi tháng 5" cannot be answered off a list
         // that never says who was at anything.
@@ -317,7 +312,7 @@ pub fn block(
             }
         };
         out.push_str(&format!(
-            "- {when_text} · {} · [[{}]]{label}{}{}\n",
+            "- {when_text} · {} · [[{}]]{}{}\n",
             kind_words(&item.kind),
             item.title,
             cast("with", "with"),
@@ -396,8 +391,7 @@ mod tests {
             node_id: format!("People/p{n}.md"),
             node_type: "person".into(),
             title: format!("Người {n}"),
-            label: None,
-            related_id: None,
+            node_title: String::new(),
             links: Vec::new(),
             magnitude: 0.0,
             container_node: None,
@@ -414,8 +408,7 @@ mod tests {
             node_id: "Notes/2026-09-09.md".into(),
             node_type: "note".into(),
             title: "Đi khám".into(),
-            label: None,
-            related_id: None,
+            node_title: String::new(),
             links: Vec::new(),
             magnitude: 0.0,
             container_node: None,
@@ -451,8 +444,7 @@ mod tests {
             node_id: "Notes/d.md".into(),
             node_type: "note".into(),
             title: "Đám cưới".into(),
-            label: None,
-            related_id: None,
+            node_title: String::new(),
             links: Vec::new(),
             magnitude: 0.0,
             container_node: None,
@@ -479,9 +471,8 @@ mod tests {
             kind: "moment".into(),
             node_id: "Notes/2016-05-14.md".into(),
             node_type: "note".into(),
-            title: "2016-05-14".into(),
-            label: Some("Họp dự án".into()),
-            related_id: Some("uuid-khanh".into()),
+            title: "Họp dự án".into(),
+            node_title: "2016-05-14".into(),
             links: vec![
                 store::EventLink { node_id: "uuid-khanh".into(), role: "with".into(), label: None },
                 store::EventLink { node_id: "uuid-hai".into(), role: "with".into(), label: None },

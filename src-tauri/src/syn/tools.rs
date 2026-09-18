@@ -2541,11 +2541,9 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
                 "type": item.node_type,
                 "kind": item.kind,
                 "title": item.title,
-                "label": item.label,
                 "from": item.happened_from,
                 "to": if item.happened_to == open { "now".to_string() } else { item.happened_to.clone() },
                 "precision": item.precision,
-                "related_id": item.related_id,
                 // Everyone and everything the event names. One meeting can have
                 // three people in it; `related_id` only ever held the first.
                 // Ids and what to call them: the model answers with the name

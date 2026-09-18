@@ -1,6 +1,6 @@
 //! Phong ấn: what the user has asked never to have brought back.
 //!
-//! The design is §7.1 of `docs/tua-lai-2026-09-14.md`, and this is Nhát B2.
+//! The design is §8.1 of `docs/timeline-2026-09-17.md`.
 //!
 //! # What can be sealed
 //!
@@ -155,11 +155,20 @@ impl Seals {
     /// Anyone it names is enough: a meeting with three people is withheld when
     /// any one of them is sealed, not only when the first is.
     pub fn hides_item(&self, item: &Event) -> bool {
-        let named = |name: &str| self.people.contains(name) || self.hides(name);
         self.hides(&item.node_id)
-            || item.related_id.as_deref().is_some_and(named)
-            || item.links.iter().any(|link| named(&link.node_id))
+            || item.links.iter().any(|link| self.hides_person(&link.node_id))
             || (MOMENTS.contains(&item.kind.as_str()) && self.in_period(&item.happened_from))
+    }
+
+    /// Whether a person is sealed, by whichever of their names is to hand.
+    ///
+    /// A person is reached by path from a list and by identity from an event's
+    /// links, and only one of those is in `withheld`. Asking `hides` alone
+    /// therefore answers "no" for a sealed person named the other way — so
+    /// every road asks this instead, and there is one definition rather than
+    /// each caller's own.
+    pub fn hides_person(&self, name: &str) -> bool {
+        self.people.contains(name) || self.hides(name)
     }
 
     /// Whether `text` names anything withheld, by path or identity.
@@ -515,7 +524,7 @@ pub fn read_periods(vault_path: &str) -> Vec<SealedPeriod> {
 
 /// A period's first and last day, when both ends are a day, a month or a year
 /// and the end does not come first.
-fn period_bounds(from: &str, to: &str) -> Option<(String, String)> {
+pub(crate) fn period_bounds(from: &str, to: &str) -> Option<(String, String)> {
     let point = |text: &str| {
         when::parse(text).filter(|span| {
             matches!(span.precision, Precision::Day | Precision::Month | Precision::Year)
@@ -774,9 +783,11 @@ mod tests {
             node_id: node_id.into(),
             node_type: String::new(),
             title: String::new(),
-            label: None,
-            related_id: related.map(String::from),
-            links: Vec::new(),
+            node_title: String::new(),
+            // Người kia nằm ở link, không còn ở một cột (§4.9).
+            links: related
+                .map(|node| vec![EventLink { node_id: node.to_string(), role: "with".into(), label: None }])
+                .unwrap_or_default(),
             magnitude: 0.0,
             container_node: None,
             props: serde_json::Value::Null,

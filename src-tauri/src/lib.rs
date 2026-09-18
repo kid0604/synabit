@@ -529,7 +529,7 @@ pub fn run() {
             app.manage(std::sync::Mutex::new(db));
 
             // The timeline lives in its own file beside the cache
-            // (docs/tua-lai-2026-09-14.md §4.5.2). Everything in it is derived
+            // (docs/timeline-2026-09-17.md §4.7). Everything in it is derived
             // from the cache, so a timeline that cannot be opened costs an
             // in-memory one that fills on first use, not the app.
             let timeline = crate::timeline::TimelineStore::open_in_app_data(app.handle())
@@ -828,6 +828,9 @@ pub fn run() {
             commands::timeline::timeline_about,
             commands::timeline::seal_period,
             commands::timeline::remove_seal,
+            commands::timeline::timeline_quiet,
+            commands::timeline::timeline_hush,
+            commands::timeline::timeline_unhush,
             commands::timeline::ledger_sweep,
             commands::timeline::ledger_history,
             commands::timeline::ledger_verify,

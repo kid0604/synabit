@@ -2207,7 +2207,7 @@ async fn a_list_inside_one_file_is_merged_by_character_not_by_entry() {
 // A seal is a decision, and a decision made on one device holds on the other
 // ---------------------------------------------------------------------------
 
-/// The gate for B2 in `docs/tua-lai-2026-09-14.md`: seal a note and a period
+/// The gate for sealing, §8.1 of `docs/timeline-2026-09-17.md`: seal a note and a period
 /// on A, and B withholds them too; lift the period on A, and B lets it go.
 #[tokio::test]
 async fn a_seal_made_on_one_device_holds_on_the_other() {
@@ -2246,10 +2246,62 @@ async fn a_seal_made_on_one_device_holds_on_the_other() {
 }
 
 // ---------------------------------------------------------------------------
+// "Đừng nhắc" is a decision too, and two devices can make one at once
+// ---------------------------------------------------------------------------
+
+/// The gate for §16 Bước 3: a hush reaches the other device, lifting it on one
+/// lifts it on both, and — the reason each hush is a file of its own — two
+/// devices that go quiet about two different people in the same stretch keep
+/// both decisions instead of one overwriting the other.
+#[tokio::test]
+async fn two_devices_can_go_quiet_about_two_people_without_losing_one() {
+    use crate::timeline::quiet::{self, Subject};
+
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let vault_a = a.vault_path().to_string_lossy().to_string();
+    let vault_b = b.vault_path().to_string_lossy().to_string();
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    // Neither device has seen the other's decision when it makes its own.
+    let on_a = quiet::write_hush(&vault_a, &Subject::Person { who: "People/khanh.md".into() }, None)
+        .expect("hushed on A");
+    quiet::write_hush(&vault_b, &Subject::Person { who: "People/lan.md".into() }, Some("2027-01-01"))
+        .expect("hushed on B");
+    for _ in 0..2 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+
+    for (name, vault) in [("A", &vault_a), ("B", &vault_b)] {
+        let mut who: Vec<String> = quiet::read_hushes(vault)
+            .into_iter()
+            .filter_map(|h| match h.subject {
+                Subject::Person { who } => Some(who),
+                _ => None,
+            })
+            .collect();
+        who.sort();
+        assert_eq!(who, ["People/khanh.md", "People/lan.md"], "{name} kept both refusals");
+    }
+
+    quiet::remove_hush(&vault_a, &on_a.id).expect("lifted on A");
+    for _ in 0..2 {
+        a.sync_ok().await;
+        b.sync_ok().await;
+    }
+    let left = quiet::read_hushes(&vault_b);
+    assert_eq!(left.len(), 1, "lifting one on A lifts it on B and leaves the other");
+    assert_eq!(left[0].subject, Subject::Person { who: "People/lan.md".into() });
+}
+
+// ---------------------------------------------------------------------------
 // Evidence: each device keeps its own ledger, and they meet without a conflict
 // ---------------------------------------------------------------------------
 
-/// The gate for Nhát C in `docs/tua-lai-2026-09-14.md`: two devices write
+/// The gate for the evidence ledger, §8.3 of `docs/timeline-2026-09-17.md`: two devices write
 /// their ledgers in the same month, sync, and neither file becomes a conflict.
 /// Each device can then check both chains and read one history out of them.
 #[tokio::test]

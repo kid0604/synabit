@@ -10,11 +10,17 @@ use crate::error::{AppError, AppResult};
 use crate::timeline::frame::{self, TimeFrame};
 use crate::timeline::seal::{self, SealedPeriod, Seals};
 use crate::timeline::store::{self, CatchUp, Snapshot, Event};
+use crate::timeline::quiet::{self, Hush, Quiet, Subject};
 use crate::timeline::{extract, media, presence, reflect, when, TimelineState};
 
 fn seals_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Seals>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     seal::current(&db, vault_path)
+}
+
+fn quiet_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Quiet>> {
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    quiet::current(&db, vault_path)
 }
 
 /// Everything the vault says happened during `when`, less what is sealed.
@@ -195,7 +201,11 @@ pub(crate) fn one_side_of_each_relationship(
             return true;
         }
         let other = if mine(item) {
-            item.related_id.as_deref().map(resolve).unwrap_or_default()
+            item.links
+                .iter()
+                .find(|link| link.role == "with")
+                .map(|link| resolve(&link.node_id))
+                .unwrap_or_default()
         } else {
             resolve(&item.node_id)
         };
@@ -220,6 +230,69 @@ pub fn seal_period(vault_path: String, from: String, to: String) -> AppResult<Se
 #[tauri::command]
 pub fn remove_seal(vault_path: String, id: String) -> AppResult<()> {
     seal::remove_period(&vault_path, &id)
+}
+
+/// A person the app has gone quiet about, and why.
+///
+/// Whether anyone asked is the whole of it: a hush is undone by lifting it, and
+/// a death is not undone at all. A screen that showed them the same way would
+/// offer to "un-quiet" somebody's father.
+#[derive(Debug, serde::Serialize)]
+pub struct Hushed {
+    pub hushes: Vec<Hush>,
+    /// People quiet because they have a `died_on`, by path. §7.3.
+    pub dead: Vec<String>,
+}
+
+/// Everything the app has been told, or has worked out, not to raise first.
+#[tauri::command]
+pub fn timeline_quiet(state: tauri::State<'_, DbState>, vault_path: String) -> AppResult<Hushed> {
+    let quiet = quiet_of(&state, &vault_path)?;
+    let mut dead: Vec<String> = quiet
+        .dead_people()
+        .filter(|who| who.contains('/'))
+        .map(str::to_string)
+        .collect();
+    dead.sort();
+    Ok(Hushed { hushes: quiet.hushes().to_vec(), dead })
+}
+
+/// Ask the app to stop raising a person, one day's writing, or a stretch of
+/// time — the one action §16 Bước 3 asks for, and it is remembered because it
+/// is a file in the vault.
+///
+/// `until` is the last day it holds; without one it holds for good.
+#[tauri::command]
+pub fn timeline_hush(
+    vault_path: String,
+    who: Option<String>,
+    node: Option<String>,
+    day: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    until: Option<String>,
+) -> AppResult<Hush> {
+    let text = |value: Option<String>| {
+        value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    };
+    let subject = match (text(who), text(node), text(day), text(from), text(to)) {
+        (Some(who), ..) => Subject::Person { who },
+        (_, Some(node), Some(day), ..) => Subject::Moment { node, day },
+        (_, _, _, Some(from), Some(to)) => Subject::Period { from, to },
+        _ => {
+            return Err(AppError::General(
+                "Say what to go quiet about: a person, a note and a day, or a stretch of time"
+                    .into(),
+            ))
+        }
+    };
+    quiet::write_hush(&vault_path, &subject, text(until).as_deref())
+}
+
+/// Let the app speak about this again.
+#[tauri::command]
+pub fn timeline_unhush(vault_path: String, id: String) -> AppResult<()> {
+    quiet::remove_hush(&vault_path, &id)
 }
 
 /// Record what has changed in the vault since this device last looked.
@@ -282,8 +355,7 @@ mod tests {
             node_id: node_id.into(),
             node_type: String::new(),
             title: String::new(),
-            label: None,
-            related_id: None,
+            node_title: String::new(),
             links: Vec::new(),
             magnitude: 0.0,
             container_node: None,
@@ -480,6 +552,9 @@ pub async fn timeline_extract_run(
     if !settings.enabled {
         return if auto { skip("syn_off") } else { refuse(crate::commands::syn::SWITCHED_OFF) };
     }
+    // Model đọc nhật ký có thể khác model trợ lý, và khi nó khác thì nó chạy
+    // trên máy này. Xem `extract::reader` và §8.6.
+    let (settings, model) = extract::reader(&config, &settings);
     if !media::runs_here(&settings) && !config.allow_cloud {
         return if auto {
             skip("cloud")
@@ -487,7 +562,7 @@ pub async fn timeline_extract_run(
             refuse("Notes are read only by a model on this machine unless sending them elsewhere is allowed for this vault")
         };
     }
-    let Some(model) = settings.default_model.clone() else {
+    let Some(model) = model else {
         return if auto { skip("no_model") } else { refuse("No model is configured") };
     };
     if EXTRACTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -556,7 +631,7 @@ pub async fn timeline_extract_run(
 /// Accept a proposal into the note it came from, or decline it.
 ///
 /// Accepting writes a `moments` entry into that note's frontmatter, which is
-/// the first moment anything reaches the vault's own notes (§4.5.1). Declining
+/// the first moment anything reaches the vault's own notes (§4.7). Declining
 /// writes only the decision, so no device offers it again.
 #[tauri::command(async)]
 pub fn timeline_extract_review(
@@ -748,12 +823,14 @@ pub async fn timeline_read_line(
     if !settings.enabled {
         return Ok(no_model(None));
     }
-    let Some(model) = settings.default_model.clone() else {
+    let config = extract::read_config(&vault_path);
+    let (settings, model) = extract::reader(&config, &settings);
+    let Some(model) = model else {
         return Ok(no_model(None));
     };
     // The same rule the vault's notes are read under: what you write stays on
     // this machine unless this vault says otherwise.
-    if !media::runs_here(&settings) && !extract::read_config(&vault_path).allow_cloud {
+    if !media::runs_here(&settings) && !config.allow_cloud {
         return Ok(no_model(Some(
             "What you write is read only by a model on this machine, unless sending it elsewhere is allowed for this vault",
         )));
@@ -1453,10 +1530,18 @@ mod review_fixes {
             kind: kind.into(),
             node_id: node_id.into(),
             node_type: "person".into(),
-            title: node_id.into(),
-            label: Some(format!("label of {id}")),
-            related_id: related.map(String::from),
-            links: Vec::new(),
+            title: format!("label of {id}"),
+            node_title: node_id.into(),
+            // Người kia của một quan hệ nằm ở link, không còn ở một cột (§4.9).
+            links: related
+                .map(|node| {
+                    vec![crate::timeline::store::EventLink {
+                        node_id: node.into(),
+                        role: "with".into(),
+                        label: None,
+                    }]
+                })
+                .unwrap_or_default(),
             magnitude: 0.0,
             container_node: None,
             props: serde_json::Value::Null,
@@ -1649,7 +1734,7 @@ mod writing_an_event {
         );
         let wedding = derived
             .iter()
-            .find(|d| d.label.as_deref() == Some("Đám cưới Tuấn và Thuỳ"))
+            .find(|d| d.title.as_deref() == Some("Đám cưới Tuấn và Thuỳ"))
             .expect("the event that was just written");
         assert_eq!(wedding.kind, "moment");
         assert_eq!(wedding.span, when::parse("2016-05-14").unwrap());

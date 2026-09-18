@@ -4,7 +4,7 @@
  *
  * Every file shows what stands in for it — a caption, a transcript — and says
  * so when the file itself is on another device, rather than showing an empty
- * box (§4.6 of `docs/tua-lai-2026-09-14.md`). A line of a transcript opens the
+ * box (§5.5 of `docs/timeline-2026-09-17.md`). A line of a transcript opens the
  * recording at that moment. See `src-tauri/src/timeline/media.rs`.
  */
 import { computed, ref, watch } from 'vue';

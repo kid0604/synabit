@@ -1,8 +1,8 @@
 //! Tua lại, tier 3: every dated thing the vault already says, in one place.
 //!
-//! The design is `docs/tua-lai-2026-09-14.md`. This is Nhát A of it: items
-//! read straight out of fields that hold dates (§4.7.A), with no model and no
-//! guessing, kept in `timeline.db` beside the vault cache (§4.5.2).
+//! The design is `docs/timeline-2026-09-17.md`. These are the items
+//! read straight out of fields that hold dates (§4.8.1), with no model and no
+//! guessing, kept in `timeline.db` beside the vault cache (§4.7).
 //!
 //! - [`when`] reads a date to the precision anybody knows it.
 //! - [`derive`] turns one node into the items it implies.
@@ -16,7 +16,7 @@
 //! - [`presence`] is when an object was around, read off the events that
 //!   name it: a worldline rather than a dated edge.
 //! - [`magnitude`] is how big an event was, read from its core alone
-//!   (`docs/su-kien-2026-09-16.md` §5).
+//!   (`docs/timeline-2026-09-17.md` §4.8).
 //! - [`media`] is transcripts and captions that stand in for recordings and
 //!   pictures, and pictures grouped into moments (Nhát G).
 //!
@@ -33,6 +33,7 @@ pub mod ledger;
 pub mod magnitude;
 pub mod media;
 pub mod presence;
+pub mod quiet;
 pub mod reflect;
 pub mod seal;
 pub mod store;
