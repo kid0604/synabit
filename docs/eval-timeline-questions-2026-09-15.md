@@ -2,7 +2,7 @@
 
 **Trạng thái:** dự đoán, ghi **trước khi đo**. Kết quả sẽ được thêm vào cuối file sau khi chạy.
 Phần dự đoán không được sửa lại sau đó, kể cả khi nó sai.
-**Đo cho:** Nhát D của `docs/tua-lai-2026-09-14.md`.
+**Đo cho:** §6 (cách Timeline nói) của `docs/timeline-2026-09-17.md`.
 
 ## Hỏi gì
 

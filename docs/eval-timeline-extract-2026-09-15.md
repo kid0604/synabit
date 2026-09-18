@@ -2,7 +2,7 @@
 
 **Trạng thái:** dự đoán, ghi **trước khi đo**, và trước khi viết prompt trích xuất. Kết quả sẽ được thêm
 vào cuối file. Phần dự đoán không được sửa lại sau đó, kể cả khi nó sai.
-**Đo cho:** Nhát E của `docs/tua-lai-2026-09-14.md`.
+**Đo cho:** §5.2 (model đọc chữ) của `docs/timeline-2026-09-17.md`.
 
 ## Hỏi gì
 
