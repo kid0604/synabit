@@ -74,10 +74,18 @@ export function useNoteSave(
     if (!note) { logger.warn('[NoteApp] saveNoteForTab: note not found for', tabId); return; }
     const existing = saveTimeouts.get(tabId);
     if (existing) clearTimeout(existing);
-    saveTimeouts.set(tabId, setTimeout(() => {
-        saveTimeouts.delete(tabId);
-        void writeTab(tabId, note);
-    }, 600));
+    // The entry is what tells a re-read that the buffer on screen is newer
+    // than the file, so it has to stand until the file catches up. Clearing it
+    // when the timer fired left the write itself unguarded: a `node:updated`
+    // arriving in that window — the watcher seeing the previous save, the
+    // sync touching the file — was told nothing was pending, and the note was
+    // read back and put over the sentence being typed.
+    const handle = setTimeout(() => {
+        void writeTab(tabId, note).finally(() => {
+            if (saveTimeouts.get(tabId) === handle) saveTimeouts.delete(tabId);
+        });
+    }, 600);
+    saveTimeouts.set(tabId, handle);
   };
 
   /**
@@ -94,10 +102,19 @@ export function useNoteSave(
     const pending = saveTimeouts.get(tabId);
     if (!pending) return;
     clearTimeout(pending);
-    saveTimeouts.delete(tabId);
     const note = notes.value.find(n => n.id === tabId);
-    if (!note) { logger.warn('[NoteApp] flushSave: note not found for', tabId); return; }
-    await writeTab(tabId, note);
+    if (!note) {
+      logger.warn('[NoteApp] flushSave: note not found for', tabId);
+      saveTimeouts.delete(tabId);
+      return;
+    }
+    // Held for the same reason as above: until this write lands, the file is
+    // behind the tab.
+    try {
+      await writeTab(tabId, note);
+    } finally {
+      if (saveTimeouts.get(tabId) === pending) saveTimeouts.delete(tabId);
+    }
   };
 
   const onEditorUpdate = (val: string, rawTabId: string) => {

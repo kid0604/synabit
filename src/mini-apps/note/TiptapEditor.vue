@@ -52,6 +52,7 @@ import './editor/styles/editor-code.css';
 
 // --- Extracted Extensions ---
 import { CustomTableCell, CustomTableHeader } from './editor/extensions/customTable';
+import { NoNestedTables } from './editor/extensions/noNestedTables';
 import { SlashCommands } from './editor/extensions/slashCommands';
 import { EmojiSuggestion } from './editor/extensions/emojiSuggestion';
 import { TabIndentExtension } from './editor/extensions/tabIndent';
@@ -458,6 +459,7 @@ const editor = useEditor({
     TableRow,
     CustomTableCell,
     CustomTableHeader,
+    NoNestedTables,
     TextAlign.configure({
       types: ['heading', 'paragraph'],
     }),

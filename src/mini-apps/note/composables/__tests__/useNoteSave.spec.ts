@@ -28,6 +28,43 @@ describe('useNoteSave', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
+  // A re-read of the file is refused while the buffer is newer than it, and
+  // `saveTimeouts` is how that is known. It has to cover the write, not just
+  // the wait before it: a note read back mid-write comes back as it was before
+  // the save and lands on top of whatever has been typed since.
+  describe('while a save is in flight', () => {
+    it('still says a save is pending', async () => {
+      const h = harness();
+      let finish: () => void = () => {};
+      h.writeNode.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+      h.tabContents.value['Notes/a.md'] = 'typed';
+
+      h.api.onEditorUpdate('typed', 'Notes/a.md');
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(h.writeNode).toHaveBeenCalled();
+      expect(h.api.saveTimeouts.has('Notes/a.md')).toBe(true);
+
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.api.saveTimeouts.has('Notes/a.md')).toBe(false);
+    });
+
+    it('says so through a flush as well', async () => {
+      const h = harness();
+      let finish: () => void = () => {};
+      h.writeNode.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+      h.api.onEditorUpdate('typed', 'Notes/a.md');
+
+      const flushed = h.api.flushSave('Notes/a.md');
+      expect(h.api.saveTimeouts.has('Notes/a.md')).toBe(true);
+
+      finish();
+      await flushed;
+      expect(h.api.saveTimeouts.has('Notes/a.md')).toBe(false);
+    });
+  });
+
   describe('resolveTabId', () => {
     it('follows a rename to where the file actually is', () => {
       const h = harness();
