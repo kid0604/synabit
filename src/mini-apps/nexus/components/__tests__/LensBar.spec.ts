@@ -80,8 +80,9 @@ describe('Asking Nexus a question', () => {
         await wrapper.find('[data-run]').trigger('click');
         await flushPromises();
 
-        const table = wrapper.findComponent({ name: 'TableView' });
-        table.vm.$emit('open', EVENTS.rows[0]);
+        // Pressing the row as a person would, through whichever view the
+        // answer chose — rather than poking the component that used to draw it.
+        await wrapper.find('[data-dated-row]').trigger('click');
         expect(wrapper.emitted('open')?.[0]).toEqual(['Notes/2019-11-05.md', 'note']);
     });
 
@@ -124,8 +125,8 @@ describe('Asking Nexus a question', () => {
         await wrapper.find('[data-ask]').setValue('with:khánh when:2019');
         await flushPromises();
 
-        const chips = wrapper.findAll('[data-chip]');
-        expect(chips).toHaveLength(0, 'still typing, so still words');
+        // Still typing, so still words.
+        expect(wrapper.findAll('[data-chip]')).toHaveLength(0);
 
         // Pressing something elsewhere is what fills the bar.
         await (wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> })
@@ -165,7 +166,8 @@ describe('Asking Nexus a question', () => {
 
         await wrapper.findAll('[data-chip-drop]')[0].trigger('click');
         await flushPromises();
-        expect(vi.mocked(invoke).mock.calls.at(-1)?.[1]).toMatchObject({ query: 'when:2019' });
+        const calls = vi.mocked(invoke).mock.calls;
+        expect(calls[calls.length - 1][1]).toMatchObject({ query: 'when:2019' });
     });
 
     /// The same press that put a filter on takes it off, so pressing the same
@@ -191,5 +193,50 @@ describe('Asking Nexus a question', () => {
         await wrapper.find('[data-edit]').trigger('click');
         await flushPromises();
         expect((wrapper.find('[data-ask]').element as HTMLInputElement).value).toBe('with:Khánh');
+    });
+
+    // ─── The answer choosing its own shape ──────────────────────
+
+    /// A question with days in it is drawn down the days without anybody
+    /// saying so. This is what makes a new question cost no new code.
+    it('draws an answer with days in it down the days, unasked', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('with:khánh');
+        await wrapper.find('[data-run]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-dated-view]').exists()).toBe(true);
+        expect(wrapper.find('[data-day-label]').text()).toBe('2019-11-05');
+    });
+
+    it('lets one press overrule the answer, and lets it be pressed back', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('with:khánh');
+        await wrapper.find('[data-run]').trigger('click');
+        await flushPromises();
+
+        const asTable = wrapper.findAll('[data-shape]').find(b => b.text().match(/Bảng|Table/));
+        await asTable?.trigger('click');
+        await flushPromises();
+        expect(wrapper.find('[data-dated-view]').exists()).toBe(false);
+
+        await asTable?.trigger('click');
+        await flushPromises();
+        // Back to whatever the answer chose for itself.
+        expect(wrapper.find('[data-dated-view]').exists()).toBe(true);
+    });
+
+    it('marks which shape is in use, however it was chosen', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('with:khánh');
+        await wrapper.find('[data-run]').trigger('click');
+        await flushPromises();
+
+        const on = wrapper.findAll('[data-shape]').filter(b => b.attributes('data-on') === 'yes');
+        expect(on).toHaveLength(1);
+        expect(on[0].attributes('aria-pressed')).toBe('true');
     });
 });

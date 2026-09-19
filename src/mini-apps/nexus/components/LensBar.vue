@@ -11,18 +11,24 @@
  * because the chips are the text itself sliced (`shared/queryChips`) rather
  * than a second model that has to be kept in step.
  *
- * Still to come: step 4 lets the answer choose its own shape, so for now the
- * rows arrive in a table whatever they are.
+ * The answer picks how it is drawn (`views/shapeFor`), which is what stops a
+ * new question costing new code: the rows say what they are, so one renderer
+ * covers every question of that shape, including the ones nobody has thought
+ * of. A person can overrule it in one press, and a lens remembers what they
+ * chose.
  *
- * What is already proved is the claim the design rests on: the answer comes
- * back as an ordinary `QueryResult`, so `TableView` — written long before any
- * of this, for notes — draws a question about the timeline without being
+ * The claim the design rests on is visible here: the answer comes back as an
+ * ordinary `QueryResult`, so `TableView` and `ListView` — written long before
+ * any of this, for notes — draw a question about the timeline without being
  * taught what an event is. One result shape, and the views already know it.
  */
 import { computed, nextTick, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { Search } from 'lucide-vue-next';
 import TableView from '../../../shared/views/TableView.vue';
+import ListView from '../../../shared/views/ListView.vue';
+import DatedView from '../../../shared/views/DatedView.vue';
+import { chosenShape, SHAPES, type Shape } from '../../../shared/views/shapeFor';
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
@@ -40,6 +46,9 @@ const result = ref<QueryResult | null>(null);
 const running = ref(false);
 const refused = ref<string | null>(null);
 const active = ref<string | null>(null);
+/** What the person chose, or nothing — in which case the answer decides. */
+const shape = ref<Shape>('auto');
+const drawn = computed(() => chosenShape(shape.value, result.value));
 
 const asked = computed(() => query.value.trim().length > 0);
 
@@ -69,7 +78,16 @@ const runLens = async (lens: Lens) => {
     query.value = lens.query;
     typing.value = false;
     active.value = lens.id;
+    // A lens carries how it liked to be seen. `auto` here is not a gap — it
+    // is a lens that never overruled the answer, and should keep not doing so
+    // as the data behind it changes.
+    shape.value = lens.render === 'auto' ? 'auto' : (lens.render as Shape);
     await run();
+};
+
+/** Overruling the answer, which is a choice worth keeping if the lens is. */
+const pick = (next: Shape) => {
+    shape.value = shape.value === next ? 'auto' : next;
 };
 
 const typed = () => {
@@ -124,7 +142,9 @@ const edit = async () => {
             <p v-if="refused" data-refused class="px-4 py-3 text-[12px] text-gray-600 dark:text-gray-300">
                 {{ refused }}
             </p>
-            <TableView v-else :result="result" @open="open" />
+            <DatedView v-else-if="drawn === 'dated'" :result="result" @open="open" />
+            <TableView v-else-if="drawn === 'table'" :result="result" @open="open" />
+            <ListView v-else :result="result" @open="open" />
         </div>
 
         <div
@@ -195,11 +215,37 @@ const edit = async () => {
             </button>
         </div>
 
-        <LensShelf
-            :vault-path="vaultPath"
-            :query="query"
-            :active="active"
-            @run="runLens"
-        />
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <LensShelf
+                :vault-path="vaultPath"
+                :query="query"
+                :render="shape"
+                :active="active"
+                @run="runLens"
+            />
+
+            <!-- One press to overrule the answer. The one in use is marked
+                 whether the answer chose it or the person did, because which
+                 of them chose is not what somebody is looking for here. -->
+            <div v-if="result" data-shapes class="flex items-center gap-1">
+                <button
+                    v-for="option in SHAPES"
+                    :key="option"
+                    type="button"
+                    data-shape
+                    :data-on="drawn === option ? 'yes' : undefined"
+                    :aria-pressed="drawn === option"
+                    class="h-[26px] rounded-full px-2.5 text-[11px] transition-colors"
+                    :class="
+                        drawn === option
+                            ? 'bg-gray-100 font-semibold text-gray-900 dark:bg-[#3a3a3c] dark:text-gray-100'
+                            : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    "
+                    @click="pick(option)"
+                >
+                    {{ $t(`nexus.shape_${option}`) }}
+                </button>
+            </div>
+        </div>
     </div>
 </template>

@@ -35,13 +35,13 @@ const SHELF = {
     query_time_ms: 1,
 };
 
-const open = async (query = '', active: string | null = null) => {
+const open = async (query = '', active: string | null = null, render = 'auto') => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
         if (command === 'run_node_query') return structuredClone(SHELF);
         return null;
     });
     const wrapper = mount(LensShelf, {
-        props: { vaultPath: '/vault', query, active },
+        props: { vaultPath: '/vault', query, active, render },
         global: { plugins: [i18n] },
     });
     await flushPromises();
@@ -142,10 +142,34 @@ describe('The lens shelf', () => {
             query_time_ms: 0,
         }));
         const wrapper = mount(LensShelf, {
-            props: { vaultPath: '/vault', query: '', active: null },
+            props: { vaultPath: '/vault', query: '', active: null, render: 'auto' },
             global: { plugins: [i18n] },
         });
         await flushPromises();
         expect(wrapper.find('[data-lens-empty]').exists()).toBe(true);
+    });
+
+    /// §7: the shape is a property of the question, so it is kept with it.
+    it('keeps how the answer was being seen, when that was chosen', async () => {
+        const wrapper = await open('with:minh', null, 'table');
+        await wrapper.find('[data-lens-save]').trigger('click');
+        await wrapper.find('[data-lens-keep]').trigger('click');
+        await flushPromises();
+
+        expect(writeNode.mock.calls[0][0].properties).toEqual({
+            query: 'with:minh',
+            render: 'table',
+        });
+    });
+
+    /// And `auto` is not a choice — writing it would turn a default into a
+    /// commitment the person never made.
+    it('writes nothing about shape when the answer was left to choose', async () => {
+        const wrapper = await open('with:minh', null, 'auto');
+        await wrapper.find('[data-lens-save]').trigger('click');
+        await wrapper.find('[data-lens-keep]').trigger('click');
+        await flushPromises();
+
+        expect(writeNode.mock.calls[0][0].properties).toEqual({ query: 'with:minh' });
     });
 });

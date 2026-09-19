@@ -19,12 +19,14 @@ import { computed, ref, watch } from 'vue';
 import { BookMarked, Plus, Trash2 } from 'lucide-vue-next';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
-import { lensPath, nameFor, propertiesOf, readShelf, type Lens } from '../../../shared/lenses';
+import { lensPath, nameFor, normalise, propertiesOf, readShelf, type Lens } from '../../../shared/lenses';
 
 const props = defineProps<{
     vaultPath: string;
     /** The question on the bar right now, which is what Save would keep. */
     query: string;
+    /** And how it is being seen, which is kept with it. */
+    render: string;
     /** Which lens the bar is showing, if it came from one. */
     active: string | null;
 }>();
@@ -68,7 +70,12 @@ const save = async () => {
             relPath: lensPath(),
             nodeType: 'lens' as never,
             title,
-            properties: propertiesOf({ title, query: props.query, render: 'auto', icon: '' }),
+            properties: propertiesOf({
+                title,
+                query: props.query,
+                render: normalise(props.render),
+                icon: '',
+            }),
             content: '',
             eventType: 'created',
         });

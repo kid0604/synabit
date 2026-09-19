@@ -30,7 +30,7 @@ describe('A lens', () => {
                     id: 'Lens/a.md',
                     node_type: 'lens',
                     title: 'Lens/a.md',
-                    cells: ['Gặp Khánh', 'with:khánh when:2019/2026', 'strip', 'users'],
+                    cells: ['Gặp Khánh', 'with:khánh when:2019/2026', 'dated', 'users'],
                 },
             ]),
         );
@@ -38,7 +38,7 @@ describe('A lens', () => {
             id: 'Lens/a.md',
             title: 'Gặp Khánh',
             query: 'with:khánh when:2019/2026',
-            render: 'strip',
+            render: 'dated',
             icon: 'users',
         });
     });
@@ -63,6 +63,7 @@ describe('A lens', () => {
     });
 
     it('treats a rendering it does not know as "let the answer choose"', () => {
+        expect(normalise('dated')).toBe('dated');
         expect(normalise('bars')).toBe('bars');
         expect(normalise('BARS')).toBe('bars');
         expect(normalise('sparkline')).toBe('auto');

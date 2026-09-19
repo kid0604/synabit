@@ -264,7 +264,7 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 | 1 | ~~`events` vào được `ParsedQuery`~~ — **xong 2026-09-19** | hỏi được dòng thời gian bằng chữ lần đầu tiên |
 | 2 | ~~Thấu kính là một node + kệ thấu kính~~ — **xong 2026-09-19** | lưu được một câu hỏi |
 | 3 | ~~Thanh truy vấn hai chiều với chip~~ — **xong 2026-09-19** | bấm và gõ thành một |
-| 4 | Kết quả tự chọn hình dạng + bộ view primitive | câu hỏi mới không tốn code |
+| 4 | ~~Kết quả tự chọn hình dạng~~ — **xong 2026-09-19** | câu hỏi mới không tốn code |
 | 5 | Ống dẫn: `count by`, `top n by` | thống kê, nhịp sống |
 | 6 | `gaps`, `anniversary`, `sentences`, `ask` | bốn panel cảm xúc thành thấu kính |
 | 7 | Syn trả lời kèm truy vấn + nút Lưu | đường vào cho người không gõ |
@@ -384,3 +384,42 @@ con trỏ**, vì có chip là chuyển sang mặt chip. Nay gõ thì giữ chữ
 
 **Còn lại:** bấm người trên đồ thị và ô ngày đã đổ vào thanh; bấm tag cũng vậy. Kết
 quả vẫn về dưới dạng bảng dù nó là gì — bước 4.
+
+---
+
+## 15. Bước 4 — đã làm, 2026-09-19
+
+**Kết quả tự chọn hình dạng, và nó đọc *giá trị* chứ không chỉ đọc tên cột.**
+
+Một cột tên `when` là ngày. Một cột tên `hạn_chót` trong schema ai đó tự đặt sáng nay
+và đổ toàn ngày vào — **cũng là ngày**. Quyết theo tên thì đúng với những truy vấn
+app tự viết và sai với những truy vấn người dùng viết, tức là sai đúng chiều quan
+trọng. Nên **ô là bằng chứng, tên chỉ là gợi ý**, và tên chỉ được hỏi tới khi không
+có dòng nào để đọc.
+
+Có test cho cả chiều ngược: một cột tên `date` mà đổ *"hôm qua"*, *"tuần trước"* thì
+**không** phải cột ngày.
+
+**Ba hình dạng, không phải sáu.** §7 kể sáu, nhưng `bars` và `quotes` **chưa có gì để
+vẽ** — chúng cần `count by` và `sentences` của bước 5–6. Dựng một renderer khi chưa
+có dữ liệu là đoán xem dữ liệu ấy trông thế nào. Nên hôm nay: `dated`, `list`,
+`table`, và ba cái đó đều có người sinh ra dữ liệu thật.
+
+**`DatedView` là primitive mới duy nhất**, và nó giữ đúng hợp đồng đã viết ở
+`views/types.ts`: nhận kết quả, không tự gọi; không rẽ nhánh theo type. Nó nhóm theo
+ngày **mà không sắp xếp lại** — thứ tự là một phần của câu hỏi (`sort:`), sắp lại ở
+đây là lặng lẽ ghi đè lên `sort:when`.
+
+Vì sao một bảng không đủ cho câu hỏi về thời gian: **ba việc trong một ngày rồi năm
+tháng im lặng là một câu trả lời**, còn trong bảng nó là bốn dòng.
+
+**Một cú bấm đè được lên lựa chọn của kết quả, và bấm lại thì trả về cho nó.** Nút
+đang dùng được đánh dấu **bất kể ai chọn** — người hay câu trả lời — vì đó không phải
+thứ người ta đang tìm ở chỗ ấy.
+
+**Và lựa chọn ấy đi vào thấu kính.** Nhưng `auto` thì **không ghi gì**: ghi `auto` ra
+file là biến một mặc định thành một cam kết người ta chưa từng đưa ra. Có test cho cả
+hai chiều.
+
+**Còn lại:** `bars` và `quotes` về cùng bước 5–6. Trợ lý vẫn chưa đi qua bộ định tuyến
+— bước 7.

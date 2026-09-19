@@ -19,8 +19,16 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { QueryResult } from './views/types';
 
-/** How a lens wants its answer drawn. Step 4 gives these meaning. */
-export type Render = 'auto' | 'list' | 'table' | 'strip' | 'quotes' | 'bars' | 'one';
+/**
+ * How a lens wants its answer drawn.
+ *
+ * `dated`, `list` and `table` have renderers today (`views/shapeFor`). The
+ * rest are named in §7 of the design and arrive with the transforms that
+ * produce their data; a lens carrying one of them falls back to `auto` until
+ * then, which is the reading that shows the person their answer rather than
+ * an error.
+ */
+export type Render = 'auto' | 'dated' | 'list' | 'table' | 'quotes' | 'bars' | 'one';
 
 export interface Lens {
   /** The node's path, which is its id. */
@@ -73,7 +81,7 @@ export function lensesFrom(result: QueryResult): Lens[] {
     .filter(lens => lens.query.trim().length > 0);
 }
 
-const RENDERS: Render[] = ['auto', 'list', 'table', 'strip', 'quotes', 'bars', 'one'];
+const RENDERS: Render[] = ['auto', 'dated', 'list', 'table', 'quotes', 'bars', 'one'];
 
 /** Anything unknown means "let the answer choose", which is the default. */
 export function normalise(value: string | undefined): Render {
