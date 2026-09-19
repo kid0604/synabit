@@ -32,6 +32,14 @@ pub struct QueryRow {
     pub title: String,
     /// One entry per column, in the order the columns were requested.
     pub cells: Vec<String>,
+    /// What a click should open, when that is not the row's own id.
+    ///
+    /// A node's id *is* the thing to open, so this stays empty for them. An
+    /// event's id is `path#kind#n` and opens nothing — but it has to stay the
+    /// id, because a view keys rows by it and one note holds several events.
+    /// See `timeline::query`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -368,6 +376,7 @@ impl DbBridge {
                 id,
                 node_type,
                 title,
+                open: None,
                 cells,
             });
         }

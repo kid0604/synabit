@@ -36,6 +36,7 @@ pub mod media;
 pub mod onthisday;
 pub mod pin;
 pub mod presence;
+pub mod query;
 pub mod quiet;
 pub mod reflect;
 pub mod seal;

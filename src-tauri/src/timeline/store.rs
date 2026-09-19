@@ -411,7 +411,10 @@ impl TimelineStore {
     }
 
     /// The connection, for the evidence ledger's own table. See `timeline::ledger`.
-    pub(crate) fn conn(&self) -> &Connection {
+    /// The connection, for a reader that builds its own statement —
+    /// `timeline::query` composes SQL from a parsed question, which this type
+    /// cannot offer as a method without becoming the query language itself.
+    pub fn conn(&self) -> &Connection {
         &self.conn
     }
 

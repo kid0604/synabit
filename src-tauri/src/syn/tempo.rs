@@ -462,6 +462,7 @@ mod tests {
                     node_type: "task".into(),
                     title: format!("task {i}"),
                     cells: Vec::new(),
+                    open: None,
                 })
                 .collect(),
             total: 9,

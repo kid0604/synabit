@@ -13,6 +13,15 @@ export interface QueryRow {
   title: string;
   /** One entry per requested column, in the order the columns came back. */
   cells: string[];
+  /**
+   * What a click should open, when that is not the row's own id.
+   *
+   * Absent for a node, whose id *is* the thing to open. Present for a
+   * timeline row, whose id is the event (`path#kind#n`, unique, which is what
+   * a view needs for a key) while the thing to open is the note it came from.
+   * So: open `row.open ?? row.id`, and no view needs to know which it got.
+   */
+  open?: string;
 }
 
 export interface QueryResult {

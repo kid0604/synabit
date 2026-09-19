@@ -261,7 +261,7 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 
 | | Việc | Xong thì làm được gì |
 | --- | --- | --- |
-| 1 | `events` vào được `ParsedQuery`: `when:` `with:` `where:` `about:` `shape:` `magnitude:` | hỏi được dòng thời gian bằng chữ lần đầu tiên |
+| 1 | ~~`events` vào được `ParsedQuery`~~ — **xong 2026-09-19** | hỏi được dòng thời gian bằng chữ lần đầu tiên |
 | 2 | Thấu kính là một node + kệ thấu kính | lưu được một câu hỏi |
 | 3 | Thanh truy vấn hai chiều với chip | bấm và gõ thành một |
 | 4 | Kết quả tự chọn hình dạng + bộ view primitive | câu hỏi mới không tốn code |
@@ -275,3 +275,38 @@ lại chỉ là cách bày ra thứ bước 1 mở khoá.
 
 **Gate cho cả tài liệu này:** một câu hỏi mà hôm nay cần một panel mới, sau khi xong
 phải trả lời được **không thêm một dòng Rust hay Vue nào**.
+
+---
+
+## 12. Bước 1 — đã làm, 2026-09-19
+
+Sáu từ khoá vào `ParsedQuery`, một bộ chạy trên `events` ở `timeline::query`, và
+**cùng một lệnh** `run_node_query` định tuyến giữa hai bên.
+
+**Không có cửa thứ hai.** Giao diện vẫn gọi đúng lệnh cũ với đúng tham số cũ; câu hỏi
+nào không mang từ khoá dòng thời gian thì chạy y như trước. Từ khoá **chính là bộ
+chọn bảng**, và đó không phải mẹo: hỏi ai có mặt, hỏi chuyện đó lớn cỡ nào — chỉ
+*sự kiện* mới trả lời được, nên viết một trong sáu từ ấy đã là nói rõ hỏi bảng nào.
+
+**Cùng một `QueryResult`.** Đây là chỗ quyết định: bộ chạy mới trả về đúng struct mà
+`run_node_query` vẫn trả, nên mọi view đang vẽ được truy vấn node thì vẽ được truy vấn
+dòng thời gian **mà không cần biết sự kiện là gì**.
+
+Một thứ phải thêm: `QueryRow.open`. Id của node **chính là** thứ để mở; id của sự
+kiện là `path#kind#n` và mở ra không có gì — nhưng nó phải giữ nguyên làm id vì view
+dùng id làm khoá, mà một ghi chú chứa nhiều sự kiện. Nên id giữ của sự kiện, `open`
+mang ghi chú. Node để trống, nghĩa là "mở chính id". Người gọi viết `row.open ?? row.id`
+một lần và không view nào phải biết nó nhận loại nào.
+
+**Vault thật bắt lỗi ngay ở câu hỏi thứ tư.** `when:2026 ăn` trả về 15 kết quả, ba cái
+đầu là *«công **văn**»* và *«Bùi **Văn** Phương»*. Khớp chuỗi con biến mọi từ ngắn
+thành ký tự đại diện trong tiếng Việt. Nay so khớp trên một bản tiêu đề đã đệm khoảng
+trắng và ép dấu câu thành khoảng trắng, nên `% ăn %` là một **từ**. Đo lại: `văn` → 5
+đúng, `ăn` → 0 đúng (mấy dòng bữa ăn còn là đề xuất chờ duyệt).
+
+Hai lỗi nhỏ hơn cũng do chạy thật mới lộ: dấu nháy đơn trong danh sách dấu câu làm vỡ
+chuỗi SQL, và biểu thức ép dấu câu bị lặp lại cho **từng** từ — giờ dựng một lần thành
+cột dẫn xuất.
+
+**Còn lại của bước 1:** trợ lý vẫn chỉ hỏi được `nodes` (`query_nodes` gọi thẳng
+`db.run_node_query`). Cho nó đi qua cùng bộ định tuyến là việc của bước 7.

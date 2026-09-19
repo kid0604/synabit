@@ -50,6 +50,25 @@ pub struct ParsedQuery {
     /// carrying `offset:500` in its text would reopen on page two forever.
     /// The caller sets it after parsing.
     pub offset: u32,
+    /// `when:2019`, `when:2016-05-14`, `when:2019/2026`, `when:last-year`.
+    ///
+    /// Kept as the person wrote it: `timeline::when::parse` already reads
+    /// every shape a date can take here, and re-implementing that in the
+    /// parser would give two readings of the same words.
+    pub when: Option<String>,
+    /// `with:khánh` — who was there. A name, a path or an identity; the
+    /// caller resolves it against the vault before the query runs, because
+    /// only the caller has the vault.
+    pub with: Vec<String>,
+    /// `where:hanoi` — where it happened. Named `place` because `where` is
+    /// not a field name Rust will take.
+    pub place: Vec<String>,
+    /// `about:synabit` — what it was about: a project, a piece of work.
+    pub about: Vec<String>,
+    /// `shape:occasion` — what sort of thing it is (`timeline::derive::Shape`).
+    pub shape: Option<String>,
+    /// `magnitude:>4` — how big, on the scale `timeline::magnitude` computes.
+    pub magnitude: Option<(Comparison, f64)>,
     /// Whether the query is empty (no meaningful search terms)
     pub is_empty: bool,
     /// Whether to enforce case-sensitive matching (post-filter)
@@ -190,6 +209,38 @@ pub fn json_path_for(key: &str) -> Option<String> {
 /// - `in:title`: search only in title field
 /// - `status:done` / `status:todo` / `status:in-progress`: task status filter
 /// - `date:today` / `date:this-week` / `date:this-month`: date filter
+impl ParsedQuery {
+    /// Whether this question is about the timeline rather than about notes.
+    ///
+    /// The keywords are the selector, deliberately and not as a trick: asking
+    /// who was somewhere, or how big a thing was, is only answerable of an
+    /// *event*, so writing one of those words is the same act as saying which
+    /// table to read. A query with none of them means what it has always
+    /// meant, so nothing that worked yesterday changes.
+    pub fn asks_the_timeline(&self) -> bool {
+        self.when.is_some()
+            || self.shape.is_some()
+            || self.magnitude.is_some()
+            || !self.with.is_empty()
+            || !self.place.is_empty()
+            || !self.about.is_empty()
+    }
+}
+
+/// A value with its quotes taken off, straight or curly.
+///
+/// The tokenizer keeps quotes on so `tag:"one mount"` survives as one token;
+/// every keyword that takes a value then has to take them off again, and doing
+/// it in one place is how they all agree about `“` and `”`.
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    let quote = |c: char| c == '"' || c == '\u{201c}' || c == '\u{201d}';
+    if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+        return value[1..value.len() - 1].trim();
+    }
+    value
+}
+
 pub fn parse_query(raw: &str) -> ParsedQuery {
     let mut pq = ParsedQuery {
         is_empty: true,
@@ -249,6 +300,63 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
 
     for token in tokens {
         let lower = token.to_lowercase();
+
+        // ── The timeline's own words ───────────────────────────────
+        //
+        // Read before `is:` and the property filters so they are never taken
+        // for a property named `with` on a note. Each keeps the person's text
+        // as written: a name becomes a node id only where the vault can be
+        // read, and a date only where `timeline::when` can read it.
+        if let Some(stripped) = lower.strip_prefix("when:") {
+            let value = unquoted(stripped);
+            if !value.is_empty() {
+                pq.when = Some(value.to_string());
+                pq.is_empty = false;
+            }
+            continue;
+        }
+        // `with:`, `where:` and `about:` are three of §4.2's four roles. The
+        // fourth, `evidence`, is not a question anybody asks: nobody looks for
+        // "events a photograph belongs to" — they look at the photograph.
+        //
+        // The value keeps its original casing, because a name is a name.
+        if let Some(role) = ["with:", "where:", "about:"]
+            .into_iter()
+            .find(|word| lower.starts_with(word))
+        {
+            let value = unquoted(&token[role.len()..]).to_string();
+            if !value.is_empty() {
+                match role {
+                    "with:" => pq.with.push(value),
+                    "where:" => pq.place.push(value),
+                    _ => pq.about.push(value),
+                }
+                pq.is_empty = false;
+            }
+            continue;
+        }
+        if let Some(stripped) = lower.strip_prefix("shape:") {
+            let value = unquoted(stripped);
+            if !value.is_empty() {
+                pq.shape = Some(value.to_string());
+                pq.is_empty = false;
+            }
+            continue;
+        }
+        if let Some(stripped) = lower.strip_prefix("magnitude:") {
+            let value = unquoted(stripped);
+            // A bare number means "at least this big", which is what somebody
+            // asking for big things means. `>`, `>=`, `<`, `<=` say it exactly.
+            let (comparison, number) = match split_comparison(value) {
+                Some((comparison, rest)) => (comparison, rest),
+                None => (Comparison::GreaterOrEqual, value),
+            };
+            if let Ok(number) = number.trim().parse::<f64>() {
+                pq.magnitude = Some((comparison, number));
+                pq.is_empty = false;
+            }
+            continue;
+        }
 
         // is: filter
         // `type:` and `is:` are the same filter. `is:` came first and is what

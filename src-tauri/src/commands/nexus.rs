@@ -461,17 +461,75 @@ pub fn list_observed_types(
         .collect())
 }
 
+/// Run one question, against whichever table can answer it.
+///
+/// One command rather than two, because a person asking a question does not
+/// know which table holds the answer and should not have to. The words decide:
+/// `with:`, `where:`, `about:`, `when:`, `shape:` and `magnitude:` are only
+/// answerable of an event, so writing one of them is the same act as naming
+/// the timeline. Everything else means what it has always meant, so no call
+/// that worked before this changes.
+///
+/// Both halves return the same `QueryResult`, which is what lets one view draw
+/// either — see `timeline::query`.
 #[tauri::command]
 pub fn run_node_query(
     state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, crate::timeline::TimelineState>,
+    vault_path: Option<String>,
     query: String,
     // Rows to skip. Absent means the first page, which is every existing call.
     offset: Option<u32>,
 ) -> AppResult<crate::db::QueryResult> {
     let mut parsed = crate::search::parse_query(&query);
     parsed.offset = offset.unwrap_or(0);
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.run_node_query(&parsed)
+
+    if !parsed.asks_the_timeline() {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        return db.run_node_query(&parsed);
+    }
+
+    // A name becomes an identity here, where the vault can be read: an event's
+    // links name people by identity, and a person typing a question names them
+    // by their name.
+    let named = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        let resolve = |names: &Vec<String>| -> Vec<String> {
+            names.iter().map(|name| identity_of(&db, name)).collect()
+        };
+        crate::timeline::query::Named {
+            with: resolve(&parsed.with),
+            place: resolve(&parsed.place),
+            about: resolve(&parsed.about),
+        }
+    };
+
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(vault_path) = vault_path.as_deref() {
+        crate::timeline::store::catch_up_in(state.inner(), &mut timeline, Some(vault_path))?;
+    }
+    crate::timeline::query::run(&timeline, &parsed, &named)
+}
+
+/// What an event's links would call this name.
+///
+/// A path, a stable id or a person's name all reach the same node; the links
+/// hold whichever of its names the vault gave it. A name that resolves to
+/// nothing is passed through untouched, so a query naming an identity directly
+/// still works and a typo simply finds nothing instead of finding everything.
+fn identity_of(db: &crate::db::DbBridge, name: &str) -> String {
+    let Some(id) = crate::timeline::store::node_for(db, name) else {
+        return name.to_string();
+    };
+    db.conn()
+        .query_row(
+            "SELECT COALESCE(NULLIF(json_extract(properties, '$.node_id'), ''), \
+                             NULLIF(stable_id, ''), id)
+               FROM nodes WHERE id = ?1",
+            [&id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or(id)
 }
 
 #[cfg(test)]

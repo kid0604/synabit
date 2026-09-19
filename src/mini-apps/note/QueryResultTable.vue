@@ -64,8 +64,12 @@ const run = async () => {
 };
 
 const open = (row: QueryRow) => {
+  // `open` when the row carries one, else the id. A timeline row keys on its
+  // event — unique, which is what a list needs — while the thing to open is
+  // the note it came from; a node row has only the one id and leaves `open`
+  // empty. Written once here so no view has to know which kind it got.
   window.dispatchEvent(
-    new CustomEvent('synabit-navigate', { detail: { type: row.node_type, id: row.id } }),
+    new CustomEvent('synabit-navigate', { detail: { type: row.node_type, id: row.open ?? row.id } }),
   );
 };
 
