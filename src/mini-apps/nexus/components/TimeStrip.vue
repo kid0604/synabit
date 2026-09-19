@@ -222,7 +222,7 @@ const close = () => {
 
 <template>
     <div
-        class="pointer-events-auto mx-4 mb-3 flex items-center gap-4 rounded-2xl border border-gray-200 bg-white/85 px-4 py-3 shadow-lg backdrop-blur-md dark:border-[#3a3a3c] dark:bg-[#242426]/85"
+        class="pointer-events-auto mx-4 mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-gray-200 bg-white/85 px-4 py-3 shadow-lg backdrop-blur-md dark:border-[#3a3a3c] dark:bg-[#242426]/85"
         @click.stop
     >
         <template v-if="frame && frame.earliest">
@@ -303,8 +303,17 @@ const close = () => {
         </template>
         <p v-else class="flex-1 text-sm text-gray-500 dark:text-gray-400">{{ $t('nexus.no_dates') }}</p>
 
-        <!-- What the strip carries beside sealing, such as the extraction tray. -->
-        <slot name="actions" />
+        <!-- What the strip carries beside sealing: the panels that read this
+             span. There are eight of them now, so they get a row of their own
+             below the scrubber rather than squeezing it — the scrubber is the
+             control people came for, and it needs the width. -->
+        <div
+            v-if="$slots.actions"
+            data-actions
+            class="flex w-full flex-wrap items-center justify-end gap-x-1 gap-y-2 border-t border-gray-100 pt-2 dark:border-[#3a3a3c]"
+        >
+            <slot name="actions" />
+        </div>
 
         <div v-if="frame" class="relative flex-shrink-0">
             <button

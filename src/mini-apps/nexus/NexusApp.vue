@@ -10,6 +10,11 @@ import TimeStrip from './components/TimeStrip.vue';
 import ExtractTray from './components/ExtractTray.vue';
 import ReflectPanel from './components/ReflectPanel.vue';
 import MomentsPanel from './components/MomentsPanel.vue';
+import OnThisDay from './components/OnThisDay.vue';
+import SilencePanel from './components/SilencePanel.vue';
+import YearInYourWords from './components/YearInYourWords.vue';
+import AskPanel from './components/AskPanel.vue';
+import RefusalsPanel from './components/RefusalsPanel.vue';
 import type { TimeFrame } from './timeFrame';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -396,6 +401,23 @@ const cleanSnippet = (snippet: string) => {
                             :at-date="atDate"
                             @open="(id: string, route: string, query?: string) => emit('edit-item', id, route, query)"
                         />
+                        <OnThisDay
+                            :vault-path="vaultPath"
+                            :at-date="atDate"
+                            @open="(id: string, route: string) => emit('edit-item', id, route)"
+                        />
+                        <YearInYourWords
+                            :vault-path="vaultPath"
+                            @open="(id: string, route: string) => emit('edit-item', id, route)"
+                        />
+                        <SilencePanel :vault-path="vaultPath" />
+                        <AskPanel
+                            :vault-path="vaultPath"
+                            :format="dailyNoteFormat"
+                            :tag="dailyNoteTag"
+                            @changed="loadTimeFrame"
+                        />
+                        <RefusalsPanel :vault-path="vaultPath" @changed="loadTimeFrame" />
                         <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" @changed="loadTimeFrame" />
                         <ExtractTray :vault-path="vaultPath" @changed="loadTimeFrame" />
                     </template>

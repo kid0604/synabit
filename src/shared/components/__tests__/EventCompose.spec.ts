@@ -83,6 +83,7 @@ describe('EventCompose', () => {
             precision: 'day',
             with: ['People/khanh.md', 'Hải'],
             place: 'quán cũ',
+            about: [],
             formatStr: 'YYYY-MM-DD',
             tag: 'daily',
         });

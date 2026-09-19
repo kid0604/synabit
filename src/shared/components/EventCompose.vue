@@ -107,6 +107,7 @@ const write = async () => {
             precision: form.value.from === to ? 'day' : 'range',
             with: form.value.people.split(',').map(name => name.trim()).filter(Boolean),
             place: form.value.place.trim() || null,
+            about: [],
             formatStr: props.format,
             tag: props.tag,
         });
