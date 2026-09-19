@@ -78,10 +78,7 @@ const ALREADY_ENDED: &[&str] =
 /// Node types that end on their own terms and never need asking about: a task
 /// carries its own state, and the app's own records are not anybody's life.
 fn worth_asking_about(node_type: &str) -> bool {
-    !(node_type.starts_with("finance_")
-        || node_type.starts_with("syn_")
-        || node_type.starts_with("pdf_")
-        || matches!(node_type, "task" | "schema" | "filter" | "view" | "json" | "file"))
+    !(super::derive::is_the_apps_own(node_type) || matches!(node_type, "task" | "file"))
 }
 
 /// Something that was written about and then was not.
@@ -343,7 +340,7 @@ mod tests {
         assert!(worth_asking_about("project"));
         assert!(worth_asking_about("person"));
         assert!(worth_asking_about("place"));
-        for its_own in ["task", "json", "schema", "file", "finance_month", "syn_chat"] {
+        for its_own in ["task", "json", "schema", "file", "lens", "finance_month", "syn_chat"] {
             assert!(!worth_asking_about(its_own), "{its_own}");
         }
     }

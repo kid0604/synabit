@@ -303,6 +303,13 @@ const close = () => {
         </template>
         <p v-else class="flex-1 text-sm text-gray-500 dark:text-gray-400">{{ $t('nexus.no_dates') }}</p>
 
+        <!-- Asking the vault a question, which is what the panels below are
+             each a saved instance of. Its own row because it is a text field
+             and a row of saved questions, not a button. -->
+        <div v-if="$slots.ask" data-ask-row class="w-full">
+            <slot name="ask" />
+        </div>
+
         <!-- What the strip carries beside sealing: the panels that read this
              span. There are eight of them now, so they get a row of their own
              below the scrubber rather than squeezing it — the scrubber is the

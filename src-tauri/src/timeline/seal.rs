@@ -309,10 +309,7 @@ fn flagged(properties: &Value) -> bool {
 /// Types whose nodes are something the person wrote or kept, and so can be
 /// part of a period. The app's own records, money and people are not.
 fn is_content(node_type: &str) -> bool {
-    !(node_type.starts_with("finance_")
-        || node_type.starts_with("syn_")
-        || node_type.starts_with("pdf_")
-        || matches!(node_type, "person" | "schema" | "filter" | "view" | "json"))
+    !(derive::is_the_apps_own(node_type) || node_type == "person")
 }
 
 pub(crate) fn compute(

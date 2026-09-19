@@ -15,6 +15,7 @@ import SilencePanel from './components/SilencePanel.vue';
 import YearInYourWords from './components/YearInYourWords.vue';
 import AskPanel from './components/AskPanel.vue';
 import RefusalsPanel from './components/RefusalsPanel.vue';
+import LensBar from './components/LensBar.vue';
 import type { TimeFrame } from './timeFrame';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -395,6 +396,12 @@ const cleanSnippet = (snippet: string) => {
                     @remove-seal="removeSeal"
                     @close="stopLookingBack"
                 >
+                    <template #ask>
+                        <LensBar
+                            :vault-path="vaultPath"
+                            @open="(id: string, type: string) => emit('edit-item', id, type)"
+                        />
+                    </template>
                     <template #actions>
                         <MomentsPanel
                             :vault-path="vaultPath"

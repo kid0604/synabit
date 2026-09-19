@@ -262,7 +262,7 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 | | Việc | Xong thì làm được gì |
 | --- | --- | --- |
 | 1 | ~~`events` vào được `ParsedQuery`~~ — **xong 2026-09-19** | hỏi được dòng thời gian bằng chữ lần đầu tiên |
-| 2 | Thấu kính là một node + kệ thấu kính | lưu được một câu hỏi |
+| 2 | ~~Thấu kính là một node + kệ thấu kính~~ — **xong 2026-09-19** | lưu được một câu hỏi |
 | 3 | Thanh truy vấn hai chiều với chip | bấm và gõ thành một |
 | 4 | Kết quả tự chọn hình dạng + bộ view primitive | câu hỏi mới không tốn code |
 | 5 | Ống dẫn: `count by`, `top n by` | thống kê, nhịp sống |
@@ -310,3 +310,39 @@ cột dẫn xuất.
 
 **Còn lại của bước 1:** trợ lý vẫn chỉ hỏi được `nodes` (`query_nodes` gọi thẳng
 `db.run_node_query`). Cho nó đi qua cùng bộ định tuyến là việc của bước 7.
+
+---
+
+## 13. Bước 2 — đã làm, 2026-09-19
+
+**Gần như không cần Rust, và đó là thiết kế tự kiểm.** Một thấu kính là một node, nên:
+
+- **lưu** = tạo một node (`write_node_file`, đã có từ lâu)
+- **liệt kê** = `is:lens columns:title,query,render,icon` — **một truy vấn thường**
+- **bỏ** = `trash_node_file`, tức là vào thùng rác chứ không mất
+
+Kệ thấu kính được dựng bằng **chính cỗ máy mà kệ ấy phục vụ**. Nếu lưu một câu hỏi
+cần một bảng mới, một lệnh mới và một đường sync mới, thì đó là thiết kế đang báo nó
+sai.
+
+Rust chỉ đụng một chỗ, và là chỗ đáng: `lens` phải nằm trong danh sách "đồ đạc của
+app" chứ không phải chuyện của đời người. Ba câu hỏi khác nhau cần biết điều đó —
+*không bao giờ có ngày*, *phong ấn có phủ không*, *có đáng hỏi không* — và cả ba đang
+chép lại cùng một lõi. Nay lõi ấy là `derive::is_the_apps_own`, ba câu hỏi giữ phần
+ngoại lệ riêng của mình. Đó đúng là cái mùi Bước 9 đi dọn, gặp lại ở tầng node.
+
+**`TableView` vẽ được câu trả lời của dòng thời gian mà không ai dạy nó.** Component
+ấy viết cho ghi chú, từ rất lâu trước khi `events` có ngôn ngữ hỏi. Có test khẳng định
+đúng điều đó, vì nó là luận điểm mà cả thiết kế đứng trên.
+
+**Chưa có gì được ưu ái.** Không có mục "thấu kính có sẵn" mà người dùng không sửa
+được; thấu kính ship kèm vault và thấu kính viết sáng nay là **cùng một loại**, nằm
+cùng một hàng. Khoảnh khắc một cái thành đặc biệt là khoảnh khắc quay lại làm panel.
+
+**Nút Lưu nằm cạnh câu trả lời**, không nằm trong màn hình Cài đặt — vì lúc người ta
+muốn giữ một câu hỏi là lúc vừa thấy nó trả lời đúng. Tên mặc định là **chính câu truy
+vấn**, không phải một câu model đoán ra.
+
+**Còn thiếu so với §6.1:** thanh hiện là một ô chữ thường, chưa phải **biên lai**. Bấm
+người trên đồ thị chưa đổ vào nó, và chưa có chip. Đó là Bước 3, và nó là bước quyết
+định người non-tech có dùng được hay không.

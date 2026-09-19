@@ -371,17 +371,26 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
     }
 }
 
-/// Types the app owns whose dates are not events in a life: storage, views,
-/// the assistant's own records, money (which reaches the timeline only as
-/// density, never as items; §4.8.1).
-fn never_dated(node_type: &str) -> bool {
+/// Whether a type is the app's own furniture rather than anything anybody
+/// lived: storage, saved questions, type definitions, the assistant's records,
+/// money (which reaches the timeline only as density, never as items; §4.8.1).
+///
+/// Three questions elsewhere each need this and then add their own exceptions
+/// — what is never dated, what a sealed period covers, what is worth asking
+/// after. They are genuinely different questions, so they stay three; but they
+/// were repeating this core, which is how a type added later gets remembered
+/// in two places out of three.
+pub fn is_the_apps_own(node_type: &str) -> bool {
     node_type.starts_with("finance_")
         || node_type.starts_with("syn_")
         || node_type.starts_with("pdf_")
-        || matches!(
-            node_type,
-            "quickcap" | "whiteboard" | "filter" | "view" | "schema" | "canvas" | "json" | "place"
-        )
+        || matches!(node_type, "schema" | "filter" | "view" | "json" | "lens")
+}
+
+/// Types the app owns whose dates are not events in a life.
+fn never_dated(node_type: &str) -> bool {
+    is_the_apps_own(node_type)
+        || matches!(node_type, "quickcap" | "whiteboard" | "canvas" | "place")
 }
 
 /// A user-defined type and its date keys, from a `type: schema` node.
