@@ -1,0 +1,277 @@
+# Thấu kính — một cách hỏi cho cả graph lẫn dòng thời gian
+
+**2026-09-19.** Thiết kế trải nghiệm cho Nexus, thay cho việc thêm panel.
+
+---
+
+## 1. Một câu
+
+Thay vì mỗi câu hỏi là một panel viết tay, **một câu hỏi là một truy vấn, một truy
+vấn lưu lại được gọi là một thấu kính, và cùng một thấu kính có ba đường để tạo ra:
+bấm, hỏi bằng lời, hoặc gõ.**
+
+---
+
+## 2. Điều phải sửa trước: tao đã chẩn đoán sai
+
+Ở `docs/timeline-2026-09-17.md` §16 Bước 2 tao viết rằng nhật ký ăn uống là nhiễu và
+đề nghị **một cửa thứ năm** chặn thứ lặp lại hằng ngày.
+
+**Sai.** Chủ vault nói rõ: bữa ăn, chi tiêu, cuộc họp và khoảnh khắc xúc động **đều
+là sự kiện trên dòng thời gian**. Mục tiêu là một **database đầy đủ về đời một
+người**. Một database cố ý bỏ sót thứ lặp lại là một database nói dối về nhịp sống —
+và chính cái nhịp ấy mới trả lời được "tao ăn ngoài bao nhiêu lần năm nay", "tháng
+nào tao họp nhiều nhất", "từ khi nào tao thôi nấu cơm".
+
+Chỗ cần tinh tế **không phải lúc ghi vào, mà lúc hiện ra**. Ghi thì tham lam, hiện
+thì chọn lọc. Cả tài liệu này tồn tại vì ranh giới đó.
+
+> Cửa thứ năm **bị huỷ**. Bốn cửa của §5.4 giữ nguyên — chúng lọc thứ *không có thật*
+> (không trích được câu, không có ngày), không lọc thứ *tầm thường*.
+
+---
+
+## 3. Cái đã có, và chỗ nó đứt
+
+Đây là phát hiện quyết định hình dạng của thiết kế này: **một nửa những gì cần đã tồn
+tại trong code, và nửa kia chưa từng gặp nó.**
+
+| | ngôn ngữ hỏi | cách vẽ kết quả | lưu lại được | ai dùng được |
+| --- | --- | --- | --- | --- |
+| **`nodes`** (graph) | ✅ `ParsedQuery`: `is:`, `#tag`, `status:`, `date:`, `prop:>x`, `-prop:y`, `sort:`, `columns:`, `limit:` | ✅ `ListView` / `TableView` / `ObjectDetail`, có **hợp đồng** viết rõ: nhận kết quả, không tự gọi; không rẽ nhánh theo type | ❌ **không chỗ nào** | Things app dựng truy vấn bằng cách bấm |
+| **`events`** (timeseries) | ❌ không có — chỉ hàm viết tay | ❌ **8 panel hàn cứng** | ❌ | không ai |
+| **`node_edges`** (graph) | ❌ | GraphView | ❌ | — |
+
+Tám panel tao vừa viết **chính là triệu chứng**. Dòng thời gian không có ngôn ngữ
+hỏi, nên mỗi câu hỏi mới tốn một module Rust + một component Vue + hai file i18n +
+một lệnh Tauri. Đó đúng là *"fix cứng và nhồi nhét"*.
+
+Và hai kho nằm **cùng một thư mục** (`vault_cache.db`, `timeline.db`), nên `ATTACH`
+là chuyện một dòng. Chỗ đứt là khái niệm, không phải hạ tầng.
+
+---
+
+## 4. Thấu kính
+
+**Một thấu kính là một câu hỏi đã lưu, kèm cách nó muốn được nhìn.**
+
+```yaml
+---
+type: lens
+title: Những lần gặp Khánh
+query: with:khanh when:2019/2026 | sort:-when
+render: strip
+icon: users
+---
+```
+
+Bốn điều làm nó khác một "saved search" thông thường:
+
+1. **Thấu kính là một node.** Nó nằm trong vault, sync như mọi thứ khác, gắn tag
+   được, tìm kiếm được, **hiện trên đồ thị**, chia sẻ được. Có thể có một thấu kính
+   đi tìm thấu kính.
+2. **Cách vẽ là thuộc tính của câu hỏi**, không phải của màn hình. Cùng một truy vấn
+   xem dưới dạng dải, bảng, đồ thị hay một con số — và nó nhớ mày thích dạng nào.
+3. **Sửa được.** Bộ thấu kính có sẵn không phải hộp đen: mở ra, thấy câu truy vấn,
+   đổi một chữ. Đây là cách người non-tech học ngôn ngữ mà không ai dạy.
+4. **Không có đặc quyền.** Panel có sẵn và thấu kính mày tự viết chạy qua **cùng một
+   đường**. Nếu một tính năng gốc làm được điều mà thấu kính không làm được, thiết kế
+   này hỏng.
+
+---
+
+## 5. Ngôn ngữ: lọc, rồi biến đổi
+
+Cú pháp lọc **giữ nguyên `ParsedQuery` đang có** — không phát minh lại thứ đã chạy và
+đã có test. Thêm ba nhóm.
+
+### 5.1 Từ khoá của dòng thời gian
+
+```
+when:2019-03            when:2019/2026        when:last-year
+with:khanh              where:hanoi           about:synabit
+shape:occasion          magnitude:>4          has:quote
+```
+
+`with` / `where` / `about` là **bốn vai** của §4.2 — thứ đã có trong lược đồ mà chưa
+ai hỏi tới được.
+
+### 5.2 Ống dẫn
+
+Đây là chỗ mượn Splunk, và mượn có chọn lọc:
+
+```
+<lọc> | <biến đổi> | <biến đổi> …
+```
+
+Sáu phép biến đổi, và **không phép nào được nghĩ ra từ trí tưởng tượng** — mỗi phép
+là thứ một panel hiện có đang làm bằng tay:
+
+| Phép | Làm gì | Hôm nay là ai |
+| --- | --- | --- |
+| `count by <khoá>` | đếm theo tháng, theo người, theo tag | mật độ dải thời gian |
+| `top <n> by <khoá>` | giữ n cái lớn nhất | zoom theo độ lớn (Bước 8) |
+| `gaps` | chuỗi lần xuất hiện → các khoảng trống | khoảng lặng (Bước 5), chuyện gì đã xảy ra với (Bước 7) |
+| `anniversary` | khớp ngày-tháng qua các năm | ngày này năm xưa (Bước 4) |
+| `sentences` | nổ ghi chú thành từng câu trích được | một năm bằng lời mày (Bước 6) |
+| `ask <n>` | **đưa model chọn**, không cho viết | một năm bằng lời mày (Bước 6) |
+
+`ask` là chỗ model được phép bước vào ống dẫn, và nó **chỉ chọn**: nhận danh sách
+đánh số, trả về số. Giao thức không có trường nào chứa văn xuôi — đúng như
+`timeline::year` đang làm. Một phép biến đổi tốn tiền và tốn thời gian thì phải
+**nhìn thấy được trong câu truy vấn**, không giấu trong một nút bấm.
+
+### 5.3 Phép thử của thiết kế
+
+Nếu tám panel hiện có không viết lại được thành thấu kính thì thiết kế này sai. Kiểm
+từng cái:
+
+| Panel | Thành truy vấn |
+| --- | --- |
+| Ngày này năm xưa | `anniversary shape:occasion has:quote` |
+| Khoảng lặng | `with:* \| gaps \| where quiet > longest` |
+| Chuyện gì đã xảy ra với | `about:* \| gaps \| where quiet > 6mo -has:ending` |
+| Một năm bằng lời mày | `when:2026 \| sentences \| ask 15` |
+| Zoom theo độ lớn | `when:<span> \| top 20 by magnitude` |
+| Khoảnh khắc (ảnh) | `is:file when:<span>` |
+| Khay duyệt | `is:proposal -decided` |
+| Đã từ chối | `is:hush` + `is:pin` |
+
+Tám trên tám. **Hai phép còn thiếu duy nhất là `gaps` và `sentences`** — phần còn
+lại là lọc thuần.
+
+---
+
+## 6. Ba đường vào, một cỗ máy
+
+Đây là câu trả lời cho *"người non-tech vẫn dùng dễ dàng"*, và nó không phải là "giấu
+truy vấn đi".
+
+### 6.1 Không gõ gì — thanh truy vấn là **biên lai**
+
+Mọi thứ trên màn hình vốn đã là một bộ lọc:
+
+- Bấm một người trên đồ thị → thêm chip `with:khánh`
+- Kéo dải về 2019 → chip `when:2019`
+- Bấm một tag → chip `#gia-đình`
+- Bấm "chỉ chuyện lớn" → chip `magnitude:>4`
+
+Thanh truy vấn hiện **đúng những chip ấy**, viết bằng chính ngôn ngữ trên. Người
+non-tech không bao giờ phải đọc nó. Người kỹ thuật đọc, rồi bắt đầu sửa.
+
+> Đây là chỗ then chốt: thanh truy vấn **không phải một tính năng riêng cho dân kỹ
+> thuật**. Nó là biên lai của thứ vừa bấm. Người ta học `with:` giống cách người ta
+> học `from:` của Gmail — bằng cách thấy nó xuất hiện sau khi mình bấm.
+
+Ràng buộc bắt buộc: **chip và chữ phải đi được cả hai chiều.** Sửa chữ thì chip đổi
+theo; bấm chip thì chữ đổi theo. Một câu truy vấn gõ tay mà không hiện lại được thành
+chip là một câu làm hỏng đường số một.
+
+### 6.2 Hỏi bằng lời — trợ lý **viết truy vấn**, không thay thế nó
+
+Syn đã có `query_nodes` và `timeline`. Đổi một điều: trả lời xong thì **hiện cả câu
+truy vấn nó đã dùng**, kèm nút *"Lưu thành thấu kính"*.
+
+> *"cho tao xem những lần gặp Khánh năm ngoái"*
+> → `with:khánh when:last-year | sort:-when` · 14 lần · **[Lưu]**
+
+Trợ lý thành **người dạy** ngôn ngữ, không phải bức tường che nó. Và mọi câu nó viết
+đều kiểm được — khác hẳn một câu trả lời bằng văn xuôi.
+
+### 6.3 Gõ thẳng
+
+Cho người như chủ vault. Ống dẫn đầy đủ, gợi ý khoá và giá trị theo ngữ cảnh, và
+**xem trước số dòng khớp trước khi chạy** phép tốn tiền như `ask`.
+
+---
+
+## 7. Kết quả tự chọn hình dạng
+
+Không panel nào được hàn cứng cách vẽ. Kết quả mang theo **hình dạng**, và cách vẽ
+mặc định suy ra từ đó:
+
+| Kết quả có | Vẽ mặc định |
+| --- | --- |
+| một con số | một câu: *"14 lần, lần cuối 14/3/2021"* |
+| dòng có ngày | dải thời gian |
+| dòng có hai cột node | đồ thị |
+| dòng có nhiều cột | bảng |
+| dòng có câu trích | danh sách trích dẫn, mỗi câu bấm về nguồn |
+| dòng nhóm theo khoá | biểu đồ cột |
+
+Đổi được bằng một cú bấm, và lựa chọn ấy lưu vào thấu kính. Đây là lý do **thêm câu
+hỏi mới không còn tốn code**.
+
+Hợp đồng của view primitive ở `src/shared/views/types.ts` đã viết sẵn luật đúng —
+*nhận kết quả, không tự gọi; không rẽ nhánh theo type*. Thiết kế này chỉ mở rộng bộ
+primitive, không sửa hợp đồng.
+
+---
+
+## 8. Cái kệ có sẵn
+
+Một thanh truy vấn trống là một lời từ chối phục vụ. Vault mới đi kèm khoảng **mười
+hai thấu kính**, và chúng **sửa được** — đó là giáo trình.
+
+Tám cái đầu là tám panel hiện có. Bốn cái còn lại chính là thứ database đầy đủ mở ra
+mà hôm nay chưa hỏi được:
+
+- **Nhịp sống** — `is:note | count by month` — tháng nào viết nhiều, tháng nào im
+- **Ăn ở đâu** — `#ăn | count by where` — thứ chỉ có nghĩa **nhờ** đã ghi từng bữa
+- **Tiền theo tháng** — `is:transaction | count by month`
+- **Ai còn gặp** — `with:* | count by person | sort:-count`
+
+Bốn cái này là bằng chứng cho luận điểm §2: **ghi tham lam thì mới hỏi được sâu.**
+Không ghi từng bữa thì không có "Ăn ở đâu".
+
+---
+
+## 9. Cái này thay thế cái gì
+
+- Tám panel → tám thấu kính. `timeline_on_this_day`, `timeline_silences`,
+  `timeline_ask`, `timeline_year` thôi làm lệnh riêng.
+- Things, Task, Note đang mỗi nơi dựng truy vấn một kiểu → cùng một cỗ máy.
+- Hàng công cụ tám nút → **một thanh truy vấn và một kệ thấu kính**.
+
+Code ít đi, không nhiều lên.
+
+---
+
+## 10. Nói thẳng về giá phải trả
+
+1. **`ParsedQuery` hôm nay không có ống dẫn, không chạm được `events`, không biết
+   vai.** Đây là phần lớn công việc — nhưng là mở rộng một thứ đã có test, không phải
+   viết lại.
+2. **Hai database phải nối.** `ATTACH` được vì cùng thư mục, nhưng
+   `events` là tầng 3 dựng lại được còn `nodes` là bản sao của vault: một truy vấn
+   bắc qua cả hai phải chịu được lúc một bên đang dựng lại.
+3. **Ngôn ngữ là một cam kết vĩnh viễn.** Thấu kính đã lưu trong vault của người ta
+   thì cú pháp không đổi được nữa. Phải chốt ít và chốt chắc.
+4. **Rủi ro lớn nhất không phải kỹ thuật.** Nếu thanh truy vấn khiến việc bấm trở nên
+   khó hơn, người non-tech mất nhiều hơn người kỹ thuật được. **Đường số một phải
+   dùng được trọn vẹn với thanh truy vấn cuộn lại và không ai mở ra bao giờ.**
+5. **`ask` tốn tiền.** Phải hiện rõ trong truy vấn, phải xem trước được số dòng, và
+   không bao giờ chạy ngầm.
+
+---
+
+## 11. Thứ tự nếu làm
+
+Mỗi bước dùng được ngay và lùi lại được, như §16 của tài liệu Timeline.
+
+| | Việc | Xong thì làm được gì |
+| --- | --- | --- |
+| 1 | `events` vào được `ParsedQuery`: `when:` `with:` `where:` `about:` `shape:` `magnitude:` | hỏi được dòng thời gian bằng chữ lần đầu tiên |
+| 2 | Thấu kính là một node + kệ thấu kính | lưu được một câu hỏi |
+| 3 | Thanh truy vấn hai chiều với chip | bấm và gõ thành một |
+| 4 | Kết quả tự chọn hình dạng + bộ view primitive | câu hỏi mới không tốn code |
+| 5 | Ống dẫn: `count by`, `top n by` | thống kê, nhịp sống |
+| 6 | `gaps`, `anniversary`, `sentences`, `ask` | bốn panel cảm xúc thành thấu kính |
+| 7 | Syn trả lời kèm truy vấn + nút Lưu | đường vào cho người không gõ |
+| 8 | Bỏ tám panel, thay bằng kệ có sẵn | code ít đi |
+
+**Nếu chỉ làm được một bước:** làm **bước 1**. Nó là chỗ đứt thật sự — mọi thứ còn
+lại chỉ là cách bày ra thứ bước 1 mở khoá.
+
+**Gate cho cả tài liệu này:** một câu hỏi mà hôm nay cần một panel mới, sau khi xong
+phải trả lời được **không thêm một dòng Rust hay Vue nào**.
