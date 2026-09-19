@@ -24,7 +24,8 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
 use super::seal::SealedPeriod;
-use super::store::{Event, EventLink};
+use super::derive::Shape;
+use super::store::Event;
 use super::when;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -74,17 +75,10 @@ pub struct FrameNode {
     pub created_at: String,
 }
 
-/// Dates about a node that do not place it in the user's life.
-const NOT_AN_ARRIVAL: &[&str] = &["birthday", "important_date", "experience", "death"];
-
 /// How many times two people have to turn up at the same thing before the
 /// graph calls it a relationship. Three, the same threshold reflection uses
 /// before it will call anything a pattern.
 const MET_ENOUGH: u32 = 3;
-
-/// Dates that are not moments in the user's life either, and so do not make
-/// the strip start in 1932 because a grandmother was born then.
-const NOT_A_MOMENT: &[&str] = &["birthday", "experience"];
 
 pub fn read_nodes(cache: &DbBridge) -> AppResult<Vec<FrameNode>> {
     let mut stmt = cache
@@ -138,7 +132,6 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
         if item.happened_from > today {
             continue;
         }
-        let kind = item.kind.as_str();
         // Everyone the event says was there, under whatever name the vault
         // used for them.
         let there: Vec<String> = item
@@ -148,7 +141,7 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
             .filter_map(|link| resolve(&link.node_id))
             .collect();
 
-        if !NOT_A_MOMENT.contains(&kind) {
+        if item.shape.fills_the_strip() {
             if let Some(month) = item.happened_from.get(..7) {
                 let month = months.entry(month.to_string()).or_default();
                 month.0 += 1;
@@ -176,13 +169,13 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
             }
         }
 
-        if kind == "death" {
+        if item.shape == Shape::Ending {
             died_on.insert(item.node_id.clone(), item.happened_from.clone());
         }
 
         // Người kia của một quan hệ, từ chính link của sự kiện.
         let other = there.first().cloned();
-        if !NOT_AN_ARRIVAL.contains(&kind) {
+        if item.shape.is_an_arrival() {
             earliest(&mut first_seen, &item.node_id, &item.happened_from);
             if let Some(other) = &other {
                 earliest(&mut first_seen, other, &item.happened_from);
@@ -194,7 +187,7 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
             }
         }
 
-        if kind == "connection" {
+        if item.shape == Shape::Bond {
             let Some(other) = other else { continue };
             // A relationship entered on both people is recorded twice; it is
             // still one relationship.
@@ -267,6 +260,7 @@ pub(crate) fn local_day(stamp: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::store::EventLink;
 
     fn item(kind: &str, node_id: &str, related: Option<&str>, from: &str, to: &str) -> Event {
         Event {
@@ -288,8 +282,25 @@ mod tests {
             precision: "day".to_string(),
             time_source: "frontmatter".to_string(),
             source: "derived".to_string(),
+            shape: shape_of(kind),
         }
     }
+
+    /// The shape derivation gives each of these kinds, so a test that names a
+    /// kind gets the behaviour the real event would have.
+    fn shape_of(kind: &str) -> crate::timeline::derive::Shape {
+        use crate::timeline::derive::Shape;
+        match kind {
+            "experience" => Shape::Spell,
+            "connection" => Shape::Bond,
+            "birthday" => Shape::Marker,
+            "important_date" => Shape::Noted,
+            "death" => Shape::Ending,
+            "task_done" => Shape::Chore,
+            _ => Shape::Occasion,
+        }
+    }
+
 
     fn node(id: &str, stable: &str, created: &str) -> FrameNode {
         FrameNode {

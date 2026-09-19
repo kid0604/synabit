@@ -331,6 +331,7 @@ mod tests {
             precision: "range".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         };
         let coffee = NodeMetadata {
             id: "People/Interactions/c.md".into(),

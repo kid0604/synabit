@@ -77,6 +77,21 @@ pub enum Subject {
     Moment { node: String, day: String },
     /// Every day from `from` to `to`, inclusive.
     Period { from: String, to: String },
+    /// One sentence of one note, by the note and a hash of the sentence.
+    ///
+    /// A hash rather than the sentence itself, and not to hide anything — the
+    /// text is the person's own, in their own vault. It is because a hush file
+    /// outlives the note: keep the words here and sealing that note later
+    /// would leave a copy of its sentence sitting in `Timeline/quiet`, outside
+    /// everything the seal covers. A decision file records a decision, not a
+    /// second copy of the diary.
+    Line { node: String, line: String },
+}
+
+/// How a sentence is named in a hush, so the same sentence is recognised again
+/// after the note around it has been edited.
+pub fn line_id(text: &str) -> String {
+    blake3::hash(text.trim().as_bytes()).to_hex().to_string()
 }
 
 /// One decision to stop the app bringing something up.
@@ -102,6 +117,8 @@ pub struct Quiet {
     people: HashSet<String>,
     /// `(note, day)` pairs hushed by hand.
     moments: HashSet<(String, String)>,
+    /// `(note, line id)` pairs hushed by hand.
+    lines: HashSet<(String, String)>,
     periods: Vec<(String, String)>,
     /// Paths and identities of people with a `died_on`. §7.3.
     dead: HashSet<String>,
@@ -111,6 +128,7 @@ impl Quiet {
     pub fn is_empty(&self) -> bool {
         self.people.is_empty()
             && self.moments.is_empty()
+            && self.lines.is_empty()
             && self.periods.is_empty()
             && self.dead.is_empty()
     }
@@ -141,6 +159,11 @@ impl Quiet {
     /// Everyone quiet because they died, by every name they are known under.
     pub fn dead_people(&self) -> impl Iterator<Item = &str> {
         self.dead.iter().map(String::as_str)
+    }
+
+    /// Whether one sentence of one note has been waved away.
+    pub fn hushes_line(&self, node: &str, text: &str) -> bool {
+        self.lines.contains(&(node.to_string(), line_id(text)))
     }
 
     /// Whether a day, `YYYY-MM-DD`, falls in a hushed stretch.
@@ -306,6 +329,9 @@ pub(crate) fn compute(hushes: Vec<Hush>, people: &[QuietNode], today: &str) -> Q
             Subject::Moment { node, day } => {
                 quiet.moments.insert((node.clone(), day.clone()));
             }
+            Subject::Line { node, line } => {
+                quiet.lines.insert((node.clone(), line.clone()));
+            }
             Subject::Period { from, to } => {
                 if let Some(bounds) = period_bounds(from, to) {
                     quiet.periods.push(bounds);
@@ -349,6 +375,8 @@ pub fn read_hushes(vault_path: &str) -> Vec<Hush> {
             };
             let subject = if let Some(who) = text("person") {
                 Subject::Person { who }
+            } else if let (Some(node), Some(line)) = (text("node"), text("line")) {
+                Subject::Line { node, line }
             } else if let (Some(node), Some(day)) = (text("node"), text("day")) {
                 Subject::Moment { node, day }
             } else if let (Some(from), Some(to)) = (text("from"), text("to")) {
@@ -366,6 +394,7 @@ pub fn write_hush(vault_path: &str, subject: &Subject, until: Option<&str>) -> A
     let mut body = match subject {
         Subject::Person { who } => json!({ "person": who }),
         Subject::Moment { node, day } => json!({ "node": node, "day": day }),
+        Subject::Line { node, line } => json!({ "node": node, "line": line }),
         Subject::Period { from, to } => {
             if period_bounds(from, to).is_none() {
                 return Err(AppError::General(format!(

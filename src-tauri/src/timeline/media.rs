@@ -788,7 +788,9 @@ pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaMoment> {
 pub fn moments(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[Event]) -> AppResult<Vec<MediaMoment>> {
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
-    for item in items.iter().filter(|item| item.kind == "media") {
+    // A file node derives nothing but its own picture or recording, so asking
+    // what the node is answers this without a `kind` list (§16 Bước 9).
+    for item in items.iter().filter(|item| item.node_type == "file") {
         if seals.hides_item(item) || !seen.insert(item.node_id.clone()) {
             continue;
         }

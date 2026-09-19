@@ -74,6 +74,32 @@ fn written_by_hand(source: &str) -> f64 {
     }
 }
 
+/// How much a view of this many days has room for.
+///
+/// §4.5: zoom is a threshold on size, not a filter on type. Looking at a whole
+/// life you see the big things; pull into one month and all 102 tasks come
+/// back.
+///
+/// The threshold is **a count, not a number of points**, on purpose. A fixed
+/// magnitude cutoff would have to be tuned to one vault's distribution and
+/// would be wrong on the next one — a person who writes three lines a week and
+/// a person who writes three a day do not share a scale. A count calibrates
+/// itself: whatever this vault holds, the widest view shows the biggest
+/// twenty of it.
+///
+/// The steps are a guess, like the weights above, and the gate that settles
+/// them is a question to a person rather than a measurement (§16 Bước 8).
+pub fn room_for(days: i64) -> Option<usize> {
+    match days {
+        // A month or less is the working view: everything, including tasks.
+        ..=31 => None,
+        // A year: enough to see a shape, few enough to read.
+        32..=366 => Some(60),
+        // A life.
+        _ => Some(20),
+    }
+}
+
 fn days_between(from: &str, to: &str) -> f64 {
     let day = |text: &str| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok();
     match (day(from), day(to)) {
@@ -164,5 +190,15 @@ mod tests {
         let point = of(Signals { from: "2016-05-14", to: "2016-05-14", text: "x", source: "user", ..Signals::default() });
         assert_eq!(broken, point);
         assert_eq!(backwards, point);
+    }
+
+    #[test]
+    fn a_month_shows_everything_and_a_life_shows_twenty() {
+        assert_eq!(room_for(1), None, "one day is the working view");
+        assert_eq!(room_for(31), None);
+        assert_eq!(room_for(32), Some(60));
+        assert_eq!(room_for(366), Some(60));
+        assert_eq!(room_for(367), Some(20));
+        assert_eq!(room_for(40 * 365), Some(20), "a whole life is still twenty");
     }
 }

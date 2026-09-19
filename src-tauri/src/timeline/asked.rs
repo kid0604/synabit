@@ -401,6 +401,7 @@ mod tests {
             precision: "range".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         };
         let day_note = Event {
             id: "n".into(),
@@ -418,6 +419,7 @@ mod tests {
             precision: "day".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         };
         // The store's order: the day first, then the long spans.
         let mut items = vec![day_note];
@@ -454,6 +456,7 @@ mod tests {
             precision: "day".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         };
         let written = block(&asked, &[item], &Default::default());
         assert!(written.contains("- 2017-02-14 · note · [[Đám cưới]]"), "{written}");
@@ -483,6 +486,7 @@ mod tests {
             precision: "day".into(),
             time_source: "user".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
             magnitude: 4.0,
             container_node: Some("Notes/2016-05-14.md".into()),
             props: serde_json::Value::Null,

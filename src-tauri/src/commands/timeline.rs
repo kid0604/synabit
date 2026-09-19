@@ -5,13 +5,20 @@
 
 use std::sync::Arc;
 
+use chrono::Datelike;
+
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::timeline::frame::{self, TimeFrame};
 use crate::timeline::seal::{self, SealedPeriod, Seals};
 use crate::timeline::store::{self, CatchUp, Snapshot, Event};
+use crate::timeline::onthisday::{self, Looking};
 use crate::timeline::quiet::{self, Hush, Quiet, Subject};
-use crate::timeline::{extract, media, presence, reflect, when, TimelineState};
+use crate::timeline::asking::{self, Question};
+use crate::timeline::pin::{self, Pin};
+use crate::timeline::silence::{self, Missing};
+use crate::timeline::year::{self, Line};
+use crate::timeline::{extract, magnitude, media, presence, reflect, when, TimelineState};
 
 fn seals_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Seals>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -23,18 +30,37 @@ fn quiet_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Quiet>> {
     quiet::current(&db, vault_path)
 }
 
+/// What a view of `when` holds, and what it had no room for.
+#[derive(Debug, serde::Serialize)]
+pub struct Looked {
+    pub items: Vec<Event>,
+    /// How many were left out because the view is too wide to show them.
+    ///
+    /// Said out loud rather than swallowed: §10 draws the gaps instead of
+    /// skipping them, and a person who cannot tell "nothing happened" from
+    /// "too much happened to list" has been lied to by omission.
+    pub too_small: usize,
+    /// How many of those shown are there because the person put them there.
+    pub pinned: usize,
+}
+
 /// Everything the vault says happened during `when`, less what is sealed.
 ///
 /// `when` is any time the timeline reads: `2016-05-14`, `2016-05`, `2016`,
 /// `2016-05-01/2016-06-30` or `~2012`. The timeline catches up with the vault
 /// first, and only reads the vault again if something in it changed.
+///
+/// The width of `when` is the zoom (§4.5): a month or less shows everything,
+/// and wider views keep only the biggest — plus everything pinned by hand,
+/// which is the whole point of pinning. `all` asks for the lot regardless.
 #[tauri::command]
 pub fn timeline_query(
     state: tauri::State<'_, DbState>,
     timeline: tauri::State<'_, TimelineState>,
     vault_path: String,
     when: String,
-) -> AppResult<Vec<Event>> {
+    all: Option<bool>,
+) -> AppResult<Looked> {
     let span = when::parse(&when).ok_or_else(|| {
         AppError::General(format!(
             "'{when}' is not a time the timeline can read. Use 2016-05-14, 2016-05, 2016, \
@@ -47,7 +73,234 @@ pub fn timeline_query(
     let mut items = timeline.query(span, chrono::Local::now().date_naive())?;
     let seals = seals_of(state.inner(), &vault_path)?;
     items.retain(|item| !seals.hides_item(item));
-    Ok(items)
+
+    let pinned = pin::read(&vault_path);
+    let held = items.iter().filter(|item| pinned.holds(item)).count();
+    let room = if all.unwrap_or(false) { None } else { magnitude::room_for(span.days()) };
+    let Some(room) = room else {
+        return Ok(Looked { items, too_small: 0, pinned: held });
+    };
+
+    let (items, too_small) = pin::keep(items, room, &pinned);
+    Ok(Looked { items, too_small, pinned: held })
+}
+
+/// Lift one thing above the threshold, for good — §4.5, rule 3.
+#[tauri::command]
+pub fn timeline_pin(vault_path: String, node_id: String, day: String) -> AppResult<Pin> {
+    pin::write(&vault_path, &node_id, &day)
+}
+
+/// Let it fall back to its measured size.
+#[tauri::command]
+pub fn timeline_unpin(vault_path: String, id: String) -> AppResult<()> {
+    pin::remove(&vault_path, &id)
+}
+
+/// Everything the person has lifted by hand.
+#[tauri::command]
+pub fn timeline_pins(vault_path: String) -> AppResult<Vec<Pin>> {
+    Ok(pin::read(&vault_path).pins().to_vec())
+}
+
+/// What this day held in earlier years, in the person's own words.
+///
+/// `day` is the day being looked at, so walking the strip back walks this
+/// back with it; without one it is today.
+///
+/// Returns nothing rather than something vague when there is nothing to quote
+/// — §6.1's last row, and the reason this is worth having at all.
+#[tauri::command]
+pub fn timeline_on_this_day(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    day: Option<String>,
+) -> AppResult<Vec<Looking>> {
+    let today = match day.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        Some(text) => when::parse(text)
+            .map(|span| span.from)
+            .ok_or_else(|| AppError::General(format!("'{text}' is not a day")))?,
+        None => chrono::Local::now().date_naive(),
+    };
+
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    let seals = seals_of(state.inner(), &vault_path)?;
+    let quiet = quiet_of(state.inner(), &vault_path)?;
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    onthisday::look_back(&timeline, &db, today, &quiet, &seals)
+}
+
+/// Stop offering this day's writing for a year — the one action §7.1 asks for.
+///
+/// A year, because the next time it could come back is its next anniversary,
+/// and the person has already said no to this one.
+#[tauri::command]
+pub fn timeline_not_again(vault_path: String, node_id: String, day: String) -> AppResult<Hush> {
+    let until = when::parse(&day)
+        .and_then(|span| span.from.with_year(span.from.year() + 1))
+        .map(when::iso)
+        .ok_or_else(|| AppError::General(format!("'{day}' is not a day")))?;
+    quiet::write_hush(
+        &vault_path,
+        &Subject::Moment { node: node_id, day },
+        Some(&until),
+    )
+}
+
+/// How long somebody set aside stays set aside.
+///
+/// §7.2: waved away once, gone for months. Six, because the shortest quiet
+/// this feature will speak about at all is three (`SHORTEST_WORTH_SAYING`),
+/// and a pause shorter than the thing it is pausing would be no pause.
+const SET_ASIDE_DAYS: i64 = 183;
+
+/// Somebody who was there often and then was not, with their name.
+#[derive(Debug, serde::Serialize)]
+pub struct Absent {
+    #[serde(flatten)]
+    pub missing: Missing,
+    /// What to call them. The identity alone is unreadable, and this sentence
+    /// is going to have a person's name in it.
+    pub name: String,
+}
+
+/// Everyone whose absence is unlike anything in their own record — §7.2.
+///
+/// Counts and says the number. It does not say why, and there is nowhere in
+/// this path for a reason to be added.
+#[tauri::command]
+pub fn timeline_silences(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+) -> AppResult<Vec<Absent>> {
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    let seals = seals_of(state.inner(), &vault_path)?;
+    let quiet = quiet_of(state.inner(), &vault_path)?;
+    let today = chrono::Local::now().date_naive();
+    let missing = silence::who_went_quiet(&timeline, today, &quiet, &seals)?;
+
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let ids: Vec<&str> = missing.iter().map(|m| m.who.as_str()).collect();
+    let names = store::names_for(&db, &ids);
+    Ok(missing
+        .into_iter()
+        .map(|missing| {
+            let name = names.get(&missing.who).cloned().unwrap_or_else(|| missing.who.clone());
+            Absent { missing, name }
+        })
+        .collect())
+}
+
+/// Leave somebody alone for a while — §7.2's last "must never".
+#[tauri::command]
+pub fn timeline_set_aside(vault_path: String, who: String) -> AppResult<Hush> {
+    let until = when::iso(
+        chrono::Local::now().date_naive() + chrono::Duration::days(SET_ASIDE_DAYS),
+    );
+    quiet::write_hush(&vault_path, &Subject::Person { who }, Some(&until))
+}
+
+/// A year, told in the person's own sentences — §7.6.
+///
+/// The model is asked to point at sentences by number; it is never asked for
+/// prose, and the reply has nowhere to put any. Everything sealed or hushed is
+/// dropped before the prompt is built, so it is not merely left out of the
+/// answer — it was never sent.
+#[tauri::command(async)]
+pub async fn timeline_year(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    year: i32,
+) -> AppResult<Vec<Line>> {
+    let today = chrono::Local::now().date_naive();
+    let (lines, prepared) = {
+        let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+        store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+        let seals = seals_of(state.inner(), &vault_path)?;
+        let quiet = quiet_of(state.inner(), &vault_path)?;
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        let candidates = year::candidates(&timeline, &db, year, today, &quiet, &seals)?;
+        // A short year needs no choosing, and asking would cost a call to say
+        // back the same list.
+        if candidates.len() <= year::MOST_KEPT {
+            let all: Vec<usize> = (0..candidates.len()).collect();
+            (Some(year::keep(&candidates, &all)), candidates)
+        } else {
+            (None, candidates)
+        }
+    };
+    if let Some(lines) = lines {
+        return Ok(lines);
+    }
+
+    let settings = crate::commands::syn::settings_for(&vault_path);
+    if !settings.enabled {
+        return Err(AppError::General(crate::commands::syn::SWITCHED_OFF.into()));
+    }
+    let config = extract::read_config(&vault_path);
+    let (settings, model) = extract::reader(&config, &settings);
+    let Some(model) = model else {
+        return Err(AppError::General("No model is configured".into()));
+    };
+    if !media::runs_here(&settings) && !config.allow_cloud {
+        return Err(AppError::General(
+            "Your year is read only by a model on this machine, unless sending it elsewhere is allowed for this vault".into(),
+        ));
+    }
+
+    let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
+    let messages = vec![crate::syn::provider::ChatMessage::new(
+        "user",
+        year::prompt(year, &prepared),
+    )];
+    let reply = provider
+        .chat(crate::syn::provider::ChatRequest {
+            model: &model,
+            messages: &messages,
+            temperature: Some(0.0),
+            num_ctx: settings.num_ctx,
+            tools: None,
+        })
+        .await?;
+    let picked = year::parse_reply(&reply.content)
+        .ok_or_else(|| AppError::General("the reply was not the JSON asked for".into()))?;
+    Ok(year::keep(&prepared, &picked))
+}
+
+/// Leave one sentence out of the year, for good.
+#[tauri::command]
+pub fn timeline_drop_line(vault_path: String, node_id: String, text: String) -> AppResult<Hush> {
+    quiet::write_hush(
+        &vault_path,
+        &Subject::Line { node: node_id, line: quiet::line_id(&text) },
+        None,
+    )
+}
+
+/// The one thing to ask about now, if there is one — §7.4.
+///
+/// Asking is a write: §7.4 says a thing is not asked about twice in a year
+/// whether or not the person answers, so seeing the question is what counts.
+/// The reply is a question, never a verdict, and nothing here is counted into
+/// any total.
+#[tauri::command]
+pub fn timeline_ask(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+) -> AppResult<Option<Question>> {
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    let seals = seals_of(state.inner(), &vault_path)?;
+    let quiet = quiet_of(state.inner(), &vault_path)?;
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    asking::ask(&timeline, &db, &vault_path, chrono::Local::now().date_naive(), &quiet, &seals)
 }
 
 /// Derive the whole timeline again from the vault cache.
@@ -365,6 +618,7 @@ mod tests {
             precision: "day".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         }
     }
 
@@ -924,6 +1178,9 @@ pub fn timeline_write_event(
     precision: String,
     with: Vec<String>,
     place: Option<String>,
+    // What it was about: a project or anything else that is not a person and
+    // not a place. §4.2's fourth role.
+    about: Vec<String>,
     format_str: String,
     tag: String,
 ) -> AppResult<String> {
@@ -937,6 +1194,7 @@ pub fn timeline_write_event(
         &precision,
         &with,
         place.as_deref(),
+        &about,
         &format_str,
         &tag,
     )?;
@@ -957,6 +1215,7 @@ pub(crate) fn write_event_inner<R: tauri::Runtime>(
     precision: &str,
     with: &[String],
     place: Option<&str>,
+    about: &[String],
     format_str: &str,
     tag: &str,
 ) -> AppResult<String> {
@@ -992,6 +1251,11 @@ pub(crate) fn write_event_inner<R: tauri::Runtime>(
     }
     if let Some(place) = place.map(str::trim).filter(|p| !p.is_empty()) {
         moment.insert("where".into(), serde_json::Value::String(place.to_string()));
+    }
+    let about: Vec<&str> =
+        about.iter().map(|name| name.trim()).filter(|name| !name.is_empty()).collect();
+    if !about.is_empty() {
+        moment.insert("about".into(), serde_json::json!(about));
     }
 
     let (id, note_title) = daily_note(state, vault_path, from, format_str)?;
@@ -1550,6 +1814,7 @@ mod review_fixes {
             precision: "month".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
         }
     }
 
@@ -1637,7 +1902,7 @@ mod writing_an_event {
 
         let note = super::write_event_inner(
             app.handle(), state, &vault_path, "Đám cưới", "2016-05-14", "2016-05-14",
-            "day", &[], None, "YYYY-MM-DD", "daily",
+            "day", &[], None, &[], "YYYY-MM-DD", "daily",
         )
         .expect("the first event");
 
@@ -1651,7 +1916,7 @@ mod writing_an_event {
 
         super::write_event_inner(
             app.handle(), state, &vault_path, "Ăn tối", "2016-05-14", "2016-05-14",
-            "day", &[], None, "YYYY-MM-DD", "daily",
+            "day", &[], None, &[], "YYYY-MM-DD", "daily",
         )
         .expect("the second event");
 
@@ -1686,6 +1951,7 @@ mod writing_an_event {
                 "day",
                 &people,
                 place,
+                &[],
                 "YYYY-MM-DD",
                 "",
             )

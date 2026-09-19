@@ -55,6 +55,12 @@ impl Span {
             precision: Precision::Day,
         }
     }
+
+    /// How wide it is, in days, counting both ends. This is what a view's zoom
+    /// is read from: see [`super::magnitude::room_for`].
+    pub fn days(&self) -> i64 {
+        (self.to - self.from).num_days().max(0) + 1
+    }
 }
 
 /// The far end of something still going on, such as a job held today.

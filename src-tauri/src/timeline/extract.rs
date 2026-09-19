@@ -1682,6 +1682,9 @@ pub fn proposals(
                 precision: extracted.precision.clone(),
                 time_source: "extract".into(),
                 source: "extract".into(),
+                // A proposal is always something that happened; that is the
+                // only thing the reader is asked for (§5.4).
+                shape: crate::timeline::derive::Shape::Occasion,
             };
             if seals.hides_item(&as_item) || extracted.payload.people.iter().any(|p| seals.hides(p)) {
                 continue;
@@ -2498,6 +2501,110 @@ mod tests {
                 }
                 Err(e) => eprintln!("\ncould not ask: {e}"),
             }
+        }
+
+        /// Read one month of the real vault for real, and report the four
+        /// gates of §5.4 separately.
+        ///
+        /// Writes proposals into the vault where the tray will find them, the
+        /// same as the app's own run — the point is to have something to
+        /// approve, not a dry run.
+        ///
+        ///   SYN_EXTRACT_MONTH=2026-06 SYN_EXTRACT_CACHE=/path/to/vault_cache.db \
+        ///     cargo test --lib -- --ignored read_one_real_month --nocapture
+        #[tokio::test]
+        #[ignore = "spends real API credit and writes to the vault; run by hand"]
+        async fn read_one_real_month() {
+            let month = std::env::var("SYN_EXTRACT_MONTH").expect("which month");
+            let cache_path = std::env::var("SYN_EXTRACT_CACHE").expect("the vault cache");
+            let vault_path = std::env::var("SYN_EVAL_VAULT").unwrap_or_else(|_| {
+                format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default())
+            });
+
+            let conn = rusqlite::Connection::open(&cache_path).expect("the cache");
+            let db = crate::db::DbBridge::init_with_conn(conn).expect("its schema");
+            let settings =
+                crate::syn::settings::load_settings(&vault_path).expect("the real Syn settings");
+            let config = read_config(&vault_path);
+            assert!(config.enabled, "extraction is off for this vault");
+            let (settings, model) = reader(&config, &settings);
+            let model = model.expect("a model");
+            assert!(
+                crate::timeline::media::runs_here(&settings) || config.allow_cloud,
+                "§8.6: this vault has not allowed a model off this machine"
+            );
+
+            let seals = crate::timeline::seal::Seals::read(&db, &vault_path).expect("seals");
+            let today = chrono::Local::now().date_naive();
+            let all = inputs(&db, &vault_path, &config, &seals, today, None).expect("inputs");
+            let mine: Vec<Input> = all
+                .into_iter()
+                .filter(|i| when::iso(i.recorded).starts_with(&month))
+                .collect();
+
+            let people = People::read(&db).expect("people");
+            let provider = crate::syn::provider::for_settings(
+                &settings,
+                crate::secrets::SecretManager::get_syn_api_key(None, settings.provider.key_slot()),
+            );
+
+            eprintln!("\n═══ reading {month} with {model} ═══  {} notes\n", mine.len());
+            let (mut kept, mut dropped) = (0usize, Dropped::default());
+            let (mut with_people, mut without_quote) = (0usize, 0usize);
+            for input in &mine {
+                // `extract_one`'s own steps, so the four gates stay separate:
+                // its `SourceRun` keeps only the total.
+                let asked = provider
+                    .chat(ChatRequest {
+                        model: &model,
+                        messages: &[ChatMessage::new("user", prompt(input))],
+                        temperature: Some(0.0),
+                        num_ctx: settings.num_ctx,
+                        tools: None,
+                    })
+                    .await
+                    .map(|reply| parse_reply(&reply.content));
+                match asked {
+                    Ok(Some(raw)) => {
+                        let (items, gates) = settle(input, raw, &people, &model);
+                        kept += items.len();
+                        dropped.no_quote += gates.no_quote;
+                        dropped.undated += gates.undated;
+                        dropped.not_yet += gates.not_yet;
+                        dropped.untitled += gates.untitled;
+                        let run =
+                            SourceRun::new(input, &model, &items, gates.total(), 0, Utc::now());
+                        for item in &items {
+                            if !item.payload.people.is_empty() {
+                                with_people += 1;
+                            }
+                            if item.payload.quote.trim().is_empty() {
+                                without_quote += 1;
+                            }
+                            eprintln!(
+                                "  {} · {} · {:?}\n      «{}»",
+                                item.happened_from,
+                                item.payload.title,
+                                item.payload.people,
+                                item.payload.quote
+                            );
+                        }
+                        record(&vault_path, "probe", run, &items, Utc::now()).expect("written");
+                    }
+                    Ok(None) => eprintln!("  {}: the reply was not the JSON asked for", input.node_id),
+                    Err(e) => eprintln!("  {} failed: {e}", input.node_id),
+                }
+            }
+
+            eprintln!("\n─── the four gates ───");
+            eprintln!("  no_quote: {}", dropped.no_quote);
+            eprintln!("  undated:  {}", dropped.undated);
+            eprintln!("  not_yet:  {}", dropped.not_yet);
+            eprintln!("  untitled: {}", dropped.untitled);
+            eprintln!("\n  proposals:        {kept}");
+            eprintln!("  naming somebody:  {with_people}");
+            eprintln!("  with no quote:    {without_quote}");
+            assert_eq!(without_quote, 0, "§5.4: nothing passes without its own sentence");
         }
 
         #[tokio::test]

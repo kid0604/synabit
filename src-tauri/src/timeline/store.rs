@@ -21,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection, Transaction};
 use serde::Serialize;
 use serde_json::Value;
@@ -46,7 +46,7 @@ pub const FILE_NAME: &str = "timeline.db";
 /// built its index under any of the versions in between holds rows derived by
 /// rules that no longer apply, and nothing else would ever ask it to look
 /// again: `node_sources` still matches, so every node looks unchanged.
-const DERIVE_VERSION: &str = "6";
+const DERIVE_VERSION: &str = "7";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct EventLink {
@@ -76,6 +76,11 @@ pub struct Event {
     pub magnitude: f64,
     /// The note that wrote it out, when the event is not a node of its own.
     pub container_node: Option<String>,
+    /// What it is, as against what it is called. See [`super::derive::Shape`],
+    /// which is also where the four readers that used to compare `kind` against
+    /// a hard-coded list now get their answer.
+    #[serde(skip)]
+    pub shape: super::derive::Shape,
     /// What the person wrote that this version has no meaning for.
     pub props: Value,
 }
@@ -83,7 +88,7 @@ pub struct Event {
 /// Every column an [`Event`] is read from, in the order [`read_event`] wants.
 const COLUMNS: &str = "id, kind, node_id, node_type, title, node_title, \
                        happened_from, happened_to, precision, time_source, source, \
-                       magnitude, props, container_node";
+                       magnitude, props, container_node, shape";
 
 /// What a catch-up did, so a log can say it.
 #[derive(Debug, Default, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -256,6 +261,10 @@ impl TimelineStore {
              CREATE TABLE IF NOT EXISTS events (
                 id             TEXT PRIMARY KEY,
                 kind           TEXT NOT NULL,
+                -- What it is, as against what it is called: see `derive::Shape`.
+                -- `kind` is free text a person may invent; this is the closed set
+                -- the app reads when it needs to know how to treat something.
+                shape          TEXT NOT NULL DEFAULT 'occasion',
                 happened_from  TEXT NOT NULL,
                 happened_to    TEXT NOT NULL,
                 precision      TEXT NOT NULL,
@@ -314,6 +323,10 @@ impl TimelineStore {
             ("container_node", "TEXT"),
             ("folded_into", "TEXT"),
             ("node_title", "TEXT"),
+            // Every row an older version wrote is a thing that happened until
+            // the next derivation says otherwise, which is what `occasion`
+            // means and why it is the default (`derive::Shape::read`).
+            ("shape", "TEXT NOT NULL DEFAULT 'occasion'"),
         ] {
             let present = conn
                 .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?1")
@@ -566,6 +579,134 @@ impl TimelineStore {
         Ok(events)
     }
 
+    /// What happened on this month and day, in years before this one.
+    ///
+    /// Only the day a thing *started*, and only when that day is exactly
+    /// known. Two rules, both of which §7.1 needs:
+    ///
+    /// - A stretch of time has no anniversary. `2009-01-01 → 2009-12-31` means
+    ///   "some time in 2009", and offering it every first of January would be
+    ///   the app inventing a date the person never wrote.
+    /// - Matching the start alone is also what keeps §7.1's "never twice in one
+    ///   year" true without remembering anything: a thing has exactly one
+    ///   anniversary, so it gets exactly one chance a year. A rule that holds by
+    ///   arithmetic cannot drift out of step with a record of what was shown.
+    pub fn anniversaries(&self, today: NaiveDate) -> AppResult<Vec<Event>> {
+        let month_day = when::iso(today)[5..].to_string();
+        self.select(
+            "substr(happened_from, 6) = ?1 AND happened_from < ?2 AND precision = 'day'",
+            vec![month_day, format!("{}-01-01", today.year())],
+        )
+    }
+
+    /// Every day each person was there, in order, one row per day.
+    ///
+    /// Only `with` — being the subject of an event is not the same as being at
+    /// it, and a rhythm of meeting is what §7.2 measures. A day on which
+    /// somebody appears twice counts once: two notes about one dinner is one
+    /// evening, and counting it twice would make the rhythm look busier than
+    /// the life was.
+    pub fn days_with_people(&self, today: NaiveDate) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT l.node_id, e.happened_from
+                   FROM event_links l
+                   JOIN events e ON e.id = l.event_id
+                  WHERE l.role = 'with'
+                    AND e.happened_from <= ?1
+                    AND e.superseded_by IS NULL AND e.source != 'extract'
+                  ORDER BY l.node_id, e.happened_from",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![when::iso(today)], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?;
+        Ok(rows.flatten().collect())
+    }
+
+    /// Every day each *thing* was written about, in order, one row per day.
+    ///
+    /// Wider than [`Self::days_with_people`]: a project, a place and a person
+    /// alike, plus the node an event belongs to, because a project's own notes
+    /// are how a project is mostly written about. `evidence` is left out — a
+    /// picture attached to a note is not somebody writing about the thing.
+    pub fn days_about_things(&self, today: NaiveDate) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT about, happened_from FROM (
+                     SELECT l.node_id AS about, e.happened_from AS happened_from
+                       FROM event_links l
+                       JOIN events e ON e.id = l.event_id
+                      WHERE l.role != 'evidence'
+                        AND e.happened_from <= ?1
+                        AND e.superseded_by IS NULL AND e.source != 'extract'
+                     UNION ALL
+                     SELECT e.node_id AS about, e.happened_from AS happened_from
+                       FROM events e
+                      WHERE e.happened_from <= ?1
+                        AND e.superseded_by IS NULL AND e.source != 'extract'
+                 )
+                  ORDER BY about, happened_from",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![when::iso(today)], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?;
+        Ok(rows.flatten().collect())
+    }
+
+    /// Every row of the index, folded ones included, as one canonical line
+    /// each — the shape of the whole timeline, for proving a refactor changed
+    /// nothing (§16 Bước 9's gate).
+    pub fn snapshot_lines(&self) -> AppResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, kind, happened_from, happened_to, precision, source,
+                        ROUND(magnitude, 6), COALESCE(folded_into, ''), COALESCE(container_node, ''),
+                        COALESCE(superseded_by, '')
+                   FROM events ORDER BY id",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, f64>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut out: Vec<String> = rows.flatten().collect();
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event_id, node_id, role FROM event_links ORDER BY event_id, node_id, role")
+            .map_err(sql)?;
+        let links = stmt
+            .query_map([], |r| {
+                Ok(format!(
+                    "link\t{}\t{}\t{}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?
+                ))
+            })
+            .map_err(sql)?;
+        out.extend(links.flatten());
+        Ok(out)
+    }
+
     /// Every item up to `today`, for a view that reads the whole timeline.
     pub fn all_items(&self, today: NaiveDate) -> AppResult<Vec<Event>> {
         self.select("happened_from <= ?1", vec![when::iso(today)])
@@ -597,7 +738,7 @@ impl TimelineStore {
         let statement = format!(
             "SELECT {COLUMNS}
              FROM events
-             WHERE {condition} AND superseded_by IS NULL AND source != 'extract' AND folded_into IS NULL AND folded_into IS NULL
+             WHERE {condition} AND superseded_by IS NULL AND source != 'extract' AND folded_into IS NULL
              ORDER BY happened_from, kind, id"
         );
         let mut stmt = self.conn.prepare(&statement).map_err(sql)?;
@@ -660,6 +801,7 @@ fn read_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or(Value::Null),
         container_node: r.get(13)?,
+        shape: derive::Shape::read(&r.get::<_, String>(14)?),
     })
 }
 
@@ -816,13 +958,14 @@ fn insert_derived(tx: &Transaction, id: &str, node: &SnapshotNode, derived: &Der
     });
     tx.execute(
         "INSERT OR REPLACE INTO events
-            (id, kind, happened_from, happened_to, precision, time_source,
+            (id, kind, shape, happened_from, happened_to, precision, time_source,
              node_id, node_type, title, node_title, source,
              magnitude, props, container_node)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'derived', ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'derived', ?12, ?13, ?14)",
         params![
             id,
             derived.kind,
+            derived.shape.as_str(),
             from,
             to,
             derived.span.precision.as_str(),

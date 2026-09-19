@@ -69,9 +69,12 @@ const MIRROR: &str = "fold_days";
 /// chính xác cũng không, vì khai cả `start` lẫn `end` thì nó thành một khoảng
 /// biết tới ngày.
 ///
-/// Đây là chỗ rẽ nhánh theo `kind` mà §16 Bước 9 phải thay bằng vai và độ lớn.
-const NOT_AN_OCCASION: &str =
-    "'experience', 'connection', 'birthday', 'death', 'important_date'";
+/// Câu hỏi thật là "ảnh có thể là bằng chứng *của* chuyện này không", và nó
+/// được trả lời một lần lúc dựng, ở `derive::Shape` — không phải bằng một danh
+/// sách `kind` mà mọi chỗ đọc phải nhớ giữ đồng bộ (§16 Bước 9).
+fn an_occasion() -> String {
+    format!("shape IN ({})", crate::timeline::derive::Shape::hosting_list())
+}
 
 /// Chỗ chứa phải là chuyện biết tới **ngày**, không phải một phông nền.
 ///
@@ -165,6 +168,7 @@ pub fn folding(conn: &Connection) -> bool {
 /// Runs inside the catch-up transaction, after every node has been derived and
 /// after pictures have been given the day of the note they sit in.
 pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
+    let an_occasion = an_occasion();
     // This pass is the whole truth about what is inside what, so it starts
     // from nothing folded. That is also what makes it idempotent: running it
     // twice says the same thing, and running it after the switch went off
@@ -186,7 +190,7 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
                   AND n.{VISIBLE}
                 ORDER BY n.happened_from, n.id LIMIT 1)
              WHERE kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND container_node IS NULL
-               AND {DATED_TO_A_DAY} AND kind NOT IN ({NOT_AN_OCCASION})
+               AND {DATED_TO_A_DAY} AND {an_occasion}
                AND julianday(happened_to) - julianday(happened_from) <= {LONGEST_HOST_DAYS}
                AND {VISIBLE}
                AND EXISTS (SELECT 1 FROM events n WHERE n.kind IN ({CONTAINERS})
@@ -203,7 +207,7 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
             "UPDATE events SET folded_into = (
                 SELECT e.id FROM events e
                 WHERE e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE}
-                  AND e.{DATED_TO_A_DAY} AND e.kind NOT IN ({NOT_AN_OCCASION})
+                  AND e.{DATED_TO_A_DAY} AND e.{an_occasion}
                   AND events.happened_from BETWEEN e.happened_from AND e.happened_to
                   AND julianday(e.happened_to) - julianday(e.happened_from) <= {LONGEST_HOST_DAYS}
                 ORDER BY julianday(e.happened_to) - julianday(e.happened_from), e.magnitude DESC, e.id
@@ -211,7 +215,7 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
              WHERE kind IN ({CONTAINERS}) AND {VISIBLE}
                AND EXISTS (SELECT 1 FROM events e
                            WHERE e.kind NOT IN ({CONTAINERS}, {EVIDENCE}) AND e.{VISIBLE}
-                             AND e.{DATED_TO_A_DAY} AND e.kind NOT IN ({NOT_AN_OCCASION})
+                             AND e.{DATED_TO_A_DAY} AND e.{an_occasion}
                              AND events.happened_from BETWEEN e.happened_from AND e.happened_to
                              AND julianday(e.happened_to) - julianday(e.happened_from) <= {LONGEST_HOST_DAYS})"
         ),
@@ -241,7 +245,7 @@ pub fn fold_days(tx: &Transaction, folding: bool) -> AppResult<()> {
                 &format!(
                     "SELECT id FROM events
                      WHERE ?1 BETWEEN happened_from AND happened_to
-                       AND {DATED_TO_A_DAY} AND kind NOT IN ({NOT_AN_OCCASION})
+                       AND {DATED_TO_A_DAY} AND {an_occasion}
                        AND julianday(happened_to) - julianday(happened_from) <= {LONGEST_HOST_DAYS}
                        AND kind NOT IN ({EVIDENCE})
                        AND folded_into IS NULL AND {VISIBLE}

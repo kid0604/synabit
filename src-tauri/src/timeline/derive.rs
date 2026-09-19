@@ -50,11 +50,159 @@ impl Link {
     pub fn at(node: impl Into<String>) -> Self {
         Link { node: node.into(), role: "where", label: None }
     }
+
+    /// What it was about: a project, a piece of work, a thing that is not a
+    /// person and not a place. §4.2 names four roles and a moment could write
+    /// only two of them, so an event about a project had nowhere to say so.
+    pub fn about(node: impl Into<String>) -> Self {
+        Link { node: node.into(), role: "about", label: None }
+    }
+}
+
+/// What shape of thing an event is.
+///
+/// Four places used to answer this by looking at `kind` and comparing against
+/// a hard-coded list: folding, the frame, sealing a period, and the picture
+/// gallery. That was wrong twice over. `kind` is free text a person may invent
+/// (§4.3), so a type nobody anticipated fell through every list by luck rather
+/// than by decision; and the knowledge of what a thing *is* lives here, where
+/// it is derived, not in four readers that each had to be kept in step.
+///
+/// So the question is answered once, at derivation, in a closed set the app
+/// owns. `kind` goes back to being what §4.3 says it is: a label for an icon.
+///
+/// §16 Bước 9 asks for this to be **role and magnitude** instead. It cannot be,
+/// yet, and the reason is measured rather than guessed: 1 of 166 events on the
+/// real vault names anybody, so a rule reading roles would put nearly every
+/// event in the same bucket and the timeline would change on almost every row.
+/// Roles become usable when Bước 2 runs; until then this is the honest half of
+/// the change — the lists are gone and the decision is made in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shape {
+    /// Something that happened, on a day or a few: a note, a meeting, a
+    /// finished task, a picture, a decision. Pictures can be evidence of it, a
+    /// sealed period covers it, and a person met at one has arrived.
+    #[default]
+    Occasion,
+    /// A stretch of a life whose beginning is still a day somebody can name:
+    /// a relationship. Nothing is evidence "of" it, but "we met in May 2019"
+    /// is a claim about May 2019, so a seal over that time covers it.
+    Bond,
+    /// A stretch that merely ran through time: a job. It did not happen *in*
+    /// any period it crossed, and listing it on someone's page is not the day
+    /// they walked into your life.
+    Spell,
+    /// A date the app recomputes every year from a field: a birthday. It
+    /// belongs to no one year, so no year's seal covers it.
+    Marker,
+    /// A dated claim the person wrote down as worth keeping, which recurs in
+    /// the reading but was still written about a particular day.
+    Noted,
+    /// A day something stopped. Covered by a seal like any other day, but it
+    /// is nobody's arrival and nothing is a photograph "of" it.
+    Ending,
+    /// A piece of work ticked off. It happened on a day like anything else and
+    /// behaves like one everywhere — except that a day holding nothing but
+    /// these is a work log, not a memory (§7.1).
+    Chore,
+}
+
+impl Shape {
+    /// Every shape there is, so a rule can be asked of all of them rather than
+    /// written out twice.
+    pub const ALL: &'static [Shape] = &[
+        Shape::Occasion,
+        Shape::Bond,
+        Shape::Spell,
+        Shape::Marker,
+        Shape::Noted,
+        Shape::Ending,
+        Shape::Chore,
+    ];
+
+    /// The shapes that host evidence, as a SQL list for an `IN (…)`.
+    ///
+    /// Built from [`Shape::hosts_evidence`] rather than written out, because
+    /// writing it out is exactly the mistake this whole change is undoing: the
+    /// first version of `fold`'s query said `shape = 'occasion'` while the
+    /// predicate said occasion *or* chore, and 302 pictures quietly changed
+    /// which event they belonged to. One rule, one place, asked two ways.
+    pub fn hosting_list() -> String {
+        Shape::ALL
+            .iter()
+            .filter(|shape| shape.hosts_evidence())
+            .map(|shape| format!("'{}'", shape.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Whether pictures taken that day can become evidence of it (§4.6).
+    pub fn hosts_evidence(self) -> bool {
+        matches!(self, Shape::Occasion | Shape::Chore)
+    }
+
+    /// Whether meeting somebody here is the day they arrived (§9).
+    pub fn is_an_arrival(self) -> bool {
+        matches!(self, Shape::Occasion | Shape::Bond | Shape::Chore)
+    }
+
+    /// Whether a seal over a period covers it (§8.1).
+    pub fn happened_in_time(self) -> bool {
+        matches!(
+            self,
+            Shape::Occasion | Shape::Bond | Shape::Noted | Shape::Ending | Shape::Chore
+        )
+    }
+
+    /// Whether it thickens the strip on the month it falls in.
+    ///
+    /// A grandmother's birthday and a job listed on somebody's page are not
+    /// moments in *this* life, and counting them would start the strip in 1932.
+    pub fn fills_the_strip(self) -> bool {
+        !matches!(self, Shape::Marker | Shape::Spell)
+    }
+
+    /// Whether it is the sort of thing worth handing back years later (§7.1).
+    ///
+    /// The one question where a ticked task differs from everything else that
+    /// happened on a day: a day of nothing but these is a work log.
+    pub fn is_a_memory(self) -> bool {
+        matches!(self, Shape::Occasion | Shape::Bond | Shape::Spell)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Shape::Occasion => "occasion",
+            Shape::Bond => "bond",
+            Shape::Spell => "spell",
+            Shape::Marker => "marker",
+            Shape::Noted => "noted",
+            Shape::Ending => "ending",
+            Shape::Chore => "chore",
+        }
+    }
+
+    pub fn read(text: &str) -> Shape {
+        match text {
+            "bond" => Shape::Bond,
+            "spell" => Shape::Spell,
+            "marker" => Shape::Marker,
+            "noted" => Shape::Noted,
+            "ending" => Shape::Ending,
+            "chore" => Shape::Chore,
+            // Anything unknown, including a row written by an older version,
+            // is a thing that happened. That is the reading that keeps a
+            // strange event visible rather than quietly dropping it.
+            _ => Shape::Occasion,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Derived {
     pub kind: &'static str,
+    /// What it is, as against what it is called. See [`Shape`].
+    pub shape: Shape,
     pub span: Span,
     /// Where the date came from: `frontmatter`, `filename`, or `note`.
     pub time_source: &'static str,
@@ -73,6 +221,7 @@ pub struct Derived {
 fn item(kind: &'static str, span: Span) -> Derived {
     Derived {
         kind,
+        shape: Shape::Occasion,
         span,
         time_source: "frontmatter",
         title: None,
@@ -117,7 +266,7 @@ fn moments(p: &Value) -> Vec<Derived> {
 
 /// What the app understands about a moment. Everything else is kept in
 /// [`Derived::props`] rather than dropped.
-const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where"];
+const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where", "about"];
 
 /// Everyone and everywhere the moment names.
 ///
@@ -139,6 +288,7 @@ fn cast(moment: &Value) -> Vec<Link> {
     };
     let mut links: Vec<Link> = clean(names("people")).into_iter().map(Link::with).collect();
     links.extend(clean(names("where")).into_iter().map(Link::at));
+    links.extend(clean(names("about")).into_iter().map(Link::about));
     links
 }
 
@@ -197,7 +347,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
         "event" => event(node).into_iter().collect(),
         // Done is something that happened. A due date is a plan.
         "task" => dated(p, "completed_at")
-            .map(|span| item("task_done", span))
+            .map(|span| Derived { shape: Shape::Chore, ..item("task_done", span) })
             .into_iter()
             .collect(),
         "decision" => decision(p),
@@ -295,13 +445,14 @@ fn person(p: &Value) -> Vec<Derived> {
                 .join(" · ");
             out.push(Derived {
                 title: (!label.is_empty()).then_some(label),
+                shape: Shape::Spell,
                 ..item("experience", span)
             });
         }
     }
 
     if let Some(span) = dated(p, "birthday") {
-        out.push(item("birthday", span));
+        out.push(Derived { shape: Shape::Marker, ..item("birthday", span) });
     }
 
     // A relationship with someone, from the day it began. Unlike a job whose
@@ -321,6 +472,7 @@ fn person(p: &Value) -> Vec<Derived> {
             out.push(Derived {
                 links: vec![Link::with(other)],
                 title: text(link, "relation_type").map(String::from),
+                shape: Shape::Bond,
                 ..item(
                     "connection",
                     Span {
@@ -334,7 +486,7 @@ fn person(p: &Value) -> Vec<Derived> {
     }
 
     if let Some(span) = dated(p, "died_on") {
-        out.push(item("death", span));
+        out.push(Derived { shape: Shape::Ending, ..item("death", span) });
     }
 
     if let Some(Value::Array(dates)) = p.get("important_dates") {
@@ -342,6 +494,7 @@ fn person(p: &Value) -> Vec<Derived> {
             if let Some(span) = dated(entry, "date") {
                 out.push(Derived {
                     title: text(entry, "label").map(String::from),
+                    shape: Shape::Noted,
                     ..item("important_date", span)
                 });
             }
@@ -763,5 +916,94 @@ mod tests {
         let items = derive_one("person", json!({ "died_on": "2017-11-22" }));
         assert_eq!(items[0].kind, "death");
         assert_eq!(items[0].span, Span::day(day(2017, 11, 22)));
+    }
+
+    /// The five lists §16 Bước 9 removed, written out one last time, and
+    /// proved equal to the predicates that replaced them.
+    ///
+    /// A vault diff proves nothing changed on *this* vault; this proves nothing
+    /// changed for a kind the vault happens not to hold — there are no deaths
+    /// in it, for one.
+    #[test]
+    fn every_predicate_answers_exactly_what_its_list_used_to() {
+        const EVERY_KIND: &[&str] = &[
+            "note", "interaction", "event", "moment", "decision", "decision_review",
+            "task_done", "project_start", "media", "field", "connection",
+            "experience", "birthday", "important_date", "death",
+        ];
+        // The lists as they stood in fold.rs, frame.rs and seal.rs.
+        const NOT_AN_OCCASION: &[&str] =
+            &["experience", "connection", "birthday", "death", "important_date"];
+        const NOT_AN_ARRIVAL: &[&str] = &["birthday", "important_date", "experience", "death"];
+        const NOT_A_MOMENT: &[&str] = &["birthday", "experience"];
+        const MOMENTS: &[&str] = &[
+            "note", "interaction", "event", "connection", "important_date", "moment",
+            "decision", "decision_review", "task_done", "project_start", "media", "field",
+            "death",
+        ];
+        const NOT_A_MEMORY: &[&str] = &["task_done", "birthday", "important_date", "death"];
+
+        for kind in EVERY_KIND {
+            let shape = shape_for_kind(kind);
+            assert_eq!(
+                shape.hosts_evidence(),
+                !NOT_AN_OCCASION.contains(kind),
+                "{kind}: hosts_evidence"
+            );
+            assert_eq!(
+                shape.is_an_arrival(),
+                !NOT_AN_ARRIVAL.contains(kind),
+                "{kind}: is_an_arrival"
+            );
+            assert_eq!(
+                shape.fills_the_strip(),
+                !NOT_A_MOMENT.contains(kind),
+                "{kind}: fills_the_strip"
+            );
+            assert_eq!(
+                shape.happened_in_time(),
+                MOMENTS.contains(kind),
+                "{kind}: happened_in_time"
+            );
+            assert_eq!(shape.is_a_memory(), !NOT_A_MEMORY.contains(kind), "{kind}: is_a_memory");
+        }
+    }
+
+    /// What derivation assigns each kind, read off the derivations themselves.
+    fn shape_for_kind(kind: &str) -> Shape {
+        match kind {
+            "experience" => Shape::Spell,
+            "connection" => Shape::Bond,
+            "birthday" => Shape::Marker,
+            "important_date" => Shape::Noted,
+            "death" => Shape::Ending,
+            "task_done" => Shape::Chore,
+            _ => Shape::Occasion,
+        }
+    }
+
+    /// And that the mapping above is the one derivation really uses.
+    #[test]
+    fn derivation_gives_each_kind_the_shape_the_predicates_were_checked_against() {
+        let person = derive_one(
+            "person",
+            json!({
+                "birthday": "1990-04-02",
+                "died_on": "2025-01-01",
+                "experiences": [{ "start": "2019-01-01", "end": "2020-01-01", "role": "Dev" }],
+                "connections": [{ "person_id": "uuid-x", "since": "2015-01-01" }],
+                "important_dates": [{ "date": "2018-06-01", "label": "cưới" }],
+            }),
+        );
+        for item in &person {
+            assert_eq!(item.shape, shape_for_kind(item.kind), "{}", item.kind);
+        }
+        assert!(person.len() >= 5, "{person:?}");
+
+        let task = derive_one("task", json!({ "completed_at": "2026-01-01" }));
+        assert_eq!(task[0].shape, Shape::Chore);
+
+        let note = derive_one("note", json!({ "date": "2026-01-01" }));
+        assert_eq!(note[0].shape, Shape::Occasion);
     }
 }

@@ -63,30 +63,6 @@ pub struct SealedPeriod {
     pub to_text: String,
 }
 
-/// Timeline kinds that are a moment in a life, which a period seals. A job, a
-/// relationship, a birthday or an anniversary spans or recurs past any one
-/// period and is not sealed by one.
-const MOMENTS: &[&str] = &[
-    "note",
-    "interaction",
-    "event",
-    // A relationship and an anniversary are claims about a day as much as a
-    // note is: "we met in May 2019" is exactly what sealing 2019 hides. The
-    // person stays — only the dated item goes. `birthday` and `experience` are
-    // deliberately not here: a birthday is not of that period, and a job that
-    // ran through it did not happen in it.
-    "connection",
-    "important_date",
-    "moment",
-    "decision",
-    "decision_review",
-    "task_done",
-    "project_start",
-    "media",
-    "field",
-    "death",
-];
-
 #[derive(Debug, Default)]
 pub struct Seals {
     periods: Vec<SealedPeriod>,
@@ -157,7 +133,7 @@ impl Seals {
     pub fn hides_item(&self, item: &Event) -> bool {
         self.hides(&item.node_id)
             || item.links.iter().any(|link| self.hides_person(&link.node_id))
-            || (MOMENTS.contains(&item.kind.as_str()) && self.in_period(&item.happened_from))
+            || (item.shape.happened_in_time() && self.in_period(&item.happened_from))
     }
 
     /// Whether a person is sealed, by whichever of their names is to hand.
@@ -434,7 +410,7 @@ fn happened_inside(
     // note. It is hidden on its own (`hides_item`); it does not hide the note.
     let moments: Vec<String> = derive::derive(&view, date_fields)
         .into_iter()
-        .filter(|d| MOMENTS.contains(&d.kind) && d.kind != "moment")
+        .filter(|d| d.shape.happened_in_time() && d.kind != "moment")
         .map(|d| when::iso(d.span.from))
         .collect();
     if moments.is_empty() {
@@ -796,8 +772,25 @@ mod tests {
             precision: "day".into(),
             time_source: "frontmatter".into(),
             source: "derived".into(),
+            shape: shape_of(kind),
         }
     }
+
+    /// The shape derivation gives each of these kinds, so a test that names a
+    /// kind gets the behaviour the real event would have.
+    fn shape_of(kind: &str) -> crate::timeline::derive::Shape {
+        use crate::timeline::derive::Shape;
+        match kind {
+            "experience" => Shape::Spell,
+            "connection" => Shape::Bond,
+            "birthday" => Shape::Marker,
+            "important_date" => Shape::Noted,
+            "death" => Shape::Ending,
+            "task_done" => Shape::Chore,
+            _ => Shape::Occasion,
+        }
+    }
+
 
     const MADE: &str = "2026-01-01T12:00:00.000Z";
 
