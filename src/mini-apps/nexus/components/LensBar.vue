@@ -4,29 +4,38 @@
  *
  * The design is `docs/nexus-lenses-2026-09-19.md`, step 2.
  *
- * What this is *not* yet: step 3 turns the input into a two-way bar of chips
- * that fills itself when somebody clicks a person on the graph, and step 4
- * lets the answer choose its own shape. Until then it is a plain input and a
- * plain table, which is honest about how far the work has got.
+ * The bar is a **receipt**, not a power-user feature. Press a person on the
+ * graph, drag the strip, tap a tag, and it fills with the chips that describe
+ * what just happened. Somebody who never reads it loses nothing; somebody who
+ * reads it starts editing. That is the whole of §6.1, and it only works
+ * because the chips are the text itself sliced (`shared/queryChips`) rather
+ * than a second model that has to be kept in step.
  *
- * What it already proves is the claim the design rests on: the answer comes
+ * Still to come: step 4 lets the answer choose its own shape, so for now the
+ * rows arrive in a table whatever they are.
+ *
+ * What is already proved is the claim the design rests on: the answer comes
  * back as an ordinary `QueryResult`, so `TableView` — written long before any
  * of this, for notes — draws a question about the timeline without being
  * taught what an event is. One result shape, and the views already know it.
  */
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { Search } from 'lucide-vue-next';
 import TableView from '../../../shared/views/TableView.vue';
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
+import { chipsOf, withFilter, withTag, without } from '../../../shared/queryChips';
 import LensShelf from './LensShelf.vue';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ (e: 'open', id: string, type: string): void }>();
 
 const query = ref('');
+const typing = ref(false);
+const field = ref<HTMLInputElement | null>(null);
+const chips = computed(() => chipsOf(query.value));
 const result = ref<QueryResult | null>(null);
 const running = ref(false);
 const refused = ref<string | null>(null);
@@ -58,18 +67,51 @@ const run = async () => {
 
 const runLens = async (lens: Lens) => {
     query.value = lens.query;
+    typing.value = false;
     active.value = lens.id;
     await run();
 };
 
 const typed = () => {
-    // Once the words differ from the lens they came from, it is not that lens
-    // any more — and the shelf should stop claiming it is.
+    // Typing keeps the words on screen. Without this the field is swapped for
+    // chips the moment the first character makes one, which takes the input
+    // out from under the cursor mid-word.
+    typing.value = true;
+    // And once the words differ from the lens they came from, it is not that
+    // lens any more — the shelf should stop claiming it is.
     active.value = null;
 };
 
 /** A row's `open` when it has one, else its id. See `timeline::query`. */
 const open = (row: QueryRow) => emit('open', row.open ?? row.id, row.node_type);
+
+const drop = (index: number) => {
+    query.value = without(query.value, index);
+    active.value = null;
+    void run();
+};
+
+/**
+ * What the rest of the screen presses. Adding a filter runs the question
+ * straight away: the gesture *was* the question, and making somebody press
+ * Ask afterwards would turn one act into two.
+ */
+const press = async (key: string, value: string) => {
+    query.value = key === '#' ? withTag(query.value, value) : withFilter(query.value, key, value);
+    // Pressing something on the screen is the other way of using the bar, so
+    // the bar shows the other face: chips, not words.
+    typing.value = false;
+    active.value = null;
+    if (query.value.trim()) await run();
+    else result.value = null;
+};
+defineExpose({ press });
+
+const edit = async () => {
+    typing.value = true;
+    await nextTick();
+    field.value?.focus();
+};
 </script>
 
 <template>
@@ -89,7 +131,14 @@ const open = (row: QueryRow) => emit('open', row.open ?? row.id, row.node_type);
             class="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-[#3a3a3c] dark:bg-[#242426]"
         >
             <Search class="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
+
+            <!-- The chips and the words are the same thing seen two ways, so
+                 the bar shows whichever the person is using. Reading: chips.
+                 Editing: the words, with the chips coming back as soon as
+                 they stop. -->
             <input
+                v-if="typing || !chips.length"
+                ref="field"
                 v-model="query"
                 data-ask
                 type="text"
@@ -97,8 +146,37 @@ const open = (row: QueryRow) => emit('open', row.open ?? row.id, row.node_type);
                 :placeholder="$t('nexus.lens_ask')"
                 class="min-w-0 flex-grow bg-transparent text-[13px] text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
                 @input="typed"
-                @keyup.enter="run"
+                @keyup.enter="typing = false; run()"
+                @blur="typing = false"
             />
+            <span v-else data-chips class="flex min-w-0 flex-grow flex-wrap items-center gap-1.5">
+                <span
+                    v-for="(chip, i) in chips"
+                    :key="`${i}-${chip.text}`"
+                    data-chip
+                    class="inline-flex h-6 items-center rounded-md border border-indigo-200 bg-indigo-50 pl-2 text-[12px] font-medium text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"
+                >
+                    <span v-if="chip.key && chip.key !== '#'" class="mr-1 opacity-60">{{ chip.key }}</span>
+                    {{ chip.label }}
+                    <button
+                        type="button"
+                        data-chip-drop
+                        :aria-label="$t('nexus.lens_drop_chip', { what: chip.label })"
+                        class="px-1.5 opacity-50 transition-opacity hover:opacity-100"
+                        @click="drop(i)"
+                    >
+                        ×
+                    </button>
+                </span>
+                <button
+                    type="button"
+                    data-edit
+                    class="text-[12px] text-gray-400 underline decoration-dotted underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200"
+                    @click="edit"
+                >
+                    {{ $t('nexus.lens_edit') }}
+                </button>
+            </span>
             <span
                 v-if="result"
                 data-found

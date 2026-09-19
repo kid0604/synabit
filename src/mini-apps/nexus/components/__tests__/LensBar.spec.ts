@@ -115,4 +115,81 @@ describe('Asking Nexus a question', () => {
         await wrapper.find('[data-ask]').setValue('  ');
         expect(wrapper.find('[data-run]').attributes('disabled')).toBeDefined();
     });
+
+    // ─── The bar as a receipt ───────────────────────────────────
+
+    it('shows what was asked as chips, and lets the words be edited', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('with:khánh when:2019');
+        await flushPromises();
+
+        const chips = wrapper.findAll('[data-chip]');
+        expect(chips).toHaveLength(0, 'still typing, so still words');
+
+        // Pressing something elsewhere is what fills the bar.
+        await (wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> })
+            .press('with', 'Minh');
+        await flushPromises();
+        expect(wrapper.findAll('[data-chip]').map(c => c.text())).toEqual([
+            expect.stringContaining('khánh'),
+            expect.stringContaining('2019'),
+            expect.stringContaining('Minh'),
+        ]);
+    });
+
+    /// §6.1: pressing a person is asking about them, and the gesture *was*
+    /// the question — so it runs, rather than waiting for a second press.
+    it('runs straight away when something is pressed', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await (wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> })
+            .press('with', 'Khánh');
+        await flushPromises();
+
+        expect(invoke).toHaveBeenCalledWith('run_node_query', {
+            vaultPath: '/vault',
+            query: 'with:Khánh',
+            offset: 0,
+        });
+        expect(wrapper.find('[data-answer]').exists()).toBe(true);
+    });
+
+    it('takes a chip off and asks again without it', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        const vm = wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> };
+        await vm.press('with', 'Khánh');
+        await vm.press('when', '2019');
+        await flushPromises();
+
+        await wrapper.findAll('[data-chip-drop]')[0].trigger('click');
+        await flushPromises();
+        expect(vi.mocked(invoke).mock.calls.at(-1)?.[1]).toMatchObject({ query: 'when:2019' });
+    });
+
+    /// The same press that put a filter on takes it off, so pressing the same
+    /// person twice does not leave a filter nobody can see.
+    it('presses off what it pressed on', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        const vm = wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> };
+        await vm.press('when', '2019');
+        await vm.press('when', '2019');
+        await flushPromises();
+        expect(wrapper.findAll('[data-chip]')).toHaveLength(0);
+    });
+
+    it('goes back to words when asked to edit them', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await (wrapper.vm as unknown as { press: (k: string, v: string) => Promise<void> })
+            .press('with', 'Khánh');
+        await flushPromises();
+        expect(wrapper.find('[data-ask]').exists()).toBe(false);
+
+        await wrapper.find('[data-edit]').trigger('click');
+        await flushPromises();
+        expect((wrapper.find('[data-ask]').element as HTMLInputElement).value).toBe('with:Khánh');
+    });
 });

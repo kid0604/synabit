@@ -263,7 +263,7 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 | --- | --- | --- |
 | 1 | ~~`events` vào được `ParsedQuery`~~ — **xong 2026-09-19** | hỏi được dòng thời gian bằng chữ lần đầu tiên |
 | 2 | ~~Thấu kính là một node + kệ thấu kính~~ — **xong 2026-09-19** | lưu được một câu hỏi |
-| 3 | Thanh truy vấn hai chiều với chip | bấm và gõ thành một |
+| 3 | ~~Thanh truy vấn hai chiều với chip~~ — **xong 2026-09-19** | bấm và gõ thành một |
 | 4 | Kết quả tự chọn hình dạng + bộ view primitive | câu hỏi mới không tốn code |
 | 5 | Ống dẫn: `count by`, `top n by` | thống kê, nhịp sống |
 | 6 | `gaps`, `anniversary`, `sentences`, `ask` | bốn panel cảm xúc thành thấu kính |
@@ -346,3 +346,41 @@ vấn**, không phải một câu model đoán ra.
 **Còn thiếu so với §6.1:** thanh hiện là một ô chữ thường, chưa phải **biên lai**. Bấm
 người trên đồ thị chưa đổ vào nó, và chưa có chip. Đó là Bước 3, và nó là bước quyết
 định người non-tech có dùng được hay không.
+
+---
+
+## 14. Bước 3 — đã làm, 2026-09-19
+
+**Chip không phải một mô hình riêng — chip là chữ, cắt ra.**
+
+Cách hiển nhiên là: phân tích chữ thành cấu trúc, vẽ chip từ cấu trúc, ghi cấu trúc
+ngược ra chữ. Cách ấy đòi phân tích và ghi ra phải là **nghịch đảo chính xác của
+nhau, vĩnh viễn**, kể cả cho những phần không bên nào hiểu hết. Lần đầu tiên
+`sort:-when` quay về thành `sort:when` là một thấu kính đã lưu của ai đó lặng lẽ đổi
+nghĩa.
+
+Nên **chữ là trạng thái duy nhất**, và chip là một lát của nó. Bỏ chip = bỏ token;
+bấm thêm = nối token; gõ = cắt lại. Hai chiều không phải một tính năng phải giữ cho
+khỏi hỏng — nó là **hình dạng của thứ này**. Có test chạy vòng cho năm câu truy vấn
+thật, trong đó có cả tên có dấu cách và `-status:done`.
+
+**Hai luật chép từ Rust sang, cố ý:** tách token giữ nguyên cụm trong ngoặc kép, vì
+`search.rs` làm thế; và danh sách khoá **thay thế thay vì lặp** (`when`, `shape`,
+`magnitude`…) chép đúng chỗ bên kia khai `Option` hay `Vec`. Có test khẳng định
+`with`/`where`/`about` **không** nằm trong danh sách ấy — vì hỏi hai người nghĩa là
+**cả hai** cùng có mặt, đó là câu người ta thật sự hỏi.
+
+**Cùng một cử chỉ bật và tắt.** Bấm lại đúng thứ vừa bấm thì nó rời thanh. Không có
+luật này, bấm dải hai lần để lại một `when:` mà không ai nhìn thấy.
+
+**Dải thời gian: ô ngày là nút, không phải cú kéo.** Dải không có sự kiện "thả tay",
+mà bắn truy vấn theo từng nhịp kéo là một truy vấn mỗi pixel. Nên nửa có chủ đích của
+cùng cử chỉ ấy là **bấm vào chỗ mình vừa kéo tới**. Đây là chỗ tao đi chệch §6.1 một
+bước và ghi lại để không ai tưởng là quên.
+
+**Một lỗi test bắt được mà mắt không thấy:** gõ một ký tự làm ô chữ **biến mất dưới
+con trỏ**, vì có chip là chuyển sang mặt chip. Nay gõ thì giữ chữ; bấm chỗ khác mới
+đổi mặt.
+
+**Còn lại:** bấm người trên đồ thị và ô ngày đã đổ vào thanh; bấm tag cũng vậy. Kết
+quả vẫn về dưới dạng bảng dù nó là gì — bước 4.

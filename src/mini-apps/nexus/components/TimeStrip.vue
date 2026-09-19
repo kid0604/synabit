@@ -32,6 +32,8 @@ const emit = defineEmits<{
     (e: 'update:modelValue', day: string): void;
     (e: 'update:revealed', revealed: boolean): void;
     (e: 'seal-period', from: string, to: string): void;
+    /** The month the scrubber is at, to ask the bar about. */
+    (e: 'ask-time', when: string): void;
     (e: 'remove-seal', id: string): void;
     (e: 'close'): void;
 }>();
@@ -237,10 +239,20 @@ const close = () => {
                 <Play v-else class="h-4 w-4 translate-x-px" />
             </button>
 
-            <div class="w-36 flex-shrink-0">
-                <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ $t('nexus.viewing') }}</div>
-                <div class="truncate text-base font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ label }}</div>
-            </div>
+            <!-- The date is a button, because the strip has no "let go"
+                 event and asking on every tick of a drag would fire a query a
+                 pixel. Pressing where you have scrubbed to is the deliberate
+                 half of the same gesture. -->
+            <button
+                type="button"
+                data-ask-time
+                class="w-36 flex-shrink-0 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+                :title="$t('nexus.ask_about_time')"
+                @click="emit('ask-time', modelValue ? modelValue.slice(0, 7) : '')"
+            >
+                <span class="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ $t('nexus.viewing') }}</span>
+                <span class="block truncate text-base font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ label }}</span>
+            </button>
 
             <div
                 ref="track"

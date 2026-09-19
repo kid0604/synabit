@@ -314,9 +314,31 @@ const openPreview = async (item: NexusItem | SearchResult) => {
     emit('edit-item', item.id, item.item_type, searchQuery.value.trim() || undefined);
 };
 
+const bar = ref<{ press: (key: string, value: string) => Promise<void> } | null>(null);
+
+/**
+ * Pressing something on the graph is asking a question about it.
+ *
+ * §6.1: everything on this screen is already a filter, and the bar is the
+ * receipt. A person becomes `with:`, a tag becomes `#tag`, and anything else
+ * opens the way it always did — so nothing that worked before this is taken
+ * away, and the bar fills itself for the people who never look at it.
+ */
 const openPreviewFromGraph = async (node: GraphNode) => {
-    if (node.item_type === 'tag') return;
+    if (node.item_type === 'tag') {
+        await bar.value?.press('#', node.title.replace(/^#/, ''));
+        return;
+    }
+    if (node.item_type === 'person') {
+        await bar.value?.press('with', node.title);
+        return;
+    }
     emit('edit-item', node.id, node.item_type);
+};
+
+/** Dragging the strip to a year is asking about that year. */
+const askAboutTime = async (when: string) => {
+    await bar.value?.press('when', when);
 };
 
 const closePreview = () => {
@@ -392,12 +414,14 @@ const cleanSnippet = (snippet: string) => {
                     :frame="timeFrame"
                     :revealed="revealSealed"
                     @update:revealed="setRevealSealed"
+                    @ask-time="askAboutTime"
                     @seal-period="sealPeriod"
                     @remove-seal="removeSeal"
                     @close="stopLookingBack"
                 >
                     <template #ask>
                         <LensBar
+                            ref="bar"
                             :vault-path="vaultPath"
                             @open="(id: string, type: string) => emit('edit-item', id, type)"
                         />
