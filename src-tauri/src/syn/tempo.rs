@@ -473,6 +473,7 @@ mod tests {
                 .collect(),
             total: 9,
             query_time_ms: 0,
+            note: None,
         };
 
         let sample = sample(&result);
@@ -487,6 +488,7 @@ mod tests {
             rows: Vec::new(),
             total: 0,
             query_time_ms: 0,
+            note: None,
         };
         assert!(sample(&empty).is_empty());
     }

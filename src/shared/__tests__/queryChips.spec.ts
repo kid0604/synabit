@@ -95,10 +95,52 @@ describe('The query bar, both ways round', () => {
         expect(chipsOf('#a or #b')).toHaveLength(3);
     });
 
+    // ─── Stages ─────────────────────────────────────────────────
+
+    /// §10: a stage is one chip. `| stats count by month` is four words that
+    /// mean one thing, and there is no half of it that means anything.
+    it('draws each step of the pipeline as one chip', () => {
+        const chips = chipsOf('events when:2019 | stats count by month | head 5');
+        expect(chips.map(c => c.key)).toEqual(['source', 'when', 'stage', 'stage']);
+        expect(chips[2].label).toBe('stats count by month');
+        expect(chips[3].label).toBe('head 5');
+    });
+
+    /// The pipe belongs to the stage after it, so taking the last step off
+    /// does not leave a dangling `|` for the engine to refuse.
+    it('takes the pipe with the step it belongs to', () => {
+        const text = 'events when:2019 | stats count by month | head 5';
+        const chips = chipsOf(text);
+        expect(without(text, chips[3].from, chips[3].to)).toBe(
+            'events when:2019 | stats count by month',
+        );
+        expect(without(text, chips[2].from, chips[2].to)).toBe('events when:2019 | head 5');
+    });
+
+    /// A pipeline works on the answer, so a new filter belongs to the
+    /// question. Appended at the end it would become three more words of the
+    /// stage — and pressing a person on the graph is the bar's main path.
+    it('adds a filter to the question, not to the end of the pipeline', () => {
+        expect(withFilter('events when:2019 | stats count by month', 'with', 'khánh')).toBe(
+            'events when:2019 with:khánh | stats count by month',
+        );
+        expect(withTag('when:2019 | head 5', 'work')).toBe('when:2019 #work | head 5');
+    });
+
+    /// And a key inside a stage is the stage's, not the bar's to replace.
+    it('leaves a stage alone when replacing a single-valued key', () => {
+        expect(withFilter('when:2019 | sort count desc', 'when', '2021')).toBe(
+            'when:2021 | sort count desc',
+        );
+    });
+
     it('splits brackets the way the parser does, and leaves a call alone', () => {
         expect(tokenise('(#a OR #b)')).toEqual(['(', '#a', 'OR', '#b', ')']);
         expect(tokenise('when:same-day-as(today)')).toEqual(['when:same-day-as(today)']);
         expect(tokenise('-(#a OR #b)')).toEqual(['-', '(', '#a', 'OR', '#b', ')']);
+        expect(tokenise('#a|stats count by month')).toEqual([
+            '#a', '|', 'stats', 'count', 'by', 'month',
+        ]);
     });
 
     it('shows a quoted value without its quotes', () => {

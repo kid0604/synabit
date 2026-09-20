@@ -38,6 +38,16 @@ export interface QueryResult {
    */
   total: number;
   query_time_ms: number;
+  /**
+   * Something the answer has to admit about itself.
+   *
+   * §8 of `docs/query-grammar-2026-09-20.md`: a pipeline runs over rows
+   * already in hand, so the filter half stops at an internal ceiling, and a
+   * gathering leaves out rows that have nothing to be gathered under. Either
+   * is a fine answer; either one presented as the whole answer is not. So the
+   * engine says it and the bar shows it.
+   */
+  note?: string;
 }
 
 /**

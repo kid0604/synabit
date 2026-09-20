@@ -28,6 +28,7 @@ import { Search } from 'lucide-vue-next';
 import TableView from '../../../shared/views/TableView.vue';
 import ListView from '../../../shared/views/ListView.vue';
 import DatedView from '../../../shared/views/DatedView.vue';
+import BarsView from '../../../shared/views/BarsView.vue';
 import { chosenShape, SHAPES, type Shape } from '../../../shared/views/shapeFor';
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
@@ -150,9 +151,24 @@ const edit = async () => {
             <p v-if="refused" data-refused class="px-4 py-3 text-[12px] text-gray-600 dark:text-gray-300">
                 {{ refused }}
             </p>
-            <DatedView v-else-if="drawn === 'dated'" :result="result" @open="open" />
-            <TableView v-else-if="drawn === 'table'" :result="result" @open="open" />
-            <ListView v-else :result="result" @open="open" />
+            <template v-else>
+                <BarsView v-if="drawn === 'bars'" :result="result" />
+                <DatedView v-else-if="drawn === 'dated'" :result="result" @open="open" />
+                <TableView v-else-if="drawn === 'table'" :result="result" @open="open" />
+                <ListView v-else :result="result" @open="open" />
+
+                <!-- What the answer had to admit about itself: a ceiling it
+                     hit, rows it had nowhere to put. §8 — owning up to a cut
+                     beats staying quiet about it, and an answer nobody can
+                     tell is partial is the worst kind. -->
+                <p
+                    v-if="result?.note"
+                    data-answer-note
+                    class="border-t border-gray-100 px-4 py-2 text-[11px] text-gray-500 dark:border-[#3a3a3c] dark:text-gray-400"
+                >
+                    {{ result.note }}
+                </p>
+            </template>
         </div>
 
         <div
@@ -178,29 +194,35 @@ const edit = async () => {
                 @blur="typing = false"
             />
             <span v-else data-chips class="flex min-w-0 flex-grow flex-wrap items-center gap-1.5">
-                <!-- Three looks, because three different things: the table
-                     being read, an alternative, and a plain filter. A chip
-                     asking for the *absence* of something carries a minus —
-                     it used to be drawn identically to the chip asking for its
-                     presence, which made two opposite questions one picture. -->
+                <!-- Four looks, because four different things: the table
+                     being read, an alternative, a step of the pipeline, and a
+                     plain filter. A chip asking for the *absence* of something
+                     carries a minus — it used to be drawn identically to the
+                     chip asking for its presence, which made two opposite
+                     questions one picture. -->
                 <span
                     v-for="(chip, i) in chips"
                     :key="`${i}-${chip.text}`"
                     data-chip
-                    :data-chip-kind="chip.key === 'source' ? 'source' : chip.key === 'group' ? 'group' : undefined"
+                    :data-chip-kind="['source', 'group', 'stage'].includes(chip.key) ? chip.key : undefined"
                     :data-chip-not="chip.negated ? 'yes' : undefined"
                     class="inline-flex h-6 items-center rounded-md border pl-2 text-[12px] font-medium"
                     :class="
                         chip.key === 'source'
                             ? 'border-gray-300 bg-gray-100 text-gray-700 dark:border-[#48484a] dark:bg-[#3a3a3c] dark:text-gray-200'
-                            : chip.key === 'group'
-                              ? 'border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200'
-                              : 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200'
+                            : chip.key === 'stage'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+                              : chip.key === 'group'
+                                ? 'border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200'
+                                : 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200'
                     "
                 >
                     <span v-if="chip.negated" data-chip-negated class="mr-1 font-bold">−</span>
+                    <!-- A step reads left to right, so it carries the pipe it
+                         is written with rather than a key. -->
+                    <span v-if="chip.key === 'stage'" class="mr-1 opacity-60">|</span>
                     <span
-                        v-if="chip.key && !['#', 'source', 'group'].includes(chip.key)"
+                        v-if="chip.key && !['#', 'source', 'group', 'stage'].includes(chip.key)"
                         class="mr-1 opacity-60"
                         >{{ chip.key }}</span
                     >

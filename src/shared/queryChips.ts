@@ -32,6 +32,9 @@
  * Brackets are how somebody says otherwise, and then they get their chips
  * back: `(#a OR #b) with:khánh` is two.
  *
+ * A stage is one chip for the same reason (§10). `| stats count by month` is
+ * four words that mean one thing; there is no half of it that means anything.
+ *
  * # Three rules copied from the Rust side, deliberately
  *
  * `tokenise` keeps quoted phrases whole and splits brackets the same way
@@ -115,6 +118,11 @@ export function tokenise(text: string): string[] {
       token += ch;
     } else if (/\s/.test(ch)) {
       end();
+    } else if (ch === '|') {
+      // The pipe is always its own token: it is the one mark that says the
+      // answer so far is about to be turned into a different answer.
+      end();
+      tokens.push(ch);
     } else if (ch === '(') {
       if (namesACall(token)) {
         depth += 1;
@@ -171,6 +179,16 @@ function chipOf(token: string, from: number, to: number): Chip {
 
 export function chipsOf(text: string): Chip[] {
   const tokens = tokenise(text);
+  const pipe = tokens.indexOf('|');
+  // Everything from the first `|` on is stages, and a stage is one chip: four
+  // words that mean one thing, with no half of them that means anything.
+  if (pipe >= 0) {
+    return [
+      ...chipsOf(tokens.slice(0, pipe).join(' ')),
+      ...stageChips(tokens, pipe),
+    ];
+  }
+
   const chips: Chip[] = [];
   let at = 0;
 
@@ -256,6 +274,33 @@ export function chipsOf(text: string): Chip[] {
   return chips;
 }
 
+/**
+ * One chip per `| …` run, each covering its own pipe.
+ *
+ * The pipe belongs to the stage that follows it, so taking the stage off takes
+ * the pipe with it — otherwise dropping the last stage leaves a dangling `|`,
+ * which the engine refuses.
+ */
+function stageChips(tokens: string[], pipe: number): Chip[] {
+  const chips: Chip[] = [];
+  let from = pipe;
+  for (let i = pipe + 1; i <= tokens.length; i += 1) {
+    if (i < tokens.length && tokens[i] !== '|') continue;
+    const span = tokens.slice(from, i);
+    chips.push({
+      text: span.join(' '),
+      key: 'stage',
+      // Without the pipe: the chip's own outline already says it is a step.
+      label: span.slice(1).join(' '),
+      negated: false,
+      from,
+      to: i,
+    });
+    from = i;
+  }
+  return chips;
+}
+
 /** The text with a run of tokens taken out, spacing tidied. */
 export function without(text: string, from: number, to = from + 1): string {
   const tokens = tokenise(text);
@@ -279,6 +324,8 @@ function grouped(tokens: string[]): string[] {
 function topLevel(tokens: string[], key: string): number {
   let depth = 0;
   for (let i = 0; i < tokens.length; i += 1) {
+    // A `|` ends the question; anything after it belongs to a stage.
+    if (tokens[i] === '|') return -1;
     if (tokens[i] === '(') depth += 1;
     else if (tokens[i] === ')') depth = Math.max(0, depth - 1);
     else if (depth === 0 && tokens[i].toLowerCase().startsWith(`${key}:`)) return i;
@@ -315,7 +362,7 @@ export function withFilter(text: string, key: string, value: string): string {
     if (at >= 0 && !joinedByOr(tokens)) return without(text, at);
   }
 
-  return [...grouped(tokens), token].join(' ');
+  return withAdded(tokens, token);
 }
 
 /** A tag, which carries its own mark rather than a key. */
@@ -326,7 +373,23 @@ export function withTag(text: string, tag: string): string {
   const tokens = tokenise(text);
   const at = tokens.indexOf(token);
   if (at >= 0 && !joinedByOr(tokens)) return without(text, at);
-  return [...grouped(tokens), token].join(' ');
+  return withAdded(tokens, token);
+}
+
+/**
+ * The tokens with one more filter in them.
+ *
+ * Added to the **question**, which is everything before the first `|`. A
+ * pipeline works on the answer, so appending at the end would write
+ * `… | stats count by month with:khánh` — three words the engine reads as part
+ * of the stage. Pressing a person on the graph must narrow the question, not
+ * corrupt the step that draws it.
+ */
+function withAdded(tokens: string[], token: string): string {
+  const pipe = tokens.indexOf('|');
+  const question = pipe >= 0 ? tokens.slice(0, pipe) : tokens;
+  const stages = pipe >= 0 ? tokens.slice(pipe) : [];
+  return [...grouped(question), token, ...stages].join(' ');
 }
 
 function quoteIfNeeded(value: string): string {

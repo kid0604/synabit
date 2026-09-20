@@ -486,7 +486,7 @@ pub fn run_node_query(
 
     if asked.source_of() == crate::query::Source::Notes {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        return db.run_node_query(&asked);
+        return crate::pipeline::run(&asked, db.run_node_query(&asked)?);
     }
 
     // A name becomes an identity here, where the vault can be read: an event's
@@ -510,7 +510,11 @@ pub fn run_node_query(
     if let Some(vault_path) = vault_path.as_deref() {
         crate::timeline::store::catch_up_in(state.inner(), &mut timeline, Some(vault_path))?;
     }
-    crate::timeline::query::run(&timeline, &asked, &named)
+    let found = crate::timeline::query::run(&timeline, &asked, &named)?;
+    // One place for both sources: the pipeline works on rows, and by here the
+    // rows are rows whichever table they came out of. That is the same claim
+    // `QueryResult` has been making since the lenses went in.
+    crate::pipeline::run(&asked, found)
 }
 
 /// What an event's links would call this name.

@@ -177,6 +177,75 @@ impl Default for Expr {
     }
 }
 
+/// What a `stats` stage counts up.
+///
+/// §7.1: the grammar slot is fixed and the **table of names inside it is
+/// open**. Adding `sum(x)` later costs an entry here and not one comma of
+/// syntax, which is the whole reason the slot was drawn this wide while only
+/// one name ships.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tally {
+    Count,
+}
+
+impl Tally {
+    /// What the column of numbers is called in the answer.
+    pub fn column(self) -> &'static str {
+        match self {
+            Tally::Count => "count",
+        }
+    }
+}
+
+/// What rows are gathered under.
+///
+/// §7.3: `day`, `week`, `month` and `year` are **special**. They gather by the
+/// row's *day*, wherever that is, rather than by a field that happens to be
+/// called "month" — because no row has a field called month, and gathering by
+/// one would answer nothing and explain nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bucket {
+    Day,
+    Week,
+    Month,
+    Year,
+    Field(String),
+}
+
+impl Bucket {
+    /// What the column of labels is called in the answer.
+    pub fn column(&self) -> String {
+        match self {
+            Bucket::Day => "day".into(),
+            Bucket::Week => "week".into(),
+            Bucket::Month => "month".into(),
+            Bucket::Year => "year".into(),
+            Bucket::Field(name) => name.clone(),
+        }
+    }
+
+    fn of(word: &str) -> Bucket {
+        match word {
+            "day" => Bucket::Day,
+            "week" => Bucket::Week,
+            "month" => Bucket::Month,
+            "year" => Bucket::Year,
+            other => Bucket::Field(other.to_string()),
+        }
+    }
+}
+
+/// One step of the pipeline: the answer so far, turned into another answer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stage {
+    /// `| stats count by month`
+    Stats { tally: Tally, by: Bucket },
+    /// `| sort count desc`
+    Sort { key: String, descending: bool },
+    /// `| head 5`
+    Head(u32),
+}
+
 /// A whole question: what to match, and how to lay out what matched.
 ///
 /// The shaping words are not part of the filter tree on purpose. `sort:`,
@@ -184,8 +253,7 @@ impl Default for Expr {
 /// about the table, not the question — so putting them in the tree would mean
 /// every walker had to skip over them.
 ///
-/// The pipeline (`| stats …`) of §1 is not here yet: step 5 adds it when there
-/// is something to parse into it.
+/// The pipeline is `stages`, read from what follows each `|`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Query {
     /// Which table, when the question said. `None` means it did not, and the
@@ -211,6 +279,8 @@ pub struct Query {
     /// carrying `offset:500` in its text would reopen on page two for ever.
     /// The caller sets it after parsing.
     pub offset: u32,
+    /// What to do with the rows once they are found (§7).
+    pub stages: Vec<Stage>,
 }
 
 /// Words that used to mean something and now mean it under another name.
@@ -402,6 +472,11 @@ fn tokenize(trimmed: &str) -> Vec<String> {
                     chars.next();
                 } else if c.is_whitespace() {
                     break;
+                } else if c == '|' {
+                    // The pipe is always its own token: it is the one mark
+                    // that says the answer so far is about to be turned into
+                    // a different answer.
+                    break;
                 } else if c == '(' {
                     // A bracket right after a name is the name's own bracket —
                     // `same-day-as(today)` is one thing, not a group. Anywhere
@@ -473,6 +548,16 @@ pub fn parse(raw: &str) -> Query {
         q.source = Source::of(&tokens.remove(0).to_lowercase());
     }
 
+    // ── the pipeline, cut off before the expression is read ──
+    //
+    // Split rather than woven in: everything before the first `|` is the
+    // question, everything after it is what to do with the answer, and keeping
+    // them apart means the expression reader never has to know a pipe exists.
+    let mut runs = tokens.split(|token| token == "|");
+    let filter_tokens: Vec<String> = runs.next().unwrap_or(&[]).to_vec();
+    let stage_runs: Vec<Vec<String>> = runs.map(<[String]>::to_vec).collect();
+    let tokens = filter_tokens;
+
     // ── the expression ──
     let mut reader = Reader { tokens: &tokens, at: 0, q: &mut q };
     let filter = reader.expr();
@@ -483,7 +568,78 @@ pub fn parse(raw: &str) -> Query {
         q.refused.push(format!("'{extra}' has nothing to join onto"));
     }
     q.filter = filter.unwrap_or_default();
+
+    for run in stage_runs {
+        read_stage(&run, &mut q);
+    }
+
     q
+}
+
+/// One `| …` run, read onto the query.
+fn read_stage(run: &[String], q: &mut Query) {
+    let words: Vec<String> = run.iter().map(|w| w.to_lowercase()).collect();
+    let Some(name) = words.first().map(String::as_str) else {
+        q.refused.push("'|' needs something after it".into());
+        return;
+    };
+    let rest = &words[1..];
+
+    match name {
+        "stats" => {
+            // `stats <fn> by <key>` — the slot is fixed, the table of names
+            // inside it is open (§7.1).
+            let tally = match rest.first().map(String::as_str) {
+                Some("count") => Tally::Count,
+                Some(other) => {
+                    q.refused
+                        .push(format!("'{other}' is not something stats can work out yet"));
+                    return;
+                }
+                None => {
+                    q.refused.push("stats needs to be told what to work out".into());
+                    return;
+                }
+            };
+            match (rest.get(1).map(String::as_str), rest.get(2)) {
+                (Some("by"), Some(key)) => q.stages.push(Stage::Stats {
+                    tally,
+                    by: Bucket::of(key),
+                }),
+                _ => q
+                    .refused
+                    .push("stats needs `by` and something to gather under".into()),
+            }
+        }
+        "sort" => match rest.first() {
+            Some(key) => q.stages.push(Stage::Sort {
+                key: key.clone(),
+                descending: rest.get(1).is_some_and(|d| d == "desc"),
+            }),
+            None => q.refused.push("sort needs something to sort by".into()),
+        },
+        "head" => match rest.first().and_then(|n| n.parse::<u32>().ok()) {
+            Some(n) => q.stages.push(Stage::Head(n)),
+            None => q.refused.push("head needs a number of rows".into()),
+        },
+        // Plain sugar, and said to be: `top 5 by count` is the question people
+        // actually ask, and writing it out as two stages every time is noise.
+        // Named here rather than pretending to be a step of its own, which is
+        // the mistake `anniversary` made in the old design.
+        "top" => match (rest.first().and_then(|n| n.parse::<u32>().ok()), rest.get(1).map(String::as_str), rest.get(2)) {
+            (Some(n), Some("by"), Some(key)) => {
+                q.stages.push(Stage::Sort {
+                    key: key.clone(),
+                    descending: true,
+                });
+                q.stages.push(Stage::Head(n));
+            }
+            _ => q
+                .refused
+                .push("top needs a number and `by` something — `top 5 by count`".into()),
+        },
+        other => q.refused.push(format!("'{other}' is not something a question can do")),
+    }
 }
 
 /// A token stream being read as a tree.

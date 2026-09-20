@@ -305,7 +305,13 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     };
     let direction = if descending { "DESC" } else { "ASC" };
 
-    let limit = query.limit.unwrap_or(A_PAGEFUL).min(AT_MOST);
+    // §8: with a pipeline, `limit:` is about the **final** answer, so the
+    // filter half runs to the internal ceiling instead.
+    let limit = if query.stages.is_empty() {
+        query.limit.unwrap_or(A_PAGEFUL).min(AT_MOST)
+    } else {
+        crate::pipeline::CEILING
+    };
     let wanted: Vec<String> = {
         let asked: Vec<&str> = query.columns.iter().map(String::as_str).collect();
         let asked = if asked.is_empty() { BY_DEFAULT.to_vec() } else { asked };
@@ -365,11 +371,16 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
         })
         .map_err(|e| AppError::General(format!("timeline query: {e}")))?;
 
+    let rows: Vec<QueryRow> = rows.flatten().collect();
+    // Reaching the ceiling is admitted, not hidden.
+    let note = crate::pipeline::hit_the_ceiling(query, rows.len(), total as usize);
+
     Ok(QueryResult {
         columns: wanted,
-        rows: rows.flatten().collect(),
+        rows,
         total: total as usize,
         query_time_ms: started.elapsed().as_millis() as u64,
+        note,
     })
 }
 

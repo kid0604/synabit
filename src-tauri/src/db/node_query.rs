@@ -58,6 +58,15 @@ pub struct QueryResult {
     /// signal as a count.
     pub total: usize,
     pub query_time_ms: u64,
+    /// Something the answer has to admit about itself.
+    ///
+    /// §8: a pipeline runs over rows already in hand, so the filter half stops
+    /// at an internal ceiling. A count over the first five thousand events is
+    /// a fine answer; a count over the first five thousand **presented as a
+    /// count** is not. So when the ceiling bites, the answer carries a
+    /// sentence saying so, and the bar shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A string, as a bound parameter.
@@ -386,7 +395,14 @@ impl DbBridge {
             if order.1 { "DESC" } else { "ASC" }
         ));
 
-        let limit = query.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
+        // §8: with a pipeline, `limit:` is about the **final** answer, so the
+        // filter half runs to the internal ceiling instead and the pipeline
+        // does the limiting. Without one it is what it has always been.
+        let limit = if query.stages.is_empty() {
+            query.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT)
+        } else {
+            crate::pipeline::CEILING
+        };
         sql.push_str(&format!(" LIMIT {limit}"));
         // Only when asked. `OFFSET 0` is the same query and a different plan in
         // some engines, and every existing caller passes nothing.
@@ -442,11 +458,15 @@ impl DbBridge {
             });
         }
 
+    // Reaching the ceiling is admitted, not hidden.
+        let note = crate::pipeline::hit_the_ceiling(query, collected.len(), total);
+
         Ok(QueryResult {
             columns,
             rows: collected,
             total,
             query_time_ms: start.elapsed().as_millis() as u64,
+            note,
         })
     }
 }

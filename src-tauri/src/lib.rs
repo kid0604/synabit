@@ -4,6 +4,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod people;
+pub mod pipeline;
 pub mod query;
 pub mod path_utils;
 pub mod search;

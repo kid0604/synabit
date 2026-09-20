@@ -63,6 +63,34 @@ describe('An answer choosing its own shape', () => {
     expect(dateColumn(spans)).toBe(0);
   });
 
+  // ─── A tally, which is what `| stats` makes ─────────────────
+
+  /// §7: `stats count by month` answers a question about proportion, and a
+  /// column of digits makes the reader do the comparing.
+  it('draws a heap of labels with a number against each as bars', () => {
+    const tally = answer(['month', 'count'], [['2019-11', '3'], ['2021-03', '1']]);
+    expect(shapeFor(tally)).toBe('bars');
+  });
+
+  /// Read before the date test on purpose: `by month` has days down one side,
+  /// and a timeline would show the labels and hide the thing that was counted.
+  it('prefers bars over a timeline when the labels happen to be days', () => {
+    const byDay = answer(['day', 'count'], [['2019-11-05', '3'], ['2019-11-06', '1']]);
+    expect(dateColumn(byDay)).toBe(0);
+    expect(shapeFor(byDay)).toBe('bars');
+  });
+
+  /// And the common case that looks just like it from a distance: two columns
+  /// with numbers in the second is also `columns:title,priority`, which is a
+  /// table of tasks. The name is the hint and the cells are the evidence, and
+  /// here both have to agree.
+  it('does not turn a table of tasks into a chart', () => {
+    const tasks = answer(['title', 'priority'], [['Gửi báo cáo', '3'], ['Làm công văn', '5']]);
+    expect(shapeFor(tasks)).toBe('list');
+    // A column named like a tally but full of words is not one either.
+    expect(shapeFor(answer(['place', 'count'], [['Hà Nội', 'nhiều']]))).toBe('list');
+  });
+
   it('shows the columns when the columns were asked for', () => {
     expect(shapeFor(answer(['title', 'kind', 'shape'], [['a', 'note', 'occasion']]))).toBe('table');
   });

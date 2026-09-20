@@ -26,15 +26,32 @@
 import type { QueryResult } from './types';
 
 /** Every way an answer can be drawn. `auto` means "you decide". */
-export type Shape = 'auto' | 'dated' | 'table' | 'list';
+export type Shape = 'auto' | 'dated' | 'bars' | 'table' | 'list';
 
 /** Shapes a person can actually pick, in the order they are offered. */
-export const SHAPES: Exclude<Shape, 'auto'>[] = ['dated', 'list', 'table'];
+export const SHAPES: Exclude<Shape, 'auto'>[] = ['dated', 'bars', 'list', 'table'];
 
 /** Names that mean a day even before any cell has been seen. */
 const SOUNDS_LIKE_A_DAY = ['when', 'from', 'date', 'day', 'happened_from'];
 
 const A_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * What a `| stats` stage calls its column of numbers.
+ *
+ * Mirrors `Tally::column` in `query.rs`. A name **and** numbers in the cells,
+ * both: `columns:title,priority` is also two columns with numbers in the
+ * second, and it is a table of tasks, not a chart.
+ */
+const A_TALLY = ['count', 'sum', 'avg', 'min', 'max'];
+
+/** Whether an answer is a heap of labels with a number against each. */
+export function isTally(result: QueryResult): boolean {
+  if (result.columns.length !== 2) return false;
+  if (!A_TALLY.includes(result.columns[1].toLowerCase())) return false;
+  const numbers = result.rows.map(row => (row.cells[1] ?? '').trim());
+  return numbers.every(cell => cell !== '' && Number.isFinite(Number(cell)));
+}
 
 /** Enough of a column's cells being days to call it a date column. */
 const MOSTLY = 0.8;
@@ -66,13 +83,19 @@ export function dateColumn(result: QueryResult): number {
 /**
  * The shape to draw an answer in, when nobody has chosen one.
  *
- * Deliberately few: three shapes that all have something to draw today.
- * `bars` and `quotes` are named in §7 and arrive with the transforms that
- * produce them — building a renderer with no data to put in it would be
- * guessing at what the data will look like.
+ * Four shapes, each with something to draw. `bars` arrived with `| stats`,
+ * which is the transform that produces its data — building it earlier would
+ * have been guessing at what that data would look like. `quotes` is still
+ * named in §7 and still waiting on `explode sentences`.
  */
 export function shapeFor(result: QueryResult | null): Exclude<Shape, 'auto'> {
   if (!result) return 'list';
+  // A count against a label is a comparison, and a column of digits is the one
+  // way of showing a comparison that makes the reader do the comparing. Read
+  // before the date test on purpose: `stats count by month` has days down one
+  // side, and drawing it as a timeline would show the labels and hide the
+  // thing that was counted.
+  if (isTally(result)) return 'bars';
   // Anything with a day in it is a question about time, and time is the one
   // thing a table hides: the gaps between rows are the answer as much as the
   // rows are.

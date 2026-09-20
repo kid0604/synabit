@@ -243,8 +243,19 @@ Ba từ này là **của giai đoạn lọc**, không phải của cả câu.
   (đề nghị 5.000 dòng), và **nói ra khi chạm trần**: *"đếm trên 5.000 sự kiện đầu"*.
   Thừa nhận cắt còn hơn im.
 - `sort:` sắp **dòng nguồn**. Muốn sắp kết quả sau khi gom thì dùng `| sort`.
-- `columns:` chọn cột **của nguồn**. Sau một `stats` hay `explode`, cột do giai đoạn
-  quyết định, nên `columns:` ở đầu câu không còn nghĩa — **nói ra**, đừng bỏ qua.
+- `columns:` chọn cột **của nguồn**. Sau một `stats` hay `explode`, cột **ra** do giai
+  đoạn quyết định.
+
+> **Sửa lại — 2026-09-20, lúc làm bước 5.** Chỗ này vốn viết tiếp: *"nên `columns:` ở
+> đầu câu không còn nghĩa — nói ra, đừng bỏ qua"*. **Sai**, và cái sai lộ ra ngay khi
+> chạy: `| stats count by shape` bị từ chối với câu *"`shape` không phải một cột của
+> câu trả lời này — xin nó bằng `columns:` trước đã"*, trong khi luật cũ lại **từ chối
+> `columns:` khi có `stats`**. Hai câu từ chối bảo nhau làm hai việc ngược nhau.
+>
+> Cái đúng: `columns:` chọn cột **vào**, và đó chính là cách một trường trở nên gom
+> được. `events … columns:when,shape | stats count by shape` chạy. Thứ `columns:`
+> không làm là chọn cột **ra** sau một `stats` — mà đó không phải lỗi, đó chỉ là nghĩa
+> của `stats`, và §7.2 đã ghi rồi.
 
 ---
 
@@ -442,7 +453,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | **2** | ~~Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11~~ — **xong 2026-09-20** | ảnh chụp đổi đúng chỗ đổi tên ✓ |
 | **3** | ~~`OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy~~ — **xong 2026-09-20** | câu cũ không đổi; câu có `OR` chạy ✓ |
 | **4** | ~~Chip biết nhóm~~ — **xong 2026-09-20** (giai đoạn theo bước 5) | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 ✓ |
-| **5** | Dấu `\|` + `stats` + `sort`/`head` | `bars` có dữ liệu |
+| **5** | ~~Dấu `\|` + `stats` + `sort`/`head`~~ — **xong 2026-09-20** | `bars` có dữ liệu ✓ |
 | **6** | `seq gaps` + `where` + `same-day-as()` | bốn panel cảm xúc thành thấu kính |
 | **7** | `explode sentences` + `ask` | bước duy nhất tiêu tiền |
 
@@ -958,3 +969,117 @@ Dựng ô chứa cho một hình dạng chưa câu nào viết ra được thì 
 | Test TypeScript | 1885 (thêm 17) |
 | Test Rust | 2377, không đổi |
 | `vue-tsc` | sạch |
+
+---
+
+## 22. Bước 5 — đã làm, 2026-09-20
+
+**`|`, `stats count by …`, `sort`, `head` — và `bars` cuối cùng có dữ liệu.**
+
+Ảnh chụp 75 → 90 dòng. Không dòng cũ nào đổi.
+
+```
+events when:2016..2026 | stats count by month              → events 2 [2021-03 · 2019-11]
+events when:2016..2026 | stats count by month | top 1 by count → events 2 [2019-11]
+notes columns:title,date | stats count by year             → notes  2 [2019 · 2021] — 5 with no year
+is:task | stats count by status → từ chối: 'status' không phải cột của câu trả lời này
+is:note | stats count by month  → notes  2 [2021-03 · 2019-11]
+events when:2016..2026 | wibble → từ chối: 'wibble' không phải việc một câu hỏi làm được
+```
+
+### Ống dẫn chạy trong Rust, không phải trong SQL
+
+`stats count by month` **là** một `GROUP BY`, và viết thế thì nhanh hơn. Nhưng ô ngay
+cạnh nó là `seq gaps by with` — bao lâu giữa lần gặp này với lần gặp trước — mà thứ
+ấy **không** là `GROUP BY` trong phương ngữ nào app này dám dựa vào. Viết nửa ống dẫn
+bằng SQL và nửa bằng Rust nghĩa là **hai chỗ** một giai đoạn có thể mang nghĩa, và
+hai chỗ ấy sẽ trôi ra khỏi nhau.
+
+Nên: cơ sở dữ liệu trả lời câu hỏi, ống dẫn trả lời *làm gì với câu trả lời*, trên
+những dòng đã cầm trong tay. §8 định giá chỗ ấy một cách sòng phẳng — nửa lọc chạy
+tới **trần 5.000 dòng**, và chạm trần thì **nói ra**.
+
+### Câu trả lời tự khai ra thứ nó bỏ lại
+
+Hai chỗ một câu trả lời có thể **đúng mà vẫn lừa người đọc**:
+
+1. Chạm trần 5.000 — "đếm trên 5.000 sự kiện đầu" là câu trả lời tốt; **trình bày nó
+   như một phép đếm** thì không.
+2. Gom theo `status` mà có dòng không có `status` nào. Bỏ im lặng chính là cách một
+   phép đếm trên 3 thứ trả về 1.
+
+Nên `QueryResult` có thêm một trường `note`, và thanh vẽ nó dưới câu trả lời:
+
+```
+is:task columns:title,status | stats count by status
+  → notes 1 [done] — 1 with no status
+```
+
+Luật trần được **bóc ra thành hàm** (`hit_the_ceiling`) chứ không viết thẳng vào hai
+bộ chạy — một luật không gọi được là một luật không test được, mà luật này chỉ nổ
+trên vault to hơn bất kỳ vault nào test dựng ra.
+
+### §8 tự mâu thuẫn, và chạy mới lộ
+
+Luật cũ: *"`columns:` khi có `stats` thì vô nghĩa — từ chối"*. Nhưng `stats count by
+shape` lại bị từ chối với câu *"`shape` không phải cột của câu trả lời này — xin nó
+bằng `columns:` trước đã"*.
+
+**Hai câu từ chối bảo nhau làm hai việc ngược nhau.** Không test nào bắt được; chỉ
+đọc hai dòng ảnh chụp cạnh nhau mới thấy.
+
+Cái đúng ghi ở ô sửa lại trong §8: `columns:` chọn cột **vào**, và đó chính là cách
+một trường trở nên gom được.
+
+### Đo trên vault thật, như mọi bước
+
+```
+events when:2024..2026 | stats count by month | top 6 by count
+  2026-05  51      2026-04  19
+  2026-06  35      2026-09  13
+  2026-07  22      2026-08  12
+
+events when:2016..2026 columns:when,shape | stats count by shape
+  chore 102   occasion 52   spell 7   marker 1
+```
+
+162 sự kiện, `chore` **102/162 = 63%** — cùng tỉ lệ mà cả phiên này đã đo được nhiều
+lần. Trần không chạm (162 ≪ 5.000), nên `note` rỗng, đúng như phải thế.
+
+### `bars`, và vì sao nó không đến sớm hơn
+
+`shapeFor` nhận ra **một đống nhãn kèm một con số**: đúng hai cột, cột thứ hai tên là
+`count`/`sum`/`avg`/`min`/`max`, **và** ô trong nó là số. Cả hai điều kiện, vì
+`columns:title,priority` cũng là hai cột với số ở cột hai — mà đó là bảng công việc,
+không phải biểu đồ.
+
+Đọc **trước** phép thử ngày, cố ý: `stats count by month` có ngày dọc một bên, và vẽ
+nó thành dòng thời gian sẽ khoe cái nhãn và giấu đúng cái vừa được đếm.
+
+Cột được chia theo **cái lớn nhất**, không theo tổng: câu hỏi là *cái nào to hơn*, mà
+thang chia theo tổng thì hai mươi cái đè bẹp nhau hết.
+
+### Chip giai đoạn — món nợ bước 4, trả ở đây
+
+Bước 4 để lại chip giai đoạn vì `|` chưa phân tích được. Giờ có rồi:
+
+- `| stats count by month` là **một chip**, và dấu `|` thuộc về nó — gỡ bước cuối đi
+  mà để lại `|` lủng lẳng thì máy từ chối.
+- Và một lỗi cùng họ với lỗi `OR` của bước 4: **bấm một người trên đồ thị khi đang có
+  ống dẫn** vốn sẽ nối vào cuối → `… | stats count by month with:khánh`, tức là ba từ
+  nữa của giai đoạn. Giờ nó nối vào **câu hỏi**, trước dấu `|` đầu tiên.
+
+### Chưa làm
+
+`stats sum(x)`/`avg(x)` — bảng tên hàm mở, thêm sau không đụng cú pháp (§7.1). `seq`,
+`where`, `explode`, `ask` là bước 6 và 7.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 75 → **90 dòng**, không dòng cũ nào đổi |
+| Test Rust | 2383 (thêm 6) |
+| Test TypeScript | 1897 (thêm 12) |
+| `vue-tsc` | sạch |
+| Trần ống dẫn | 5.000 dòng, và nói ra khi chạm |

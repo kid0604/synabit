@@ -45,6 +45,9 @@ function stillAQuestion(tokens: string[]): boolean {
     else if (token === ')') {
       depth -= 1;
       if (depth < 0) return false;
+    } else if (token === '|') {
+      // A stage needs something in it.
+      if (tokens[i + 1] === undefined || tokens[i + 1] === '|') return false;
     } else if (token === 'OR') {
       const before = tokens[i - 1];
       const after = tokens[i + 1];

@@ -56,6 +56,21 @@ is:note (#gia-đình OR #công-việc)  → notes    2 [2021-03-14 · 2019-11-05
 (#gia-đình                         → refused: a bracket was opened and not closed
 #gia-đình)                         → refused: ')' has nothing to join onto
 #gia-đình OR                       → refused: 'OR' needs something on both sides
+events when:2016..2026 | stats count by month → events   2 [2021-03 · 2019-11]
+events when:2016..2026 | stats count by year → events   2 [2021 · 2019]
+events when:2016..2026 | stats count by shape → events refused: General application error: 'shape' is not one of the columns of this answer (when, title, who). Ask for it with columns: first.
+events when:2016..2026 | stats count by month | sort count desc → events   2 [2019-11 · 2021-03]
+events when:2016..2026 | stats count by month | head 1 → events   2 [2021-03]
+events when:2016..2026 | stats count by month | top 1 by count → events   2 [2019-11]
+notes columns:title,date | stats count by year → notes    2 [2019 · 2021] — 5 with no year
+events when:2016..2026 columns:when,shape | stats count by shape → events   2 [occasion · chore]
+is:task columns:title,status | stats count by status → notes    1 [done] — 1 with no status
+is:task | stats count by status    → notes  refused: General application error: 'status' is not one of the columns of this answer (title, updated_at). Ask for it with columns: first.
+is:note | stats count by month     → notes    2 [2021-03 · 2019-11]
+events when:2016..2026 |           → refused: '|' needs something after it
+events when:2016..2026 | stats     → refused: stats needs to be told what to work out
+events when:2016..2026 | wibble    → refused: 'wibble' is not something a question can do
+events when:2016..2026 | head abc  → refused: head needs a number of rows
 date:today                         → notes    0 []
 date:2026-06                       → notes    0 []
 is:note date:2026-06               → notes    0 []

@@ -166,6 +166,24 @@ const ASKED: &[&str] = &[
     "(#gia-đình",
     "#gia-đình)",
     "#gia-đình OR",
+    // ── §7: the pipeline ──
+    "events when:2016..2026 | stats count by month",
+    "events when:2016..2026 | stats count by year",
+    "events when:2016..2026 | stats count by shape",
+    "events when:2016..2026 | stats count by month | sort count desc",
+    "events when:2016..2026 | stats count by month | head 1",
+    "events when:2016..2026 | stats count by month | top 1 by count",
+    "notes columns:title,date | stats count by year",
+    "events when:2016..2026 columns:when,shape | stats count by shape",
+    "is:task columns:title,status | stats count by status",
+    // a heap to gather by that is not there, and a day that is not there
+    "is:task | stats count by status",
+    "is:note | stats count by month",
+    // the shapes of a broken pipeline
+    "events when:2016..2026 |",
+    "events when:2016..2026 | stats",
+    "events when:2016..2026 | wibble",
+    "events when:2016..2026 | head abc",
     // ── §9: what answers a different question today ──
     "date:today",
     "date:2026-06",
@@ -228,6 +246,10 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
         cache.lock().unwrap().run_node_query(&asked)
     };
 
+    // The pipeline runs where the command runs it: on rows, after whichever
+    // table produced them.
+    let result = result.and_then(|found| crate::pipeline::run(&asked, found));
+
     let source = if source == crate::query::Source::Events { "events" } else { "notes " };
     match result {
         Ok(found) => {
@@ -236,7 +258,12 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
             // there is to see about `sort:`.
             let titles: Vec<&str> =
                 found.rows.iter().take(3).map(|r| r.title.as_str()).collect();
-            format!("{q:<34} → {source} {:>3} [{}]", found.total, titles.join(" · "))
+            let note = found.note.map(|n| format!(" — {n}")).unwrap_or_default();
+            format!(
+                "{q:<34} → {source} {:>3} [{}]{note}",
+                found.total,
+                titles.join(" · ")
+            )
         }
         Err(e) => format!("{q:<34} → {source} refused: {e}"),
     }
