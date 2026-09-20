@@ -1277,7 +1277,9 @@
     "put_away_line": "Bỏ câu này ra",
     "put_away_moment": "Đừng nhắc lại chuyện này",
     "lens_kept": "Đã lên kệ",
-    "extract_edit": "Sửa"
+    "extract_edit": "Sửa",
+    "shown_as_graph": "Đồ thị",
+    "shown_as_timeline": "Dòng thời gian"
   },
   "people": {
     "cancel": "Hủy",

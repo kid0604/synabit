@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, History, Scale } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, History, Scale, Share2, CalendarDays } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
+import DatedView from '../../shared/views/DatedView.vue';
+import type { QueryResult, QueryRow } from '../../shared/views/types';
+import { asTimeline } from './searchAsTimeline';
 import TimeStrip from './components/TimeStrip.vue';
 import ExtractTray from './components/ExtractTray.vue';
 import ReflectPanel from './components/ReflectPanel.vue';
@@ -105,6 +108,57 @@ const searchResults = ref<SearchResult[]>([]);
  * says where the question *can* be asked, and none of that reached anybody.
  */
 const searchRefused = ref<string | null>(null);
+
+/**
+ * Which way this screen is drawing what it holds.
+ *
+ * One vault, two shapes. The graph answers *what is connected to what*; the
+ * timeline answers *when*. Everything here has always had both — every node
+ * carries a day — and only one of them was ever drawn.
+ *
+ * Not a second screen, and not a second engine: the same matches, laid out
+ * down the days instead of pulled into a hairball.
+ */
+const shownAs = ref<'graph' | 'timeline'>('graph');
+
+/** The whole timeline, for when nothing has been asked. */
+const wholeTimeline = ref<QueryResult | null>(null);
+
+/**
+ * What the timeline draws.
+ *
+ * With a search, **the same rows the list beside it is showing** — built from
+ * them rather than queried again, so the two halves of the screen can never
+ * disagree about what matched. Without one, the vault's own timeline.
+ */
+const timelineAnswer = computed<QueryResult | null>(() =>
+    searchQuery.value
+        ? asTimeline(searchResults.value, totalCount.value, queryTimeMs.value)
+        : wholeTimeline.value,
+);
+
+const loadWholeTimeline = async () => {
+    if (wholeTimeline.value) return;
+    try {
+        wholeTimeline.value = await invoke<QueryResult>('run_node_query', {
+            vaultPath: props.vaultPath,
+            query: 'events sort:-when limit:300',
+            offset: 0,
+        });
+    } catch (e) {
+        searchRefused.value = refusalText(e);
+        logger.error('Could not read the timeline', e);
+    }
+};
+
+const showAs = async (shape: 'graph' | 'timeline') => {
+    shownAs.value = shape;
+    if (shape === 'timeline' && !searchQuery.value) await loadWholeTimeline();
+};
+
+/** A row of the timeline opens the thing behind it, as the list does. */
+const openFromTimeline = (row: QueryRow) =>
+    emit('edit-item', row.open ?? row.id, row.node_type);
 const searchQuery = ref('');
 const isSearching = ref(false);
 const queryTimeMs = ref(0);
@@ -410,8 +464,51 @@ const cleanSnippet = (snippet: string) => {
             class="absolute inset-y-0 right-0 z-0"
             :class="searchQuery ? 'left-0 sm:left-[420px] lg:left-[480px]' : 'left-0'"
         >
+            <!-- One vault, two shapes: what is connected to what, and when.
+                 Sits opposite the graph's own controls so neither hides the
+                 other. -->
+            <div
+                data-shown-as
+                class="absolute top-[100px] left-6 z-20 flex items-center gap-0.5 rounded-full border border-gray-200 bg-white/80 p-0.5 shadow-lg backdrop-blur-md dark:border-[#3a3a3c] dark:bg-[#242426]/80"
+            >
+                <button
+                    v-for="option in (['graph', 'timeline'] as const)"
+                    :key="option"
+                    type="button"
+                    :data-shape="option"
+                    :aria-pressed="shownAs === option"
+                    class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+                    :class="
+                        shownAs === option
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'
+                    "
+                    @click="showAs(option)"
+                >
+                    <component :is="option === 'graph' ? Share2 : CalendarDays" class="h-3.5 w-3.5" />
+                    {{ $t(`nexus.shown_as_${option}`) }}
+                </button>
+            </div>
+
+            <!-- The same matches, laid out down the days instead of pulled
+                 into a hairball. -->
+            <div
+                v-if="shownAs === 'timeline'"
+                data-timeline-pane
+                class="absolute inset-0 overflow-y-auto bg-[#fdfdfc] pt-[150px] dark:bg-[#1a1a1c]"
+            >
+                <DatedView
+                    v-if="timelineAnswer?.rows.length"
+                    :result="timelineAnswer"
+                    @open="openFromTimeline"
+                />
+                <p v-else data-timeline-empty class="px-8 text-[12px] text-gray-400">
+                    {{ $t('nexus.lens_nothing') }}
+                </p>
+            </div>
+
             <GraphView
-                v-if="graphData"
+                v-else-if="graphData"
                 :graph-data="graphData"
                 :match-ids="graphMatchIds"
                 :at-date="lookingBack ? atDate : null"
@@ -422,7 +519,7 @@ const cleanSnippet = (snippet: string) => {
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
             </div>
 
-            <template v-if="graphData">
+            <template v-if="graphData && shownAs === 'graph'">
                 <TimeStrip
                     v-if="lookingBack && timeFrame"
                     v-model="atDate"

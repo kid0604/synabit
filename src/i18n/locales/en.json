@@ -1277,7 +1277,9 @@
     "put_away_line": "Not this sentence",
     "put_away_moment": "Don’t raise this again",
     "lens_kept": "On the shelf",
-    "extract_edit": "Edit"
+    "extract_edit": "Edit",
+    "shown_as_graph": "Graph",
+    "shown_as_timeline": "Timeline"
   },
   "people": {
     "cancel": "Cancel",
