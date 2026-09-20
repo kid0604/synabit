@@ -164,10 +164,11 @@ const ASKED: &[&str] = &[
     "with:khánh OR with:minh",
     "(with:khánh OR with:minh) when:2019",
     "when:2019 (gặp OR ăn)",
-    // BROKEN, and recorded so it stays visible: the vault holds «Ăn tối với
-    // Minh» in 2019 and this answers 0. SQLite's `lower()` is ASCII only, so
-    // `Ă` never becomes `ă` and a word that starts a Vietnamese sentence can
-    // never be matched on the timeline. See §20 of the grammar document.
+    // This answered 0 until `db::text` gave SQL a lower case that knows more
+    // than twenty-six letters: the vault holds «Ăn tối với Minh», and
+    // SQLite's own `lower()` never turns `Ă` into `ă`. That a word still has
+    // to be a *word* — that `ăn` is not «công văn» — is guarded where there is
+    // a «văn» to be wrong about: `timeline::query`'s own tests.
     "when:2016..2026 ăn",
     "NOT #gia-đình",
     "-shape:chore",

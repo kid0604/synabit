@@ -46,7 +46,7 @@ blake3 = "1"
 notify = "6.1.1"
 tauri-plugin-store = "2"
 thiserror = "2.0.18"
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.39.0", features = ["bundled", "functions"] }
 tauri-plugin-deep-link = "2.4.7"
 uuid = { version = "1.23.1", features = ["v4"] }
 infer = "0.19.0"

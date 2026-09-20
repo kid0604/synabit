@@ -253,7 +253,7 @@ impl DbBridge {
                        json_extract(value, '$.personId') = ?1
                        OR (
                            COALESCE(json_extract(value, '$.personId'), '') = ''
-                           AND lower(COALESCE(json_extract(value, '$.person'), '')) = lower(?2)
+                           AND vlower(COALESCE(json_extract(value, '$.person'), '')) = vlower(?2)
                        )
                    )",
             )

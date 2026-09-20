@@ -212,6 +212,10 @@ impl TimelineStore {
         conn.busy_timeout(std::time::Duration::from_secs(10)).map_err(sql)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
 
+        // `vlower` and `vwords`, because SQLite's own `lower()` folds ASCII and
+        // leaves every Vietnamese letter alone. See `db::text`.
+        crate::db::text::teach(&conn).map_err(sql)?;
+
         // `timeline_items` became `events` when the unit of the timeline became
         // a thing that happened rather than a node carrying a date
         // (`docs/timeline-2026-09-17.md` §13). This runs before the CREATE below:
@@ -830,7 +834,7 @@ pub fn node_for(cache: &DbBridge, name: &str) -> Option<String> {
         .query_row(
             "SELECT id FROM nodes
              WHERE id = ?1 OR stable_id = ?1
-                OR (node_type = 'person' AND lower(title) = lower(?1))
+                OR (node_type = 'person' AND vlower(title) = vlower(?1))
              ORDER BY (id = ?1) DESC, (node_type = 'person') DESC
              LIMIT 1",
             [name],

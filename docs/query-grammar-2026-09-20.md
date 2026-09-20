@@ -836,10 +836,11 @@ Unicode.
 when:2016..2026 ăn                 → events   0 []
 ```
 
-**Không sửa trong bước này**, và nói rõ vì sao: cách sửa đúng là một **cột đã chuẩn
-hoá trong Rust** trên bảng `events` — rẻ, vì `timeline.db` là tầng 3, dựng lại được
-— và đó là một thay đổi lược đồ riêng, không phải thứ nhét kèm một bước ngữ pháp.
-Đã tách ra thành việc riêng.
+**Không sửa trong bước này**, và nói rõ vì sao: nó là một thay đổi riêng, không phải
+thứ nhét kèm một bước ngữ pháp.
+
+> **Đã sửa — 2026-09-20. Xem §26.** Và cách sửa **không** phải cột chuẩn hoá như tao
+> đoán ở đây: cột ấy chữa được dòng thời gian và để **phía node vẫn hỏng**.
 
 ### Mô tả công cụ: đo rồi mới quyết, và quyết là không đụng
 
@@ -1350,3 +1351,87 @@ Một mình nó vẫn là tiếng Anh bình thường, đúng như `nodes` và `
 Kèm theo: mấy câu báo lỗi nói *"this question is about notes"* và *"asks about a
 note"* giờ nói **node** — chúng nói về `#tag` với `status:`, vốn là trường của node
 chứ không riêng gì note.
+
+---
+
+## 26. `lower()` chỉ biết tiếng Anh — 2026-09-20
+
+`lower()` của SQLite gấp chữ ASCII và **không gấp gì khác**. Đo:
+
+```
+lower("Ăn tối")    = "Ăn tối"      không đổi
+lower("Gặp Khánh") = "gặp khánh"   chỉ chữ G, vì G là ASCII
+lower("ĂN")        = "Ăn"          chỉ chữ N
+```
+
+Mọi chữ cái tiếng Việt không đồng thời là chữ tiếng Anh — `Ă Â Đ Ê Ô Ơ Ư` và các
+dạng có dấu — trở ra **y như lúc đi vào**. Nên mọi phép so trong app này từng hạ chữ
+cả hai vế thật ra đang so **chữ hạ bằng Rust** với **chữ hạ bằng ASCII**, mà hai thứ
+ấy khác nhau đúng ở những từ vault này viết bằng.
+
+### Nó rộng hơn chỗ §20 ghi
+
+§20 ghi nó như một lỗi của **dòng thời gian**. Đo lại thì không phải. Một node có
+thẻ `Gia-Đình`:
+
+```
+is:book      → 1     ← nó vẫn ở đó
+#gia-đình    → 0
+#Gia-Đình    → 0
+#GIA-ĐÌNH    → 0
+author:Đặng  → 0
+```
+
+**Không tìm được bằng bất kỳ cách viết nào.** Không phải "khó tìm" — không tồn tại
+với mọi câu hỏi về thẻ hay về thuộc tính.
+
+### Cách sửa tao đoán ở §20 là sai
+
+§20 đề nghị một **cột đã chuẩn hoá** trên bảng `events`. Cột ấy chữa được dòng thời
+gian và **để nguyên phía node**: thẻ, status, mọi giá trị frontmatter được so **tại
+chỗ**, và không có chỗ nào để đặt bản sao thứ hai của từng cái.
+
+Cái sửa đúng là **dạy SQL một phép hạ chữ biết hơn hai mươi sáu chữ cái**:
+`db::text` đăng ký hai hàm vô hướng lên mọi kết nối —
+
+| | |
+| --- | --- |
+| `vlower(x)` | hạ chữ Unicode |
+| `vwords(x)` | như trên, cộng đệm khoảng trắng và biến dấu câu thành khoảng trắng |
+
+Dùng y như `lower()` vẫn được dùng, và **không bao giờ trôi khỏi phía Rust vì nó
+chính là phía Rust**.
+
+Giá phải trả: hàm tự viết thì không đánh chỉ mục được. Trước đó không có chỉ mục nào
+trên `lower(title)` cả, nên hôm nay không mất gì — và một vault đủ to để cần chỉ mục
+chính là thứ sẽ báo cho ta biết.
+
+Kèm theo: mười sáu lời gọi `replace()` lồng nhau dựng vào SQL của **mọi** câu truy
+vấn dòng thời gian có chữ, giờ là một danh sách đọc một lần mỗi dòng.
+
+### Đo
+
+Ảnh chụp đổi **đúng hai dòng** — đúng hai dòng §20 ghi ra để nó không chìm:
+
+| Câu | Trước | Sau |
+| --- | --- | --- |
+| `when:2016..2026 ăn` | **0** | **1** [Ăn tối với Minh] |
+| `when:2019 (gặp OR ăn)` | 1 | **2** |
+
+Vault thật:
+
+```
+ăn   →  1  ["Cam ăn miếng táo đầu tiên"]
+đi   →  1  ["Cam lần đầu đi trung tâm thương mại"]
+văn  →  5  ["Làm công văn…", "Onboard Bùi Văn Phương", …]
+ĂN   →  1  ["Cam ăn miếng táo đầu tiên"]
+```
+
+`ăn` **không** dính 5 sự kiện «văn» — bảo đảm cũ còn nguyên, và được canh ở chỗ có
+một chữ «văn» thật để sai: test của `timeline::query`, giờ thêm cả «Ăn» viết hoa.
+
+| | |
+| --- | --- |
+| Test Rust | 2409 (thêm 5) |
+| Test TypeScript | 1899, không đổi |
+| Phụ thuộc | `rusqlite` thêm feature `functions` |

@@ -424,7 +424,7 @@ impl DbBridge {
                 continue;
             };
             let clause = format!(
-                " AND lower(CAST(json_extract(properties, '{}') AS TEXT)) = ?{}",
+                " AND vlower(CAST(json_extract(properties, '{}') AS TEXT)) = ?{}",
                 path, param_idx
             );
             sql.push_str(&clause);

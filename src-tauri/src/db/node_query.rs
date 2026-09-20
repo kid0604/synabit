@@ -219,7 +219,7 @@ impl Where {
             }
             (Field::Status, Value::Text(status)) => {
                 let at = self.bind(text(&status.to_lowercase()));
-                format!("lower(CAST(json_extract(properties, '$.status') AS TEXT)) = {at}")
+                format!("vlower(CAST(json_extract(properties, '$.status') AS TEXT)) = {at}")
             }
             // `tags` is usually an array and occasionally a bare string, so it
             // is wrapped into an array either way rather than handled twice.
@@ -230,7 +230,7 @@ impl Where {
                         CASE WHEN json_type(properties, '$.tags') = 'array'
                              THEN json_extract(properties, '$.tags')
                              ELSE json_array(json_extract(properties, '$.tags')) END
-                     ) WHERE lower(CAST(value AS TEXT)) = {at})"
+                     ) WHERE vlower(CAST(value AS TEXT)) = {at})"
                 )
             }
             (Field::Prop(key), Value::Text(value)) => {
@@ -254,11 +254,11 @@ impl Where {
                     word @ ("true" | "false") => {
                         let digit = if word == "true" { "1" } else { "0" };
                         let (a, b) = (self.bind(text(word)), self.bind(text(digit)));
-                        format!("lower(CAST({read} AS TEXT)) IN ({a}, {b})")
+                        format!("vlower(CAST({read} AS TEXT)) IN ({a}, {b})")
                     }
                     other => {
                         let at = self.bind(text(other));
-                        format!("lower(CAST({read} AS TEXT)) = {at}")
+                        format!("vlower(CAST({read} AS TEXT)) = {at}")
                     }
                 }
             }
@@ -610,6 +610,37 @@ mod tests {
         let refused = db.run_node_query(&parse_query("nodes with:khánh"));
         let why = refused.expect_err("with: is not a note's field").to_string();
         assert!(why.contains("with:") && why.contains("events"), "{why}");
+    }
+
+    /// A tag or a value with a Vietnamese capital in it used to be
+    /// **unreachable by any spelling**: SQLite's `lower()` folds ASCII only, so
+    /// `lower('Gia-Đình')` is `gia-Đình`, which matches neither what the person
+    /// typed nor what they typed with the case flipped. The node was there —
+    /// `is:book` found it — and no tag query could reach it. See `db::text`.
+    #[test]
+    fn a_capital_that_is_not_an_english_one_is_still_the_same_letter() {
+        let db = db();
+        db.upsert_node(&NodeMetadata {
+            id: "Books/a.md".into(),
+            node_type: "book".into(),
+            title: "sách".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "author": "Đặng", "tags": ["Gia-Đình"] }),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+            updated_at: "2026-01-01T00:00:00.000Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("seed");
+
+        let total = |q: &str| db.run_node_query(&parse_query(q)).expect("runs").total;
+        assert_eq!(total("is:book"), 1, "it was always there");
+        for q in ["#gia-đình", "#Gia-Đình", "#GIA-ĐÌNH", "author:đặng", "author:Đặng"] {
+            assert_eq!(total(q), 1, "'{q}' could not reach it");
+        }
+        // And the letter is still a letter: a different word is still different.
+        assert_eq!(total("#gia-dinh"), 0, "folding tone marks is a different feature");
+        assert_eq!(total("author:đang"), 0);
     }
 
     #[test]
@@ -1105,3 +1136,4 @@ mod tests {
         );
     }
 }
+

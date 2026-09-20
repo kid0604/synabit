@@ -120,32 +120,6 @@ fn role_column(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Every character that stands between two words here.
-const BETWEEN_WORDS: &[&str] =
-    &[",", ".", ";", ":", "!", "?", "(", ")", "\"", "'", "/", "\u{b7}", "\u{2014}", "\u{2013}", "\u{ab}", "\u{bb}"];
-
-/// The title as one space-padded, punctuation-flattened string, so that
-/// `LIKE '% word %'` matches a word rather than a run of letters.
-///
-/// Built once as a derived column rather than repeated in every term's
-/// condition: with three words in a query the inline version wrote the same
-/// sixteen nested `replace`s three times, which is unreadable in a log and
-/// impossible to check by eye.
-///
-/// Not a tokenizer and not pretending to be one — a word glued to a character
-/// outside [`BETWEEN_WORDS`] is still missed. That is a far smaller wrong than
-/// `ăn` matching `văn`.
-fn flattened_title() -> String {
-    let mut read = String::from("lower(' ' || title || ' ')");
-    for separator in BETWEEN_WORDS {
-        // A literal `'` inside a SQL string is written twice. Missing this
-        // made every query with a bare word a syntax error.
-        let escaped = separator.replace('\'', "''");
-        read = format!("replace({read}, '{escaped}', ' ')");
-    }
-    read
-}
-
 /// What a timeline query shows when it was not told.
 const BY_DEFAULT: &[&str] = &["when", "title", "who"];
 
@@ -262,16 +236,20 @@ impl Where<'_> {
             // said so immediately: `ăn` found fifteen events, and the first
             // three were «công **văn**» and «Bùi **Văn** Phương». Vietnamese is
             // written in syllables separated by spaces, so a substring test
-            // turns every short word into a wildcard. Hence the padded,
-            // punctuation-flattened title: `% ăn %` means the word and nothing
-            // else.
+            // turns every short word into a wildcard.
+            //
+            // `vwords` is what pads and flattens it — and it is what lowercases
+            // it, which SQLite's own `lower()` could not do. Until it did, no
+            // word that begins a title was findable at all: titles are
+            // sentences, so their first word is capitalised, and `ăn` never
+            // found «Ăn tối với Minh». See `db::text`.
             (Field::Text, Value::Text(written)) => {
                 let word = written.trim_matches('"').trim();
                 if word.is_empty() {
                     return Ok("1".to_string());
                 }
-                let at = self.bind(Sql::Text(format!("% {} %", word.to_lowercase())));
-                format!("e.word_title LIKE {at}")
+                let at = self.bind(Sql::Text(format!("%{}%", crate::db::text::words_in(word))));
+                format!("vwords(e.title) LIKE {at}")
             }
             // Everything a question carries has to be either answered or
             // refused. These are fields of a *node*, and an event is not one —
@@ -312,10 +290,9 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     let next = params.len() + 1;
 
     let sql = format!(
-        "FROM (SELECT events.*, {} AS word_title FROM events) e \
+        "FROM events e \
          WHERE e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL \
-           AND ({condition})",
-        flattened_title()
+           AND ({condition})"
     );
 
     let total: i64 = {
@@ -631,6 +608,7 @@ mod tests {
                 "date": "2026-06-03",
                 "moments": [
                     { "title": "ăn trưa: cơm cá kho", "happened": "2026-06-03" },
+                    { "title": "Ăn tối với Minh", "happened": "2026-06-03" },
                     { "title": "Làm công văn cấp chứng thư số", "happened": "2026-06-03" },
                     { "title": "Onboard Bùi Văn Phương", "happened": "2026-06-03" }
                 ]
@@ -642,8 +620,13 @@ mod tests {
         catch_up(&cache, &mut timeline).unwrap();
 
         let found = ask(&cache, &timeline, "when:2026 ăn");
-        let titles: Vec<&str> = found.rows.iter().map(|r| r.title.as_str()).collect();
-        assert_eq!(titles, ["ăn trưa: cơm cá kho"], "«công văn» is not «ăn»");
+        let mut titles: Vec<&str> = found.rows.iter().map(|r| r.title.as_str()).collect();
+        titles.sort_unstable();
+        assert_eq!(
+            titles,
+            ["Ăn tối với Minh", "ăn trưa: cơm cá kho"],
+            "«công văn» is not «ăn», and «Ăn» is"
+        );
     }
 
     /// Punctuation is not a word boundary the eye sees, so it must not be one
@@ -753,3 +736,4 @@ mod tests {
         }
     }
 }
+

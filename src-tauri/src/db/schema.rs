@@ -17,6 +17,8 @@ impl DbBridge {
         let mut conn = Connection::open_in_memory()
             .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
         run_sync_schema_migrations(&mut conn)?;
+        crate::db::text::teach(&conn)
+            .map_err(|e| AppError::General(format!("DB Open Error: {e}")))?;
         Ok(DbBridge { conn })
     }
 
@@ -59,6 +61,11 @@ impl DbBridge {
         // Enable WAL mode for better concurrent read performance and enable foreign keys
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .ok();
+
+        // `vlower` and `vwords`, because SQLite's own `lower()` folds ASCII and
+        // leaves every Vietnamese letter alone. See `db::text`.
+        crate::db::text::teach(&conn)
+            .map_err(|e| AppError::General(format!("DB Open Error: {e}")))?;
 
         // ─── One-time Legacy Cleanup ────────────────────────────
         // These tables were migrated to Universal Node Core in v0.2.x.
