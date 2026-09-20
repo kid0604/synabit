@@ -93,7 +93,13 @@ describe('Asking Nexus a question', () => {
         // meant to be about, and report it as this test's failure.
         vi.mocked(invoke).mockImplementation(async (_c: string, args?: unknown) => {
             const q = (args as { query?: string })?.query ?? '';
-            if (q.startsWith('when:hôm')) throw new Error("'hôm-nào-đó' is not a time.");
+            // The shape `AppError` actually serialises to — `{code, message}`,
+            // not an `Error`. Mocking an `Error` here is what let the bug
+            // below live: `String({…})` is "[object Object]".
+            if (q.startsWith('when:hôm')) {
+                // eslint-disable-next-line no-throw-literal
+                throw { code: 'GENERAL_ERROR', message: "'hôm-nào-đó' is not a time." };
+            }
             return EMPTY_SHELF;
         });
         const wrapper = mount(LensBar, {

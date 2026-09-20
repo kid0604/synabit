@@ -53,9 +53,10 @@ NOT #gia-đình                      → nodes    6 [Khánh · Minh · 2021-03-1
 events -with:khánh                 → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
 is:note (#gia-đình OR #công-việc)  → nodes    2 [2021-03-14 · 2019-11-05]
 #gia-đình or #công-việc            → nodes    0 []
-(#gia-đình                         → refused: a bracket was opened and not closed
+(#gia-đình                         → nodes    1 [2019-11-05]
+#gia-đình OR                       → nodes    1 [2019-11-05]
 #gia-đình)                         → refused: ')' has nothing to join onto
-#gia-đình OR                       → refused: 'OR' needs something on both sides
+#gia-đình OR )                     → refused: 'OR' needs something on both sides
 events when:2016..2026 | stats count by month → events   2 [2021-03 · 2019-11]
 events when:2016..2026 | stats count by year → events   2 [2021 · 2019]
 events when:2016..2026 | stats count by shape → events refused: General application error: 'shape' is not one of the columns of this answer (when, title, who). Ask for it with columns: first.

@@ -324,6 +324,41 @@ impl DbBridge {
         per_page: u32,
     ) -> AppResult<crate::search::SearchResponse> {
         let start = Instant::now();
+
+        // A question this path cannot honour is refused, not half-answered.
+        //
+        // This is the search box, the graph filter and the app's sidebars, and
+        // it reads eight of `ParsedQuery`'s fields. Everything else it used to
+        // drop **in silence**: measured, `#alpha OR #beta` came back with every
+        // note in the vault, and so did `when:2019` and `NOT #alpha`. A filter
+        // that quietly finds everything is the same bug as one that quietly
+        // finds nothing — the answer is "here is your vault" instead of "I
+        // cannot ask that."
+        //
+        // Named rather than lumped together, because the right move differs:
+        // a timeline word belongs in the query bar, and a pipeline belongs
+        // there too.
+        if let Some(why) = parsed.refused.first() {
+            return Err(AppError::General(why.clone()));
+        }
+        let elsewhere = [
+            (parsed.has_pipeline, "a `|` step"),
+            (!parsed.tag_exclusions.is_empty(), "-#tag"),
+            (!parsed.property_exclusions.is_empty(), "-field:value"),
+            (!parsed.property_ranges.is_empty(), "a comparison like rating:>3"),
+            (parsed.when.is_some(), "when:"),
+            (!parsed.with.is_empty(), "with:"),
+            (!parsed.place.is_empty(), "place:"),
+            (!parsed.about.is_empty(), "about:"),
+            (parsed.shape.is_some(), "shape:"),
+            (parsed.size.is_some(), "size:"),
+        ];
+        if let Some((_, what)) = elsewhere.into_iter().find(|(carried, _)| *carried) {
+            return Err(AppError::General(format!(
+                "{what} is more than this search box can ask. Ask it in the query bar."
+            )));
+        }
+
         let offset = (page.saturating_sub(1)) * per_page;
 
         let has_fts_terms = !parsed.fts_terms.is_empty();

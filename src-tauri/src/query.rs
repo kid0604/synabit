@@ -813,12 +813,17 @@ impl Reader<'_> {
         }
         while self.peek() == Some(OR) {
             self.at += 1;
+            // `#a OR` with nothing after it is somebody **mid-sentence** — the
+            // state between two words, in a box that re-parses every
+            // keystroke. It answers `#a`, which is what they had a moment ago
+            // and what they will have again the instant they finish. Refusing
+            // would empty the list under the cursor.
+            if self.peek().is_none() {
+                break;
+            }
             match self.all() {
                 Some(next) => branches.push(next),
-                // `a OR` on its own is somebody mid-sentence, and answering it
-                // as though the OR were not there would quietly narrow the
-                // question. The bar re-parses on every keystroke, so this is
-                // the state between two words — it has to say so, not guess.
+                // `OR )` or `OR sort:x` — not half-typed, just wrong.
                 None => self.q.refused.push("'OR' needs something on both sides".into()),
             }
         }
@@ -893,9 +898,20 @@ impl Reader<'_> {
             let inner = self.expr();
             if self.peek() == Some(")") {
                 self.at += 1;
-            } else {
-                self.q.refused.push("a bracket was opened and not closed".into());
             }
+            // A bracket left open at the very end is somebody **mid-sentence**,
+            // and it is taken as closed — the same courtesy `tokenize` already
+            // extends to an unclosed quote, for the same reason.
+            //
+            // This is not a nicety. Things and Tasks run their query live, a
+            // debounce behind each keystroke, so the moment `Họp (Khánh` had a
+            // bracket in it the list emptied and an error appeared under the
+            // cursor. Parentheses are ordinary in a Vietnamese title. Rewriting
+            // or rejecting what somebody is still typing is the one thing a bar
+            // like this must never do.
+            //
+            // A bracket that closes nothing is different — `#a)` is not
+            // half-typed, it is wrong — and that still says so, below.
             return inner;
         }
         let token = self.take()?.to_string();
@@ -1331,11 +1347,30 @@ mod tests {
     /// A bracket in the wrong place changes what the rest of the question
     /// means, so it is said out loud rather than dropped.
     #[test]
-    fn a_bracket_that_does_not_close_is_refused() {
-        for broken in ["(#a", "#a)", "#a OR", "((#a)"] {
+    fn a_bracket_that_closes_nothing_is_refused() {
+        for broken in ["#a)", "#a OR )", "#a )("] {
             assert!(!parse(broken).refused.is_empty(), "'{broken}' was let through");
         }
         assert!(parse("(#a)").refused.is_empty(), "and a closed one is fine");
+    }
+
+    /// Things and Tasks run their query a debounce behind every keystroke, so
+    /// the half-typed states are states the engine is really asked about.
+    /// Somebody typing `Họp (Khánh` must not have the list emptied and an
+    /// error put under their cursor — brackets are ordinary in a title.
+    #[test]
+    fn a_bracket_still_being_typed_is_taken_as_closed() {
+        for half_typed in ["(#a", "(#a OR", "((#a)", "#b (#a OR #c", "#a OR"] {
+            assert!(
+                parse(half_typed).refused.is_empty(),
+                "'{half_typed}' — somebody is mid-sentence: {:?}",
+                parse(half_typed).refused
+            );
+        }
+        // And each means what it meant a keystroke ago, which is what the
+        // list on screen is already showing.
+        assert_eq!(parse("(#a OR #b").filter, parse("(#a OR #b)").filter);
+        assert_eq!(parse("#a OR").filter, parse("#a").filter);
     }
 
     /// A name with a bracket after it is one word, not a group — which is

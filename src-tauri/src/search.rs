@@ -69,6 +69,14 @@ pub struct ParsedQuery {
     pub shape: Option<String>,
     /// `size:>4` — how big, on the scale `timeline::magnitude` computes.
     pub size: Option<(Comparison, f64)>,
+    /// Whether the question carried a `| …` pipeline.
+    ///
+    /// The flat shape has nowhere to put the stages themselves, and the one
+    /// path still reading it cannot run them. Carrying the *fact* is enough to
+    /// refuse, which is the whole difference between a search box that says
+    /// "ask that in the query bar" and one that answers a question nobody
+    /// asked.
+    pub has_pipeline: bool,
     /// Which table the question named, if it named one (§4).
     ///
     /// `None` is not "nodes": it means nobody said, and then the words decide
@@ -322,6 +330,7 @@ impl ParsedQuery {
             title_only: query.title_only,
             refused: query.refused,
             source: query.source,
+            has_pipeline: !query.stages.is_empty(),
             ..Default::default()
         };
         // Shaping words are a question too: `limit:20` on its own is a page of
@@ -379,21 +388,21 @@ impl ParsedQuery {
                     // error, which is a search bar that stops answering.
                     self.exclude_terms.push(strip_quotes(&word).to_string());
                 }
-                other => self.refused.push(format!(
-                    "{} cannot be negated on its own yet",
-                    names(&other)
-                )),
+                other => self
+                    .refused
+                    .push(format!("{} has to be asked in the query bar", names(&other))),
             },
             Expr::And(branches) => {
                 for branch in branches {
                     self.take(branch);
                 }
             }
-            Expr::Or(_) => self.refused.push(
-                "this question has an OR in it, and the reader it was given to can only \
-                 answer one condition at a time"
-                    .into(),
-            ),
+            // The query bar reads the tree; this is the flat view, and it has
+            // no slot for an alternative. Saying where the question *can* be
+            // asked beats explaining which reader is reading it.
+            Expr::Or(_) => self
+                .refused
+                .push("a question with OR in it has to be asked in the query bar".into()),
         }
     }
 
@@ -425,12 +434,16 @@ impl ParsedQuery {
 }
 
 /// What to call a branch in a refusal a person will read.
-fn names(branch: &Expr) -> &'static str {
+///
+/// A term names its own field: "that condition has to be asked elsewhere" is
+/// true and useless, and the person is looking at a box with `-with:khánh` in
+/// it wondering which half is the problem.
+fn names(branch: &Expr) -> String {
     match branch {
-        Expr::Term(_) => "that condition",
-        Expr::Not(_) => "a double negative",
-        Expr::And(_) => "a group of conditions",
-        Expr::Or(_) => "a group with OR in it",
+        Expr::Term(term) => format!("not {}", term.field.written()),
+        Expr::Not(_) => "a double negative".into(),
+        Expr::And(_) => "a group of conditions".into(),
+        Expr::Or(_) => "a group with OR in it".into(),
     }
 }
 
@@ -1049,4 +1062,5 @@ mod query_syntax_tests {
         );
     }
 }
+
 

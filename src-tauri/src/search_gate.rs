@@ -176,10 +176,15 @@ const ASKED: &[&str] = &[
     "is:note (#gia-đình OR #công-việc)",
     // lower case is a word, not an operator — a vault holds sentences
     "#gia-đình or #công-việc",
-    // ── brackets that do not close, and a dangling OR ──
+    // ── half-typed, and actually wrong ──
+    // Things and Tasks run their query a debounce behind each keystroke, so
+    // the first and last of these are states the engine is really asked
+    // about: taken as finished, they answer what the list is already showing.
+    // A bracket that closes nothing is not half-typed, it is wrong.
     "(#gia-đình",
-    "#gia-đình)",
     "#gia-đình OR",
+    "#gia-đình)",
+    "#gia-đình OR )",
     // ── §7: the pipeline ──
     "events when:2016..2026 | stats count by month",
     "events when:2016..2026 | stats count by year",

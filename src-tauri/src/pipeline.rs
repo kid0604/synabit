@@ -996,3 +996,4 @@ mod tests {
         assert!(run_on(&parse("nodes | explode sentences"), notes, day(2026, 9, 20)).is_err());
     }
 }
+

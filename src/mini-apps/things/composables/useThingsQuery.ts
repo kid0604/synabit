@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
+import { said } from '../../../utils/said';
 import type { QueryResult } from '../../../shared/views/types';
 
 /**
@@ -84,7 +85,7 @@ export function useThingsQuery() {
       // Shown to the user rather than swallowed. The engine says useful things
       // — an unknown sort key, a query with nothing to match on — and hiding
       // them leaves an empty list that looks like an empty vault.
-      error.value = String(e);
+      error.value = said(e);
       result.value = null;
     } finally {
       if (mine === token) loading.value = false;

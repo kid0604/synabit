@@ -1435,3 +1435,91 @@ một chữ «văn» thật để sai: test của `timeline::query`, giờ thêm
 | Test Rust | 2409 (thêm 5) |
 | Test TypeScript | 1899, không đổi |
 | Phụ thuộc | `rusqlite` thêm feature `functions` |
+
+---
+
+## 27. Rà soát trước khi dùng thật — 2026-09-20
+
+Bảy bước xong không có nghĩa là dùng được. Rà soát tìm **bốn lỗi**, trong đó **ba cái
+nằm ở khoảng giữa cỗ máy và màn hình** — chỗ không bước nào trong bảy bước nhìn tới.
+
+### 1. Mọi lời từ chối hiện ra là `[object Object]`
+
+Nặng nhất, và mỉa mai nhất. Cả bảy bước đặt cược vào *"từ chối kèm một câu dạy
+người ta"*. Câu ấy **không bao giờ tới được màn hình**.
+
+`AppError` tuần tự hoá thành `{ code, message }` — cố ý, để người gọi rẽ theo `code`.
+Nên thứ một lệnh Tauri ném ra là một **object**, mà `String(object)` là
+`"[object Object]"`. Ba mặt của cỗ máy này — `LensBar`, Things, và khối truy vấn
+trong note — đều làm đúng thế.
+
+Test lẽ ra phải bắt được thì **giả lập sai hình dạng**: nó ném `new Error(...)`, thứ
+Tauri không bao giờ ném. Xanh trên một hình dạng không tồn tại. Đây là lần thứ ba
+trong tài liệu này một test xanh che một thứ đã chết.
+
+Mà app **đã từng gặp lỗi này rồi**: mini-app Messages viết đúng hai dòng chữa nó
+**bốn lần trong bốn file**, không ai rút ra. Giờ là `utils/said.ts`, một chỗ.
+
+### 2. Ô tìm kiếm lặng lẽ trả về cả vault
+
+`search_fts` — ô tìm trong Nexus, bộ lọc đồ thị, thanh bên của Note/Task/File/QuickCap
+— đọc **8 trên 24 trường** của `ParsedQuery` và bỏ phần còn lại **trong im lặng**.
+Quan trọng nhất: nó **chưa bao giờ đọc `refused`**.
+
+Đo trên ba note:
+
+| Gõ vào ô tìm | Đúng ra | Nó trả về |
+| --- | --- | --- |
+| `#alpha OR #beta` | 2 | **3 — cả vault** |
+| `when:2019` | 0 hoặc từ chối | **3 — cả vault** |
+| `NOT #alpha` | 2 | **3 — cả vault** |
+| `#alpha \| stats count by month` | từ chối | 1, ống dẫn bị vứt |
+
+Một bộ lọc lặng lẽ tìm ra **mọi thứ** cũng là lỗi y như một bộ lọc lặng lẽ tìm ra
+**không gì** — câu trả lời là *"đây, vault của mày"* thay vì *"tao không hỏi được
+câu đó"*. Và bảy bước vừa rồi **làm nó rộng ra**: giờ có rất nhiều từ khoá gõ vào
+được mà đường ấy không hiểu.
+
+Giờ nó từ chối, và nói **hỏi ở đâu được**: *"`when:` is more than this search box can
+ask. Ask it in the query bar."* `ParsedQuery` thêm một trường `has_pipeline`, vì hình
+dạng phẳng không chỗ nào chứa giai đoạn — nhưng chứa được **sự kiện là có giai đoạn**,
+và thế là đủ để từ chối.
+
+### 3. Gõ nửa chừng một dấu ngoặc thì danh sách trống
+
+Things và Tasks chạy truy vấn **sống**, một nhịp debounce sau mỗi phím. Nên lúc gõ
+`Họp (Khánh` — trước khi kịp đóng ngoặc — câu bị từ chối, danh sách bị xoá và một
+dòng lỗi hiện ra **ngay dưới con trỏ**. Dấu ngoặc trong tiêu đề tiếng Việt là chuyện
+thường. Đây là lỗi **bước 3 tạo ra** khi biến ngoặc thành ngữ pháp.
+
+`tokenize` vốn đã có đúng luật cho chuyện này, cho dấu nháy: *"người ta đang viết dở,
+và viết lại thứ người ta đang gõ là điều duy nhất một thanh như thế không được làm."*
+Giờ ngoặc bỏ ngỏ **ở cuối** được coi là đã đóng, và `OR` cuối câu cũng thế — nó trả
+lời đúng thứ danh sách đang hiện một phím trước đó.
+
+Ngoặc **đóng vào hư không** thì khác: `#a)` không phải viết dở, nó sai. Vẫn từ chối.
+
+### 4. Lời từ chối là tiếng Anh trong một app tiếng Việt
+
+**Chưa sửa.** Mọi câu từ chối của cỗ máy — thứ dạy người ta nhiều nhất — đều là tiếng
+Anh cứng trong Rust, trong khi cả giao diện có en/vi đầy đủ. Sửa đúng là đổi từ chối
+từ **một chuỗi** thành **một mã cộng tham số**, rồi dịch ở phía màn hình. Đó là một
+việc riêng, không phải thứ nhét vào cuối một buổi rà soát.
+
+### Không phải lỗi, đã kiểm
+
+| | |
+| --- | --- |
+| Truy vấn đã lưu mang cú pháp cũ | vault thật: **0** node `lens`/`view`/`filter`, 0 thuộc tính `query` |
+| Things/Task/Note tự dựng truy vấn | chỉ dùng `type:` `is:` `sort:` `columns:` — không chữ nào bị đổi tên |
+| Things có nuốt lời từ chối không | không, nó hiện ra (và giờ hiện đúng chữ) |
+| Đường tốn tiền có tự chạy được không | không — `asker: None` trên mọi đường thường |
+
+### Đo
+
+| | |
+| --- | --- |
+| Test Rust | 2410 (thêm 1) |
+| Test TypeScript | 1903 (thêm 4) |
+| Ảnh chụp | 116 dòng; 2 dòng đổi (ngoặc và `OR` viết dở), 2 dòng mới |
+| `vue-tsc` | sạch |
