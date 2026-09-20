@@ -1,0 +1,47 @@
+is:note                            → notes    2 [2021-03-14 · 2019-11-05]
+type:task                          → notes    2 [Làm công văn · Gửi báo cáo quý]
+is:book rating:>3                  → notes    1 [Sách hay]
+#gia-đình                          → notes    1 [2019-11-05]
+tag:công-việc                      → notes    1 [2021-03-14]
+status:done                        → notes    1 [Gửi báo cáo quý]
+-status:done                       → notes    6 [Khánh · Minh · 2019-11-05]
+priority:3                         → notes    1 [Gửi báo cáo quý]
+priority:>3                        → notes    1 [Làm công văn]
+author:Nguyễn                      → notes    1 [Sách hay]
+báo cáo                            → notes    1 [Gửi báo cáo quý]
+-báo                               → refused (nothing to match on)
+"công văn"                         → notes    1 [Làm công văn]
+is:task sort:priority              → notes    2 [Gửi báo cáo quý · Làm công văn]
+is:task sort:-priority             → notes    2 [Làm công văn · Gửi báo cáo quý]
+is:task sort:title                 → notes    2 [Gửi báo cáo quý · Làm công văn]
+is:task columns:title,priority     → notes    2 [Làm công văn · Gửi báo cáo quý]
+is:task limit:1                    → notes    2 [Làm công văn]
+when:2019                          → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
+when:2019-11-05                    → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
+when:2019..2021                    → events refused: General application error: '2019..2021' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
+with:khánh                         → events   1 [Gặp Khánh ở quán quen]
+with:Khánh                         → events   1 [Gặp Khánh ở quán quen]
+with:khánh with:minh               → events   0 []
+where:"Hà Nội"                     → events   1 [Gặp Khánh ở quán quen]
+shape:occasion                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
+shape:chore                        → events   1 [Gửi báo cáo quý]
+magnitude:>2                       → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+magnitude:2                        → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+when:2019 columns:when,title,who   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
+when:2016..2026 gặp                → events refused: General application error: '2016..2026' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
+when:2016..2026 -gặp               → events refused: General application error: '2016..2026' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
+date:today                         → notes    0 []
+date:2026-06                       → notes    0 []
+is:note date:2026-06               → notes    0 []
+is:note when:2019                  → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+#gia-đình when:2019                → events refused: General application error: #tag asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+status:done when:2019              → events refused: General application error: status: asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+limit:abc                          → refused: 'abc' is not a number of rows
+-#gia-đình                         → notes    6 [Khánh · Minh · 2021-03-14]
+-with:khánh                        → notes    7 [Khánh · Minh · 2019-11-05]
+-when:2019                         → notes    7 [Khánh · Minh · 2019-11-05]
+sort:tiêu_đề                       → refused: 'tiêu_đề' is not something a query can sort by
+columns:tiêu_đề                    → refused: 'tiêu_đề' is not a column a query can show
+in:title gặp                       → notes    0 []
+                                   → refused (nothing to match on)
+                                   → refused (nothing to match on)

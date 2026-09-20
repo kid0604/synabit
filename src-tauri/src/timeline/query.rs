@@ -110,6 +110,35 @@ const AT_MOST: u32 = 1000;
 pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppResult<QueryResult> {
     let started = std::time::Instant::now();
 
+    if let Some(why) = parsed.refused.first() {
+        return Err(AppError::General(why.clone()));
+    }
+
+    // Everything a question carries has to be either answered or refused.
+    //
+    // These are fields of a *node*, and an event is not one — so asking
+    // `#gia-đình when:2019` used to drop the tag on the floor and answer a
+    // question about the whole year instead. Dropping half a question is the
+    // one thing §9 of `docs/query-grammar-2026-09-20.md` will not have.
+    //
+    // `type:` is the exception, and it is answered rather than refused: an
+    // event knows which kind of node wrote it.
+    let unanswerable = [
+        (!parsed.tag_filters.is_empty(), "#tag"),
+        (!parsed.tag_exclusions.is_empty(), "-#tag"),
+        (parsed.status_filter.is_some(), "status:"),
+        (!parsed.property_filters.is_empty(), "a note's own fields"),
+        (!parsed.property_ranges.is_empty(), "a note's own fields"),
+        (!parsed.property_exclusions.is_empty(), "-field:value"),
+        (parsed.title_only, "in:title"),
+    ];
+    if let Some((_, what)) = unanswerable.into_iter().find(|(carried, _)| *carried) {
+        return Err(AppError::General(format!(
+            "{what} asks about a note, and this question is about the timeline. \
+             Ask it without the timeline's words, or drop it."
+        )));
+    }
+
     let mut sql = format!(
         "FROM (SELECT events.*, {} AS word_title FROM events) e \
          WHERE e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL",
@@ -151,6 +180,15 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
             params.push(Sql::Text(name.clone()));
             next += 2;
         }
+    }
+
+    // `is:note when:2019` used to answer as though `is:note` had not been
+    // written. An event knows the type of the node it came from, so this is a
+    // question the timeline can actually answer.
+    if let Some(node_type) = &parsed.type_filter {
+        sql.push_str(&format!(" AND e.node_type = ?{next}"));
+        params.push(Sql::Text(node_type.clone()));
+        next += 1;
     }
 
     if let Some(shape) = &parsed.shape {

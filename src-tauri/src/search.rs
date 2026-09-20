@@ -26,9 +26,7 @@ pub struct ParsedQuery {
     pub property_exclusions: Vec<(String, String)>,
     /// Status filter for tasks: todo, in-progress, done
     pub status_filter: Option<String>,
-    /// Date filter: today, this-week, this-month
-    pub date_filter: Option<String>,
-    /// Search only in title field
+    /// Search only the title. Read by the FTS path in `db/search.rs`.
     pub title_only: bool,
     /// Generic property filters: key:value pairs not matching known keywords
     pub property_filters: Vec<(String, String)>,
@@ -69,6 +67,21 @@ pub struct ParsedQuery {
     pub shape: Option<String>,
     /// `magnitude:>4` — how big, on the scale `timeline::magnitude` computes.
     pub magnitude: Option<(Comparison, f64)>,
+    /// Why this query cannot be answered, if it cannot.
+    ///
+    /// `parse_query` stays infallible because a dozen callers rely on it being
+    /// so. But a token it cannot make sense of used to fall through to the
+    /// catch-all and become a filter on a property of that name — `limit:abc`
+    /// asked for notes whose `limit` field was "abc" — which is the silent
+    /// wrong answer this whole document exists to stop. Now it lands here and
+    /// the runner refuses.
+    pub refused: Vec<String>,
+    /// Tags a node must NOT carry.
+    ///
+    /// `-#gia-đình` used to become a *word* exclusion, so it looked for notes
+    /// not containing the literal text "#gia-đình" — which is every note,
+    /// tagged or not.
+    pub tag_exclusions: Vec<String>,
     /// Whether the query is empty (no meaningful search terms)
     pub is_empty: bool,
     /// Whether to enforce case-sensitive matching (post-filter)
@@ -398,17 +411,12 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
             continue;
         }
 
-        // date: filter
-        if let Some(stripped) = lower.strip_prefix("date:") {
-            let val = stripped.to_string();
-            match val.as_str() {
-                "today" | "this-week" | "this-month" => {
-                    pq.date_filter = Some(val);
-                }
-                _ => {}
-            }
-            continue;
-        }
+        // `date:` used to be read here and stored in `date_filter`, and no
+        // runner ever looked at it — so `date:today` quietly matched
+        // everything. Removing the branch costs no behaviour and removes a
+        // trap: `date:` now reaches the ordinary property filter below, where
+        // `date:2019-11-05` does what it says on a daily note. A date that is
+        // not one day belongs to `when:`.
 
         // in:title modifier
         if lower == "in:title" {
@@ -439,6 +447,16 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
 
         // -exclude term
         if token.starts_with('-') && token.len() > 1 && !token.starts_with("--") {
+            // `-#tag` excludes the tag, not the characters. It has to be read
+            // before the property split below, which would otherwise see no
+            // colon and fall through to a word exclusion.
+            if let Some(tag) = token[1..].strip_prefix('#') {
+                if !tag.is_empty() {
+                    pq.tag_exclusions.push(tag.to_string());
+                    pq.is_empty = false;
+                    continue;
+                }
+            }
             // `-key:value` is a property exclusion, not a word to avoid.
             if let Some((key, value)) = lower[1..].split_once(':') {
                 if !key.is_empty() && !value.is_empty() && is_queryable_key(key) {
@@ -476,8 +494,10 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
                     descending,
                 });
                 pq.is_empty = false;
-                continue;
+            } else {
+                pq.refused.push(format!("'{key}' is not something a query can sort by"));
             }
+            continue;
         }
 
         if let Some(rest) = lower.strip_prefix("columns:") {
@@ -487,18 +507,23 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
                 .filter(|c| is_queryable_key(c))
                 .map(str::to_string)
                 .collect();
-            if !pq.columns.is_empty() {
+            if pq.columns.is_empty() {
+                pq.refused.push(format!("'{rest}' is not a column a query can show"));
+            } else {
                 pq.is_empty = false;
-                continue;
             }
+            continue;
         }
 
         if let Some(rest) = lower.strip_prefix("limit:") {
-            if let Ok(n) = rest.trim().parse::<u32>() {
-                pq.limit = Some(n.clamp(1, MAX_QUERY_LIMIT));
-                pq.is_empty = false;
-                continue;
+            match rest.trim().parse::<u32>() {
+                Ok(n) => {
+                    pq.limit = Some(n.clamp(1, MAX_QUERY_LIMIT));
+                    pq.is_empty = false;
+                }
+                Err(_) => pq.refused.push(format!("'{rest}' is not a number of rows")),
             }
+            continue;
         }
 
         // Generic key:value property filter (catch-all for unknown key:value pairs)
@@ -536,7 +561,6 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
     // If we only have filters (type, status, tag) but no search terms, it's not empty
     if pq.type_filter.is_some()
         || pq.status_filter.is_some()
-        || pq.date_filter.is_some()
         || !pq.tag_filters.is_empty()
         || !pq.property_filters.is_empty()
         || !pq.property_ranges.is_empty()
@@ -768,17 +792,47 @@ mod tests {
         assert!(pq.is_empty);
     }
 
+    /// `date:` is an ordinary property filter now, and used not to be.
+    ///
+    /// The old test asserted that the parser *stored* `date_filter` — and no
+    /// runner ever read it, so `date:today` matched every node in the vault
+    /// while a green test said the feature worked. A test that checks a value
+    /// was written down, and never that anything reads it, is how a keyword
+    /// stays dead for a year.
     #[test]
-    fn test_date_filter() {
-        let pq = parse_query("date:today meeting");
-        assert_eq!(pq.date_filter, Some("today".to_string()));
+    fn a_date_is_a_field_like_any_other() {
+        let pq = parse_query("date:2019-11-05 meeting");
+        assert_eq!(pq.property_filters, vec![("date".to_string(), "2019-11-05".to_string())]);
         assert_eq!(pq.fts_terms, vec!["meeting"]);
 
-        let pq2 = parse_query("date:this-week");
-        assert_eq!(pq2.date_filter, Some("this-week".to_string()));
+        // And a relative day is not a field value, so it simply matches
+        // nothing — visibly, rather than matching everything invisibly.
+        let loose = parse_query("date:today");
+        assert_eq!(loose.property_filters, vec![("date".to_string(), "today".to_string())]);
+    }
 
-        let pq3 = parse_query("date:this-month");
-        assert_eq!(pq3.date_filter, Some("this-month".to_string()));
+    /// The three keywords that used to fall through to the property filter
+    /// when their value made no sense.
+    #[test]
+    fn a_shaping_keyword_with_a_value_it_cannot_use_is_refused() {
+        for (q, about) in [
+            ("limit:abc", "abc"),
+            ("sort:tiêu_đề", "tiêu_đề"),
+            ("columns:tiêu_đề", "tiêu_đề"),
+        ] {
+            let pq = parse_query(q);
+            assert!(!pq.refused.is_empty(), "{q} was accepted");
+            assert!(pq.refused[0].contains(about), "{q}: {:?}", pq.refused);
+            assert!(pq.property_filters.is_empty(), "{q} became a property filter");
+        }
+    }
+
+    #[test]
+    fn a_tag_can_be_excluded_as_a_tag() {
+        let pq = parse_query("-#gia-đình");
+        assert_eq!(pq.tag_exclusions, vec!["gia-đình".to_string()]);
+        assert!(pq.exclude_terms.is_empty(), "not a word to avoid");
+        assert!(!pq.is_empty, "excluding a tag is something to match on");
     }
 
     /// A type this app has not heard of is filtered on, not discarded.

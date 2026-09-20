@@ -7,6 +7,8 @@ pub mod people;
 pub mod path_utils;
 pub mod search;
 pub mod search_fold;
+#[cfg(test)]
+mod search_gate;
 pub mod utils;
 
 pub mod chat_engine;

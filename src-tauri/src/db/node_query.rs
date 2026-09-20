@@ -155,6 +155,10 @@ impl DbBridge {
     pub fn run_node_query(&self, parsed: &ParsedQuery) -> AppResult<QueryResult> {
         let start = Instant::now();
 
+        if let Some(why) = parsed.refused.first() {
+            return Err(AppError::General(why.clone()));
+        }
+
         if parsed.is_empty {
             return Err(AppError::General(
                 "A query needs something to match on.".to_string(),
@@ -196,6 +200,22 @@ impl DbBridge {
                 " AND ({read} IS NULL OR lower(CAST({read} AS TEXT)) <> ?{next})"
             ));
             params.push(text(&value.to_lowercase()));
+            next += 1;
+        }
+
+        // A tag a node must not carry. Written as `NOT EXISTS` rather than as
+        // a negated `EXISTS` over the same join so that a node with no `tags`
+        // key at all satisfies it — the same reason `-status:done` is written
+        // `IS NULL OR <>` above.
+        for tag in &parsed.tag_exclusions {
+            sql.push_str(&format!(
+                " AND NOT EXISTS (SELECT 1 FROM json_each(
+                    CASE WHEN json_type(properties, '$.tags') = 'array'
+                         THEN json_extract(properties, '$.tags')
+                         ELSE json_array(json_extract(properties, '$.tags')) END
+                 ) WHERE lower(value) = ?{next})"
+            ));
+            params.push(text(&tag.to_lowercase()));
             next += 1;
         }
 
