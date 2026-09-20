@@ -37,7 +37,7 @@ use super::store::TimelineStore;
 use super::when;
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
-use crate::search::ParsedQuery;
+use crate::query::{Expr, Field, Query, Term, Value};
 
 /// What a `with:`/`place:`/`about:` name turned out to be.
 ///
@@ -46,11 +46,40 @@ use crate::search::ParsedQuery;
 /// answers in. It also means this function has no opinion about what a name
 /// is, which is the only way `with:khánh` and `with:People/khanh.md` can mean
 /// the same thing.
+///
+/// A map from the written name rather than three lists in order: with a tree,
+/// a name can sit anywhere — inside a bracket, under a `NOT` — so there is no
+/// position to line up against. A name nobody resolved is used as written,
+/// which is how a question naming an identity directly still works.
 #[derive(Debug, Default, Clone)]
-pub struct Named {
-    pub with: Vec<String>,
-    pub place: Vec<String>,
-    pub about: Vec<String>,
+pub struct Named(pub std::collections::HashMap<String, String>);
+
+impl Named {
+    fn of(&self, written: &str) -> String {
+        self.0.get(written).cloned().unwrap_or_else(|| written.to_string())
+    }
+}
+
+/// Every name a question hands to the vault to resolve.
+pub fn names_in(expr: &Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(expr: &Expr, out: &mut Vec<String>) {
+        match expr {
+            Expr::Term(Term {
+                field: Field::With | Field::Place | Field::About,
+                value: Value::Text(name),
+            }) => out.push(name.clone()),
+            Expr::Term(_) => {}
+            Expr::Not(inner) => walk(inner, out),
+            Expr::And(branches) | Expr::Or(branches) => {
+                for branch in branches {
+                    walk(branch, out);
+                }
+            }
+        }
+    }
+    walk(expr, &mut out);
+    out
 }
 
 /// The columns a timeline query can show, and what each reads.
@@ -107,134 +136,154 @@ const A_PAGEFUL: u32 = 200;
 /// Nothing may ask for the whole index in one go.
 const AT_MOST: u32 = 1000;
 
-pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppResult<QueryResult> {
+/// Building the `WHERE` clause of a timeline question, one branch at a time.
+struct Where<'a> {
+    params: Vec<Sql>,
+    named: &'a Named,
+}
+
+impl Where<'_> {
+    fn bind(&mut self, value: Sql) -> String {
+        self.params.push(value);
+        format!("?{}", self.params.len())
+    }
+
+    fn condition(&mut self, expr: &Expr) -> AppResult<String> {
+        Ok(match expr {
+            Expr::Term(term) => self.term(term)?,
+            // "Unknown" counts as "not true", the same rule the node runner
+            // uses and for the same reason: `NOT NULL` is NULL in SQL, which
+            // the WHERE clause throws away, so an event with nothing recorded
+            // would fail "not with Khánh".
+            Expr::Not(inner) => {
+                let inner = self.condition(inner)?;
+                format!("COALESCE({inner}, 0) = 0")
+            }
+            Expr::And(branches) if branches.is_empty() => "1".to_string(),
+            Expr::And(branches) => self.join(branches, " AND ")?,
+            Expr::Or(branches) if branches.is_empty() => "0".to_string(),
+            Expr::Or(branches) => self.join(branches, " OR ")?,
+        })
+    }
+
+    fn join(&mut self, branches: &[Expr], with: &str) -> AppResult<String> {
+        let mut parts = Vec::with_capacity(branches.len());
+        for branch in branches {
+            parts.push(self.condition(branch)?);
+        }
+        Ok(format!("({})", parts.join(with)))
+    }
+
+    fn term(&mut self, term: &Term) -> AppResult<String> {
+        Ok(match (&term.field, &term.value) {
+            // `when:` — anything `timeline::when` can read, which is every
+            // shape a date takes in this app. An unreadable one is refused
+            // rather than ignored: silently answering a different question
+            // than the one asked is worse than saying no.
+            (Field::When, Value::Text(text)) => {
+                let span = when::parse(text).ok_or_else(|| {
+                    AppError::General(format!("'{text}' is not a time. {}", when::HOW_TO_WRITE_ONE))
+                })?;
+                let to = self.bind(Sql::Text(when::iso(span.to)));
+                let from = self.bind(Sql::Text(when::iso(span.from)));
+                format!("(e.happened_from <= {to} AND e.happened_to >= {from})")
+            }
+            (Field::With | Field::Place | Field::About, Value::Text(name)) => {
+                let role = match term.field {
+                    Field::With => "with",
+                    Field::Place => "where",
+                    _ => "about",
+                };
+                let who = self.named.of(name);
+                let (role, who) = (self.bind(Sql::Text(role.into())), self.bind(Sql::Text(who)));
+                format!(
+                    "EXISTS (SELECT 1 FROM event_links l
+                             WHERE l.event_id = e.id AND l.role = {role} AND l.node_id = {who})"
+                )
+            }
+            // `is:note when:2019` used to answer as though `is:note` had not
+            // been written. An event knows the type of the node it came from,
+            // so this is a question the timeline can actually answer.
+            (Field::Kind, Value::Text(kind)) => {
+                let at = self.bind(Sql::Text(kind.clone()));
+                format!("e.node_type = {at}")
+            }
+            (Field::Shape, Value::Text(shape)) => {
+                let at = self.bind(Sql::Text(shape.to_lowercase()));
+                format!("e.shape = {at}")
+            }
+            (Field::Size, Value::Number(op, size)) => {
+                // The operator comes from a fixed set, never from the text.
+                let at = self.bind(Sql::Real(*size));
+                format!("e.magnitude {} {at}", op.as_sql())
+            }
+            // A word with no `key:` in front of it matches the event's own
+            // name.
+            //
+            // Not FTS: the search index holds nodes, and an event's title is
+            // often a sentence the extractor wrote out that no node carries.
+            // Matching a few hundred titles directly is honest here, and it
+            // keeps the two indexes from having to agree about anything.
+            //
+            // But it has to match a WORD, not a run of letters. The real vault
+            // said so immediately: `ăn` found fifteen events, and the first
+            // three were «công **văn**» and «Bùi **Văn** Phương». Vietnamese is
+            // written in syllables separated by spaces, so a substring test
+            // turns every short word into a wildcard. Hence the padded,
+            // punctuation-flattened title: `% ăn %` means the word and nothing
+            // else.
+            (Field::Text, Value::Text(written)) => {
+                let word = written.trim_matches('"').trim();
+                if word.is_empty() {
+                    return Ok("1".to_string());
+                }
+                let at = self.bind(Sql::Text(format!("% {} %", word.to_lowercase())));
+                format!("e.word_title LIKE {at}")
+            }
+            // Everything a question carries has to be either answered or
+            // refused. These are fields of a *node*, and an event is not one —
+            // so asking `#gia-đình when:2019` used to drop the tag on the floor
+            // and answer a question about the whole year instead. Dropping half
+            // a question is the one thing §9 will not have.
+            (field, _) => {
+                return Err(AppError::General(format!(
+                    "{} asks about a note, and this question is about the timeline. \
+                     Ask it without the timeline's words, or drop it.",
+                    field.written()
+                )))
+            }
+        })
+    }
+}
+
+pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<QueryResult> {
     let started = std::time::Instant::now();
 
-    if let Some(why) = parsed.refused.first() {
+    if let Some(why) = query.refused.first() {
         return Err(AppError::General(why.clone()));
     }
-
-    // Everything a question carries has to be either answered or refused.
-    //
-    // These are fields of a *node*, and an event is not one — so asking
-    // `#gia-đình when:2019` used to drop the tag on the floor and answer a
-    // question about the whole year instead. Dropping half a question is the
-    // one thing §9 of `docs/query-grammar-2026-09-20.md` will not have.
-    //
-    // `type:` is the exception, and it is answered rather than refused: an
-    // event knows which kind of node wrote it.
-    let unanswerable = [
-        (!parsed.tag_filters.is_empty(), "#tag"),
-        (!parsed.tag_exclusions.is_empty(), "-#tag"),
-        (parsed.status_filter.is_some(), "status:"),
-        (!parsed.property_filters.is_empty(), "a note's own fields"),
-        (!parsed.property_ranges.is_empty(), "a note's own fields"),
-        (!parsed.property_exclusions.is_empty(), "-field:value"),
-        (parsed.title_only, "in:title"),
-    ];
-    if let Some((_, what)) = unanswerable.into_iter().find(|(carried, _)| *carried) {
-        return Err(AppError::General(format!(
-            "{what} asks about a note, and this question is about the timeline. \
+    if query.title_only {
+        return Err(AppError::General(
+            "in:title asks about a note, and this question is about the timeline. \
              Ask it without the timeline's words, or drop it."
-        )));
+                .to_string(),
+        ));
     }
 
-    let mut sql = format!(
+    let mut build = Where {
+        params: Vec::new(),
+        named,
+    };
+    let condition = build.condition(&query.filter)?;
+    let mut params = build.params;
+    let next = params.len() + 1;
+
+    let sql = format!(
         "FROM (SELECT events.*, {} AS word_title FROM events) e \
-         WHERE e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL",
+         WHERE e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL \
+           AND ({condition})",
         flattened_title()
     );
-    let mut params: Vec<Sql> = Vec::new();
-    let mut next = 1usize;
-
-    // `when:` — anything `timeline::when` can read, which is every shape a
-    // date takes in this app. An unreadable one is refused rather than
-    // ignored: silently answering a different question than the one asked is
-    // worse than saying no.
-    if let Some(text) = &parsed.when {
-        let span = when::parse(text).ok_or_else(|| {
-            AppError::General(format!(
-                "'{text}' is not a time. {}",
-                when::HOW_TO_WRITE_ONE
-            ))
-        })?;
-        sql.push_str(&format!(
-            " AND e.happened_from <= ?{next} AND e.happened_to >= ?{}",
-            next + 1
-        ));
-        params.push(Sql::Text(when::iso(span.to)));
-        params.push(Sql::Text(when::iso(span.from)));
-        next += 2;
-    }
-
-    for (role, names) in
-        [("with", &named.with), ("where", &named.place), ("about", &named.about)]
-    {
-        for name in names {
-            sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM event_links l
-                              WHERE l.event_id = e.id AND l.role = ?{next} AND l.node_id = ?{})",
-                next + 1
-            ));
-            params.push(Sql::Text(role.to_string()));
-            params.push(Sql::Text(name.clone()));
-            next += 2;
-        }
-    }
-
-    // `is:note when:2019` used to answer as though `is:note` had not been
-    // written. An event knows the type of the node it came from, so this is a
-    // question the timeline can actually answer.
-    if let Some(node_type) = &parsed.type_filter {
-        sql.push_str(&format!(" AND e.node_type = ?{next}"));
-        params.push(Sql::Text(node_type.clone()));
-        next += 1;
-    }
-
-    if let Some(shape) = &parsed.shape {
-        sql.push_str(&format!(" AND e.shape = ?{next}"));
-        params.push(Sql::Text(shape.to_lowercase()));
-        next += 1;
-    }
-
-    if let Some((comparison, size)) = &parsed.size {
-        // The operator comes from a fixed set, never from the person's text.
-        sql.push_str(&format!(" AND e.magnitude {} ?{next}", comparison.as_sql()));
-        params.push(Sql::Real(*size));
-        next += 1;
-    }
-
-    // Words with no `key:` in front of them match the event's own name.
-    //
-    // Not FTS: the search index holds nodes, and an event's title is often a
-    // sentence the extractor wrote out that no node carries. Matching a few
-    // hundred titles directly is honest here, and it keeps the two indexes
-    // from having to agree about anything.
-    //
-    // But it has to match a WORD, not a run of letters. The real vault said so
-    // immediately: `ăn` found fifteen events, and the first three were «công
-    // **văn**» and «Bùi **Văn** Phương». Vietnamese is written in syllables
-    // separated by spaces, so a substring test turns every short word into a
-    // wildcard. Hence [`a_word_in`]: the title padded and with punctuation
-    // turned to spaces, so `% ăn %` means the word and nothing else.
-    for term in &parsed.fts_terms {
-        let word = term.trim_matches('"').trim();
-        if word.is_empty() {
-            continue;
-        }
-        sql.push_str(&format!(" AND e.word_title LIKE ?{next}"));
-        params.push(Sql::Text(format!("% {} %", word.to_lowercase())));
-        next += 1;
-    }
-    for term in &parsed.exclude_terms {
-        let word = term.trim();
-        if word.is_empty() {
-            continue;
-        }
-        sql.push_str(&format!(" AND e.word_title NOT LIKE ?{next}"));
-        params.push(Sql::Text(format!("% {} %", word.to_lowercase())));
-        next += 1;
-    }
 
     let total: i64 = {
         let bound: Vec<&dyn ToSql> = params.iter().map(|p| p as &dyn ToSql).collect();
@@ -247,7 +296,7 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
     // Which way round, and by what. `sort:-when` is the common one and the
     // default, because a timeline read newest-first is what a person means by
     // "show me".
-    let (order_by, descending) = match &parsed.sort {
+    let (order_by, descending) = match &query.sort {
         Some(order) => (
             column_sql(&order.key).unwrap_or("e.happened_from"),
             order.descending,
@@ -256,9 +305,9 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
     };
     let direction = if descending { "DESC" } else { "ASC" };
 
-    let limit = parsed.limit.unwrap_or(A_PAGEFUL).min(AT_MOST);
+    let limit = query.limit.unwrap_or(A_PAGEFUL).min(AT_MOST);
     let wanted: Vec<String> = {
-        let asked: Vec<&str> = parsed.columns.iter().map(String::as_str).collect();
+        let asked: Vec<&str> = query.columns.iter().map(String::as_str).collect();
         let asked = if asked.is_empty() { BY_DEFAULT.to_vec() } else { asked };
         asked
             .into_iter()
@@ -292,7 +341,7 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
         next + 1
     );
     params.push(Sql::Integer(limit as i64));
-    params.push(Sql::Integer(parsed.offset as i64));
+    params.push(Sql::Integer(query.offset as i64));
 
     let columns = wanted.len();
     let conn = store.conn();
@@ -333,7 +382,6 @@ mod tests {
     use super::*;
     use crate::db::DbBridge;
     use crate::models::node::NodeMetadata;
-    use crate::search::parse_query;
     use crate::timeline::store::catch_up;
 
     fn node(id: &str, node_type: &str, title: &str, properties: serde_json::Value) -> NodeMetadata {
@@ -398,23 +446,19 @@ mod tests {
 
     /// Resolve names the way the command does, so the tests exercise the
     /// same path.
-    fn named(cache: &Mutex<DbBridge>, parsed: &ParsedQuery) -> Named {
+    fn named(cache: &Mutex<DbBridge>, asked: &Query) -> Named {
         let db = cache.lock().unwrap();
-        let resolve = |names: &Vec<String>| -> Vec<String> {
-            names
-                .iter()
+        Named(
+            names_in(&asked.filter)
+                .into_iter()
                 .map(|name| {
-                    crate::timeline::store::node_for(&db, name)
+                    let found = crate::timeline::store::node_for(&db, &name)
                         .and_then(|id| identity(&db, &id))
-                        .unwrap_or_else(|| name.clone())
+                        .unwrap_or_else(|| name.clone());
+                    (name, found)
                 })
-                .collect()
-        };
-        Named {
-            with: resolve(&parsed.with),
-            place: resolve(&parsed.place),
-            about: resolve(&parsed.about),
-        }
+                .collect(),
+        )
     }
 
     fn identity(db: &DbBridge, id: &str) -> Option<String> {
@@ -428,22 +472,22 @@ mod tests {
     }
 
     fn ask(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> QueryResult {
-        let parsed = parse_query(q);
-        assert!(parsed.asks_the_timeline(), "'{q}' did not read as a timeline question");
-        run(timeline, &parsed, &named(cache, &parsed)).expect("the query runs")
+        let asked = crate::query::parse(q);
+        assert_eq!(asked.source_of(), crate::query::Source::Events, "'{q}' is not a timeline question");
+        run(timeline, &asked, &named(cache, &asked)).expect("the query runs")
     }
 
     #[test]
     fn a_question_without_the_timeline_s_words_is_still_a_question_about_notes() {
         for q in ["is:task", "#family", "status:done", "báo cáo"] {
-            assert!(!parse_query(q).asks_the_timeline(), "{q}");
+            assert_eq!(crate::query::parse(q).source_of(), crate::query::Source::Notes, "{q}");
         }
         for q in ["when:2019", "with:khánh", "place:hanoi", "about:synabit", "shape:occasion", "size:>4"] {
-            assert!(parse_query(q).asks_the_timeline(), "{q}");
+            assert_eq!(crate::query::parse(q).source_of(), crate::query::Source::Events, "{q}");
         }
         // And saying it out loud beats guessing from the words, both ways.
-        assert!(parse_query("events #family").asks_the_timeline());
-        assert!(!parse_query("notes when:2019").asks_the_timeline());
+        assert_eq!(crate::query::parse("events #family").source_of(), crate::query::Source::Events);
+        assert_eq!(crate::query::parse("notes when:2019").source_of(), crate::query::Source::Notes);
     }
 
     /// The two words §11 renamed say so, rather than quietly becoming a filter
@@ -451,7 +495,7 @@ mod tests {
     #[test]
     fn the_old_spellings_say_what_they_are_now_called() {
         for (old, now) in [("where:hanoi", "place"), ("magnitude:>4", "size")] {
-            let refused = parse_query(old).refused;
+            let refused = crate::query::parse(old).refused;
             assert!(
                 refused.first().is_some_and(|why| why.contains(now)),
                 "{old} → {refused:?}"
@@ -495,7 +539,7 @@ mod tests {
     #[test]
     fn a_time_nobody_can_read_is_refused_rather_than_ignored() {
         let (cache, timeline) = a_vault();
-        let parsed = parse_query("when:hôm-nào-đó");
+        let parsed = crate::query::parse("when:hôm-nào-đó");
         let refused = run(&timeline, &parsed, &named(&cache, &parsed));
         assert!(refused.is_err(), "answering a different question is worse than saying no");
     }
@@ -652,7 +696,7 @@ mod tests {
             "when:2026 shape:occasion -ăn limit:5",
             "shape:spell",
         ] {
-            let parsed = parse_query(q);
+            let parsed = crate::query::parse(q);
             match run(&timeline, &parsed, &named(&cache, &parsed)) {
                 Ok(found) => {
                     eprintln!("\n  {q}\n    {} khớp, {} ms", found.total, found.query_time_ms);

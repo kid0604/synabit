@@ -2192,8 +2192,8 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::General("Missing required parameter: query".into()))?;
 
-    let parsed = crate::search::parse_query(query);
-    let mut result = db.run_node_query(&parsed)?;
+    let asked = crate::query::parse(query);
+    let mut result = db.run_node_query(&asked)?;
 
     // Widen to "any of these words" when requiring all of them found nothing.
     //
@@ -2212,6 +2212,10 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
     // `decide pricing disagreed`, got nothing, and reported that the vault held
     // no notes about pricing. It holds two, and both are entirely about it.
     //
+    // It used to be a flag the FTS path read. Now the grammar has `OR` in it,
+    // so the looser question is written in the language: the words become one
+    // group, and every other filter stays required.
+    //
     // Falling back rather than switching, because the two failures are not
     // symmetric. Too many results is visible and recoverable: the model reads
     // `total_matches` and narrows. Zero results is neither — it reads as an
@@ -2219,10 +2223,8 @@ fn tool_query_nodes(db: &DbBridge, args: &Value) -> AppResult<String> {
     // working exactly as it does today, and only one that found nothing is
     // asked a second, looser way.
     let mut widened = false;
-    if result.total == 0 && parsed.fts_terms.len() > 1 {
-        let mut loose = crate::search::parse_query(query);
-        loose.match_any = true;
-        let retry = db.run_node_query(&loose)?;
+    if result.total == 0 && asked.word_count() > 1 {
+        let retry = db.run_node_query(&asked.any_word())?;
         if retry.total > 0 {
             result = retry;
             widened = true;

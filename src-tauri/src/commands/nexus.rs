@@ -481,34 +481,36 @@ pub fn run_node_query(
     // Rows to skip. Absent means the first page, which is every existing call.
     offset: Option<u32>,
 ) -> AppResult<crate::db::QueryResult> {
-    let mut parsed = crate::search::parse_query(&query);
-    parsed.offset = offset.unwrap_or(0);
+    let mut asked = crate::query::parse(&query);
+    asked.offset = offset.unwrap_or(0);
 
-    if !parsed.asks_the_timeline() {
+    if asked.source_of() == crate::query::Source::Notes {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        return db.run_node_query(&parsed);
+        return db.run_node_query(&asked);
     }
 
     // A name becomes an identity here, where the vault can be read: an event's
     // links name people by identity, and a person typing a question names them
-    // by their name.
+    // by their name. Gathered from the whole tree rather than from three lists,
+    // because a name can now sit inside a bracket or under a `NOT`.
     let named = {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let resolve = |names: &Vec<String>| -> Vec<String> {
-            names.iter().map(|name| identity_of(&db, name)).collect()
-        };
-        crate::timeline::query::Named {
-            with: resolve(&parsed.with),
-            place: resolve(&parsed.place),
-            about: resolve(&parsed.about),
-        }
+        crate::timeline::query::Named(
+            crate::timeline::query::names_in(&asked.filter)
+                .into_iter()
+                .map(|name| {
+                    let identity = identity_of(&db, &name);
+                    (name, identity)
+                })
+                .collect(),
+        )
     };
 
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(vault_path) = vault_path.as_deref() {
         crate::timeline::store::catch_up_in(state.inner(), &mut timeline, Some(vault_path))?;
     }
-    crate::timeline::query::run(&timeline, &parsed, &named)
+    crate::timeline::query::run(&timeline, &asked, &named)
 }
 
 /// What an event's links would call this name.
@@ -680,7 +682,7 @@ mod things_gate {
             .expect("the vault scans");
 
         let db = db_state.lock().expect("lock");
-        let ask = |q: &str| db.run_node_query(&crate::search::parse_query(q)).expect("query runs");
+        let ask = |q: &str| db.run_node_query(&crate::query::parse(q)).expect("query runs");
 
         // The menus are built from this, so it has to see the field first.
         let observed = db.observed_schemas(25).expect("schemas");
@@ -781,7 +783,7 @@ mod things_gate {
         // 3. The list. `type:` rather than `is:` because that is what the app
         //    and the assistant both write.
         let found = db
-            .run_node_query(&crate::search::parse_query("type:animal"))
+            .run_node_query(&crate::query::parse("type:animal"))
             .expect("query runs");
         assert_eq!(found.total, 2, "both animals, and nothing else");
 

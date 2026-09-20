@@ -32,7 +32,6 @@ use serde_json::json;
 
 use crate::db::DbBridge;
 use crate::models::node::NodeMetadata;
-use crate::search::parse_query;
 use crate::timeline::store::{catch_up, TimelineStore};
 
 fn node(id: &str, node_type: &str, title: &str, properties: serde_json::Value) -> NodeMetadata {
@@ -144,6 +143,29 @@ const ASKED: &[&str] = &[
     "when:2019 columns:when,title,who",
     "when:2016..2026 gặp",
     "when:2016..2026 -gặp",
+    // ── §3: either, not-this, and brackets ──
+    "#gia-đình OR #công-việc",
+    "is:task OR is:book",
+    "báo OR văn",
+    "is:task AND status:done",
+    "with:khánh OR with:minh",
+    "(with:khánh OR with:minh) when:2019",
+    "when:2019 (gặp OR ăn)",
+    // BROKEN, and recorded so it stays visible: the vault holds «Ăn tối với
+    // Minh» in 2019 and this answers 0. SQLite's `lower()` is ASCII only, so
+    // `Ă` never becomes `ă` and a word that starts a Vietnamese sentence can
+    // never be matched on the timeline. See §20 of the grammar document.
+    "when:2016..2026 ăn",
+    "NOT #gia-đình",
+    "-shape:chore",
+    "events -with:khánh",
+    "is:note (#gia-đình OR #công-việc)",
+    // lower case is a word, not an operator — a vault holds sentences
+    "#gia-đình or #công-việc",
+    // ── brackets that do not close, and a dangling OR ──
+    "(#gia-đình",
+    "#gia-đình)",
+    "#gia-đình OR",
     // ── §9: what answers a different question today ──
     "date:today",
     "date:2026-06",
@@ -168,25 +190,25 @@ const ASKED: &[&str] = &[
 
 /// How one question answers, in one line.
 fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String {
-    let parsed = parse_query(q);
+    let asked = crate::query::parse(q);
     // Refusals first, the way both runners read them: a query that carries one
     // is refused for that reason, not for being empty — and saying "nothing to
     // match on" for `limit:abc` would hide the actual complaint.
-    if let Some(why) = parsed.refused.first() {
+    if let Some(why) = asked.refused.first() {
         return format!("{q:<34} → refused: {why}");
     }
-    if parsed.is_empty {
+    if asked.asks_nothing() {
         return format!("{q:<34} → refused (nothing to match on)");
     }
 
-    let to_timeline = parsed.asks_the_timeline();
-    let result = if to_timeline {
+    let source = asked.source_of();
+    let result = if source == crate::query::Source::Events {
         let db = cache.lock().unwrap();
-        let resolve = |names: &Vec<String>| -> Vec<String> {
-            names
-                .iter()
+        let named = crate::timeline::query::Named(
+            crate::timeline::query::names_in(&asked.filter)
+                .into_iter()
                 .map(|name| {
-                    crate::timeline::store::node_for(&db, name)
+                    let found = crate::timeline::store::node_for(&db, &name)
                         .and_then(|id| {
                             db.conn()
                                 .query_row(
@@ -196,24 +218,17 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
                                 )
                                 .ok()
                         })
-                        .unwrap_or_else(|| name.clone())
+                        .unwrap_or_else(|| name.clone());
+                    (name, found)
                 })
-                .collect()
-        };
-        crate::timeline::query::run(
-            timeline,
-            &parsed,
-            &crate::timeline::query::Named {
-                with: resolve(&parsed.with),
-                place: resolve(&parsed.place),
-                about: resolve(&parsed.about),
-            },
-        )
+                .collect(),
+        );
+        crate::timeline::query::run(timeline, &asked, &named)
     } else {
-        cache.lock().unwrap().run_node_query(&parsed)
+        cache.lock().unwrap().run_node_query(&asked)
     };
 
-    let source = if to_timeline { "events" } else { "notes " };
+    let source = if source == crate::query::Source::Events { "events" } else { "notes " };
     match result {
         Ok(found) => {
             // In the order they came back, deliberately: sorting them here

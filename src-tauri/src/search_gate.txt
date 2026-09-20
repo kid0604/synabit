@@ -40,6 +40,22 @@ when:today                         → events   0 []
 when:2019 columns:when,title,who   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
 when:2016..2026 gặp                → events   1 [Gặp Khánh ở quán quen]
 when:2016..2026 -gặp               → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
+#gia-đình OR #công-việc            → notes    2 [2019-11-05 · 2021-03-14]
+is:task OR is:book                 → notes    3 [Sách hay · Gửi báo cáo quý · Làm công văn]
+báo OR văn                         → notes    2 [Gửi báo cáo quý · Làm công văn]
+is:task AND status:done            → notes    1 [Gửi báo cáo quý]
+with:khánh OR with:minh            → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+(with:khánh OR with:minh) when:2019 → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+when:2019 (gặp OR ăn)              → events   1 [Gặp Khánh ở quán quen]
+when:2016..2026 ăn                 → events   0 []
+NOT #gia-đình                      → notes    6 [Khánh · Minh · 2021-03-14]
+-shape:chore                       → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
+events -with:khánh                 → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
+is:note (#gia-đình OR #công-việc)  → notes    2 [2021-03-14 · 2019-11-05]
+#gia-đình or #công-việc            → notes    0 []
+(#gia-đình                         → refused: a bracket was opened and not closed
+#gia-đình)                         → refused: ')' has nothing to join onto
+#gia-đình OR                       → refused: 'OR' needs something on both sides
 date:today                         → notes    0 []
 date:2026-06                       → notes    0 []
 is:note date:2026-06               → notes    0 []
@@ -48,8 +64,8 @@ is:note when:2019                  → events   2 [Gặp Khánh ở quán quen �
 status:done when:2019              → events refused: General application error: status: asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
 limit:abc                          → refused: 'abc' is not a number of rows
 -#gia-đình                         → notes    6 [Khánh · Minh · 2021-03-14]
--with:khánh                        → notes    7 [Khánh · Minh · 2019-11-05]
--when:2019                         → notes    7 [Khánh · Minh · 2019-11-05]
+-with:khánh                        → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
+-when:2019                         → events   1 [2021-03-14]
 sort:tiêu_đề                       → refused: 'tiêu_đề' is not something a query can sort by
 columns:tiêu_đề                    → refused: 'tiêu_đề' is not a column a query can show
 where:"Hà Nội"                     → refused: 'where' is now 'place'

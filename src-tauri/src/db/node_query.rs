@@ -22,7 +22,8 @@ use serde::Serialize;
 
 use super::DbBridge;
 use crate::error::{AppError, AppResult};
-use crate::search::{json_path_for, ParsedQuery, MAX_QUERY_LIMIT, SORTABLE_COLUMNS};
+use crate::query::{Expr, Field, Query, Term, Value};
+use crate::search::{json_path_for, MAX_QUERY_LIMIT, SORTABLE_COLUMNS};
 
 /// One matching note, with the values the query asked to see.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -150,233 +151,215 @@ fn cell_text(value: Option<&serde_json::Value>) -> String {
     }
 }
 
+/// Building the `WHERE` clause of a question, one branch at a time.
+///
+/// A flat struct could only ever say "all of these", so the old builder
+/// appended ` AND …` per field and that was the whole of boolean logic. A
+/// tree can say "either of these", and that means the clause has to be built
+/// the way the tree is shaped rather than as a list.
+struct Where {
+    params: Vec<rusqlite::types::Value>,
+    title_only: bool,
+}
+
+impl Where {
+    /// The next placeholder, `?N`. Numbered rather than `?` so a fragment can
+    /// be built in any order and still bind what it meant to.
+    fn bind(&mut self, value: rusqlite::types::Value) -> String {
+        self.params.push(value);
+        format!("?{}", self.params.len())
+    }
+
+    /// One branch of the tree as a SQL condition.
+    fn condition(&mut self, expr: &Expr) -> AppResult<String> {
+        Ok(match expr {
+            Expr::Term(term) => self.term(term)?,
+            // `NOT` is not SQL's `NOT`, and the difference is the whole reason
+            // `-status:done` was ever written as `IS NULL OR <>`.
+            //
+            // A comparison against a missing frontmatter key is NULL, and
+            // `NOT NULL` is NULL, which the WHERE clause throws away. So a task
+            // that never had a status would be excluded by "not done" — the
+            // opposite of what the words mean. Treating "unknown" as "not
+            // true" is what a person means by "not", and it is one rule here
+            // instead of a special case at every negatable field.
+            Expr::Not(inner) => {
+                let inner = self.condition(inner)?;
+                format!("COALESCE({inner}, 0) = 0")
+            }
+            Expr::And(branches) if branches.is_empty() => "1".to_string(),
+            Expr::And(branches) => self.join(branches, " AND ")?,
+            Expr::Or(branches) if branches.is_empty() => "0".to_string(),
+            Expr::Or(branches) => self.join(branches, " OR ")?,
+        })
+    }
+
+    fn join(&mut self, branches: &[Expr], with: &str) -> AppResult<String> {
+        let mut parts = Vec::with_capacity(branches.len());
+        for branch in branches {
+            parts.push(self.condition(branch)?);
+        }
+        Ok(format!("({})", parts.join(with)))
+    }
+
+    /// One condition as SQL over `nodes`.
+    fn term(&mut self, term: &Term) -> AppResult<String> {
+        Ok(match (&term.field, &term.value) {
+            (Field::Kind, Value::Text(kind)) => {
+                format!("node_type = {}", self.bind(text(kind)))
+            }
+            (Field::Status, Value::Text(status)) => {
+                let at = self.bind(text(&status.to_lowercase()));
+                format!("lower(CAST(json_extract(properties, '$.status') AS TEXT)) = {at}")
+            }
+            // `tags` is usually an array and occasionally a bare string, so it
+            // is wrapped into an array either way rather than handled twice.
+            (Field::Tag, Value::Text(tag)) => {
+                let at = self.bind(text(&tag.to_lowercase()));
+                format!(
+                    "EXISTS (SELECT 1 FROM json_each(
+                        CASE WHEN json_type(properties, '$.tags') = 'array'
+                             THEN json_extract(properties, '$.tags')
+                             ELSE json_array(json_extract(properties, '$.tags')) END
+                     ) WHERE lower(CAST(value AS TEXT)) = {at})"
+                )
+            }
+            (Field::Prop(key), Value::Text(value)) => {
+                let Some(read) = value_expression(key) else {
+                    // Not a key any question can ask about, so there is nothing
+                    // to compare — and nothing of the person's text reaches the
+                    // SQL either, which is the point of the check.
+                    log::warn!("query: ignoring a filter on unusable key '{key}'");
+                    return Ok("1".to_string());
+                };
+                // A boolean has three spellings by the time it reaches here, and
+                // somebody writing `pinned:true` means all of them.
+                //
+                // `json_extract` hands a JSON boolean back as the integer 1 or
+                // 0, so casting it to text gives `'1'` — which matched nothing
+                // and said nothing about it. On top of that, a writer that
+                // stringified its booleans leaves `'true'` in the file. So the
+                // comparison is made against the word and its number, and only
+                // for the two words that have one.
+                match value.to_lowercase().as_str() {
+                    word @ ("true" | "false") => {
+                        let digit = if word == "true" { "1" } else { "0" };
+                        let (a, b) = (self.bind(text(word)), self.bind(text(digit)));
+                        format!("lower(CAST({read} AS TEXT)) IN ({a}, {b})")
+                    }
+                    other => {
+                        let at = self.bind(text(other));
+                        format!("lower(CAST({read} AS TEXT)) = {at}")
+                    }
+                }
+            }
+            (Field::Prop(key), Value::Compare(op, value)) => {
+                let Some(read) = value_expression(key) else {
+                    log::warn!("query: ignoring a comparison on unusable key '{key}'");
+                    return Ok("1".to_string());
+                };
+                // The columns hold UTC instants, and `2026-09-01` means that
+                // day where the person is. Compared as text it would be
+                // Greenwich's.
+                let value = if matches!(read.as_str(), "created_at" | "updated_at")
+                    && is_bare_day(value)
+                {
+                    crate::utils::timestamp::normalize(value)
+                } else {
+                    value.clone()
+                };
+                // The operator comes from a fixed set; only the value is bound.
+                let at = self.bind(comparable(&value));
+                format!("{read} {} {at}", op.as_sql())
+            }
+            // `when:` — one word for both sources (§5).
+            //
+            // A note's day is the `date` it carries, and failing that the day
+            // it was made. Two conditions rather than a `COALESCE` because they
+            // are not the same kind of value: `date` is a written day and
+            // `created_at` is an instant in UTC, so the same local day is a
+            // different string in each.
+            (Field::When, Value::Text(written)) => {
+                let span = crate::timeline::when::parse(written).ok_or_else(|| {
+                    AppError::General(format!(
+                        "'{written}' is not a time. {}",
+                        crate::timeline::when::HOW_TO_WRITE_ONE
+                    ))
+                })?;
+                let iso = crate::timeline::when::iso;
+                let day = "CAST(json_extract(properties, '$.date') AS TEXT)";
+                let from = self.bind(text(&iso(span.from)));
+                let to = self.bind(text(&iso(span.to)));
+                let made_from =
+                    self.bind(text(&crate::utils::timestamp::normalize(&iso(span.from))));
+                // The morning after the last day, so the whole of it is
+                // included however late in it a note was written.
+                let made_to = self.bind(text(&crate::utils::timestamp::normalize(&iso(
+                    span.to.succ_opt().unwrap_or(span.to),
+                ))));
+                format!(
+                    "(CASE WHEN {day} IS NOT NULL AND {day} <> ''
+                           THEN substr({day}, 1, 10) BETWEEN {from} AND {to}
+                           ELSE created_at >= {made_from} AND created_at < {made_to}
+                      END)"
+                )
+            }
+            // Words are the index's business, asked as a subquery rather than
+            // as a separate round trip. One definition of "matches this word"
+            // — the one that folds tone marks and knows about `đ` — and it
+            // composes: a word can now sit inside an `OR` or under a `NOT`,
+            // which narrowing the whole question to a list of ids could not do.
+            (Field::Text, Value::Text(word)) => {
+                let at = self.bind(text(&crate::db::search::fts_match_for(
+                    word,
+                    self.title_only,
+                )));
+                format!("id IN (SELECT item_id FROM search_index WHERE search_index MATCH {at})")
+            }
+            // A field belongs to a source, the way a column belongs to a table
+            // (§5). Reaching here with one of the timeline's roles means the
+            // question said `notes` out loud — otherwise those words would have
+            // chosen the other table themselves — so it is answered with a
+            // sentence rather than dropped on the floor.
+            (field, _) => {
+                return Err(AppError::General(format!(
+                    "{} asks about an event, and this question is about notes. \
+                     Start it with `events`, or drop it.",
+                    field.written()
+                )))
+            }
+        })
+    }
+}
+
 impl DbBridge {
-    /// Notes matching a parsed query, with the columns it asked for.
-    pub fn run_node_query(&self, parsed: &ParsedQuery) -> AppResult<QueryResult> {
+    /// Notes matching a query, with the columns it asked for.
+    pub fn run_node_query(&self, query: &Query) -> AppResult<QueryResult> {
         let start = Instant::now();
 
-        if let Some(why) = parsed.refused.first() {
+        if let Some(why) = query.refused.first() {
             return Err(AppError::General(why.clone()));
         }
 
-        if parsed.is_empty {
+        if query.asks_nothing() {
             return Err(AppError::General(
                 "A query needs something to match on.".to_string(),
             ));
         }
 
-        // A field belongs to a source, the way a column belongs to a table
-        // (§5). Reaching here with one of the timeline's roles means the
-        // question said `notes` out loud — otherwise those words would have
-        // chosen the other table themselves — so it is answered with a
-        // sentence rather than dropped on the floor.
-        let elsewhere = [
-            (!parsed.with.is_empty(), "with:"),
-            (!parsed.place.is_empty(), "place:"),
-            (!parsed.about.is_empty(), "about:"),
-            (parsed.shape.is_some(), "shape:"),
-            (parsed.size.is_some(), "size:"),
-        ];
-        if let Some((_, what)) = elsewhere.into_iter().find(|(carried, _)| *carried) {
-            return Err(AppError::General(format!(
-                "{what} asks about an event, and this question is about notes. \
-                 Start it with `events`, or drop it."
-            )));
-        }
+        let mut build = Where {
+            params: Vec::new(),
+            title_only: query.title_only,
+        };
+        let condition = build.condition(&query.filter)?;
+        let params = build.params;
 
         // Built on its own so the count and the page ask the same question.
         // `total` used to be whatever the paged read happened to return, which
         // is a different number from "how many match" whenever a limit bites.
-        let mut sql = String::from("FROM nodes WHERE node_type NOT LIKE 'finance_%'");
-        let mut params: Vec<rusqlite::types::Value> = Vec::new();
-        let mut next = 1usize;
-
-        if let Some(node_type) = &parsed.type_filter {
-            sql.push_str(&format!(" AND node_type = ?{next}"));
-            params.push(text(node_type));
-            next += 1;
-        }
-
-        if let Some(status) = &parsed.status_filter {
-            sql.push_str(&format!(
-                " AND lower(CAST(json_extract(properties, '$.status') AS TEXT)) = ?{next}"
-            ));
-            params.push(text(&status.to_lowercase()));
-            next += 1;
-        }
-
-        // A property the node must not have this value for.
-        //
-        // `IS NULL OR <>` rather than a bare `<>`: SQL comparison against NULL
-        // is NULL, which filters the row out, so a task that never had a
-        // status would be excluded by `-status:done` — the opposite of what
-        // "not done" means.
-        for (key, value) in &parsed.property_exclusions {
-            let Some(read) = value_expression(key) else {
-                continue;
-            };
-            sql.push_str(&format!(
-                " AND ({read} IS NULL OR lower(CAST({read} AS TEXT)) <> ?{next})"
-            ));
-            params.push(text(&value.to_lowercase()));
-            next += 1;
-        }
-
-        // A tag a node must not carry. Written as `NOT EXISTS` rather than as
-        // a negated `EXISTS` over the same join so that a node with no `tags`
-        // key at all satisfies it — the same reason `-status:done` is written
-        // `IS NULL OR <>` above.
-        for tag in &parsed.tag_exclusions {
-            sql.push_str(&format!(
-                " AND NOT EXISTS (SELECT 1 FROM json_each(
-                    CASE WHEN json_type(properties, '$.tags') = 'array'
-                         THEN json_extract(properties, '$.tags')
-                         ELSE json_array(json_extract(properties, '$.tags')) END
-                 ) WHERE lower(value) = ?{next})"
-            ));
-            params.push(text(&tag.to_lowercase()));
-            next += 1;
-        }
-
-        // `tags` is usually an array and occasionally a bare string, so it is
-        // wrapped into an array either way rather than handled twice.
-        for tag in &parsed.tag_filters {
-            sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM json_each(
-                    CASE WHEN json_type(properties, '$.tags') = 'array'
-                         THEN json_extract(properties, '$.tags')
-                         ELSE json_array(json_extract(properties, '$.tags')) END
-                  ) WHERE lower(CAST(value AS TEXT)) = ?{next})"
-            ));
-            params.push(text(&tag.to_lowercase()));
-            next += 1;
-        }
-
-        for (key, value) in &parsed.property_filters {
-            let Some(read) = value_expression(key) else {
-                log::warn!("query: ignoring a filter on unusable key '{}'", key);
-                continue;
-            };
-            // A boolean has three spellings by the time it reaches here, and a
-            // person writing `pinned:true` means all of them.
-            //
-            // `json_extract` hands a JSON boolean back as the integer 1 or 0,
-            // so casting it to text gives `'1'` — which matched nothing, and
-            // said nothing about it. On top of that, a writer that stringified
-            // its booleans leaves `'true'` in the file; three task files in
-            // this vault carry exactly that. So the comparison is made against
-            // the word and its number, and only for the two words that have
-            // one.
-            let spellings = match value.to_lowercase().as_str() {
-                "true" => Some(("true", "1")),
-                "false" => Some(("false", "0")),
-                _ => None,
-            };
-
-            match spellings {
-                Some((word, digit)) => {
-                    sql.push_str(&format!(
-                        " AND lower(CAST({read} AS TEXT)) IN (?{next}, ?{})",
-                        next + 1
-                    ));
-                    params.push(text(word));
-                    params.push(text(digit));
-                    next += 2;
-                }
-                None => {
-                    sql.push_str(&format!(
-                        " AND lower(CAST({read} AS TEXT)) = ?{next}"
-                    ));
-                    params.push(text(&value.to_lowercase()));
-                    next += 1;
-                }
-            }
-        }
-
-        for range in &parsed.property_ranges {
-            let Some(read) = value_expression(&range.key) else {
-                log::warn!(
-                    "query: ignoring a comparison on unusable key '{}'",
-                    range.key
-                );
-                continue;
-            };
-            // The operator comes from a fixed set; only the value is a parameter.
-            sql.push_str(&format!(" AND {read} {} ?{next}", range.op.as_sql()));
-            // The columns hold UTC instants, and `2026-09-01` means that day
-            // where the person is. Compared as text it would be Greenwich's.
-            let value = if matches!(read.as_str(), "created_at" | "updated_at") && is_bare_day(&range.value) {
-                crate::utils::timestamp::normalize(&range.value)
-            } else {
-                range.value.clone()
-            };
-            params.push(comparable(&value));
-            next += 1;
-        }
-
-        // `when:` — one word for both sources (§5).
-        //
-        // A note's day is the `date` it carries, and failing that the day it
-        // was made. Two conditions rather than a `COALESCE` because they are
-        // not the same kind of value: `date` is a written day and `created_at`
-        // is an instant in UTC, so the same local day is a different string in
-        // each. Comparing `created_at` as text against `2019-01-01` would ask
-        // Greenwich's question, not the one the person in front of the screen
-        // asked.
-        if let Some(written_when) = &parsed.when {
-            let span = crate::timeline::when::parse(written_when).ok_or_else(|| {
-                AppError::General(format!(
-                    "'{written_when}' is not a time. {}",
-                    crate::timeline::when::HOW_TO_WRITE_ONE
-                ))
-            })?;
-            let written = "CAST(json_extract(properties, '$.date') AS TEXT)";
-            sql.push_str(&format!(
-                " AND (CASE WHEN {written} IS NOT NULL AND {written} <> ''
-                            THEN substr({written}, 1, 10) BETWEEN ?{next} AND ?{}
-                            ELSE created_at >= ?{} AND created_at < ?{}
-                       END)",
-                next + 1,
-                next + 2,
-                next + 3
-            ));
-            params.push(text(&crate::timeline::when::iso(span.from)));
-            params.push(text(&crate::timeline::when::iso(span.to)));
-            params.push(text(&crate::utils::timestamp::normalize(
-                &crate::timeline::when::iso(span.from),
-            )));
-            // The morning after the last day, so the whole of it is included
-            // however late in it a note was written.
-            params.push(text(&crate::utils::timestamp::normalize(
-                &crate::timeline::when::iso(span.to.succ_opt().unwrap_or(span.to)),
-            )));
-            next += 4;
-        }
-
-        // Words are the index's business. Asking it for the ids and narrowing
-        // to those keeps one definition of what "matches these words" means —
-        // the one that folds tone marks and knows about `đ`.
-        if !parsed.fts_terms.is_empty() {
-            let matched = self.search_fts(parsed, 1, MAX_QUERY_LIMIT * 4)?;
-            if matched.results.is_empty() {
-                return Ok(QueryResult {
-                    columns: requested_columns(parsed),
-                    rows: Vec::new(),
-                    total: 0,
-                    query_time_ms: start.elapsed().as_millis() as u64,
-                });
-            }
-            let placeholders: Vec<String> = matched
-                .results
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", next + i))
-                .collect();
-            sql.push_str(&format!(" AND id IN ({})", placeholders.join(", ")));
-            for hit in &matched.results {
-                params.push(text(&hit.id));
-            }
-        }
+        let mut sql = format!(
+            "FROM nodes WHERE node_type NOT LIKE 'finance_%' AND ({condition})"
+        );
 
         // How many match, before any limit. One extra statement over the same
         // WHERE clause, which is what makes `total` an answer rather than a
@@ -392,7 +375,7 @@ impl DbBridge {
             as usize;
 
         // Newest first when nothing else is asked for, matching the note list.
-        let order = parsed
+        let order = query
             .sort
             .as_ref()
             .and_then(|s| order_expression(&s.key).map(|expr| (expr, s.descending)))
@@ -403,15 +386,15 @@ impl DbBridge {
             if order.1 { "DESC" } else { "ASC" }
         ));
 
-        let limit = parsed.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
+        let limit = query.limit.unwrap_or(MAX_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
         sql.push_str(&format!(" LIMIT {limit}"));
         // Only when asked. `OFFSET 0` is the same query and a different plan in
         // some engines, and every existing caller passes nothing.
-        if parsed.offset > 0 {
-            sql.push_str(&format!(" OFFSET {}", parsed.offset));
+        if query.offset > 0 {
+            sql.push_str(&format!(" OFFSET {}", query.offset));
         }
 
-        let columns = requested_columns(parsed);
+        let columns = requested_columns(query);
         let sql = format!(
             "SELECT id, node_type, title, properties, created_at, updated_at {sql}"
         );
@@ -480,12 +463,12 @@ impl DbBridge {
 /// Enforced here rather than in a view because the columns are decided here,
 /// and there is more than one caller: the table, saved views, and the
 /// assistant's own queries.
-fn requested_columns(parsed: &ParsedQuery) -> Vec<String> {
-    if parsed.columns.is_empty() {
+fn requested_columns(query: &Query) -> Vec<String> {
+    if query.columns.is_empty() {
         return DEFAULT_COLUMNS.iter().map(|c| c.to_string()).collect();
     }
 
-    let mut columns = parsed.columns.clone();
+    let mut columns = query.columns.clone();
     if !columns.iter().any(|c| c == "title") {
         columns.insert(0, "title".to_string());
     }
@@ -497,7 +480,7 @@ mod tests {
     use super::*;
     use crate::db::DbBridge;
     use crate::models::node::NodeMetadata;
-    use crate::search::parse_query;
+    use crate::query::parse as parse_query;
 
     fn db() -> DbBridge {
         DbBridge::new_in_memory_full().expect("full in-memory schema")
@@ -920,9 +903,9 @@ mod tests {
         }
 
         let first = run(&d, "type:note");
-        let mut parsed = crate::search::parse_query("type:note");
-        parsed.offset = cap as u32;
-        let second = d.run_node_query(&parsed).expect("second page");
+        let mut second_page = parse_query("type:note");
+        second_page.offset = cap as u32;
+        let second = d.run_node_query(&second_page).expect("second page");
 
         assert_eq!(second.total, first.total, "the count is of matches, not of a page");
         assert_eq!(second.rows.len(), over - cap, "the remainder, and no more");
@@ -1051,8 +1034,14 @@ mod tests {
     fn a_key_that_is_not_a_key_cannot_reach_the_sql() {
         let d = tasks();
 
-        // Were the key interpolated, this would drop the table.
-        let got = run(&d, "is:task a'); DROP TABLE nodes; --:1");
+        // Brackets are grammar now, so this one is refused before any of it is
+        // read as a filter — which is a better answer than running it.
+        let refused = d.run_node_query(&parse_query("is:task a'); DROP TABLE nodes; --:1"));
+        assert!(refused.is_err(), "a stray bracket is refused");
+
+        // And without them, the key still never reaches the SQL: it is not a
+        // key, so the filter is dropped rather than interpolated.
+        let got = run(&d, "is:task a'; DROP TABLE nodes; --:1");
         assert!(got.rows.is_empty() || !got.rows.is_empty());
 
         let still_there = run(&d, "is:task");

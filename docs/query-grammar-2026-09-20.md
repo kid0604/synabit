@@ -440,7 +440,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | **0** | ~~Sửa năm lỗi §9~~ — **xong 2026-09-20** | ảnh chụp đổi **đúng 10 dòng**, 37 dòng còn lại không nhúc nhích |
 | **1** | ~~`Term`/`Expr`/`Query` dựng bên cạnh; `ParsedQuery` thành khung nhìn phẳng~~ — **xong 2026-09-20** | ảnh chụp **không đổi một dòng** ✓ |
 | **2** | ~~Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11~~ — **xong 2026-09-20** | ảnh chụp đổi đúng chỗ đổi tên ✓ |
-| **3** | `OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy | câu cũ không đổi; câu có `OR` chạy |
+| **3** | ~~`OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy~~ — **xong 2026-09-20** | câu cũ không đổi; câu có `OR` chạy ✓ |
 | **4** | Chip biết nhóm và giai đoạn | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 |
 | **5** | Dấu `\|` + `stats` + `sort`/`head` | `bars` có dữ liệu |
 | **6** | `seq gaps` + `where` + `same-day-as()` | bốn panel cảm xúc thành thấu kính |
@@ -715,3 +715,146 @@ hằng, một chỗ: `when::HOW_TO_WRITE_ONE`.
 | Test Rust | 2371 (thêm 6) |
 | Test TypeScript | 1868, không đổi |
 | Clippy | không cảnh báo mới trên file nào đụng tới |
+
+---
+
+## 20. Bước 3 — đã làm, 2026-09-20
+
+**`OR`, `NOT`, ngoặc — trong bộ phân tích và trong *cả hai* bộ chạy.**
+
+### Ảnh chụp: 58 → 75 dòng, và **đúng hai dòng cũ đổi**
+
+Hai dòng ấy là món nợ bước 0 đã ghi ra và không trả được:
+
+| Câu | Trước | Sau |
+| --- | --- | --- |
+| `-with:khánh` | **notes 7** — "note có khoá `with` khác khánh" | **events 3** — sự kiện không có Khánh |
+| `-when:2019` | notes 7 | **events 1** — sự kiện ngoài 2019 |
+
+Mười bảy dòng mới là những câu **chưa viết được**:
+
+```
+#gia-đình OR #công-việc              → notes    2
+is:task OR is:book                   → notes    3
+with:khánh OR with:minh              → events   2
+(with:khánh OR with:minh) when:2019  → events   2
+is:note (#gia-đình OR #công-việc)    → notes    2
+#gia-đình or #công-việc              → notes    0   ← chữ thường là một TỪ
+(#gia-đình                           → từ chối: ngoặc mở mà không đóng
+#gia-đình)                           → từ chối: ')' không dính vào đâu
+#gia-đình OR                         → từ chối: 'OR' cần hai vế
+```
+
+### Không có danh sách "cái gì phủ định được" nữa
+
+Đây là gốc của lỗi `-with:khánh`. Bộ đọc cũ **tự biết một danh sách nhỏ** những
+thứ có thể đứng sau dấu trừ — một tag, một khoá tra được, một từ — và `with:`
+không nằm trong danh sách ấy, nên câu hỏi lặng lẽ thành *"note có khoá frontmatter
+`with` khác khánh"*.
+
+Giờ `-x` **bóc dấu trừ rồi đọc `x` như một điều kiện bình thường**. Không còn danh
+sách. **Hỏi được gì thì bỏ-hỏi được nấy** — kể cả những từ khoá chưa ai viết ra.
+
+### `NOT` của SQL không phải `NOT` của người
+
+Chỗ này là lý do `-status:done` xưa nay phải viết tay thành `IS NULL OR <>`.
+
+So sánh với một khoá frontmatter không có là `NULL`, `NOT NULL` cũng là `NULL`, mà
+mệnh đề `WHERE` thì vứt `NULL` đi. Nên một task **chưa từng có status** sẽ bị
+`-status:done` loại ra — đúng ngược với nghĩa của chữ "chưa xong".
+
+Cây có `NOT` ở mọi chỗ, nên luật này phải là **một luật**, không phải một ngoại lệ
+viết tay ở từng trường:
+
+```sql
+COALESCE(<điều kiện>, 0) = 0     -- "không biết" tính là "không đúng"
+```
+
+Một dòng, ở cả hai bộ chạy, thay cho ba chỗ viết tay khác nhau.
+
+### Từ trần thành câu truy vấn con, không còn là một vòng đi-về
+
+Trước: câu nào có từ thì **hỏi FTS trước**, lấy về một danh sách id, rồi
+`AND id IN (…)`. Cách ấy chỉ nói được "và", nên một từ **không thể** nằm trong một
+nhóm `OR` hay dưới một `NOT`. Nó còn có trần `MAX_QUERY_LIMIT * 4` id.
+
+Giờ mỗi từ là một điều kiện tự đứng được:
+
+```sql
+id IN (SELECT item_id FROM search_index WHERE search_index MATCH ?)
+```
+
+Không vòng đi-về, không trần, và **ghép vào đâu cũng được**. Định nghĩa "khớp một
+từ" vẫn đúng một chỗ (`fts_match_for`), dùng chung với `search_fts`.
+
+Sửa kèm: hàm dựng biểu thức FTS **không escape dấu nháy**, nên `foo"bar` đóng chuỗi
+FTS5 sớm và cả câu thành lỗi cú pháp. Giờ nháy trong từ được nhân đôi, như FTS5 quy
+định.
+
+### `match_any` thôi là một cờ, nó thành câu chữ
+
+Trợ lý có một bước lùi: hỏi `query_nodes` mà đòi **mọi** từ thì trả về 0, nên thử lại
+với **bất kỳ** từ nào. Nó vốn là `parsed.match_any = true` — một cờ chỉ đường FTS
+đọc.
+
+Có `OR` rồi thì nó là chính cái nó vẫn có nghĩa: `Query::any_word()` gom các từ trần
+thành **một nhóm `OR`**, mọi bộ lọc khác vẫn bắt buộc. Cờ biến mất khỏi đường này.
+
+### Một lỗi tiếng Việt, tìm thấy bằng chính ảnh chụp
+
+Thêm dòng `when:2019 (gặp OR ăn)` vào ảnh chụp thì nó trả **1**, trong khi vault có
+«**Ăn** tối với Minh» đúng năm 2019.
+
+Đo, không đoán:
+
+```
+lower("Ăn tối")   = "Ăn tối"      ← không đổi
+lower("Gặp Khánh") = "gặp khánh"
+lower("ĂN")       = "Ăn"          ← chỉ chữ N bị hạ
+```
+
+**`lower()` của SQLite chỉ biết ASCII.** `Ă`, `Đ`, `Ô`… không bao giờ thành chữ
+thường. Mà tiêu đề sự kiện là **câu**, nên chữ đầu viết hoa — tức là **mọi từ tiếng
+Việt mở đầu một tiêu đề đều không tìm được trên dòng thời gian**. `đi` không thấy
+«Đi chơi». Chỉ dính đường LIKE của dòng thời gian; phía note đi qua FTS5, vốn biết
+Unicode.
+
+Đã ghi **một dòng riêng trong ảnh chụp để nó không chìm**:
+
+```
+when:2016..2026 ăn                 → events   0 []
+```
+
+**Không sửa trong bước này**, và nói rõ vì sao: cách sửa đúng là một **cột đã chuẩn
+hoá trong Rust** trên bảng `events` — rẻ, vì `timeline.db` là tầng 3, dựng lại được
+— và đó là một thay đổi lược đồ riêng, không phải thứ nhét kèm một bước ngữ pháp.
+Đã tách ra thành việc riêng.
+
+### Mô tả công cụ: đo rồi mới quyết, và quyết là không đụng
+
+§15.4 dặn nhớ `syn/tools.rs`. Đo:
+
+```
+chars 19799 of 19800
+```
+
+**Thừa đúng một ký tự.** Dạy `OR` cho model nghĩa là phải cắt một thứ đang có ích.
+Và cái model cần `OR` để làm thì nó **đã có**: `query_nodes` tự nới sang "bất kỳ từ
+nào" khi đòi mọi từ ra 0. Nên không đụng — và ghi ra đây để lần sau khỏi tưởng là
+quên.
+
+### Còn nợ sang bước 4
+
+Thanh chip chưa biết nhóm. Gõ `(#a OR #b)` thì câu trả lời **đúng**, nhưng chip vẽ
+ra trông lạ. Vòng chữ→chip→chữ vẫn khít (chữ vẫn là trạng thái duy nhất), nên không
+có gì hỏng — đó đúng là việc của bước 4.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 58 → **75 dòng**; 2 dòng cũ đổi (đúng món nợ bước 0), 17 dòng mới |
+| Test Rust | 2377 (thêm 6) |
+| Test TypeScript | 1868, không đổi |
+| Clippy | không cảnh báo mới trên file nào đụng tới |
+| `ParsedQuery` | thôi là thứ hai bộ chạy đọc — chỉ còn đường FTS dùng |

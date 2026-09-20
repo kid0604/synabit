@@ -48,7 +48,7 @@
 
 use crate::db::DbBridge;
 use crate::error::AppResult;
-use crate::search::ParsedQuery;
+use crate::query::{Expr, Field, Query, Term};
 
 /// How much work a question is expected to be.
 ///
@@ -200,22 +200,24 @@ pub fn of(message: &str, types: &[String]) -> Option<Instant> {
 
 /// The query that answers it.
 ///
-/// Built as a `ParsedQuery` directly rather than by writing `type:task` and
-/// parsing it back — the struct is the interface, and going through the text
-/// form would mean depending on the query language's spelling to ask a question
-/// in Rust.
-pub fn query_for(instant: &Instant) -> ParsedQuery {
-    ParsedQuery {
-        type_filter: Some(instant.node_type.clone()),
-        // `-status:done` rather than `status:todo`, and the difference is
-        // load-bearing: `node_query.rs` records the assistant answering 7 and 0
-        // for a real number of 4, because a task that never had a status at all
-        // satisfies "not finished" and does not satisfy "is todo".
-        property_exclusions: if instant.unfinished {
-            vec![("status".to_string(), "done".to_string())]
-        } else {
-            Vec::new()
-        },
+/// Built as a tree directly rather than by writing `type:task` and parsing it
+/// back — the structure is the interface, and going through the text form
+/// would mean depending on the query language's spelling to ask a question in
+/// Rust.
+pub fn query_for(instant: &Instant) -> Query {
+    let mut filter = vec![Expr::Term(Term::text(Field::Kind, &instant.node_type))];
+    // `-status:done` rather than `status:todo`, and the difference is
+    // load-bearing: `node_query.rs` records the assistant answering 7 and 0 for
+    // a real number of 4, because a task that never had a status at all
+    // satisfies "not finished" and does not satisfy "is todo".
+    if instant.unfinished {
+        filter.push(Expr::Not(Box::new(Expr::Term(Term::text(
+            Field::Status,
+            "done",
+        )))));
+    }
+    Query {
+        filter: Expr::And(filter),
         ..Default::default()
     }
 }
@@ -410,16 +412,20 @@ mod tests {
     fn unfinished_asks_for_not_done_rather_than_todo() {
         let q = query_for(&Instant { node_type: "task".into(), unfinished: true });
 
-        assert_eq!(q.type_filter.as_deref(), Some("task"));
-        assert_eq!(q.property_exclusions, vec![("status".into(), "done".into())]);
-        assert!(q.status_filter.is_none(), "never the equality form");
+        assert_eq!(
+            q.filter,
+            Expr::And(vec![
+                Expr::Term(Term::text(Field::Kind, "task")),
+                Expr::Not(Box::new(Expr::Term(Term::text(Field::Status, "done")))),
+            ]),
+            "the exclusion, never the equality form"
+        );
     }
 
     #[test]
     fn a_plain_count_filters_only_by_type() {
         let q = query_for(&Instant { node_type: "note".into(), unfinished: false });
-        assert_eq!(q.type_filter.as_deref(), Some("note"));
-        assert!(q.property_exclusions.is_empty());
+        assert_eq!(q.filter, Expr::And(vec![Expr::Term(Term::text(Field::Kind, "note"))]));
     }
 
     /// The saving, stated as the property that produces it.

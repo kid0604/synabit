@@ -15,12 +15,39 @@ use std::time::Instant;
 /// `đ` in it cannot match anything in that column, and adding the branch
 /// anyway would grow every query for nothing.
 fn with_d_stroke_branch(term: &str) -> String {
-    let folded = crate::search_fold::fold_d_stroke(term);
+    let folded = quoted(&crate::search_fold::fold_d_stroke(term));
     let touches_d = term.chars().any(|c| matches!(c, 'd' | 'D' | 'đ' | 'Đ'));
     if !touches_d {
-        return format!("\"{}\"", term);
+        return quoted(term);
     }
-    format!("(\"{}\" OR norm : \"{}\")", term, folded)
+    format!("({} OR norm : {})", quoted(term), folded)
+}
+
+/// A term as an FTS5 string.
+///
+/// A bare word is allowed to contain a quote — `tag:"one mount"` is a
+/// supported spelling, and so is a typo like `foo"bar`. Wrapping such a term
+/// without escaping ends the FTS5 string early and the whole query comes back
+/// as a syntax error, which in the feeds search meant results silently
+/// stopping as you typed. FTS5 spells a literal quote as two of them.
+fn quoted(term: &str) -> String {
+    format!("\"{}\"", term.replace('"', "\"\""))
+}
+
+/// What one word matches, as an FTS5 expression.
+///
+/// Shared with `db::node_query`, which asks the index as a subquery so that a
+/// word can sit inside an `OR` or under a `NOT`. One definition of "matches
+/// this word" — the one that folds tone marks and knows about `đ`.
+pub(crate) fn fts_match_for(term: &str, title_only: bool) -> String {
+    // Already a phrase, written the way FTS5 writes one.
+    if term.starts_with('"') && term.ends_with('"') && term.chars().count() > 1 {
+        return term.to_string();
+    }
+    if title_only {
+        return format!("title : {}", quoted(term));
+    }
+    with_d_stroke_branch(term)
 }
 
 impl DbBridge {

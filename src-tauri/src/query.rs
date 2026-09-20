@@ -100,6 +100,25 @@ pub enum Field {
     Size,
 }
 
+impl Field {
+    /// How the field is written in a question, for a message a person reads.
+    pub fn written(&self) -> &'static str {
+        match self {
+            Field::Kind => "type:",
+            Field::Status => "status:",
+            Field::Tag => "#tag",
+            Field::Prop(_) => "a note's own field",
+            Field::Text => "a bare word",
+            Field::When => "when:",
+            Field::With => "with:",
+            Field::Place => "place:",
+            Field::About => "about:",
+            Field::Shape => "shape:",
+            Field::Size => "size:",
+        }
+    }
+}
+
 /// What a condition is compared against.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -123,7 +142,8 @@ pub struct Term {
 }
 
 impl Term {
-    fn text(field: Field, value: impl Into<String>) -> Self {
+    /// A condition on a written value.
+    pub fn text(field: Field, value: impl Into<String>) -> Self {
         Term {
             field,
             value: Value::Text(value.into()),
@@ -149,6 +169,14 @@ pub enum Expr {
     Or(Vec<Expr>),
 }
 
+impl Default for Expr {
+    /// Asking nothing. An empty conjunction is true of everything, which is
+    /// what an empty search bar shows.
+    fn default() -> Self {
+        Expr::And(Vec::new())
+    }
+}
+
 /// A whole question: what to match, and how to lay out what matched.
 ///
 /// The shaping words are not part of the filter tree on purpose. `sort:`,
@@ -163,7 +191,9 @@ pub struct Query {
     /// Which table, when the question said. `None` means it did not, and the
     /// words it used decide — see `ParsedQuery::source_of`.
     pub source: Option<Source>,
-    pub filter: Vec<Expr>,
+    /// What has to be true of a row. `Expr::And(vec![])` asks nothing, which
+    /// is what an empty search bar asks.
+    pub filter: Expr,
     pub title_only: bool,
     pub sort: Option<SortOrder>,
     pub columns: Vec<String>,
@@ -174,6 +204,13 @@ pub struct Query {
     /// grammar cannot make sense of lands here rather than becoming a filter
     /// on a property of that name. That was the whole of §9 and step 0.
     pub refused: Vec<String>,
+    /// How many matching rows to skip, for reaching past the cap.
+    ///
+    /// Not query syntax and deliberately not: it is a property of the page
+    /// being looked at, not of the question being asked, and a saved view
+    /// carrying `offset:500` in its text would reopen on page two for ever.
+    /// The caller sets it after parsing.
+    pub offset: u32,
 }
 
 /// Words that used to mean something and now mean it under another name.
@@ -182,6 +219,143 @@ pub struct Query {
 /// not make it stop parsing — it makes it parse as *a frontmatter key of that
 /// name*, which answers 0 and explains nothing.
 const RENAMED: &[(&str, &str)] = &[("where:", "place:"), ("magnitude:", "size:")];
+
+impl Query {
+    /// Whether there is nothing here to match on.
+    ///
+    /// Naming a table is asking something, and so is every condition — except
+    /// one. A bare word exclusion is not a question: "not draft" asks for the
+    /// whole vault minus a little, and nobody means that by typing `-draft`
+    /// into a search bar. So it does not make an empty bar non-empty, though
+    /// it narrows a question that has something else in it.
+    /// Which table answers this question.
+    ///
+    /// A question that names its source gets that one. A question that does
+    /// not is read the way it always was: the timeline's words are the
+    /// selector, and they are a fair one — asking who was somewhere is only
+    /// answerable of an *event*, so writing `with:` is already the act of
+    /// saying which table to read.
+    ///
+    /// §4 proposed defaulting to `notes` instead. That was written before this
+    /// code was read: it would turn every `with:khánh` anybody has ever typed
+    /// into a refusal, and `when:` is the word the timeline is *made of*.
+    /// Naming the source is worth having because it lets a question mean one
+    /// thing when it uses words from both halves — not because guessing was
+    /// wrong when it had only one half to guess from.
+    pub fn source_of(&self) -> Source {
+        fn timeline(expr: &Expr) -> bool {
+            match expr {
+                Expr::Term(term) => matches!(
+                    term.field,
+                    Field::When | Field::With | Field::Place | Field::About | Field::Shape | Field::Size
+                ),
+                Expr::Not(inner) => timeline(inner),
+                Expr::And(branches) | Expr::Or(branches) => branches.iter().any(timeline),
+            }
+        }
+        match self.source {
+            Some(source) => source,
+            None if timeline(&self.filter) => Source::Events,
+            None => Source::Notes,
+        }
+    }
+
+    /// The same question, asking for **any** of its words rather than all.
+    ///
+    /// What arrives at the assistant's `query_nodes` is not a search phrase —
+    /// it is the words of a *question*, and requiring all of them requires the
+    /// asker to have guessed the note's own vocabulary. Asked what was decided
+    /// about pricing and who disagreed, it queried `decide pricing disagreed`,
+    /// got nothing, and reported that the vault held no notes about pricing.
+    /// It holds two, and both are entirely about it.
+    ///
+    /// This used to be a flag on the flat struct that only the FTS path read.
+    /// With a tree it is the thing it always meant: the words become one `OR`
+    /// group, and everything else stays required.
+    pub fn any_word(&self) -> Query {
+        let Expr::And(branches) = &self.filter else {
+            return self.clone();
+        };
+        let is_word = |e: &Expr| matches!(e, Expr::Term(Term { field: Field::Text, .. }));
+        let words: Vec<Expr> = branches.iter().filter(|e| is_word(e)).cloned().collect();
+        if words.len() < 2 {
+            return self.clone();
+        }
+        let mut kept: Vec<Expr> = branches.iter().filter(|e| !is_word(e)).cloned().collect();
+        kept.push(Expr::Or(words));
+        Query {
+            filter: Expr::And(kept),
+            ..self.clone()
+        }
+    }
+
+    /// How many bare words the question carries, at the top level.
+    pub fn word_count(&self) -> usize {
+        match &self.filter {
+            Expr::And(branches) => branches
+                .iter()
+                .filter(|e| matches!(e, Expr::Term(Term { field: Field::Text, .. })))
+                .count(),
+            Expr::Term(Term { field: Field::Text, .. }) => 1,
+            _ => 0,
+        }
+    }
+
+    pub fn asks_nothing(&self) -> bool {
+        fn says_something(expr: &Expr) -> bool {
+            match expr {
+                Expr::Term(_) => true,
+                Expr::Not(inner) => !matches!(
+                    &**inner,
+                    Expr::Term(Term {
+                        field: Field::Text,
+                        ..
+                    })
+                ),
+                Expr::And(branches) | Expr::Or(branches) => {
+                    branches.iter().any(says_something)
+                }
+            }
+        }
+        self.source.is_none()
+            && self.sort.is_none()
+            && self.columns.is_empty()
+            && self.limit.is_none()
+            && !says_something(&self.filter)
+    }
+}
+
+/// A quoted token with its quotes straightened.
+///
+/// A phone turns `"` into `“` without being asked, and FTS5 knows one kind of
+/// quote. Only when the token both opens and closes with one, so a typo like
+/// `foo"bar` stays the word somebody typed.
+fn as_phrase(token: &str) -> String {
+    let quote = |c: char| c == '"' || c == '\u{201c}' || c == '\u{201d}';
+    let mut chars = token.chars();
+    match (chars.next(), chars.next_back()) {
+        (Some(open), Some(close)) if quote(open) && quote(close) => {
+            format!("\"{}\"", chars.as_str())
+        }
+        _ => token.to_string(),
+    }
+}
+
+/// Whether what has been read so far is a name that could take a bracket.
+///
+/// `same-day-as` is, and so is the `same-day-as` in `when:same-day-as`, which
+/// is why only the part after the last colon is looked at — the keyword in
+/// front of a value is not part of the value's name. `-` is not a name, so
+/// `-(a OR b)` is a minus and then a group rather than a call to something
+/// called "-".
+fn names_a_call(word: &str) -> bool {
+    let name = word.rsplit(':').next().unwrap_or("");
+    !name.is_empty()
+        && name.chars().any(char::is_alphabetic)
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
 
 /// Split a raw query into tokens, keeping a quoted phrase whole.
 fn tokenize(trimmed: &str) -> Vec<String> {
@@ -215,17 +389,47 @@ fn tokenize(trimmed: &str) -> Vec<String> {
             // so is a typo like `foo"bar`.
             let mut word = String::new();
             let mut in_quote = false;
+            // Brackets opened inside this word, so that `same-day-as(today)`
+            // stays one token while `(a OR b)` becomes five.
+            let mut depth = 0usize;
             while let Some(&c) = chars.peek() {
                 if c == '"' || c == '\u{201c}' || c == '\u{201d}' {
                     in_quote = !in_quote;
                     word.push(c);
                     chars.next();
-                } else if c.is_whitespace() && !in_quote {
+                } else if in_quote {
+                    word.push(c);
+                    chars.next();
+                } else if c.is_whitespace() {
                     break;
+                } else if c == '(' {
+                    // A bracket right after a name is the name's own bracket —
+                    // `same-day-as(today)` is one thing, not a group. Anywhere
+                    // else it opens a group, so the word so far ends here.
+                    if names_a_call(&word) {
+                        depth += 1;
+                        word.push(c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                } else if c == ')' {
+                    // Only the bracket this word opened belongs to it.
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    word.push(c);
+                    chars.next();
                 } else {
                     word.push(c);
                     chars.next();
                 }
+            }
+            // An empty word means the character in front is a bracket of its
+            // own, which is a token.
+            if word.is_empty() {
+                word.push(chars.next().expect("a character that is not whitespace"));
             }
             tokens.push(word);
         }
@@ -269,7 +473,158 @@ pub fn parse(raw: &str) -> Query {
         q.source = Source::of(&tokens.remove(0).to_lowercase());
     }
 
-    for token in tokens {
+    // ── the expression ──
+    let mut reader = Reader { tokens: &tokens, at: 0, q: &mut q };
+    let filter = reader.expr();
+    if let Some(extra) = reader.peek().map(str::to_string) {
+        // Something is left that nothing could attach to — a stray `)`, or a
+        // word after one. Refused rather than dropped: a bracket in the wrong
+        // place changes what the rest of the question means.
+        q.refused.push(format!("'{extra}' has nothing to join onto"));
+    }
+    q.filter = filter.unwrap_or_default();
+    q
+}
+
+/// A token stream being read as a tree.
+///
+/// Recursive descent over §3's grammar, which is Lucene's precedence and
+/// everyone else's: `NOT` binds tighter than `AND`, which binds tighter than
+/// `OR`, and brackets beat all three.
+struct Reader<'a> {
+    tokens: &'a [String],
+    at: usize,
+    q: &'a mut Query,
+}
+
+/// The words that are structure rather than something to search for.
+///
+/// Upper case only, as in Lucene — and here it earns its keep twice over,
+/// because `or` and `and` are ordinary English and `không` is not the point:
+/// a vault holds sentences, and a search for the word "or" must stay a search
+/// for the word "or".
+const OR: &str = "OR";
+const AND: &str = "AND";
+const NOT: &str = "NOT";
+
+impl Reader<'_> {
+    fn peek(&self) -> Option<&str> {
+        self.tokens.get(self.at).map(String::as_str)
+    }
+
+    fn take(&mut self) -> Option<&str> {
+        let token = self.tokens.get(self.at).map(String::as_str);
+        if token.is_some() {
+            self.at += 1;
+        }
+        token
+    }
+
+    /// `or := and { "OR" and }`
+    fn expr(&mut self) -> Option<Expr> {
+        let mut branches = Vec::new();
+        if let Some(first) = self.all() {
+            branches.push(first);
+        }
+        while self.peek() == Some(OR) {
+            self.at += 1;
+            match self.all() {
+                Some(next) => branches.push(next),
+                // `a OR` on its own is somebody mid-sentence, and answering it
+                // as though the OR were not there would quietly narrow the
+                // question. The bar re-parses on every keystroke, so this is
+                // the state between two words — it has to say so, not guess.
+                None => self.q.refused.push("'OR' needs something on both sides".into()),
+            }
+        }
+        match branches.len() {
+            0 => None,
+            1 => branches.pop(),
+            _ => Some(Expr::Or(branches)),
+        }
+    }
+
+    /// `and := unary { [ "AND" ] unary }` — juxtaposition is AND.
+    fn all(&mut self) -> Option<Expr> {
+        let mut branches = Vec::new();
+        loop {
+            match self.peek() {
+                None | Some(OR) | Some(")") => break,
+                Some(AND) => {
+                    self.at += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            let before = self.at;
+            if let Some(branch) = self.unary() {
+                branches.push(branch);
+            }
+            // A token that was shaping (`sort:`) or a refusal yields nothing,
+            // and that is fine — but it must still have been consumed, or this
+            // loops for ever.
+            if self.at == before {
+                self.at += 1;
+            }
+        }
+        match branches.len() {
+            0 => None,
+            1 => branches.pop(),
+            _ => Some(Expr::And(branches)),
+        }
+    }
+
+    /// `unary := [ "-" | "NOT" ] atom`
+    ///
+    /// A minus glued to the front of a word is the same thing as the word
+    /// `NOT` in front of it, so both strip and then read what is left **as an
+    /// ordinary term**. That is the whole fix for `-with:khánh`: the old
+    /// reader knew its own small list of what could be negated — a tag, a
+    /// queryable key, a word — and `with:` was not on it, so the question
+    /// quietly became *a note whose `with` frontmatter field is not khánh*.
+    /// There is no list now. Whatever can be asked can be un-asked.
+    fn unary(&mut self) -> Option<Expr> {
+        if matches!(self.peek(), Some(NOT) | Some("-")) {
+            self.at += 1;
+            let inner = self.atom()?;
+            return Some(Expr::Not(Box::new(inner)));
+        }
+        // `-x`, with nothing between the minus and the x. `--` is left alone:
+        // it is how a command line writes a flag, not how a person writes
+        // "without".
+        if let Some(token) = self.peek() {
+            if token.starts_with('-') && token.chars().count() > 1 && !token.starts_with("--") {
+                let rest = self.take().expect("a token that was just peeked at")[1..].to_string();
+                return self.read_term(rest).map(|inner| Expr::Not(Box::new(inner)));
+            }
+        }
+        self.atom()
+    }
+
+    /// `atom := "(" expr ")" | term`
+    fn atom(&mut self) -> Option<Expr> {
+        if self.peek() == Some("(") {
+            self.at += 1;
+            let inner = self.expr();
+            if self.peek() == Some(")") {
+                self.at += 1;
+            } else {
+                self.q.refused.push("a bracket was opened and not closed".into());
+            }
+            return inner;
+        }
+        let token = self.take()?.to_string();
+        self.read_term(token)
+    }
+
+    /// One token as a condition, or nothing when it was not one.
+    ///
+    /// `sort:`, `columns:`, `limit:` and `in:title` land on the query rather
+    /// than in the tree — they say nothing about *which* rows match — and a
+    /// word the grammar cannot read lands in `refused`. Both come back as
+    /// `None`, which the caller treats as "that token was not a condition".
+    fn read_term(&mut self, token: String) -> Option<Expr> {
+        let q = &mut *self.q;
         let lower = token.to_lowercase();
 
         // ── The timeline's own words ───────────────────────────────
@@ -280,10 +635,7 @@ pub fn parse(raw: &str) -> Query {
         // read, and a date only where `timeline::when` can read it.
         if let Some(stripped) = lower.strip_prefix("when:") {
             let value = unquoted(stripped);
-            if !value.is_empty() {
-                q.filter.push(Expr::Term(Term::text(Field::When, value)));
-            }
-            continue;
+            return (!value.is_empty()).then(|| Expr::Term(Term::text(Field::When, value)));
         }
         // `with:`, `where:` and `about:` are three of §4.2's four roles. The
         // fourth, `evidence`, is not a question anybody asks: nobody looks for
@@ -295,15 +647,12 @@ pub fn parse(raw: &str) -> Query {
             .find(|word| lower.starts_with(word))
         {
             let value = unquoted(&token[word.len()..]);
-            if !value.is_empty() {
-                let field = match word {
-                    "with:" => Field::With,
-                    "place:" => Field::Place,
-                    _ => Field::About,
-                };
-                q.filter.push(Expr::Term(Term::text(field, value)));
-            }
-            continue;
+            let field = match word {
+                "with:" => Field::With,
+                "place:" => Field::Place,
+                _ => Field::About,
+            };
+            return (!value.is_empty()).then(|| Expr::Term(Term::text(field, value)));
         }
         // The two words §11 renamed. Refused rather than quietly left to the
         // property catch-all below, where `where:hanoi` would become a filter
@@ -318,14 +667,11 @@ pub fn parse(raw: &str) -> Query {
                 renamed.0.trim_end_matches(':'),
                 renamed.1.trim_end_matches(':')
             ));
-            continue;
+            return None;
         }
         if let Some(stripped) = lower.strip_prefix("shape:") {
             let value = unquoted(stripped);
-            if !value.is_empty() {
-                q.filter.push(Expr::Term(Term::text(Field::Shape, value)));
-            }
-            continue;
+            return (!value.is_empty()).then(|| Expr::Term(Term::text(Field::Shape, value)));
         }
         if let Some(stripped) = lower.strip_prefix("size:") {
             let value = unquoted(stripped);
@@ -341,22 +687,26 @@ pub fn parse(raw: &str) -> Query {
             // against a vault — §16 Bước 8 showed the distribution is
             // currently degenerate, so fixing numbers to words now would be
             // fixing them to a broken one.
-            match split_comparison(value) {
+            return match split_comparison(value) {
                 Some((comparison, rest)) => match rest.trim().parse::<f64>() {
-                    Ok(number) => q.filter.push(Expr::Term(Term {
+                    Ok(number) => Some(Expr::Term(Term {
                         field: Field::Size,
                         value: Value::Number(comparison, number),
                     })),
-                    Err(_) => q
-                        .refused
-                        .push(format!("'{rest}' is not a size to compare against")),
+                    Err(_) => {
+                        q.refused
+                            .push(format!("'{rest}' is not a size to compare against"));
+                        None
+                    }
                 },
-                None if value.is_empty() => {}
-                None => q.refused.push(format!(
-                    "'size:{value}' has to say which way — write size:>={value} or size:<={value}"
-                )),
-            }
-            continue;
+                None if value.is_empty() => None,
+                None => {
+                    q.refused.push(format!(
+                        "'size:{value}' has to say which way — write size:>={value} or size:<={value}"
+                    ));
+                    None
+                }
+            };
         }
 
         // `type:` and `is:` are the same filter. `is:` came first and is what
@@ -371,20 +721,14 @@ pub fn parse(raw: &str) -> Query {
             .strip_prefix("is:")
             .or_else(|| lower.strip_prefix("type:"))
         {
-            if !stripped.is_empty() {
-                q.filter.push(Expr::Term(Term::text(Field::Kind, stripped)));
-            }
-            continue;
+            return (!stripped.is_empty()).then(|| Expr::Term(Term::text(Field::Kind, stripped)));
         }
         if let Some(stripped) = lower.strip_prefix("status:") {
             // Same widening, and here it was not merely narrow but wrong: the
             // old list read `in-progress` while every task in every vault is
             // written `in_progress`, and `backlog` and `canceled` — both real
             // statuses the Tasks app writes — were not on it at all.
-            if !stripped.is_empty() {
-                q.filter.push(Expr::Term(Term::text(Field::Status, stripped)));
-            }
-            continue;
+            return (!stripped.is_empty()).then(|| Expr::Term(Term::text(Field::Status, stripped)));
         }
 
         // `date:` used to be read here into a field no runner ever looked at,
@@ -394,23 +738,14 @@ pub fn parse(raw: &str) -> Query {
 
         if lower == "in:title" {
             q.title_only = true;
-            continue;
+            return None;
         }
 
         if token.starts_with('#') && token.len() > 1 {
-            q.filter
-                .push(Expr::Term(Term::text(Field::Tag, &token[1..])));
-            continue;
+            return Some(Expr::Term(Term::text(Field::Tag, &token[1..])));
         }
         if lower.starts_with("tag:") && lower.len() > 4 {
-            q.filter
-                .push(Expr::Term(Term::text(Field::Tag, strip_quotes(&lower[4..]))));
-            continue;
-        }
-
-        if token.starts_with('-') && token.len() > 1 && !token.starts_with("--") {
-            q.filter.push(negated(&token[1..], &lower[1..]));
-            continue;
+            return Some(Expr::Term(Term::text(Field::Tag, strip_quotes(&lower[4..]))));
         }
 
         // How a table built from this query should be shaped. These say nothing
@@ -430,7 +765,7 @@ pub fn parse(raw: &str) -> Query {
                 q.refused
                     .push(format!("'{key}' is not something a query can sort by"));
             }
-            continue;
+            return None;
         }
 
         if let Some(rest) = lower.strip_prefix("columns:") {
@@ -444,7 +779,7 @@ pub fn parse(raw: &str) -> Query {
                 q.refused
                     .push(format!("'{rest}' is not a column a query can show"));
             }
-            continue;
+            return None;
         }
 
         if let Some(rest) = lower.strip_prefix("limit:") {
@@ -454,7 +789,7 @@ pub fn parse(raw: &str) -> Query {
                     .refused
                     .push(format!("'{rest}' is not a number of rows")),
             }
-            continue;
+            return None;
         }
 
         // Any other `key:value` is a filter on a frontmatter key of that name.
@@ -466,51 +801,17 @@ pub fn parse(raw: &str) -> Query {
                     Some((op, rest)) => Value::Compare(op, rest.to_string()),
                     None => Value::Text(value.to_string()),
                 };
-                q.filter.push(Expr::Term(Term {
+                return Some(Expr::Term(Term {
                     field: Field::Prop(key.to_string()),
                     value,
                 }));
-                continue;
             }
         }
 
-        q.filter.push(Expr::Term(Term::text(Field::Text, token)));
-    }
 
-    q
-}
-
-/// What `-x` means, given the text after the minus.
-///
-/// `written` keeps its casing so `-#Gia-Đình` excludes the tag as spelled;
-/// `lower` is what the key/value forms are read from, the way they are
-/// everywhere else.
-fn negated(written: &str, lower: &str) -> Expr {
-    // `-#tag` excludes the tag, not the characters. It has to be read before
-    // the key/value split, which would otherwise see no colon and fall through
-    // to a word exclusion — asking for notes that do not contain the literal
-    // text "#gia-đình", which is every note, tagged or not.
-    if let Some(tag) = written.strip_prefix('#') {
-        if !tag.is_empty() {
-            return Expr::Not(Box::new(Expr::Term(Term::text(Field::Tag, tag))));
+            Some(Expr::Term(Term::text(Field::Text, as_phrase(&token))))
         }
     }
-    // `-key:value` is a property exclusion, not a word to avoid. A bare
-    // `-draft` means "no note whose text says draft"; `-status:done` means
-    // "not finished", and a note that never had a status satisfies it.
-    if let Some((key, value)) = lower.split_once(':') {
-        if !key.is_empty() && !value.is_empty() && is_queryable_key(key) {
-            return Expr::Not(Box::new(Expr::Term(Term::text(
-                Field::Prop(key.to_string()),
-                value,
-            ))));
-        }
-    }
-    Expr::Not(Box::new(Expr::Term(Term::text(
-        Field::Text,
-        strip_quotes(written),
-    ))))
-}
 
 #[cfg(test)]
 mod tests {
@@ -526,11 +827,11 @@ mod tests {
         let q = parse("is:note #gia-đình báo");
         assert_eq!(
             q.filter,
-            vec![
+            Expr::And(vec![
                 term(Field::Kind, "note"),
                 term(Field::Tag, "gia-đình"),
                 term(Field::Text, "báo"),
-            ]
+            ])
         );
     }
 
@@ -540,12 +841,115 @@ mod tests {
         // way to say "not". The tree says it once.
         assert_eq!(
             parse("-status:done -#gia-đình -báo").filter,
-            vec![
-                Expr::Not(Box::new(term(Field::Prop("status".into()), "done"))),
+            Expr::And(vec![
+                Expr::Not(Box::new(term(Field::Status, "done"))),
                 Expr::Not(Box::new(term(Field::Tag, "gia-đình"))),
                 Expr::Not(Box::new(term(Field::Text, "báo"))),
-            ]
+            ])
         );
+    }
+
+    /// `NOT` binds tighter than `AND`, which binds tighter than `OR` — §3,
+    /// and everybody else's. Written out as a tree because that is the only
+    /// place the precedence is visible.
+    #[test]
+    fn either_binds_loosest_and_not_binds_tightest() {
+        assert_eq!(
+            parse("#a #b OR #c").filter,
+            Expr::Or(vec![
+                Expr::And(vec![term(Field::Tag, "a"), term(Field::Tag, "b")]),
+                term(Field::Tag, "c"),
+            ])
+        );
+        assert_eq!(
+            parse("(#a OR #b) #c").filter,
+            Expr::And(vec![
+                Expr::Or(vec![term(Field::Tag, "a"), term(Field::Tag, "b")]),
+                term(Field::Tag, "c"),
+            ]),
+            "brackets beat both"
+        );
+        assert_eq!(parse("#a AND #b").filter, parse("#a #b").filter, "AND may be said");
+    }
+
+    /// Only shouted. A vault holds sentences, and somebody searching for the
+    /// English word "or" must find it.
+    #[test]
+    fn the_operators_are_upper_case_or_they_are_words() {
+        assert_eq!(
+            parse("#a or #b").filter,
+            Expr::And(vec![
+                term(Field::Tag, "a"),
+                term(Field::Text, "or"),
+                term(Field::Tag, "b"),
+            ])
+        );
+    }
+
+    /// The debt step 0 could not pay. `-with:khánh` used to become *a note
+    /// whose `with` frontmatter field is not khánh*, because the reader knew a
+    /// small list of what could be negated and `with:` was not on it.
+    #[test]
+    fn anything_that_can_be_asked_can_be_un_asked() {
+        for (written, field) in [
+            ("-with:khánh", Field::With),
+            ("-when:2019", Field::When),
+            ("-shape:chore", Field::Shape),
+            ("-#gia-đình", Field::Tag),
+            ("-status:done", Field::Status),
+        ] {
+            let Expr::Not(inner) = parse(written).filter else {
+                panic!("'{written}' did not read as a negation");
+            };
+            let Expr::Term(term) = *inner else {
+                panic!("'{written}' negated something other than a condition");
+            };
+            assert_eq!(term.field, field, "{written}");
+        }
+        // And a question that negates one of the timeline's words is still a
+        // question about the timeline.
+        assert_eq!(parse("-with:khánh").source_of(), Source::Events);
+    }
+
+    /// A bracket in the wrong place changes what the rest of the question
+    /// means, so it is said out loud rather than dropped.
+    #[test]
+    fn a_bracket_that_does_not_close_is_refused() {
+        for broken in ["(#a", "#a)", "#a OR", "((#a)"] {
+            assert!(!parse(broken).refused.is_empty(), "'{broken}' was let through");
+        }
+        assert!(parse("(#a)").refused.is_empty(), "and a closed one is fine");
+    }
+
+    /// A name with a bracket after it is one word, not a group — otherwise
+    /// step 6's `same-day-as(today)` could never be written.
+    #[test]
+    fn a_bracket_that_belongs_to_a_name_stays_with_it() {
+        assert_eq!(
+            parse("when:same-day-as(today)").filter,
+            term(Field::When, "same-day-as(today)")
+        );
+    }
+
+    /// What the assistant does when requiring every word found nothing. It
+    /// used to be a flag only the FTS path read; now it is the language.
+    #[test]
+    fn widening_to_any_word_keeps_every_other_filter_required() {
+        let asked = parse("is:note decide pricing disagreed");
+        assert_eq!(asked.word_count(), 3);
+        assert_eq!(
+            asked.any_word().filter,
+            Expr::And(vec![
+                term(Field::Kind, "note"),
+                Expr::Or(vec![
+                    term(Field::Text, "decide"),
+                    term(Field::Text, "pricing"),
+                    term(Field::Text, "disagreed"),
+                ]),
+            ])
+        );
+        // One word is already as wide as it gets.
+        assert_eq!(parse("is:note decide").any_word().filter, parse("is:note decide").filter);
     }
 
     #[test]
@@ -553,7 +957,7 @@ mod tests {
         // `sort:` says nothing about which rows match, so it is not in the
         // filter — otherwise every walker of the tree would have to skip it.
         let q = parse("is:task sort:-priority limit:5 columns:title");
-        assert_eq!(q.filter, vec![term(Field::Kind, "task")]);
+        assert_eq!(q.filter, term(Field::Kind, "task"));
         assert_eq!(q.limit, Some(5));
         assert_eq!(q.columns, vec!["title"]);
         assert!(q.sort.is_some_and(|s| s.descending && s.key == "priority"));
@@ -565,10 +969,10 @@ mod tests {
     #[test]
     fn the_flat_view_refuses_an_or_rather_than_keeping_one_branch() {
         let either = Query {
-            filter: vec![Expr::Or(vec![
+            filter: Expr::Or(vec![
                 term(Field::Tag, "gia-đình"),
                 term(Field::Tag, "công-việc"),
-            ])],
+            ]),
             ..Default::default()
         };
         let flat = ParsedQuery::of(either);
@@ -582,10 +986,10 @@ mod tests {
     #[test]
     fn the_flat_view_refuses_a_negated_group_too() {
         let neither = Query {
-            filter: vec![Expr::Not(Box::new(Expr::And(vec![
+            filter: Expr::Not(Box::new(Expr::And(vec![
                 term(Field::Tag, "gia-đình"),
                 term(Field::Kind, "note"),
-            ])))],
+            ]))),
             ..Default::default()
         };
         let flat = ParsedQuery::of(neither);
@@ -601,5 +1005,6 @@ mod tests {
         assert_eq!(parse_query("with:“Khánh”").with, vec!["Khánh"]);
         assert_eq!(parse_query("tag:“gia đình”").tag_filters, vec!["gia đình"]);
         assert_eq!(parse_query("-“báo cáo”").exclude_terms, vec!["báo cáo"]);
+        assert_eq!(parse_query("“báo cáo”").fts_terms, vec!["\"báo cáo\""]);
     }
 }

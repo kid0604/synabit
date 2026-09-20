@@ -318,19 +318,12 @@ impl ParsedQuery {
     /// smaller question.
     pub fn of(query: Query) -> ParsedQuery {
         let mut pq = ParsedQuery {
-            is_empty: true,
+            is_empty: query.asks_nothing(),
             title_only: query.title_only,
             refused: query.refused,
             source: query.source,
             ..Default::default()
         };
-        // Naming the table is asking a question. `events` on its own is "the
-        // whole timeline", which is a thing somebody means; refusing it as
-        // empty would make the only way to see everything a filter that
-        // excludes nothing.
-        if query.source.is_some() {
-            pq.is_empty = false;
-        }
         // Shaping words are a question too: `limit:20` on its own is a page of
         // the vault, not an empty search bar.
         if query.sort.is_some() || !query.columns.is_empty() || query.limit.is_some() {
@@ -339,9 +332,8 @@ impl ParsedQuery {
         pq.sort = query.sort;
         pq.columns = query.columns;
         pq.limit = query.limit;
-        for branch in query.filter {
-            pq.take(branch);
-        }
+        pq.offset = query.offset;
+        pq.take(query.filter);
         pq
     }
 
@@ -349,25 +341,29 @@ impl ParsedQuery {
     fn take(&mut self, branch: Expr) {
         match branch {
             Expr::Term(term) => {
-                if self.keep(term) {
-                    self.is_empty = false;
-                }
+                self.keep(term);
             }
             Expr::Not(inner) => match *inner {
                 Expr::Term(Term {
                     field: Field::Tag,
                     value: Value::Text(tag),
-                }) => {
-                    self.tag_exclusions.push(tag);
-                    self.is_empty = false;
-                }
+                }) => self.tag_exclusions.push(tag),
                 Expr::Term(Term {
                     field: Field::Prop(key),
                     value: Value::Text(value),
-                }) => {
-                    self.property_exclusions.push((key, value));
-                    self.is_empty = false;
-                }
+                }) => self.property_exclusions.push((key, value)),
+                // `status` and `type` have a field of their own in the tree
+                // because the runners read them from a known place — but in
+                // the flat shape the only slot for "not this" is the property
+                // list, and the property list is where both of them live.
+                Expr::Term(Term {
+                    field: Field::Status,
+                    value: Value::Text(value),
+                }) => self.property_exclusions.push(("status".to_string(), value)),
+                Expr::Term(Term {
+                    field: Field::Kind,
+                    value: Value::Text(value),
+                }) => self.property_exclusions.push(("type".to_string(), value)),
                 Expr::Term(Term {
                     field: Field::Text,
                     value: Value::Text(word),
@@ -377,7 +373,11 @@ impl ParsedQuery {
                     // nobody means that by typing `-draft` into a search bar,
                     // so the query stays empty until something positive joins
                     // it.
-                    self.exclude_terms.push(word);
+                    //
+                    // Bare, because this field's readers write their own `NOT
+                    // "…"` around it — quoting it twice is an FTS5 syntax
+                    // error, which is a search bar that stops answering.
+                    self.exclude_terms.push(strip_quotes(&word).to_string());
                 }
                 other => self.refused.push(format!(
                     "{} cannot be negated on its own yet",

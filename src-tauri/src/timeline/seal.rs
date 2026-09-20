@@ -929,7 +929,7 @@ mod tests {
         }
         let seals = Seals::read(&db, "/nonexistent-vault").expect("seals");
         let mut result = db
-            .run_node_query(&crate::search::parse_query("type:task"))
+            .run_node_query(&crate::query::parse("type:task"))
             .expect("query");
         assert_eq!(result.total, 2, "the fixture counts both");
 
