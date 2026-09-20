@@ -896,7 +896,7 @@ mod tests {
         let notes = answer(&["when", "title"], &[&["2019-11-05", "a"], &["2021-03-14", "b"]]);
         let said = Said(Default::default(), vec!["một".into(), "hai".into()]);
         let got = run_around(
-            &parse("notes | explode sentences"),
+            &parse("nodes | explode sentences"),
             notes,
             &Around { today: day(2026, 9, 20), words: Some(&said), asker: None },
         )
@@ -932,7 +932,7 @@ mod tests {
 
         let said = Said(Default::default(), vec!["một".into()]);
         let got = run_around(
-            &parse("notes | explode sentences"),
+            &parse("nodes | explode sentences"),
             events,
             &Around { today: day(2026, 9, 20), words: Some(&said), asker: None },
         )
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn a_question_that_would_spend_refuses_and_says_what_it_would_cost() {
         let rows = answer(&["title"], &[&["a"], &["b"], &["c"], &["d"]]);
-        let why = run_on(&parse("notes | ask 2"), rows, day(2026, 9, 20))
+        let why = run_on(&parse("nodes | ask 2"), rows, day(2026, 9, 20))
             .expect_err("there is nowhere to spend")
             .to_string();
         assert!(why.contains("would send 4 lines"), "{why}");
@@ -959,7 +959,7 @@ mod tests {
     #[test]
     fn asking_is_skipped_when_there_is_nothing_to_choose_between() {
         let rows = answer(&["title"], &[&["a"], &["b"]]);
-        let got = run_on(&parse("notes | ask 5"), rows, day(2026, 9, 20))
+        let got = run_on(&parse("nodes | ask 5"), rows, day(2026, 9, 20))
             .expect("no call, so no asker needed");
         assert_eq!(got.rows.len(), 2);
     }
@@ -973,7 +973,7 @@ mod tests {
         let rows = answer(&["title"], &[&["a"], &["b"], &["c"], &["d"]]);
         let picks = Picks(Default::default(), vec![2, 99, 0]);
         let got = run_around(
-            &parse("notes | ask 3"),
+            &parse("nodes | ask 3"),
             rows,
             &Around { today: day(2026, 9, 20), words: None, asker: Some(&picks) },
         )
@@ -993,6 +993,6 @@ mod tests {
     #[test]
     fn explode_without_a_vault_refuses_rather_than_answering_emptily() {
         let notes = answer(&["when", "title"], &[&["2019-11-05", "a"]]);
-        assert!(run_on(&parse("notes | explode sentences"), notes, day(2026, 9, 20)).is_err());
+        assert!(run_on(&parse("nodes | explode sentences"), notes, day(2026, 9, 20)).is_err());
     }
 }

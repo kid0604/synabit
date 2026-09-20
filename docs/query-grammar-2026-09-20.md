@@ -41,7 +41,7 @@ nên không thành thấu kính được).
 ```
 query      := [ source ] expr { "|" stage }
 
-source     := "notes" | "events"
+source     := "nodes" | "events"
 
 expr       := or
 or         := and { "OR" and }
@@ -73,7 +73,7 @@ trong một câu người ta đang tìm.
 
 ```
 events  with:khánh when:2019
-notes   #gia-đình status:done
+nodes   #gia-đình status:done
 ```
 
 Không bắt buộc.
@@ -85,7 +85,7 @@ Không bắt buộc.
 > — y như hôm nay. Nêu nguồn ra mặt đáng giá vì nó cho một câu **dùng từ của cả hai
 > nửa** có đúng một nghĩa, chứ không phải vì đoán là sai khi chỉ có một nửa để đoán.
 
-Và **một mình nó thì không phải nguồn, nó là một từ.** `notes` với `events` là tiếng
+Và **một mình nó thì không phải nguồn, nó là một từ.** `nodes` với `events` là tiếng
 Anh bình thường, mà mấy ô tìm kiếm chữ trần (`search_notes`, `search_tasks`…) đưa
 thẳng thứ người ta gõ vào bộ phân tích này. Nuốt một từ đứng một mình ở đó sẽ lặng lẽ
 biến một lượt tìm thành một lượt liệt kê tất cả. "Cả dòng thời gian" vẫn viết được:
@@ -104,7 +104,7 @@ cái gì, điều mà cách ngầm không bao giờ nói được.
 
 Trường thuộc về nguồn, như cột thuộc về bảng trong KQL.
 
-| `notes` | `events` |
+| `nodes` | `events` |
 | --- | --- |
 | `type:` (bí danh `is:`) | `when:` |
 | `#tag` / `tag:` | `with:` — ai có mặt |
@@ -310,7 +310,8 @@ lý do phải chốt trước Bước 5.
 | `date:…` | `when:…` | cái cũ **không làm gì cả** — xem §14.1 |
 | `in:title` | *(giữ nguyên)* | nó **có** chạy — xem ghi chú §14.1 |
 | `2016-05/2016-06` | `2016-05..2016-06` | `/` đọc ra `dd/mm`; cũ vẫn nhận |
-| bảng chọn ngầm | `events` / `notes` | xoá một lớp lỗi cả họ |
+| bảng chọn ngầm | `events` / `nodes` | xoá một lớp lỗi cả họ |
+| `notes <câu hỏi>` | `nodes <câu hỏi>` | bảng ấy giữ cả người, cả sách, cả task |
 
 ---
 
@@ -330,12 +331,11 @@ lý do phải chốt trước Bước 5.
    không có (nở dòng, gọi model). Đó là cơ sở, không phải bằng chứng.
 2. **Nguồn đứng đầu không làm phiền người non-tech.** Lý lẽ: chip đầu tiên nói rõ
    đang xem gì, mà cách ngầm không nói. Chưa đo.
-3. **Chữ `notes` gọi đúng cái bảng nó trỏ vào.** Bảng ấy là `nodes` — nó giữ cả
-   người, cả sách, cả task. `notes sort:title` trả về một người và một cuốn sách, mà
-   chữ "notes" không hứa thế. `nodes` thì đúng nhưng là tiếng của máy; `things` thì
-   app đã dùng đúng nghĩa ấy rồi (mini-app Things liệt kê node theo type). Đã giữ
-   `notes` vì đó là chữ trong đặc tả mày đã duyệt — **đổi hay không là quyết định của
-   mày**, và giờ là lúc rẻ nhất.
+3. ~~**Chữ `notes` gọi đúng cái bảng nó trỏ vào.**~~ — **đã chốt 2026-09-20: `nodes`.**
+   Bảng ấy giữ cả người, cả sách, cả task; `notes sort:title` trả về một người và một
+   cuốn sách, mà chữ "notes" không hứa thế. Một chữ phải chịu được việc bị đọc bởi
+   người **không viết ra câu truy vấn ấy**. Chữ cũ **từ chối kèm tên mới** ở đúng chỗ
+   nó từng là nguồn — xem §25.
 4. **`ask` nằm trong ngôn ngữ là đúng.** Nó nghĩa là **một thấu kính đã lưu có thể
    tốn tiền mỗi lần mở**. Hàng rào đề nghị: xem trước số dòng và chi phí trước khi
    chạy, **không bao giờ tự chạy khi mở thấu kính**, và một dấu riêng để nhìn là biết.
@@ -386,7 +386,7 @@ model**. Đổi ngữ pháp mà quên nó thì trợ lý viết ra câu hỏng, 
 | File | Đụng gì |
 | --- | --- |
 | `shared/queryChips.ts` | `SINGULAR`, tách token — phải biết **nhóm** và **giai đoạn** |
-| `shared/lenses.ts` | `SHELF_QUERY` (`is:lens …`) → `notes type:lens …` |
+| `shared/lenses.ts` | `SHELF_QUERY` (`is:lens …`) → `nodes type:lens …` |
 | `task/query.ts` | dịch phương ngữ Tasks sang cú pháp engine |
 | `task/composables/{useTaskFilters,useTaskSearch}.ts` | dựng và đọc chuỗi |
 | `things/composables/{useThingsQuery,useThingsArrangement,useThingsViews}.ts` | dựng `type:` `sort:` `columns:` |
@@ -1320,3 +1320,33 @@ chối, có lý do.
 | Test TypeScript | 1899 (thêm 2) |
 | Cổng đồng thuận | 5 test, có đối chứng |
 | `vue-tsc` | sạch |
+
+---
+
+## 25. `notes` → `nodes` — 2026-09-20
+
+Câu hỏi treo ở §13.3 đã chốt. Bảng ấy giữ **cả người, cả sách, cả task**, nên
+`notes sort:title` trả về một người và một cuốn sách — thứ chữ "notes" không hứa. Một
+chữ trong ngôn ngữ phải chịu được việc bị đọc bởi **người không viết ra câu ấy**.
+
+Ảnh chụp 113 → 115 dòng. Mọi dòng có `notes …` đổi thành `nodes …`, cộng hai dòng mới
+ghi lại chính phép đổi tên:
+
+```
+notes when:2019   → từ chối: 'notes' is now 'nodes'
+notes             → nodes 2   ← một mình nó vẫn là từ người ta đang tìm
+```
+
+**Vì sao phải từ chối chứ không lặng lẽ bỏ.** Xoá `notes` khỏi bảng nguồn thì nó
+không thôi phân tích — nó thành **một từ trần**. Và khi ấy `notes when:2019` biến
+từ *"node mang ngày 2019"* thành *"tìm chữ notes"* cộng `when:2019`, mà câu ấy không
+còn từ nào của node nên nó **đổi luôn sang hỏi sự kiện**. Đúng loại đổi nghĩa trong
+im lặng mà §9 tồn tại để chặn — và lần này nó đổi cả **bảng**.
+
+Nên chữ cũ nằm riêng một chỗ (`RENAMED_SOURCE`), không chung với `where:`/`magnitude:`
+của §11, vì nó không phải một `key:` — nó là **từ đầu tiên của câu, và chỉ ở đó**.
+Một mình nó vẫn là tiếng Anh bình thường, đúng như `nodes` và `events` vẫn thế.
+
+Kèm theo: mấy câu báo lỗi nói *"this question is about notes"* và *"asks about a
+note"* giờ nói **node** — chúng nói về `#tag` với `status:`, vốn là trường của node
+chứ không riêng gì note.

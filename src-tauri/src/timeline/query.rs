@@ -280,7 +280,7 @@ impl Where<'_> {
             // a question is the one thing §9 will not have.
             (field, _) => {
                 return Err(AppError::General(format!(
-                    "{} asks about a note, and this question is about the timeline. \
+                    "{} asks about a node, and this question is about the timeline. \
                      Ask it without the timeline's words, or drop it.",
                     field.written()
                 )))
@@ -297,7 +297,7 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     }
     if query.title_only {
         return Err(AppError::General(
-            "in:title asks about a note, and this question is about the timeline. \
+            "in:title asks about a node, and this question is about the timeline. \
              Ask it without the timeline's words, or drop it."
                 .to_string(),
         ));
@@ -524,14 +524,14 @@ mod tests {
     #[test]
     fn a_question_without_the_timeline_s_words_is_still_a_question_about_notes() {
         for q in ["is:task", "#family", "status:done", "báo cáo"] {
-            assert_eq!(crate::query::parse(q).source_of(), crate::query::Source::Notes, "{q}");
+            assert_eq!(crate::query::parse(q).source_of(), crate::query::Source::Nodes, "{q}");
         }
         for q in ["when:2019", "with:khánh", "place:hanoi", "about:synabit", "shape:occasion", "size:>4"] {
             assert_eq!(crate::query::parse(q).source_of(), crate::query::Source::Events, "{q}");
         }
         // And saying it out loud beats guessing from the words, both ways.
         assert_eq!(crate::query::parse("events #family").source_of(), crate::query::Source::Events);
-        assert_eq!(crate::query::parse("notes when:2019").source_of(), crate::query::Source::Notes);
+        assert_eq!(crate::query::parse("nodes when:2019").source_of(), crate::query::Source::Nodes);
     }
 
     /// The two words §11 renamed say so, rather than quietly becoming a filter

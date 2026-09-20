@@ -88,6 +88,10 @@ describe('The query bar, both ways round', () => {
         expect(chips).toHaveLength(2);
         // Alone it is a word somebody is searching for, as the parser reads it.
         expect(chipsOf('events')[0].key).toBe('');
+        // `nodes`, not `notes` — the table holds people and books too, and the
+        // engine refuses the old word where it used to name the table.
+        expect(chipsOf('nodes #a')[0].key).toBe('source');
+        expect(chipsOf('notes #a')[0].key).toBe('');
     });
 
     /// Lower case is a word, not an operator — the Rust side says so too.

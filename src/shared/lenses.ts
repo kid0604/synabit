@@ -44,10 +44,10 @@ export interface Lens {
 /** The columns a lens is read back through, in the order `cells` arrives in. */
 const COLUMNS = ['title', 'query', 'render', 'icon'] as const;
 
-// `notes` first: a shelf is a list of saved questions, which are nodes, and
+// `nodes` first: a shelf is a list of saved questions, which are nodes, and
 // naming the table means the question cannot drift to the timeline if a word
 // in it ever changes meaning (§4).
-export const SHELF_QUERY = `notes type:lens columns:${COLUMNS.join(',')} sort:title limit:100`;
+export const SHELF_QUERY = `nodes type:lens columns:${COLUMNS.join(',')} sort:title limit:100`;
 
 /**
  * Where a lens file goes.

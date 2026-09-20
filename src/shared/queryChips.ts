@@ -73,9 +73,12 @@ export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort'
  *
  * Alone they are ordinary English, and the Rust parser reads them that way for
  * the same reason — a free-text box would otherwise turn somebody searching
- * for the word "notes" into a listing of every note.
+ * for the word "nodes" into a listing of everything.
+ *
+ * `nodes` and not `notes`: the table holds people, books and tasks too, and a
+ * word has to survive being read by somebody who did not write the query.
  */
-export const SOURCES = ['notes', 'events'];
+export const SOURCES = ['nodes', 'events'];
 
 /** Structure rather than something to search for. Shouted, as in Lucene. */
 const OR = 'OR';

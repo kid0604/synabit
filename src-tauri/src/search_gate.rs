@@ -131,14 +131,14 @@ const ASKED: &[&str] = &[
     "is:task columns:title,priority",
     "is:task limit:1",
     // ── naming the table (§4) ──
-    "notes",
+    "nodes",
     "events",
     "events limit:5",
-    "notes when:2019",
+    "nodes when:2019",
     "events when:2019",
-    "notes with:khánh",
+    "nodes with:khánh",
     "events #gia-đình",
-    "notes #gia-đình",
+    "nodes #gia-đình",
     "events is:note",
     // ── the timeline's words ──
     "when:2019",
@@ -186,7 +186,7 @@ const ASKED: &[&str] = &[
     "events when:2016..2026 | stats count by month | sort count desc",
     "events when:2016..2026 | stats count by month | head 1",
     "events when:2016..2026 | stats count by month | top 1 by count",
-    "notes columns:title,date | stats count by year",
+    "nodes columns:title,date | stats count by year",
     "events when:2016..2026 columns:when,shape | stats count by shape",
     "is:task columns:title,status | stats count by status",
     // a heap to gather by that is not there, and a day that is not there
@@ -201,7 +201,7 @@ const ASKED: &[&str] = &[
     // The gate for this step. Each of these is a hand-written panel today.
     "events when:same-day-as(2019-11-05)",
     "events when:same-day-as(2019-11-05) shape:occasion",
-    "notes when:same-day-as(2019-11-05)",
+    "nodes when:same-day-as(2019-11-05)",
     "events columns:when,who | seq gaps by who",
     "events columns:when,who | seq gaps by who | where quiet > longest",
     "events columns:when,who | seq gaps by who | where times > 1",
@@ -243,9 +243,12 @@ const ASKED: &[&str] = &[
     "-when:2019",
     "sort:tiêu_đề",
     "columns:tiêu_đề",
-    // ── §11: the two words that were renamed ──
+    // ── §11: the words that were renamed ──
     "where:\"Hà Nội\"",
     "magnitude:>2",
+    "notes when:2019",
+    // and on its own it is still the word somebody is searching for
+    "notes",
     "in:title gặp",
     // ── nothing to ask ──
     "",
@@ -336,7 +339,7 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
         (result, _) => result,
     };
 
-    let source = if source == crate::query::Source::Events { "events" } else { "notes " };
+    let source = if source == crate::query::Source::Events { "events" } else { "nodes " };
     match result {
         Ok(found) => {
             // In the order they came back, deliberately: sorting them here

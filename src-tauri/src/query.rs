@@ -45,7 +45,14 @@ use crate::search::{
 /// it is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    Notes,
+    /// Everything the vault holds that is a thing — notes, tasks, people,
+    /// books, and whatever type somebody invented this morning.
+    ///
+    /// Called `nodes` and not `notes`, which is what it was called until
+    /// somebody read `nodes sort:title` coming back with a person and a book
+    /// in it. The word has to survive being read by somebody who did not write
+    /// the query, and "notes" promised something the table does not hold to.
+    Nodes,
     Events,
 }
 
@@ -53,7 +60,7 @@ impl Source {
     /// The word a person writes, and the word shown back to them.
     pub fn word(self) -> &'static str {
         match self {
-            Source::Notes => "notes",
+            Source::Nodes => "nodes",
             Source::Events => "events",
         }
     }
@@ -61,7 +68,7 @@ impl Source {
     /// The source a leading word names, if it names one.
     pub fn of(word: &str) -> Option<Source> {
         match word {
-            "notes" => Some(Source::Notes),
+            "nodes" => Some(Source::Nodes),
             "events" => Some(Source::Events),
             _ => None,
         }
@@ -349,6 +356,13 @@ pub struct Query {
 /// name*, which answers 0 and explains nothing.
 const RENAMED: &[(&str, &str)] = &[("where:", "place:"), ("magnitude:", "size:")];
 
+/// And the one source that was renamed.
+///
+/// Apart from [`RENAMED`] because it is not a `key:` — it is the first word of
+/// a question, and only there. On its own it is still the ordinary English
+/// word somebody may be searching for.
+const RENAMED_SOURCE: (&str, &str) = ("notes", "nodes");
+
 impl Query {
     /// Whether there is nothing here to match on.
     ///
@@ -391,7 +405,7 @@ impl Query {
         match self.source {
             Some(source) => source,
             None if timeline(&self.filter) => Source::Events,
-            None => Source::Notes,
+            None => Source::Nodes,
         }
     }
 
@@ -593,24 +607,34 @@ pub fn parse(raw: &str) -> Query {
     let mut tokens = tokenize(trimmed);
 
     // A source names what a question is **about**, so it is the first word or
-    // it is not the source at all: `#work events` is about notes tagged work
+    // it is not the source at all: `#work events` is about nodes tagged work
     // and the word "events", and reading it the other way would take a word
     // out of somebody's search.
     //
-    // And on its own it is not a question — it is the word. `notes` and
+    // And on its own it is not a question — it is the word. `nodes` and
     // `events` are ordinary English, and the free-text boxes (`search_notes`,
     // `search_tasks`, …) hand whatever was typed straight to this parser.
     // Swallowing a lone word there would quietly turn a search into a listing
     // of everything, with nothing on the screen to say so. "The whole
     // timeline" is still sayable — `events sort:-when` or `events limit:200`
     // — and those say what they want anyway.
-    let names_a_source = tokens.len() > 1
-        && tokens
-            .first()
-            .and_then(|first| Source::of(&first.to_lowercase()))
-            .is_some();
-    if names_a_source {
-        q.source = Source::of(&tokens.remove(0).to_lowercase());
+    let leading = tokens.first().map(|first| first.to_lowercase()).unwrap_or_default();
+    if tokens.len() > 1 {
+        if Source::of(&leading).is_some() {
+            q.source = Source::of(&leading);
+            tokens.remove(0);
+        } else if leading == RENAMED_SOURCE.0 {
+            // Where it used to name a table. Refused rather than left to
+            // become a bare word, which would turn `notes when:2019` from a
+            // question about notes into a search for the word "notes" — and
+            // then, having no node words left, into a question about events.
+            // Exactly the silent change of meaning §9 exists to stop.
+            q.refused.push(format!(
+                "'{}' is now '{}'",
+                RENAMED_SOURCE.0, RENAMED_SOURCE.1
+            ));
+            tokens.remove(0);
+        }
     }
 
     // ── the pipeline, cut off before the expression is read ──
@@ -1323,6 +1347,25 @@ mod tests {
             parse("when:same-day-as(today)").filter,
             term(Field::SameDay, "today")
         );
+    }
+
+    /// The word that names the table was renamed. Where it used to name one,
+    /// it says so — silence there would turn `notes when:2019` from a question
+    /// about nodes into a search for the word "notes", and then, with no node
+    /// words left in it, into a question about events.
+    #[test]
+    fn the_old_name_for_the_table_says_what_it_is_now_called() {
+        let renamed = parse("notes when:2019");
+        assert_eq!(renamed.refused.len(), 1, "{renamed:?}");
+        assert!(renamed.refused[0].contains("nodes"), "{renamed:?}");
+
+        assert_eq!(parse("nodes when:2019").source_of(), Source::Nodes);
+        assert_eq!(parse("nodes when:2019").refused.len(), 0);
+
+        // On its own it is still the ordinary English word, the same as
+        // `nodes` and `events` are.
+        assert_eq!(parse("notes").filter, term(Field::Text, "notes"));
+        assert!(parse("notes").refused.is_empty());
     }
 
     /// §6.2: this day in other years is **not** a span, so it is not a shape

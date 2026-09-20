@@ -345,12 +345,12 @@ impl Where {
             }
             // A field belongs to a source, the way a column belongs to a table
             // (§5). Reaching here with one of the timeline's roles means the
-            // question said `notes` out loud — otherwise those words would have
+            // question said `nodes` out loud — otherwise those words would have
             // chosen the other table themselves — so it is answered with a
             // sentence rather than dropped on the floor.
             (field, _) => {
                 return Err(AppError::General(format!(
-                    "{} asks about an event, and this question is about notes. \
+                    "{} asks about an event, and this question is about nodes. \
                      Start it with `events`, or drop it.",
                     field.written()
                 )))
@@ -589,16 +589,16 @@ mod tests {
 
         let ask = |q: &str| db.run_node_query(&parse_query(q)).expect("query runs");
 
-        let in_2019 = ask("notes when:2019");
+        let in_2019 = ask("nodes when:2019");
         assert_eq!(in_2019.rows.len(), 1, "{:?}", in_2019.rows);
         assert_eq!(in_2019.rows[0].title, "nhật ký");
 
-        let in_2026 = ask("notes when:2026");
+        let in_2026 = ask("nodes when:2026");
         assert_eq!(in_2026.rows.len(), 1, "the one with no date of its own");
         assert_eq!(in_2026.rows[0].title, "không ngày");
 
-        assert_eq!(ask("notes when:2019-11-05").rows.len(), 1, "to the day");
-        assert_eq!(ask("notes when:2020").rows.len(), 0, "and only that day");
+        assert_eq!(ask("nodes when:2019-11-05").rows.len(), 1, "to the day");
+        assert_eq!(ask("nodes when:2020").rows.len(), 0, "and only that day");
     }
 
     /// A field belongs to a source. Saying `notes` and then asking who was
@@ -607,7 +607,7 @@ mod tests {
     fn a_question_about_notes_that_asks_an_events_question_is_told_so() {
         let db = db();
         seed_at(&db, "Notes/a.md", "a", "2026-01-01 00:00:00");
-        let refused = db.run_node_query(&parse_query("notes with:khánh"));
+        let refused = db.run_node_query(&parse_query("nodes with:khánh"));
         let why = refused.expect_err("with: is not a note's field").to_string();
         assert!(why.contains("with:") && why.contains("events"), "{why}");
     }

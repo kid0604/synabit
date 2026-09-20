@@ -71,7 +71,7 @@ pub struct ParsedQuery {
     pub size: Option<(Comparison, f64)>,
     /// Which table the question named, if it named one (§4).
     ///
-    /// `None` is not "notes": it means nobody said, and then the words decide
+    /// `None` is not "nodes": it means nobody said, and then the words decide
     /// — see [`ParsedQuery::source_of`].
     pub source: Option<Source>,
     /// Why this query cannot be answered, if it cannot.
@@ -230,7 +230,7 @@ pub fn json_path_for(key: &str) -> Option<String> {
 /// - `status:done` / `status:todo` / `status:in-progress`: task status filter
 /// - `date:today` / `date:this-week` / `date:this-month`: date filter
 impl ParsedQuery {
-    /// Whether this question is about the timeline rather than about notes.
+    /// Whether this question is about the timeline rather than about nodes.
     ///
     /// The keywords are the selector, deliberately and not as a trick: asking
     /// who was somewhere, or how big a thing was, is only answerable of an
@@ -268,7 +268,7 @@ impl ParsedQuery {
         if timeline {
             Source::Events
         } else {
-            Source::Notes
+            Source::Nodes
         }
     }
 }

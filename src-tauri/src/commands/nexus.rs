@@ -500,7 +500,7 @@ fn answer(
 ) -> AppResult<crate::db::QueryResult> {
     let today = chrono::Local::now().date_naive();
 
-    if asked.source_of() == crate::query::Source::Notes {
+    if asked.source_of() == crate::query::Source::Nodes {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         let found = db.run_node_query(asked)?;
         let words = VaultWords::of(&db, vault_path.unwrap_or(""))?;

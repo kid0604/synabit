@@ -20,7 +20,7 @@ describe('A lens', () => {
     /// the shelf is built out of the machine the shelf is for.
     it('is listed by asking the vault for one, not by a new read path', () => {
         expect(SHELF_QUERY).toContain('type:lens');
-        expect(SHELF_QUERY.startsWith('notes ')).toBe(true);
+        expect(SHELF_QUERY.startsWith('nodes ')).toBe(true);
         expect(SHELF_QUERY).toContain('columns:title,query,render,icon');
     });
 

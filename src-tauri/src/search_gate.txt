@@ -1,29 +1,29 @@
-is:note                            → notes    2 [2021-03-14 · 2019-11-05]
-type:task                          → notes    2 [Làm công văn · Gửi báo cáo quý]
-is:book rating:>3                  → notes    1 [Sách hay]
-#gia-đình                          → notes    1 [2019-11-05]
-tag:công-việc                      → notes    1 [2021-03-14]
-status:done                        → notes    1 [Gửi báo cáo quý]
--status:done                       → notes    6 [Khánh · Minh · 2019-11-05]
-priority:3                         → notes    1 [Gửi báo cáo quý]
-priority:>3                        → notes    1 [Làm công văn]
-author:Nguyễn                      → notes    1 [Sách hay]
-báo cáo                            → notes    2 [2021-03-14 · Gửi báo cáo quý]
+is:note                            → nodes    2 [2021-03-14 · 2019-11-05]
+type:task                          → nodes    2 [Làm công văn · Gửi báo cáo quý]
+is:book rating:>3                  → nodes    1 [Sách hay]
+#gia-đình                          → nodes    1 [2019-11-05]
+tag:công-việc                      → nodes    1 [2021-03-14]
+status:done                        → nodes    1 [Gửi báo cáo quý]
+-status:done                       → nodes    6 [Khánh · Minh · 2019-11-05]
+priority:3                         → nodes    1 [Gửi báo cáo quý]
+priority:>3                        → nodes    1 [Làm công văn]
+author:Nguyễn                      → nodes    1 [Sách hay]
+báo cáo                            → nodes    2 [2021-03-14 · Gửi báo cáo quý]
 -báo                               → refused (nothing to match on)
-"công văn"                         → notes    1 [Làm công văn]
-is:task sort:priority              → notes    2 [Gửi báo cáo quý · Làm công văn]
-is:task sort:-priority             → notes    2 [Làm công văn · Gửi báo cáo quý]
-is:task sort:title                 → notes    2 [Gửi báo cáo quý · Làm công văn]
-is:task columns:title,priority     → notes    2 [Làm công văn · Gửi báo cáo quý]
-is:task limit:1                    → notes    2 [Làm công văn]
-notes                              → notes    2 [2019-11-05 · 2021-03-14]
-events                             → notes    0 []
+"công văn"                         → nodes    1 [Làm công văn]
+is:task sort:priority              → nodes    2 [Gửi báo cáo quý · Làm công văn]
+is:task sort:-priority             → nodes    2 [Làm công văn · Gửi báo cáo quý]
+is:task sort:title                 → nodes    2 [Gửi báo cáo quý · Làm công văn]
+is:task columns:title,priority     → nodes    2 [Làm công văn · Gửi báo cáo quý]
+is:task limit:1                    → nodes    2 [Làm công văn]
+nodes                              → nodes    0 []
+events                             → nodes    0 []
 events limit:5                     → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
-notes when:2019                    → notes    1 [2019-11-05]
+nodes when:2019                    → nodes    1 [2019-11-05]
 events when:2019                   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
-notes with:khánh                   → notes  refused: General application error: with: asks about an event, and this question is about notes. Start it with `events`, or drop it.
-events #gia-đình                   → events refused: General application error: #tag asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
-notes #gia-đình                    → notes    1 [2019-11-05]
+nodes with:khánh                   → nodes  refused: General application error: with: asks about an event, and this question is about nodes. Start it with `events`, or drop it.
+events #gia-đình                   → events refused: General application error: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+nodes #gia-đình                    → nodes    1 [2019-11-05]
 events is:note                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 when:2019                          → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
 when:2019-11-05                    → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
@@ -40,19 +40,19 @@ when:today                         → events   0 []
 when:2019 columns:when,title,who   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
 when:2016..2026 gặp                → events   1 [Gặp Khánh ở quán quen]
 when:2016..2026 -gặp               → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
-#gia-đình OR #công-việc            → notes    2 [2019-11-05 · 2021-03-14]
-is:task OR is:book                 → notes    3 [Sách hay · Gửi báo cáo quý · Làm công văn]
-báo OR văn                         → notes    3 [2021-03-14 · Gửi báo cáo quý · Làm công văn]
-is:task AND status:done            → notes    1 [Gửi báo cáo quý]
+#gia-đình OR #công-việc            → nodes    2 [2019-11-05 · 2021-03-14]
+is:task OR is:book                 → nodes    3 [Sách hay · Gửi báo cáo quý · Làm công văn]
+báo OR văn                         → nodes    3 [2021-03-14 · Gửi báo cáo quý · Làm công văn]
+is:task AND status:done            → nodes    1 [Gửi báo cáo quý]
 with:khánh OR with:minh            → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
 (with:khánh OR with:minh) when:2019 → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
 when:2019 (gặp OR ăn)              → events   1 [Gặp Khánh ở quán quen]
 when:2016..2026 ăn                 → events   0 []
-NOT #gia-đình                      → notes    6 [Khánh · Minh · 2021-03-14]
+NOT #gia-đình                      → nodes    6 [Khánh · Minh · 2021-03-14]
 -shape:chore                       → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 events -with:khánh                 → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
-is:note (#gia-đình OR #công-việc)  → notes    2 [2021-03-14 · 2019-11-05]
-#gia-đình or #công-việc            → notes    0 []
+is:note (#gia-đình OR #công-việc)  → nodes    2 [2021-03-14 · 2019-11-05]
+#gia-đình or #công-việc            → nodes    0 []
 (#gia-đình                         → refused: a bracket was opened and not closed
 #gia-đình)                         → refused: ')' has nothing to join onto
 #gia-đình OR                       → refused: 'OR' needs something on both sides
@@ -62,18 +62,18 @@ events when:2016..2026 | stats count by shape → events refused: General applic
 events when:2016..2026 | stats count by month | sort count desc → events   2 [2019-11 · 2021-03]
 events when:2016..2026 | stats count by month | head 1 → events   2 [2021-03]
 events when:2016..2026 | stats count by month | top 1 by count → events   2 [2019-11]
-notes columns:title,date | stats count by year → notes    2 [2019 · 2021] — 5 with no year
+nodes columns:title,date | stats count by year → nodes    2 [2019 · 2021] — 5 with no year
 events when:2016..2026 columns:when,shape | stats count by shape → events   2 [occasion · chore]
-is:task columns:title,status | stats count by status → notes    1 [done] — 1 with no status
-is:task | stats count by status    → notes  refused: General application error: 'status' is not one of the columns of this answer (title, updated_at). Ask for it with columns: first.
-is:note | stats count by month     → notes    2 [2021-03 · 2019-11]
+is:task columns:title,status | stats count by status → nodes    1 [done] — 1 with no status
+is:task | stats count by status    → nodes  refused: General application error: 'status' is not one of the columns of this answer (title, updated_at). Ask for it with columns: first.
+is:note | stats count by month     → nodes    2 [2021-03 · 2019-11]
 events when:2016..2026 |           → refused: '|' needs something after it
 events when:2016..2026 | stats     → refused: stats needs to be told what to work out
 events when:2016..2026 | wibble    → refused: 'wibble' is not something a question can do
 events when:2016..2026 | head abc  → refused: head needs a number of rows
 events when:same-day-as(2019-11-05) → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
 events when:same-day-as(2019-11-05) shape:occasion → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
-notes when:same-day-as(2019-11-05) → notes    1 [2019-11-05]
+nodes when:same-day-as(2019-11-05) → nodes    1 [2019-11-05]
 events columns:when,who | seq gaps by who → events   2 [Khánh · Minh] — 2 with no who
 events columns:when,who | seq gaps by who | where quiet > longest → events   2 [Khánh · Minh] — 2 with no who
 events columns:when,who | seq gaps by who | where times > 1 → events   0 [] — 2 with no who
@@ -88,26 +88,28 @@ events columns:when,who | seq wibble by who → refused: 'wibble' is not somethi
 events columns:when,who | seq gaps by who | where quiet ~ longest → refused: '~' is not a way of comparing two things
 events when:2019 | explode sentences → events   2 [Hôm nay gặp Khánh ở quán quen. · Nói chuyện hai tiếng.]
 events when:2019 | explode sentences | ask 1 → events refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
-is:note | explode sentences        → notes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
-is:note | explode sentences | ask 15 → notes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
-is:note | explode sentences | ask 1 → notes  refused: General application error: `ask 1` would send 4 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
-is:note | ask 1                    → notes  refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | explode sentences        → nodes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
+is:note | explode sentences | ask 15 → nodes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
+is:note | explode sentences | ask 1 → nodes  refused: General application error: `ask 1` would send 4 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | ask 1                    → nodes  refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
 is:note | explode sentences | ask  → refused: ask needs a number of lines to keep
 is:note | explode wibble           → refused: 'wibble' is not something explode can open up yet
-date:today                         → notes    0 []
-date:2026-06                       → notes    0 []
-is:note date:2026-06               → notes    0 []
+date:today                         → nodes    0 []
+date:2026-06                       → nodes    0 []
+is:note date:2026-06               → nodes    0 []
 is:note when:2019                  → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
-#gia-đình when:2019                → events refused: General application error: #tag asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
-status:done when:2019              → events refused: General application error: status: asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+#gia-đình when:2019                → events refused: General application error: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+status:done when:2019              → events refused: General application error: status: asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
 limit:abc                          → refused: 'abc' is not a number of rows
--#gia-đình                         → notes    6 [Khánh · Minh · 2021-03-14]
+-#gia-đình                         → nodes    6 [Khánh · Minh · 2021-03-14]
 -with:khánh                        → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
 -when:2019                         → events   1 [2021-03-14]
 sort:tiêu_đề                       → refused: 'tiêu_đề' is not something a query can sort by
 columns:tiêu_đề                    → refused: 'tiêu_đề' is not a column a query can show
 where:"Hà Nội"                     → refused: 'where' is now 'place'
 magnitude:>2                       → refused: 'magnitude' is now 'size'
-in:title gặp                       → notes    0 []
+notes when:2019                    → refused: 'notes' is now 'nodes'
+notes                              → nodes    2 [2019-11-05 · 2021-03-14]
+in:title gặp                       → nodes    0 []
                                    → refused (nothing to match on)
                                    → refused (nothing to match on)
