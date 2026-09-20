@@ -213,6 +213,24 @@ primitive, không sửa hợp đồng.
 Một thanh truy vấn trống là một lời từ chối phục vụ. Vault mới đi kèm khoảng **mười
 hai thấu kính**, và chúng **sửa được** — đó là giáo trình.
 
+> **Sửa lại — 2026-09-20, sau khi nhìn thấy nó.** Mười hai là **sai**, và sai theo
+> đúng cách tài liệu này viết ra để tránh. Dựng xong rồi nhìn: mười hai cái chip xếp
+> kín một hàng dưới đáy màn hình — mà **một hàng chip kín chính là tám cái panel**,
+> thứ §2 gọi là triệu chứng. Nó quay lại, mặc áo của thuốc chữa.
+>
+> Nguyên tắc, đúng lời đã sửa nó: **xây database thì thật chi tiết; còn dùng nó thì
+> phải linh hoạt, và người dùng là người quyết**. Một cái kệ đến đã đầy sẵn là app
+> tự quyết hộ người ta rằng họ quan tâm cái gì.
+>
+> Nên: **hai cái, làm mẫu, không phải làm thực đơn.** Mỗi cái một nửa ngôn ngữ —
+> `events when:this-year` là câu đúng ngắn nhất viết được (gọi tên bảng, gọi tên một
+> khoảng thời gian), và `events … | stats count by month` là nửa kia (một ống dẫn,
+> một thứ được tính ra chứ không phải liệt kê ra). Ngắn đủ để liếc một cái là đọc
+> được — đó là toàn bộ việc của một cái mẫu.
+>
+> Còn lại học bằng hai đường mở rộng được: **hỏi bằng lời rồi giữ lại câu trợ lý
+> viết** (§6.2, bước 7), hoặc sửa một trong hai cái mẫu.
+
 Tám cái đầu là tám panel hiện có. Bốn cái còn lại chính là thứ database đầy đủ mở ra
 mà hôm nay chưa hỏi được:
 

@@ -97,11 +97,21 @@ describe('A lens', () => {
 
     // ─── The curriculum ─────────────────────────────────────────
 
-    /// §8: an empty query bar is a refusal to serve.
-    it('offers a dozen questions to a shelf with nothing on it', () => {
+    /// §8: an empty query bar is a refusal to serve — and a shelf that
+    /// arrives full is the app deciding what somebody is interested in. An
+    /// example, not a menu.
+    it('offers an example or two to a shelf with nothing on it, and no more', () => {
         expect(lensesOn([])).toHaveLength(STARTERS.length);
-        expect(STARTERS.length).toBeGreaterThanOrEqual(12);
+        expect(STARTERS.length).toBeGreaterThan(0);
+        expect(STARTERS.length).toBeLessThanOrEqual(2);
         expect(lensesOn([]).every(isStarter)).toBe(true);
+    });
+
+    /// An example has to be readable at a glance, or it is not an example.
+    it('keeps each example short enough to read', () => {
+        for (const starter of STARTERS) {
+            expect(starter.query.length, starter.query).toBeLessThan(50);
+        }
     });
 
     /// Matched by the question, not the name: the name is theirs to change,
