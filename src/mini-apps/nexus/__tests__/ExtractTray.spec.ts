@@ -85,8 +85,74 @@ describe('ExtractTray', () => {
 
     await row.find('[data-accept]').trigger('click');
     await flushPromises();
-    expect(invoke).toHaveBeenCalledWith('timeline_extract_review', { vaultPath: '/vault', itemId: 'x1', accept: true, nodeId: 'Notes/2024-06-02.md' });
+    // `title: null` — the sentence was left as the model wrote it.
+    expect(invoke).toHaveBeenCalledWith('timeline_extract_review', {
+      vaultPath: '/vault',
+      itemId: 'x1',
+      accept: true,
+      nodeId: 'Notes/2024-06-02.md',
+      title: null,
+    });
     expect(wrapper.findAll('[data-proposal]')).toHaveLength(0);
     expect(wrapper.emitted('changed')).toHaveLength(1);
+  });
+
+  // ─── A proposal that is nearly right ────────────────────────
+
+  const withProposal = () =>
+    mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+      proposals: [proposal],
+    }));
+
+  const lastReview = () =>
+    vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_review').pop()?.[1];
+
+  /// Keep-or-discard makes a nearly right proposal either kept wrong or
+  /// thrown away. This is the third thing.
+  it('can be reworded before it is kept', async () => {
+    const wrapper = await withProposal();
+    await wrapper.find('[data-reword]').trigger('click');
+
+    const box = wrapper.find('[data-proposal-title]');
+    expect((box.element as HTMLTextAreaElement).value).toBe(proposal.title);
+    await box.setValue('Took Mum to her eye appointment');
+    await wrapper.find('[data-accept]').trigger('click');
+    await flushPromises();
+
+    expect(lastReview()).toMatchObject({
+      itemId: 'x1',
+      accept: true,
+      title: 'Took Mum to her eye appointment',
+    });
+  });
+
+  /// Opening the box and leaving it as it was is not a decision. Sending the
+  /// same sentence back would record one nobody made.
+  it('sends no rewording when the sentence was not changed', async () => {
+    const wrapper = await withProposal();
+    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-proposal-title]').setValue(`  ${proposal.title}  `);
+    await wrapper.find('[data-accept]').trigger('click');
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ title: null });
+  });
+
+  /// The quote is the line in the note this was read from — what makes the
+  /// whole of extraction answerable. It is shown, and it is not a box.
+  it('shows the evidence and offers no way to rewrite it', async () => {
+    const wrapper = await withProposal();
+    expect(wrapper.text()).toContain(proposal.quote);
+    await wrapper.find('[data-reword]').trigger('click');
+    expect(wrapper.findAll('textarea')).toHaveLength(1);
+  });
+
+  it('discards without asking about the sentence', async () => {
+    const wrapper = await withProposal();
+    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-proposal-title]').setValue('does not matter');
+    await wrapper.find('[data-decline]').trigger('click');
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ accept: false, title: null });
   });
 });

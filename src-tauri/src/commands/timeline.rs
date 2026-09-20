@@ -758,6 +758,9 @@ pub fn timeline_extract_review(
     item_id: String,
     accept: bool,
     node_id: Option<String>,
+    // The sentence the person wants kept, when it is not the one the model
+    // wrote. See the note on editing below.
+    title: Option<String>,
 ) -> AppResult<()> {
     let device = crate::commands::sync::ensure_device_id(&app_handle).map_err(AppError::General)?;
     let item = {
@@ -766,6 +769,10 @@ pub fn timeline_extract_review(
         extract::item(timeline.conn(), &item_id)?
     }
     .ok_or_else(|| AppError::General(format!("No proposal {item_id}")))?;
+
+    // The sentence is the person's to fix; the quote is not theirs to write.
+    // See `extract::as_kept`.
+    let item = extract::as_kept(&item, title.as_deref())?;
     // Where the note is now, as the tray saw it: a note moved since it was
     // read is kept into at its new path.
     let node = node_id

@@ -1131,6 +1131,39 @@ pub fn happened_text(item: &Extracted) -> String {
 }
 
 /// The `moments` entry an accepted proposal becomes. See `derive::moments`.
+/// The proposal as the person decided to keep it.
+///
+/// # Why the sentence can be edited and the quote cannot
+///
+/// A proposal is often nearly right — the right day, the right people, a title
+/// that is not quite what happened. Offering only Keep or Discard means a
+/// nearly right one is either kept wrong or thrown away, and both are worse
+/// than the person spending five seconds on it.
+///
+/// So the **title** is theirs. The **quote** is not: it is the line in the note
+/// this was read from, and it is what makes the whole of extraction
+/// answerable — §16 Bước 6 calls a sentence that does not match the vault a
+/// ship-blocking error. A person rewriting the evidence would be writing the
+/// note's past.
+///
+/// What is kept carries the proposal's `extract` id either way, so the two can
+/// always be held up against each other, and a title that differs from the
+/// proposal's is a title somebody decided.
+pub fn as_kept(item: &Extracted, title: Option<&str>) -> AppResult<Extracted> {
+    let Some(written) = title else {
+        return Ok(item.clone());
+    };
+    let written = written.trim();
+    if written.is_empty() {
+        return Err(AppError::General(
+            "A moment with no title is not a moment. Write one, or discard it.".into(),
+        ));
+    }
+    let mut kept = item.clone();
+    kept.payload.title = written.to_string();
+    Ok(kept)
+}
+
 pub fn moment_entry(item: &Extracted) -> Value {
     let mut entry = json!({
         "title": item.payload.title,
@@ -1912,6 +1945,65 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
         load(store.conn(), &vault).unwrap();
         assert!(item(store.conn(), &items[0].id).unwrap().is_some());
+    }
+
+    /// A proposal is often nearly right. Keep-or-discard makes a nearly right
+    /// one either kept wrong or thrown away; this is the third thing.
+    #[test]
+    fn the_sentence_is_the_persons_to_fix() {
+        let read = input("note", "2024-06-02", true, DAILY);
+        let (items, _) = settle(&read, parse_reply(REPLY).unwrap(), &People::default(), "m");
+        let proposed = &items[0];
+
+        let mine = as_kept(proposed, Some("  Đi Huế với Khánh, lần đầu  ")).unwrap();
+        assert_eq!(mine.payload.title, "Đi Huế với Khánh, lần đầu", "trimmed, and mine");
+
+        // The evidence is not mine to write. Everything that makes this
+        // answerable to the note is untouched.
+        assert_eq!(mine.payload.quote, proposed.payload.quote);
+        assert_eq!(mine.evidence, proposed.evidence);
+        assert_eq!(mine.id, proposed.id);
+        assert_eq!(mine.happened_from, proposed.happened_from);
+        assert_eq!(mine.payload.people, proposed.payload.people);
+
+        // And what gets written into the note carries both: my sentence, and
+        // the id of the proposal it came from, so the two can be held up
+        // against each other for ever.
+        let entry = moment_entry(&mine);
+        assert_eq!(entry["title"], "Đi Huế với Khánh, lần đầu");
+        assert_eq!(entry["extract"], proposed.id.as_str());
+    }
+
+    #[test]
+    fn saying_nothing_keeps_what_was_proposed() {
+        let read = input("note", "2024-06-02", true, DAILY);
+        let (items, _) = settle(&read, parse_reply(REPLY).unwrap(), &People::default(), "m");
+        assert_eq!(as_kept(&items[0], None).unwrap(), items[0]);
+    }
+
+    /// Emptying the box is not a way of discarding it — Discard is, and it
+    /// records a refusal. A moment with no title is not a moment.
+    #[test]
+    fn a_moment_with_no_title_is_refused_rather_than_written() {
+        let read = input("note", "2024-06-02", true, DAILY);
+        let (items, _) = settle(&read, parse_reply(REPLY).unwrap(), &People::default(), "m");
+        assert!(as_kept(&items[0], Some("   ")).is_err());
+        assert!(as_kept(&items[0], Some("")).is_err());
+    }
+
+    /// Keeping the same proposal twice adds it once, whether or not the
+    /// sentence was reworded — the id is what says it is the same thing.
+    #[test]
+    fn a_reworded_moment_kept_twice_is_still_one_moment() {
+        let read = input("note", "2024-06-02", true, DAILY);
+        let (items, _) = settle(&read, parse_reply(REPLY).unwrap(), &People::default(), "m");
+        let mine = as_kept(&items[0], Some("Câu của tôi")).unwrap();
+
+        let empty: Map<String, Value> = Map::new();
+        let once = moments_after_keeping(&empty, &mine);
+        let mut again: Map<String, Value> = Map::new();
+        again.insert("moments".into(), Value::Array(once.clone()));
+        assert_eq!(moments_after_keeping(&again, &mine).len(), once.len());
     }
 
     #[test]

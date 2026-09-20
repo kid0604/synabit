@@ -1276,7 +1276,8 @@
     "put_away_person": "Tạm để yên người này",
     "put_away_line": "Bỏ câu này ra",
     "put_away_moment": "Đừng nhắc lại chuyện này",
-    "lens_kept": "Đã lên kệ"
+    "lens_kept": "Đã lên kệ",
+    "extract_reword": "Sửa lại"
   },
   "people": {
     "cancel": "Hủy",
