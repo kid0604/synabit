@@ -16,6 +16,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Loader2, MoreHorizontal } from 'lucide-vue-next';
 import { iconForNodeType } from './nodeTypeIcon';
+import { asShown } from '../localDay';
 import type { QueryResult, QueryRow } from './types';
 
 const props = defineProps<{
@@ -84,7 +85,9 @@ const detailColumns = computed(() => {
 const cellsFor = (row: QueryRow) =>
   detailColumns.value
     .map(c => row.cells[c.index])
-    .filter(v => v !== undefined && v !== '');
+    .filter((v): v is string => v !== undefined && v !== '')
+    // A stored instant is a machine's way of saying yesterday evening.
+    .map(asShown);
 
 /**
  * Where the menu should appear, in screen coordinates.

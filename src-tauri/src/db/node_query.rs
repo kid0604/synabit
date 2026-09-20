@@ -382,7 +382,8 @@ impl DbBridge {
         // `total` used to be whatever the paged read happened to return, which
         // is a different number from "how many match" whenever a limit bites.
         let mut sql = format!(
-            "FROM nodes WHERE node_type NOT LIKE 'finance_%' AND ({condition})"
+            "FROM nodes WHERE ({condition}){}",
+            crate::db::internal::unless_asked_for(query)
         );
 
         // How many match, before any limit. One extra statement over the same

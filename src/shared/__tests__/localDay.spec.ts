@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localDay } from '../localDay';
+import { asShown, localDay } from '../localDay';
 
 describe('localDay', () => {
   it('reads the day of a UTC stamp in the reader’s zone', () => {
@@ -23,5 +23,22 @@ describe('localDay', () => {
     expect(localDay('')).toBe('');
     expect(localDay(null)).toBe('');
     expect(localDay(undefined)).toBe('');
+  });
+});
+
+describe('A table cell, as a person reads it', () => {
+  /// The symptom: a list of notes showed `2026-09-20T16:58:33.969Z` under
+  /// each one, inside an app whose whole subject is when things happened.
+  it('turns a stored instant into the day it was, where the reader is', () => {
+    expect(asShown('2026-09-20T16:58:33.969Z')).toBe(localDay('2026-09-20T16:58:33.969Z'));
+    expect(asShown('2026-09-20T16:58:33.969Z')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  /// Guessing at a cell's meaning is how a table starts lying about what is in
+  /// it. Only a stamp that carries a time is touched.
+  it('leaves everything that is not a stamp exactly as it is', () => {
+    for (const cell of ['2026-09-20', 'Gặp Khánh ở quán quen', 'Hà Nội', '13', '9.28', '', '2026']) {
+      expect(asShown(cell), cell).toBe(cell);
+    }
   });
 });

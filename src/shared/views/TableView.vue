@@ -16,6 +16,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { iconForNodeType } from './nodeTypeIcon';
+import { asShown } from '../localDay';
 import type { QueryResult, QueryRow } from './types';
 
 const props = defineProps<{
@@ -73,7 +74,7 @@ const hasMore = computed(
               <component :is="iconForNodeType(row.node_type)" class="w-3.5 h-3.5 text-gray-400 shrink-0" />
               <span class="truncate">{{ cell || untitledLabel || row.id }}</span>
             </span>
-            <span v-else class="text-gray-500 dark:text-gray-400">{{ cell }}</span>
+            <span v-else class="text-gray-500 dark:text-gray-400">{{ asShown(cell) }}</span>
           </td>
           <td v-if="offerPutAway" class="px-1 align-top">
             <button

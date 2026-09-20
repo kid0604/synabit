@@ -1,3 +1,4 @@
+pub mod internal;
 pub mod text;
 mod blocks;
 pub mod crdt;

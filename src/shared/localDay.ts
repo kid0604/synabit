@@ -28,6 +28,24 @@ export function localDay(stamp: string | null | undefined): string {
   return `${moment.getFullYear()}-${pad(moment.getMonth() + 1)}-${pad(moment.getDate())}`;
 }
 
+/**
+ * A table cell as a person should read it.
+ *
+ * A query's columns are whatever was asked for, and two of the commonest —
+ * `updated_at`, `created_at` — are stored as RFC 3339 in UTC. Shown raw they
+ * read `2026-09-20T16:58:33.969Z`, which is a machine's way of saying
+ * yesterday evening, inside an app whose whole subject is when things
+ * happened.
+ *
+ * Only a stamp that carries a time is touched. A cell that is already a day
+ * stays as it is, and anything that is not a date at all — a title, a place,
+ * a count — is left exactly alone, because guessing at a cell's meaning is how
+ * a table starts lying about what is in it.
+ */
+export function asShown(cell: string): string {
+  return /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(cell) ? localDay(cell) : cell;
+}
+
 /** Today, as the vault writes a day: `YYYY-MM-DD`, in the reader's own zone. */
 export function todayIso(): string {
   const now = new Date();

@@ -18,6 +18,7 @@ import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import EventCompose from '../../shared/components/EventCompose.vue';
 import { logger } from '../../utils/logger';
+import { refusalText } from '../../shared/refusal';
 import { localDay } from '../../shared/localDay';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppStore } from '../../stores/useAppStore';
@@ -95,6 +96,15 @@ const graphData = ref<GraphData | null>(null);
  */
 const graphMatchIds = ref<string[] | null>(null);
 const searchResults = ref<SearchResult[]>([]);
+/**
+ * Why the search box will not answer, when it will not.
+ *
+ * It used to be `logger.error(String(e))` and nothing on screen: a question
+ * this box cannot ask — a `|` step, a timeline word, an `OR` — left the last
+ * answer sitting there, or nothing at all. The engine refuses precisely and
+ * says where the question *can* be asked, and none of that reached anybody.
+ */
+const searchRefused = ref<string | null>(null);
 const searchQuery = ref('');
 const isSearching = ref(false);
 const queryTimeMs = ref(0);
@@ -209,6 +219,7 @@ const performSearch = async () => {
     }
 
     isSearching.value = true;
+    searchRefused.value = null;
     const searchId = ++currentSearchId;
     try {
         // Two questions about one query. The list shows the first page, ranked
@@ -232,7 +243,15 @@ const performSearch = async () => {
             queryTimeMs.value = response.query_time_ms;
             graphMatchIds.value = matchIds;
         }
-    } catch(e) { logger.error(String(e)); } finally {
+    } catch (e) {
+        if (searchId === currentSearchId) {
+            searchRefused.value = refusalText(e);
+            searchResults.value = [];
+            totalCount.value = 0;
+            graphMatchIds.value = [];
+        }
+        logger.error('Could not search', e);
+    } finally {
         if (searchId === currentSearchId) {
             isSearching.value = false;
         }
@@ -546,6 +565,17 @@ const cleanSnippet = (snippet: string) => {
                             <span class="text-xs font-semibold text-gray-400">{{ totalCount }} items</span>
                         </div>
                     </div>
+
+                    <!-- The engine says which half of the app can answer it;
+                         showing that is the whole point of refusing rather
+                         than quietly answering something else. -->
+                    <p
+                        v-if="searchRefused"
+                        data-search-refused
+                        class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[13px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+                    >
+                        {{ searchRefused }}
+                    </p>
 
                     <div v-for="item in searchResults" :key="item.id"
                          @click="openPreview(item)"

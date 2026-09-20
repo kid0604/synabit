@@ -421,6 +421,12 @@ impl DbBridge {
             count_sql = "SELECT COUNT(*) FROM search_index WHERE 1=1".to_string();
         }
 
+        // The kinds nobody put there. See `db::internal` — a search for
+        // `nhà bà nội` used to answer with a line of an RSS state file.
+        let hide = crate::db::internal::unless_asked_for_type(parsed.type_filter.as_deref());
+        sql.push_str(&hide);
+        count_sql.push_str(&hide);
+
         // Apply filters — all use parameterized placeholders
         if let Some(type_val) = &parsed.type_filter {
             sql.push_str(&format!(" AND item_type = ?{}", param_idx));
@@ -960,5 +966,59 @@ mod tests {
         db.reindex_search().unwrap();
 
         assert_eq!(count_all(&db), after_first, "a second rebuild changed size");
+    }
+}
+
+#[cfg(test)]
+mod what_a_person_sees {
+    use crate::db::DbBridge;
+    use crate::models::node::NodeMetadata;
+    use crate::search::parse_query;
+
+    fn seeded() -> DbBridge {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        for (id, kind, title, content) in [
+            ("Notes/a.md", "note", "2026-02-16", "Ngủ nhà bà nội"),
+            (
+                "Feeds/state/dev (conflict 03dd710d).json",
+                "json",
+                "dev (conflict 03dd710d)",
+                r#"{"read": false, "t": "2026-09-10T10:54:41", "nhà": 1}"#,
+            ),
+        ] {
+            db.upsert_node(&NodeMetadata {
+                id: id.into(),
+                node_type: kind.into(),
+                title: title.into(),
+                content: content.into(),
+                properties: serde_json::json!({}),
+                created_at: "2026-01-01T00:00:00.000Z".into(),
+                updated_at: "2026-01-01T00:00:00.000Z".into(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .unwrap();
+        }
+        db.reindex_search().unwrap();
+        db
+    }
+
+    /// Measured on the real vault: 449 of 972 nodes were machine state, and a
+    /// search for `nhà bà nội` answered with a line of an RSS feed's read
+    /// positions.
+    #[test]
+    fn a_word_does_not_reach_the_apps_own_bookkeeping() {
+        let db = seeded();
+        let found = db.search_fts(&parse_query("nhà"), 1, 50).expect("runs");
+        assert_eq!(found.total_count, 1, "{:?}", found.results);
+        assert_eq!(found.results[0].id, "Notes/a.md");
+    }
+
+    /// Hiding is a default, not a refusal: naming the kind answers it.
+    #[test]
+    fn asking_for_the_kind_by_name_still_answers() {
+        let db = seeded();
+        let found = db.search_fts(&parse_query("type:json nhà"), 1, 50).expect("runs");
+        assert_eq!(found.total_count, 1, "{:?}", found.results);
     }
 }
