@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chipsOf, SINGULAR, tokenise, withFilter, withTag, without } from '../queryChips';
+import { chipsOf, SINGULAR, spends, tokenise, withFilter, withTag, without } from '../queryChips';
 
 describe('The query bar, both ways round', () => {
     /// The property the whole design rests on: chips are the text, so there is
@@ -132,6 +132,17 @@ describe('The query bar, both ways round', () => {
         expect(withFilter('when:2019 | sort count desc', 'when', '2021')).toBe(
             'when:2021 | sort count desc',
         );
+    });
+
+    /// §13.3: the screen has to know which questions cost money, so the
+    /// button that spends can look like one.
+    it('knows which questions would pay a model', () => {
+        expect(spends('is:note | explode sentences | ask 15')).toBe(true);
+        expect(spends('is:note | ask 3')).toBe(true);
+        expect(spends('is:note | stats count by month')).toBe(false);
+        // A word, not a stage — `ask` only spends after a pipe.
+        expect(spends('ask')).toBe(false);
+        expect(spends('with:khánh ask 15')).toBe(false);
     });
 
     it('splits brackets the way the parser does, and leaves a call alone', () => {

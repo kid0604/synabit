@@ -301,6 +301,22 @@ function stageChips(tokens: string[], pipe: number): Chip[] {
   return chips;
 }
 
+/**
+ * Whether running this question would spend money.
+ *
+ * §13.3: a saved lens can carry `| ask`, and opening it must not pay for a
+ * model call. The engine refuses that on the ordinary path and says what it
+ * would have cost — but the screen has to know too, so the button that spends
+ * can look like one and the button that does not can stay where it is.
+ *
+ * Read off the text, like everything else here. A stage is the words after a
+ * `|`, and `ask` is the first of them.
+ */
+export function spends(text: string): boolean {
+  const tokens = tokenise(text);
+  return tokens.some((token, i) => tokens[i - 1] === '|' && token.toLowerCase() === 'ask');
+}
+
 /** The text with a run of tokens taken out, spacing tidied. */
 export function without(text: string, from: number, to = from + 1): string {
   const tokens = tokenise(text);

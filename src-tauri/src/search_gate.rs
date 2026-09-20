@@ -35,11 +35,22 @@ use crate::models::node::NodeMetadata;
 use crate::timeline::store::{catch_up, TimelineStore};
 
 fn node(id: &str, node_type: &str, title: &str, properties: serde_json::Value) -> NodeMetadata {
+    written(id, node_type, title, properties, "")
+}
+
+/// The same, with words in it — so `explode sentences` has something to open.
+fn written(
+    id: &str,
+    node_type: &str,
+    title: &str,
+    properties: serde_json::Value,
+    content: &str,
+) -> NodeMetadata {
     NodeMetadata {
         id: id.into(),
         node_type: node_type.into(),
         title: title.into(),
-        content: String::new(),
+        content: content.into(),
         properties,
         created_at: "2026-01-01T00:00:00.000Z".into(),
         updated_at: "2026-01-01T00:00:00.000Z".into(),
@@ -54,7 +65,7 @@ fn a_vault() -> (Mutex<DbBridge>, TimelineStore) {
     for n in [
         node("People/khanh.md", "person", "Khánh", json!({ "node_id": "uuid-khanh" })),
         node("People/minh.md", "person", "Minh", json!({ "node_id": "uuid-minh" })),
-        node(
+        written(
             "Notes/2019-11-05.md",
             "note",
             "2019-11-05",
@@ -66,12 +77,14 @@ fn a_vault() -> (Mutex<DbBridge>, TimelineStore) {
                     { "title": "Ăn tối với Minh", "happened": "2019-11-05", "people": ["uuid-minh"] }
                 ]
             }),
+            "Hôm nay gặp Khánh ở quán quen. Nói chuyện hai tiếng. Về muộn.",
         ),
-        node(
+        written(
             "Notes/2021-03-14.md",
             "note",
             "2021-03-14",
             json!({ "date": "2021-03-14", "tags": ["công-việc"] }),
+            "Nộp báo cáo quý. Sếp không nói gì.",
         ),
         node(
             "Tasks/a.md",
@@ -204,6 +217,19 @@ const ASKED: &[&str] = &[
     "events columns:when,title | seq gaps by who",
     "events columns:when,who | seq wibble by who",
     "events columns:when,who | seq gaps by who | where quiet ~ longest",
+    // ── §7: the one stage that spends money, and the wall in front of it ──
+    // The gate has no vault to read words from and no model to ask, so every
+    // one of these is a refusal — which is the point: this is the shape of a
+    // saved lens being opened.
+    // the fourth panel: a year in your own words
+    "events when:2019 | explode sentences",
+    "events when:2019 | explode sentences | ask 1",
+    "is:note | explode sentences",
+    "is:note | explode sentences | ask 15",
+    "is:note | explode sentences | ask 1",
+    "is:note | ask 1",
+    "is:note | explode sentences | ask",
+    "is:note | explode wibble",
     // ── §9: what answers a different question today ──
     "date:today",
     "date:2026-06",
@@ -292,9 +318,23 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
         cache.lock().unwrap().run_node_query(&asked)
     };
 
-    // The pipeline runs where the command runs it: on rows, after whichever
-    // table produced them.
-    let result = result.and_then(|found| crate::pipeline::run(&asked, found));
+    // The pipeline runs where the command runs it, with what the command gives
+    // it: the vault's own words, and **no asker** — which is the shape of a
+    // saved lens being opened.
+    let db = cache.lock().unwrap();
+    let words = crate::commands::nexus::VaultWords::of(&db, "");
+    let result = match (result, words) {
+        (Ok(found), Ok(words)) => crate::pipeline::run_around(
+            &asked,
+            found,
+            &crate::pipeline::Around {
+                today: chrono::NaiveDate::from_ymd_opt(2026, 9, 20).expect("a real day"),
+                words: Some(&words),
+                asker: None,
+            },
+        ),
+        (result, _) => result,
+    };
 
     let source = if source == crate::query::Source::Events { "events" } else { "notes " };
     match result {

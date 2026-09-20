@@ -1227,6 +1227,7 @@
     "lens_name": "Give it a name",
     "lens_forget": "Put this lens away",
     "lens_ask": "Ask the vault something…",
+    "lens_run_asking": "Send to the model",
     "lens_run": "Ask",
     "lens_found": "{total} matched · {ms} ms",
     "lens_edit": "edit as text",

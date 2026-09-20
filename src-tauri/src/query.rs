@@ -254,6 +254,15 @@ pub enum Sequence {
     Gaps,
 }
 
+/// What an `explode` stage opens up into more rows.
+///
+/// §7.1 once more: one slot, an open table. `tags` and `people` are named in
+/// the design and cost an entry here when they come.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opened {
+    Sentences,
+}
+
 /// One side of a comparison inside `| where`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
@@ -288,6 +297,10 @@ pub enum Stage {
     Seq { sequence: Sequence, by: Bucket },
     /// `| where quiet > longest`
     Where(Test),
+    /// `| explode sentences`
+    Explode(Opened),
+    /// `| ask 15` — the one stage that spends money.
+    Ask(u32),
     /// `| head 5`
     Head(u32),
 }
@@ -686,6 +699,19 @@ fn read_stage(run: &[String], q: &mut Query) {
                     .push("seq needs `by` and something to follow through time".into()),
             }
         }
+        "explode" => match rest.first().map(String::as_str) {
+            Some("sentences") => q.stages.push(Stage::Explode(Opened::Sentences)),
+            Some(other) => q
+                .refused
+                .push(format!("'{other}' is not something explode can open up yet")),
+            None => q
+                .refused
+                .push("explode needs to be told what to open up".into()),
+        },
+        "ask" => match rest.first().and_then(|n| n.parse::<u32>().ok()) {
+            Some(n) => q.stages.push(Stage::Ask(n)),
+            None => q.refused.push("ask needs a number of lines to keep".into()),
+        },
         "where" => match read_test(rest) {
             Ok(test) => q.stages.push(Stage::Where(test)),
             Err(why) => q.refused.push(why),

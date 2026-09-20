@@ -1227,6 +1227,7 @@
     "lens_name": "Đặt tên cho nó",
     "lens_forget": "Bỏ thấu kính này",
     "lens_ask": "Hỏi vault một câu…",
+    "lens_run_asking": "Gửi cho model",
     "lens_run": "Hỏi",
     "lens_found": "{total} khớp · {ms} ms",
     "lens_edit": "sửa chữ",

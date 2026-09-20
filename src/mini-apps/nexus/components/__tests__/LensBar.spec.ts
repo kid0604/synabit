@@ -189,6 +189,28 @@ describe('Asking Nexus a question', () => {
         expect(calls[calls.length - 1][1]).toMatchObject({ query: 'with:khánh' });
     });
 
+    /// §13.3: a question that pays a model does not get run by the button
+    /// everybody presses. It gets a second one, and the first one answers with
+    /// the price.
+    it('offers a separate door for a question that spends money', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        expect(wrapper.find('[data-run-asking]').exists()).toBe(false);
+
+        await wrapper.find('[data-ask]').setValue('is:note | explode sentences | ask 15');
+        await flushPromises();
+        expect(wrapper.find('[data-run-asking]').exists()).toBe(true);
+
+        // The ordinary button never reaches the paying command.
+        await wrapper.find('[data-run]').trigger('click');
+        await flushPromises();
+        expect(vi.mocked(invoke).mock.calls.map(c => c[0])).not.toContain('ask_node_query');
+
+        await wrapper.find('[data-run-asking]').trigger('click');
+        await flushPromises();
+        expect(vi.mocked(invoke).mock.calls.map(c => c[0])).toContain('ask_node_query');
+    });
+
     /// Two opposite questions used to be one picture: the minus was stripped
     /// off to find the key and then never drawn.
     it('marks a chip that asks for the absence of something', async () => {

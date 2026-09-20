@@ -483,10 +483,32 @@ pub fn run_node_query(
 ) -> AppResult<crate::db::QueryResult> {
     let mut asked = crate::query::parse(&query);
     asked.offset = offset.unwrap_or(0);
+    answer(&state, &timeline, vault_path.as_deref(), &asked, None)
+}
+
+/// One question answered, whichever table answers it.
+///
+/// Both commands come through here, which is the only reason they cannot
+/// answer the same question two different ways. The one thing they differ in
+/// is the last argument: whether there is anywhere to spend money.
+fn answer(
+    state: &tauri::State<'_, DbState>,
+    timeline: &tauri::State<'_, crate::timeline::TimelineState>,
+    vault_path: Option<&str>,
+    asked: &crate::query::Query,
+    asker: Option<&dyn crate::pipeline::Asks>,
+) -> AppResult<crate::db::QueryResult> {
+    let today = chrono::Local::now().date_naive();
 
     if asked.source_of() == crate::query::Source::Notes {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        return crate::pipeline::run(&asked, db.run_node_query(&asked)?);
+        let found = db.run_node_query(asked)?;
+        let words = VaultWords::of(&db, vault_path.unwrap_or(""))?;
+        return crate::pipeline::run_around(
+            asked,
+            found,
+            &crate::pipeline::Around { today, words: Some(&words), asker },
+        );
     }
 
     // A name becomes an identity here, where the vault can be read: an event's
@@ -506,19 +528,80 @@ pub fn run_node_query(
         )
     };
 
-    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(vault_path) = vault_path.as_deref() {
-        crate::timeline::store::catch_up_in(state.inner(), &mut timeline, Some(vault_path))?;
+    let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(vault_path) = vault_path {
+        crate::timeline::store::catch_up_in(state.inner(), &mut store, Some(vault_path))?;
     }
-    let mut found = crate::timeline::query::run(&timeline, &asked, &named)?;
-    {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        name_the_people(&db, &mut found);
-    }
+    let mut found = crate::timeline::query::run(&store, asked, &named)?;
+
     // One place for both sources: the pipeline works on rows, and by here the
     // rows are rows whichever table they came out of. That is the same claim
     // `QueryResult` has been making since the lenses went in.
-    crate::pipeline::run(&asked, found)
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    name_the_people(&db, &mut found);
+    let words = VaultWords::of(&db, vault_path.unwrap_or(""))?;
+    crate::pipeline::run_around(
+        asked,
+        found,
+        &crate::pipeline::Around { today, words: Some(&words), asker },
+    )
+}
+
+/// The vault's words, with everything withheld already gone.
+///
+/// This is where the consent layer meets the query language, and the order is
+/// the whole of it: a sealed note, a sealed period, a hushed day, a hushed
+/// moment and a hushed sentence are dropped **before** anything is built out
+/// of them. Not filtered from the answer — never read. `timeline::year`
+/// established the rule ("so it was not merely left out of the answer — it was
+/// never sent") and a lens that can reach the same sentences has to keep it,
+/// or the language is a hole in the layer above it.
+pub(crate) struct VaultWords<'a> {
+    db: &'a crate::db::DbBridge,
+    seals: std::sync::Arc<crate::timeline::seal::Seals>,
+    quiet: std::sync::Arc<crate::timeline::quiet::Quiet>,
+}
+
+/// The most sentences taken from any one note.
+///
+/// The same three as `timeline::year`: a long note would otherwise fill the
+/// list on its own, and what is wanted is a spread across days rather than the
+/// whole of the wordiest one.
+const MOST_PER_NOTE: usize = 3;
+
+impl<'a> VaultWords<'a> {
+    pub(crate) fn of(db: &'a crate::db::DbBridge, vault_path: &str) -> AppResult<VaultWords<'a>> {
+        Ok(VaultWords {
+            db,
+            seals: crate::timeline::seal::current(db, vault_path)?,
+            quiet: crate::timeline::quiet::current(db, vault_path)?,
+        })
+    }
+}
+
+impl crate::pipeline::Words for VaultWords<'_> {
+    fn sentences_of(&self, node: &str, day: &str) -> Vec<String> {
+        // Every gate the year feature passes through, in the same order.
+        let withheld = self.seals.hides(node)
+            || (!day.is_empty() && self.seals.covers(day))
+            || (!day.is_empty() && self.quiet.hushes_day(day))
+            || (!day.is_empty() && self.quiet.hushes_moment(node, day));
+        if withheld {
+            return Vec::new();
+        }
+        let Ok(content) = self.db.conn().query_row(
+            "SELECT COALESCE(content, '') FROM nodes WHERE id = ?1 OR stable_id = ?1",
+            rusqlite::params![node],
+            |row| row.get::<_, String>(0),
+        ) else {
+            return Vec::new();
+        };
+        crate::timeline::onthisday::sentences(&content)
+            .into_iter()
+            .filter(|text| !self.quiet.hushes_line(node, text))
+            .take(MOST_PER_NOTE)
+            .collect()
+    }
 }
 
 /// Put names back where the links left identities.
@@ -557,6 +640,123 @@ fn name_the_people(db: &crate::db::DbBridge, result: &mut crate::db::QueryResult
                 .join(", ");
         }
     }
+}
+
+/// Running a question that spends money, because somebody asked it to.
+///
+/// A separate command rather than a flag on `run_node_query`, and that is the
+/// guardrail of §13.3 rather than a nicety:
+///
+/// 1. **Opening a lens cannot spend.** The ordinary path has no asker, so a
+///    saved question carrying `| ask` refuses there — with the price in the
+///    refusal, which is the preview.
+/// 2. **The screen can tell them apart.** Two doors, so the button that costs
+///    money can say so and look different from the one that does not.
+///
+/// Everything sealed or hushed is dropped before the prompt is built, so it is
+/// not merely left out of the answer — it was never sent. That rule comes from
+/// `timeline::year` and is enforced here by `VaultWords`, which is the only
+/// way this command can read a sentence at all.
+#[tauri::command(async)]
+pub async fn ask_node_query(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, crate::timeline::TimelineState>,
+    vault_path: String,
+    query: String,
+    offset: Option<u32>,
+) -> AppResult<crate::db::QueryResult> {
+    let mut asked = crate::query::parse(&query);
+    asked.offset = offset.unwrap_or(0);
+    let spends = asked
+        .stages
+        .iter()
+        .any(|stage| matches!(stage, crate::query::Stage::Ask(_)));
+    if !spends {
+        // Nothing here costs anything, so there is no reason to be on this
+        // door. Answered the same way rather than differently, which is what
+        // the shared `answer` is for.
+        return answer(&state, &timeline, Some(&vault_path), &asked, None);
+    }
+
+    // Everything the model half needs, settled before anything is sent.
+    let settings = crate::commands::syn::settings_for(&vault_path);
+    if !settings.enabled {
+        return Err(crate::error::AppError::General(
+            crate::commands::syn::SWITCHED_OFF.into(),
+        ));
+    }
+    let config = crate::timeline::extract::read_config(&vault_path);
+    let (settings, model) = crate::timeline::extract::reader(&config, &settings);
+    let Some(model) = model else {
+        return Err(crate::error::AppError::General("No model is configured".into()));
+    };
+    if !crate::timeline::media::runs_here(&settings) && !config.allow_cloud {
+        return Err(crate::error::AppError::General(
+            "Your own sentences are read only by a model on this machine, unless \
+             sending them elsewhere is allowed for this vault"
+                .into(),
+        ));
+    }
+
+    // The rows, up to the point where the money would be spent. The same
+    // stages, run the same way as on the free path — the only difference is
+    // that this time there is somewhere to spend.
+    let at = asked
+        .stages
+        .iter()
+        .position(|stage| matches!(stage, crate::query::Stage::Ask(_)))
+        .expect("a stage that was just found");
+    let crate::query::Stage::Ask(room) = asked.stages[at] else {
+        unreachable!("the stage at the position of an ask is an ask")
+    };
+    if asked.stages[at + 1..]
+        .iter()
+        .any(|stage| matches!(stage, crate::query::Stage::Ask(_)))
+    {
+        return Err(crate::error::AppError::General(
+            "a question may ask once. Two calls to a model in one question cost \
+             twice and explain half."
+                .into(),
+        ));
+    }
+
+    let before = crate::query::Query {
+        stages: asked.stages[..at].to_vec(),
+        ..asked.clone()
+    };
+    let found = answer(&state, &timeline, Some(&vault_path), &before, None)?;
+
+    // Short enough to need no choosing, and asking would cost a call to be
+    // told the same list back. `timeline::year` learnt this first.
+    if found.rows.len() <= room as usize {
+        return Ok(found);
+    }
+
+    let lines = crate::pipeline::lines_of(&found);
+    let prompt = crate::timeline::year::prompt_for(&lines, room as usize);
+    let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
+    let reply = provider
+        .chat(crate::syn::provider::ChatRequest {
+            model: &model,
+            messages: &[crate::syn::provider::ChatMessage::new("user", prompt)],
+            temperature: Some(0.0),
+            num_ctx: settings.num_ctx,
+            tools: None,
+        })
+        .await?;
+    let picked = crate::timeline::year::parse_reply(&reply.content).ok_or_else(|| {
+        crate::error::AppError::General("the reply was not the JSON asked for".into())
+    })?;
+
+    let kept = crate::pipeline::keeping_picked(found, &picked, room as usize);
+
+    // And whatever was asked for after the ask.
+    let after = crate::query::Query {
+        stages: asked.stages[at + 1..].to_vec(),
+        ..asked
+    };
+    crate::pipeline::run_on(&after, kept, chrono::Local::now().date_naive())
 }
 
 /// What an event's links would call this name.
@@ -894,5 +1094,109 @@ mod graph_tests {
         assert!(has("Notes/a.md", "People/b.md"), "identity to identity");
         assert!(has("Notes/old.md", "Notes/a.md"), "a path to an identity");
         assert!(has("Notes/a.md", "ghost-Nowhere"), "an identity to an unresolved link");
+    }
+}
+
+#[cfg(test)]
+mod consent_gate {
+    //! The one thing step 7 must not get wrong.
+    //!
+    //! `| explode sentences` is the first part of the query language that can
+    //! reach the **words a person wrote**, rather than the titles and dates an
+    //! index holds. Everything above it — seals, hushes — exists to decide
+    //! what the app may look at. A language that can reach round that is not a
+    //! feature with a bug in it; it is a hole in the layer, and the layer is
+    //! the reason any of this is allowed near a diary.
+    //!
+    //! So: written down as a test, not as a comment.
+
+    use super::VaultWords;
+    use crate::db::DbBridge;
+    use crate::models::node::NodeMetadata;
+    use crate::pipeline::Words;
+    use crate::timeline::quiet::{self, Subject};
+
+    const DAY: &str = "2019-11-05";
+    const WORDS: &str = "Hôm nay gặp Khánh ở quán quen. Nói chuyện rất lâu về mọi thứ.";
+
+    fn vault_with(properties: serde_json::Value) -> (tempfile::TempDir, DbBridge) {
+        let dir = tempfile::tempdir().expect("a temp vault");
+        let db = DbBridge::new_in_memory_full().expect("a database");
+        db.upsert_node(&NodeMetadata {
+            id: "Notes/diary.md".into(),
+            node_type: "note".into(),
+            title: DAY.into(),
+            content: WORDS.into(),
+            properties,
+            created_at: "2019-11-05T00:00:00.000Z".into(),
+            updated_at: "2019-11-05T00:00:00.000Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("seed");
+        (dir, db)
+    }
+
+    fn read(dir: &tempfile::TempDir, db: &DbBridge) -> Vec<String> {
+        VaultWords::of(db, dir.path().to_str().expect("a path"))
+            .expect("the consent layer loads")
+            .sentences_of("Notes/diary.md", DAY)
+    }
+
+    /// The control. Without it the three tests below would pass on a bug that
+    /// returned nothing for everything.
+    #[test]
+    fn an_ordinary_note_gives_up_its_sentences() {
+        let (dir, db) = vault_with(serde_json::json!({ "date": DAY }));
+        assert_eq!(read(&dir, &db).len(), 2, "{:?}", read(&dir, &db));
+    }
+
+    #[test]
+    fn a_sealed_note_gives_up_nothing() {
+        let (dir, db) = vault_with(serde_json::json!({ "date": DAY, "sealed": true }));
+        assert!(read(&dir, &db).is_empty());
+    }
+
+    #[test]
+    fn a_note_inside_a_sealed_period_gives_up_nothing() {
+        let (dir, db) = vault_with(serde_json::json!({ "date": DAY }));
+        let vault = dir.path().to_str().expect("a path");
+        crate::timeline::seal::write_period(vault, "2019-11-01", "2019-11-30")
+            .expect("the period is sealed");
+        assert!(read(&dir, &db).is_empty());
+    }
+
+    /// A hush is quieter than a seal — the app simply does not raise it first
+    /// — and one sentence can be hushed on its own. Both have to hold here.
+    #[test]
+    fn a_hushed_sentence_is_left_behind_and_the_rest_are_not() {
+        let (dir, db) = vault_with(serde_json::json!({ "date": DAY }));
+        let vault = dir.path().to_str().expect("a path");
+        quiet::write_hush(
+            vault,
+            &Subject::Line {
+                node: "Notes/diary.md".into(),
+                line: quiet::line_id("Hôm nay gặp Khánh ở quán quen."),
+            },
+            None,
+        )
+        .expect("the line is hushed");
+
+        let left = read(&dir, &db);
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert!(!left[0].contains("Khánh"), "{left:?}");
+    }
+
+    #[test]
+    fn a_hushed_stretch_of_time_gives_up_nothing() {
+        let (dir, db) = vault_with(serde_json::json!({ "date": DAY }));
+        let vault = dir.path().to_str().expect("a path");
+        quiet::write_hush(
+            vault,
+            &Subject::Period { from: "2019-11-01".into(), to: "2019-11-30".into() },
+            None,
+        )
+        .expect("the stretch is hushed");
+        assert!(read(&dir, &db).is_empty());
     }
 }

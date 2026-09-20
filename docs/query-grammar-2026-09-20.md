@@ -455,7 +455,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | **4** | ~~Chip biết nhóm~~ — **xong 2026-09-20** (giai đoạn theo bước 5) | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 ✓ |
 | **5** | ~~Dấu `\|` + `stats` + `sort`/`head`~~ — **xong 2026-09-20** | `bars` có dữ liệu ✓ |
 | **6** | ~~`seq gaps` + `where` + `same-day-as()`~~ — **xong 2026-09-20** | ba panel thành thấu kính; cái thứ tư cần bước 7 |
-| **7** | `explode sentences` + `ask` | bước duy nhất tiêu tiền |
+| **7** | ~~`explode sentences` + `ask`~~ — **xong 2026-09-20** | bước duy nhất tiêu tiền |
 
 **Bước 0 độc lập với mọi quyết định còn lại** — nó không đụng cú pháp, chỉ sửa chỗ
 đang trả lời sai mà không báo. Làm được ngay cả khi §1–13 còn bàn tiếp.
@@ -1210,3 +1210,113 @@ phép so phụ thuộc vào tháng nào mà không ai đang nói đến.
 | Test TypeScript | 1897, không đổi |
 | Clippy | không cảnh báo mới |
 | Vault thật | **161/162 sự kiện không nêu tên ai** |
+
+---
+
+## 24. Bước 7 — đã làm, 2026-09-20
+
+**`| explode sentences` và `| ask n`.** Bước duy nhất tiêu tiền. Ảnh chụp 105 → 113
+dòng, không dòng cũ nào đổi.
+
+### Bốn trên bốn
+
+```
+Ngày này năm xưa       events when:same-day-as(today)
+Khoảng lặng            events | seq gaps by who
+                             | where times >= 5 and span >= 183d
+                                   and quiet > longest and quiet > 90d
+Chuyện gì xảy ra với   events columns:when,about | seq gaps by about | where quiet > 6mo
+Một năm bằng lời mày   events when:2026 | explode sentences | ask 15
+```
+
+Phép thử của cả tài liệu thấu kính (§5.3): *"nếu tám panel không viết lại được thành
+thấu kính thì thiết kế này sai."* Tám trên tám giờ viết được.
+
+### Hàng rào dựng vào hình dạng, không dán thêm
+
+Câu hỏi khó nhất của bước này không phải "làm sao gọi model", mà **"làm sao một thấu
+kính đã lưu không âm thầm tiêu tiền khi mở ra"**.
+
+Trả lời bằng kiểu dữ liệu, không bằng kỷ luật:
+
+```rust
+pub struct Around<'a> {
+    pub words: Option<&'a dyn Words>,   // đọc chữ trong vault
+    pub asker: Option<&'a dyn Asks>,    // tiêu tiền
+}
+```
+
+Đường thường truyền `asker: None`. Nên `| ask` ở đó **không chạy được** — không phải
+vì ai đó nhớ kiểm tra, mà vì **không có chỗ để tiêu**. Nó từ chối, và lời từ chối
+mang theo giá:
+
+```
+`ask 1` would send 4 lines to a model. A question that spends money is not run
+by opening it — ask for it deliberately.
+```
+
+Lời từ chối **chính là** cái xem trước §13.3 đòi. Và cửa thứ hai là một lệnh riêng
+(`ask_node_query`) với một nút riêng trên thanh — không ai đi tới hoá đơn bằng cách
+bấm đúng cái nút vẫn bấm.
+
+### Lớp đồng thuận: chỗ duy nhất của bước này không được sai
+
+`| explode sentences` là phần đầu tiên của ngôn ngữ chạm tới **chữ người ta viết**,
+chứ không phải tiêu đề với ngày tháng trong chỉ mục. Mọi thứ ở trên nó — seal, hush —
+tồn tại để quyết định app được nhìn gì. Một ngôn ngữ đi vòng qua đó **không phải một
+tính năng có lỗi, nó là một lỗ thủng trong cái lớp ấy**, mà cái lớp ấy là lý do toàn
+bộ chuyện này được phép đến gần một cuốn nhật ký.
+
+Nên `Words` là một **trait**, không phải một `&DbBridge`. Truyền cơ sở dữ liệu thì
+"nhớ lọc đồng thuận" thành một luật ai đó phải nhớ; truyền cái này thì nó thành luật
+người gọi **không tránh được việc đã nghĩ tới**.
+
+Và viết thành test, không phải thành ghi chú — `commands::nexus::consent_gate`, năm
+cái, **kể cả cái đối chứng** (không có nó thì bốn cái kia xanh trên một lỗi trả về
+rỗng cho mọi thứ):
+
+| | |
+| --- | --- |
+| note thường | trả về câu của nó |
+| note bị seal | **không gì** |
+| note trong quãng bị seal | **không gì** |
+| một câu bị hush | câu ấy biến mất, những câu khác ở lại |
+| một quãng bị hush | **không gì** |
+
+Thứ tự là tất cả: bỏ **trước khi** dựng bất cứ thứ gì từ chúng. Không phải lọc khỏi
+câu trả lời — **không bao giờ được đọc**. Luật ấy của `timeline::year` (*"nên nó
+không chỉ bị bỏ khỏi câu trả lời — nó chưa bao giờ được gửi đi"*), và một thấu kính
+chạm tới cùng những câu ấy phải giữ nguyên luật.
+
+### Model chỉ trỏ, không nói
+
+Cùng một giao thức `timeline::year` dùng, giờ dùng chung một hàm: một danh sách đánh
+số đi ra, những con số đi về. **Trong câu trả lời không có chỗ nào để đặt văn xuôi.**
+Đó không phải lựa chọn thẩm mỹ — nó là thứ làm cho một câu bịa ra thành **không thể**
+thay vì **ít khả năng**.
+
+Một con số không ai mời thì bị bỏ, không vòng lại — model đếm sai cũng không chạm
+được dòng nó chưa từng được xem. Có test.
+
+Hai chỗ tiết kiệm mà `year` đã học trước:
+- Danh sách đã đủ ngắn thì **không hỏi** — hỏi chỉ tốn một cuộc gọi để nghe lại đúng
+  danh sách ấy.
+- Một note được đọc **một lần**, dù bao nhiêu dòng dẫn về nó. Ba sự kiện một ngày đến
+  từ một note; không chặn thì câu của nó hiện ba lần — với người là lặp, với model là
+  **ba phiếu cho cùng một dòng**. Đây là lỗi ảnh chụp bắt được: `events when:2019 |
+  explode sentences` ra **6** dòng, phải là **2**.
+
+### `ask` chỉ được hỏi một lần
+
+Hai cuộc gọi model trong một câu hỏi thì tốn gấp đôi và giải thích được một nửa. Từ
+chối, có lý do.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 105 → **113 dòng**, không dòng cũ nào đổi |
+| Test Rust | 2403 (thêm 11) |
+| Test TypeScript | 1899 (thêm 2) |
+| Cổng đồng thuận | 5 test, có đối chứng |
+| `vue-tsc` | sạch |

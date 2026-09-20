@@ -28,7 +28,7 @@
 
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
-use crate::query::{Bucket, Operand, Query, Sequence, Stage, Tally, Test};
+use crate::query::{Bucket, Opened, Operand, Query, Sequence, Stage, Tally, Test};
 use crate::search::Comparison;
 
 /// The most rows the filter half may hand the pipeline.
@@ -113,6 +113,53 @@ impl Bucket {
     }
 }
 
+/// The vault's own words, for `explode sentences`.
+///
+/// A trait rather than a `&DbBridge`, and for one reason: **what comes back
+/// has already been through the consent layer**. A sentence in a sealed note,
+/// on a hushed day, or hushed by itself must not be here at all — not filtered
+/// out further down, not left out of the answer. Never read.
+///
+/// Passing the database would have made that a rule somebody has to remember.
+/// Passing this makes it a rule the caller cannot avoid having thought about.
+pub trait Words {
+    /// The sentences of one note on one day, or nothing.
+    ///
+    /// The day is passed because the consent layer works on pairs: a hush can
+    /// cover a stretch of time rather than a note, and a seal can cover a
+    /// period. Reading the note without knowing which day it was reached
+    /// through would let a lens walk round both.
+    fn sentences_of(&self, node: &str, day: &str) -> Vec<String>;
+}
+
+/// Spending money.
+///
+/// Given a numbered list, the model points at the ones to keep. It is never
+/// asked for prose and the reply has nowhere to put any — the same protocol
+/// `timeline::year` uses, for the same reason.
+pub trait Asks {
+    fn keep(&self, lines: &[String], room: usize) -> AppResult<Vec<usize>>;
+}
+
+/// What the pipeline is allowed to reach outside itself for.
+///
+/// Both halves are absent by default, and each stage that needs one refuses by
+/// name when it is missing. That is the guardrail of §13.3 built into the
+/// shape rather than bolted on: **opening a saved lens cannot spend money**,
+/// because the ordinary path has no asker to spend it with.
+pub struct Around<'a> {
+    pub today: chrono::NaiveDate,
+    pub words: Option<&'a dyn Words>,
+    pub asker: Option<&'a dyn Asks>,
+}
+
+impl Around<'_> {
+    /// Nothing but a calendar. What every free path uses.
+    pub fn bare(today: chrono::NaiveDate) -> Self {
+        Around { today, words: None, asker: None }
+    }
+}
+
 /// Run every stage over an answer, in order.
 pub fn run(query: &Query, result: QueryResult) -> AppResult<QueryResult> {
     run_on(query, result, chrono::Local::now().date_naive())
@@ -121,26 +168,164 @@ pub fn run(query: &Query, result: QueryResult) -> AppResult<QueryResult> {
 /// The same, told what day it is — `gaps` measures silence up to now.
 pub fn run_on(
     query: &Query,
-    mut result: QueryResult,
+    result: QueryResult,
     today: chrono::NaiveDate,
 ) -> AppResult<QueryResult> {
+    run_around(query, result, &Around::bare(today))
+}
+
+/// The same, with whatever the caller is willing to let it reach for.
+pub fn run_around(
+    query: &Query,
+    mut result: QueryResult,
+    around: &Around<'_>,
+) -> AppResult<QueryResult> {
     for stage in &query.stages {
-        result = one(stage, result, today)?;
+        result = one(stage, result, around)?;
     }
     Ok(result)
 }
 
-fn one(stage: &Stage, result: QueryResult, today: chrono::NaiveDate) -> AppResult<QueryResult> {
+fn one(stage: &Stage, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
     match stage {
         Stage::Stats { tally, by } => stats(*tally, by, result),
-        Stage::Seq { sequence, by } => seq(*sequence, by, result, today),
+        Stage::Seq { sequence, by } => seq(*sequence, by, result, around.today),
         Stage::Where(test) => keeping(test, result),
+        Stage::Explode(opened) => explode(*opened, result, around),
+        Stage::Ask(room) => asking(*room as usize, result, around),
         Stage::Sort { key, descending } => Ok(sorted(key, *descending, result)),
         Stage::Head(n) => Ok(QueryResult {
             rows: result.rows.into_iter().take(*n as usize).collect(),
             ..result
         }),
     }
+}
+
+/// The most lines `explode sentences` will make.
+///
+/// The same ceiling as everything else, for the same reason — and it matters
+/// more here, because the rows after this one are what a model would be handed.
+pub const MOST_LINES: usize = 2_000;
+
+/// One row per sentence: `day, note, text` (§7.2).
+fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
+    let Opened::Sentences = opened;
+    let Some(words) = around.words else {
+        return Err(AppError::General(
+            "reading the notes' own words needs the vault, and this question was \
+             asked somewhere there is none"
+                .to_string(),
+        ));
+    };
+    let dated = dated_column(&result);
+
+    let mut rows: Vec<QueryRow> = Vec::new();
+    let mut cut = false;
+    // One note is read once, however many rows lead back to it. Three events
+    // on one day come from one note, and without this its sentences would be
+    // shown three times — to a person as repetition, and to a model as three
+    // votes for the same line. `year::candidates` deduplicates for the same
+    // reason.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for row in &result.rows {
+        let note = row.open.clone().unwrap_or_else(|| row.id.clone());
+        if !seen.insert(note.clone()) {
+            continue;
+        }
+        let day = dated
+            .and_then(|at| row.cells.get(at))
+            .map(|cell| cell.trim().to_string())
+            .unwrap_or_default();
+        for (n, text) in words.sentences_of(&note, &day).into_iter().enumerate() {
+            if rows.len() >= MOST_LINES {
+                cut = true;
+                break;
+            }
+            rows.push(QueryRow {
+                // One sentence is not a node, but it has to key uniquely — one
+                // note makes many of these.
+                id: format!("{note}#{n}"),
+                node_type: String::new(),
+                title: text.clone(),
+                cells: vec![day.clone(), note.clone(), text],
+                open: Some(note.clone()),
+            });
+        }
+        if cut {
+            break;
+        }
+    }
+
+    let total = rows.len();
+    let left_out = cut.then(|| format!("the first {MOST_LINES} lines"));
+    Ok(QueryResult {
+        columns: vec!["day".into(), "note".into(), "text".into()],
+        rows,
+        total,
+        query_time_ms: result.query_time_ms,
+        note: match (result.note, left_out) {
+            (Some(had), Some(left)) => Some(format!("{had}; {left}")),
+            (had, left) => had.or(left),
+        },
+    })
+}
+
+/// Let the model keep some of the rows, and no more than that.
+///
+/// It is handed a numbered list and gives back numbers. There is nowhere in
+/// the reply for prose, so there is nothing to check for invention: a number
+/// that is not on the list is dropped, and what comes back is the person's own
+/// sentences or nothing.
+fn asking(room: usize, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
+    // Nothing to choose between, so asking would cost a call to be told the
+    // same list back.
+    if result.rows.len() <= room {
+        return Ok(result);
+    }
+    let Some(asker) = around.asker else {
+        // The guardrail, and it is priced. §13.3: a saved lens must not spend
+        // money by being opened, and what it would spend has to be visible
+        // before anybody agrees to it.
+        return Err(AppError::General(format!(
+            "`ask {room}` would send {} lines to a model. A question that spends \
+             money is not run by opening it — ask for it deliberately.",
+            result.rows.len()
+        )));
+    };
+
+    let picked = asker.keep(&lines_of(&result), room)?;
+    Ok(keeping_picked(result, &picked, room))
+}
+
+/// What the model is shown, one line per row.
+///
+/// The last column, because that is the one `explode sentences` puts the words
+/// in and the one a person would read.
+pub fn lines_of(result: &QueryResult) -> Vec<String> {
+    result
+        .rows
+        .iter()
+        .map(|row| row.cells.last().cloned().unwrap_or_else(|| row.title.clone()))
+        .collect()
+}
+
+/// The rows the model pointed at, and no others.
+///
+/// A number nobody offered is dropped rather than wrapped around, so a model
+/// that miscounts cannot reach a line it was never shown. Shared with the
+/// command that does the asking, so there is one reading of the reply.
+pub fn keeping_picked(result: QueryResult, picked: &[usize], room: usize) -> QueryResult {
+    let mut kept: Vec<QueryRow> = Vec::new();
+    for n in picked {
+        if let Some(row) = result.rows.get(*n) {
+            kept.push(row.clone());
+        }
+        if kept.len() >= room {
+            break;
+        }
+    }
+    let total = kept.len();
+    QueryResult { rows: kept, total, ..result }
 }
 
 /// What `seq gaps` says about each thread of rows.
@@ -682,5 +867,132 @@ mod tests {
         );
         assert_eq!(kept("events | seq gaps by who | where not times > 1"), ["Minh"]);
     }
-}
 
+    /// A `Words` that hands back whatever it was given, and remembers what it
+    /// was asked for — so a test can see what reached it and what did not.
+    struct Said(std::cell::RefCell<Vec<(String, String)>>, Vec<String>);
+
+    impl Words for Said {
+        fn sentences_of(&self, node: &str, day: &str) -> Vec<String> {
+            self.0.borrow_mut().push((node.to_string(), day.to_string()));
+            self.1.clone()
+        }
+    }
+
+    /// An `Asks` that keeps whatever it is told to, and records the list it
+    /// was shown.
+    struct Picks(std::cell::RefCell<Vec<String>>, Vec<usize>);
+
+    impl Asks for Picks {
+        fn keep(&self, lines: &[String], _room: usize) -> AppResult<Vec<usize>> {
+            *self.0.borrow_mut() = lines.to_vec();
+            Ok(self.1.clone())
+        }
+    }
+
+    /// §7.2: one row per sentence, as `day, note, text`.
+    #[test]
+    fn explode_opens_a_note_into_its_own_sentences() {
+        let notes = answer(&["when", "title"], &[&["2019-11-05", "a"], &["2021-03-14", "b"]]);
+        let said = Said(Default::default(), vec!["một".into(), "hai".into()]);
+        let got = run_around(
+            &parse("notes | explode sentences"),
+            notes,
+            &Around { today: day(2026, 9, 20), words: Some(&said), asker: None },
+        )
+        .expect("runs");
+
+        assert_eq!(got.columns, ["day", "note", "text"]);
+        assert_eq!(got.rows.len(), 4);
+        assert_eq!(got.rows[0].cells, ["2019-11-05", "Notes/0.md", "một"]);
+        // The day reached the reader, which is what lets the consent layer see
+        // a hushed stretch of time at all.
+        assert_eq!(
+            said.0.borrow().as_slice(),
+            [
+                ("Notes/0.md".to_string(), "2019-11-05".to_string()),
+                ("Notes/1.md".to_string(), "2021-03-14".to_string()),
+            ]
+        );
+    }
+
+    /// Three events on one day come from one note. Its sentences are read
+    /// once — repetition to a person, and three votes for the same line to a
+    /// model.
+    #[test]
+    fn a_note_several_rows_lead_back_to_is_read_once() {
+        let mut events = answer(
+            &["when", "title"],
+            &[&["2019-11-05", "a"], &["2019-11-05", "b"], &["2021-03-14", "c"]],
+        );
+        for row in &mut events.rows[..2] {
+            row.open = Some("Notes/diary.md".into());
+        }
+        events.rows[2].open = Some("Notes/other.md".into());
+
+        let said = Said(Default::default(), vec!["một".into()]);
+        let got = run_around(
+            &parse("notes | explode sentences"),
+            events,
+            &Around { today: day(2026, 9, 20), words: Some(&said), asker: None },
+        )
+        .expect("runs");
+
+        assert_eq!(got.rows.len(), 2, "one line per note, not per row");
+        assert_eq!(said.0.borrow().len(), 2, "and the note was read once");
+    }
+
+    /// **The guardrail.** Opening a saved lens must not spend money, and what
+    /// it would spend has to be visible before anybody agrees to it.
+    #[test]
+    fn a_question_that_would_spend_refuses_and_says_what_it_would_cost() {
+        let rows = answer(&["title"], &[&["a"], &["b"], &["c"], &["d"]]);
+        let why = run_on(&parse("notes | ask 2"), rows, day(2026, 9, 20))
+            .expect_err("there is nowhere to spend")
+            .to_string();
+        assert!(why.contains("would send 4 lines"), "{why}");
+        assert!(why.contains("ask 2"), "{why}");
+    }
+
+    /// And a list already short enough needs no choosing — asking would cost a
+    /// call to be told the same list back. `timeline::year` learnt this first.
+    #[test]
+    fn asking_is_skipped_when_there_is_nothing_to_choose_between() {
+        let rows = answer(&["title"], &[&["a"], &["b"]]);
+        let got = run_on(&parse("notes | ask 5"), rows, day(2026, 9, 20))
+            .expect("no call, so no asker needed");
+        assert_eq!(got.rows.len(), 2);
+    }
+
+    /// The model points; it does not speak. A number nobody offered is dropped
+    /// rather than wrapped around, so a model that miscounts cannot reach a
+    /// line it was never shown — and there is nowhere in the reply for a
+    /// sentence of its own.
+    #[test]
+    fn a_number_nobody_offered_reaches_nothing() {
+        let rows = answer(&["title"], &[&["a"], &["b"], &["c"], &["d"]]);
+        let picks = Picks(Default::default(), vec![2, 99, 0]);
+        let got = run_around(
+            &parse("notes | ask 3"),
+            rows,
+            &Around { today: day(2026, 9, 20), words: None, asker: Some(&picks) },
+        )
+        .expect("runs");
+
+        assert_eq!(picks.0.borrow().as_slice(), ["a", "b", "c", "d"]);
+        assert_eq!(
+            got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
+            ["c", "a"],
+            "the two that were offered, in the order chosen"
+        );
+        assert_eq!(got.total, 2);
+    }
+
+    /// `explode` needs the vault. Without it the answer would be every note
+    /// with no sentences in it, which is a wrong answer told quietly.
+    #[test]
+    fn explode_without_a_vault_refuses_rather_than_answering_emptily() {
+        let notes = answer(&["when", "title"], &[&["2019-11-05", "a"]]);
+        assert!(run_on(&parse("notes | explode sentences"), notes, day(2026, 9, 20)).is_err());
+    }
+}

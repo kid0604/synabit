@@ -156,17 +156,35 @@ fn read_content(cache: &DbBridge, node_id: &str) -> Option<String> {
 
 /// What the model is asked, which is to point rather than to speak.
 pub fn prompt(year: i32, candidates: &[Candidate]) -> String {
-    let list = candidates
+    let lines: Vec<String> = candidates
+        .iter()
+        .map(|c| format!("{}\t{}", c.day, c.text))
+        .collect();
+    prompt_about(&format!("a person wrote during {year}"), &lines, MOST_KEPT)
+}
+
+/// The same asking, for any numbered list of a person's own lines.
+///
+/// `| ask n` in the query language reaches this (`commands::nexus`), so there
+/// is one protocol and not two: a numbered list goes out and numbers come
+/// back, and **the reply has nowhere to put prose**. That is not a style
+/// choice — it is what makes a made-up sentence impossible rather than
+/// unlikely.
+pub fn prompt_for(lines: &[String], room: usize) -> String {
+    prompt_about("a person wrote", lines, room)
+}
+
+fn prompt_about(whose: &str, lines: &[String], room: usize) -> String {
+    let list = lines
         .iter()
         .enumerate()
-        .map(|(n, c)| format!("{n}\t{}\t{}", c.day, c.text))
+        .map(|(n, line)| format!("{n}\t{line}"))
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "Below are sentences a person wrote during {year}, one per line, as \
-         `number<TAB>day<TAB>sentence`.\n\n\
-         Choose the {MOST_KEPT} that carry the most weight — the ones that, read \
-         together in order, would show this person their own year. Prefer what \
+        "Below are sentences {whose}, one per line, beginning with a number.\n\n\
+         Choose the {room} that carry the most weight — the ones that, read \
+         together in order, would show this person their own life. Prefer what \
          changed, what was decided, what was felt, what was first or last. Pass \
          over routine work notes and anything that only repeats another line.\n\n\
          Answer with JSON and nothing else: {{\"keep\": [numbers]}}\n\

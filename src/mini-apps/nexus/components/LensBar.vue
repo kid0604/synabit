@@ -33,7 +33,7 @@ import { chosenShape, SHAPES, type Shape } from '../../../shared/views/shapeFor'
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
-import { chipsOf, withFilter, withTag, without, type Chip } from '../../../shared/queryChips';
+import { chipsOf, spends, withFilter, withTag, without, type Chip } from '../../../shared/queryChips';
 import LensShelf from './LensShelf.vue';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -53,16 +53,29 @@ const drawn = computed(() => chosenShape(shape.value, result.value));
 
 const asked = computed(() => query.value.trim().length > 0);
 
-const run = async () => {
+/**
+ * Whether this question would pay a model to answer it.
+ *
+ * Two buttons rather than one, which is the guardrail of §13.3 on the screen:
+ * pressing the ordinary one never spends, and the engine answers it with the
+ * price rather than with rows. Nobody arrives at a bill by clicking the thing
+ * they always click.
+ */
+const costs = computed(() => spends(query.value));
+
+const run = async (spending = false) => {
     if (!asked.value || running.value) return;
     running.value = true;
     refused.value = null;
     try {
-        result.value = await invoke<QueryResult>('run_node_query', {
-            vaultPath: props.vaultPath,
-            query: query.value,
-            offset: 0,
-        });
+        result.value = await invoke<QueryResult>(
+            spending ? 'ask_node_query' : 'run_node_query',
+            {
+                vaultPath: props.vaultPath,
+                query: query.value,
+                offset: 0,
+            },
+        );
     } catch (e) {
         // A question the engine will not answer says why — an unreadable date,
         // for one. Showing that is the whole point of refusing rather than
@@ -258,9 +271,21 @@ const edit = async () => {
                 data-run
                 class="h-7 flex-shrink-0 rounded-full bg-indigo-600 px-3 text-[11px] font-semibold text-white disabled:opacity-40"
                 :disabled="!asked || running"
-                @click="run"
+                @click="run()"
             >
                 {{ $t('nexus.lens_run') }}
+            </button>
+            <!-- The door that spends. Only when the question has `| ask` in
+                 it, and never the one somebody presses out of habit. -->
+            <button
+                v-if="costs"
+                type="button"
+                data-run-asking
+                class="h-7 flex-shrink-0 rounded-full border border-amber-400 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800 disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+                :disabled="!asked || running"
+                @click="run(true)"
+            >
+                {{ $t('nexus.lens_run_asking') }}
             </button>
         </div>
 

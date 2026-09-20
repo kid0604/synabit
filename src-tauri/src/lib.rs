@@ -792,6 +792,7 @@ pub fn run() {
             rename_property::delete_kind,
             rename_property::retype_kind,
             nexus::run_node_query,
+            nexus::ask_node_query,
             nexus::search_notes,
             nexus::search_tasks,
             nexus::search_files,

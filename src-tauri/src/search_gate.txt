@@ -8,7 +8,7 @@ status:done                        → notes    1 [Gửi báo cáo quý]
 priority:3                         → notes    1 [Gửi báo cáo quý]
 priority:>3                        → notes    1 [Làm công văn]
 author:Nguyễn                      → notes    1 [Sách hay]
-báo cáo                            → notes    1 [Gửi báo cáo quý]
+báo cáo                            → notes    2 [2021-03-14 · Gửi báo cáo quý]
 -báo                               → refused (nothing to match on)
 "công văn"                         → notes    1 [Làm công văn]
 is:task sort:priority              → notes    2 [Gửi báo cáo quý · Làm công văn]
@@ -42,7 +42,7 @@ when:2016..2026 gặp                → events   1 [Gặp Khánh ở quán quen
 when:2016..2026 -gặp               → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
 #gia-đình OR #công-việc            → notes    2 [2019-11-05 · 2021-03-14]
 is:task OR is:book                 → notes    3 [Sách hay · Gửi báo cáo quý · Làm công văn]
-báo OR văn                         → notes    2 [Gửi báo cáo quý · Làm công văn]
+báo OR văn                         → notes    3 [2021-03-14 · Gửi báo cáo quý · Làm công văn]
 is:task AND status:done            → notes    1 [Gửi báo cáo quý]
 with:khánh OR with:minh            → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
 (with:khánh OR with:minh) when:2019 → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
@@ -86,6 +86,14 @@ events | seq gaps by who           → events   2 [Khánh · Minh] — 2 with no
 events columns:when,title | seq gaps by who → events refused: General application error: 'who' is not one of the columns of this answer (when, title). Ask for it with columns: first.
 events columns:when,who | seq wibble by who → refused: 'wibble' is not something seq can work out yet
 events columns:when,who | seq gaps by who | where quiet ~ longest → refused: '~' is not a way of comparing two things
+events when:2019 | explode sentences → events   2 [Hôm nay gặp Khánh ở quán quen. · Nói chuyện hai tiếng.]
+events when:2019 | explode sentences | ask 1 → events refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | explode sentences        → notes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
+is:note | explode sentences | ask 15 → notes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
+is:note | explode sentences | ask 1 → notes  refused: General application error: `ask 1` would send 4 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | ask 1                    → notes  refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | explode sentences | ask  → refused: ask needs a number of lines to keep
+is:note | explode wibble           → refused: 'wibble' is not something explode can open up yet
 date:today                         → notes    0 []
 date:2026-06                       → notes    0 []
 is:note date:2026-06               → notes    0 []
