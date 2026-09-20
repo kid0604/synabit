@@ -170,6 +170,39 @@ describe('Asking Nexus a question', () => {
         expect(calls[calls.length - 1][1]).toMatchObject({ query: 'when:2019' });
     });
 
+    /// §10: an alternative is one chip, because taking half of it off would
+    /// leave `OR` with nothing on one side. Pressing its × takes all of it.
+    it('draws an alternative as one chip and takes all of it off at once', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('(#a OR #b) with:khánh');
+        await wrapper.find('[data-ask]').trigger('keyup.enter');
+        await flushPromises();
+
+        const chips = wrapper.findAll('[data-chip]');
+        expect(chips).toHaveLength(2);
+        expect(chips[0].attributes('data-chip-kind')).toBe('group');
+
+        await wrapper.findAll('[data-chip-drop]')[0].trigger('click');
+        await flushPromises();
+        const calls = vi.mocked(invoke).mock.calls;
+        expect(calls[calls.length - 1][1]).toMatchObject({ query: 'with:khánh' });
+    });
+
+    /// Two opposite questions used to be one picture: the minus was stripped
+    /// off to find the key and then never drawn.
+    it('marks a chip that asks for the absence of something', async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        await wrapper.find('[data-ask]').setValue('-with:khánh');
+        await wrapper.find('[data-ask]').trigger('keyup.enter');
+        await flushPromises();
+
+        const chip = wrapper.find('[data-chip]');
+        expect(chip.attributes('data-chip-not')).toBe('yes');
+        expect(chip.find('[data-chip-negated]').exists()).toBe(true);
+    });
+
     /// The same press that put a filter on takes it off, so pressing the same
     /// person twice does not leave a filter nobody can see.
     it('presses off what it pressed on', async () => {

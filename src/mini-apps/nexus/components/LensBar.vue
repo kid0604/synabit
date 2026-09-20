@@ -32,7 +32,7 @@ import { chosenShape, SHAPES, type Shape } from '../../../shared/views/shapeFor'
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
-import { chipsOf, withFilter, withTag, without } from '../../../shared/queryChips';
+import { chipsOf, withFilter, withTag, without, type Chip } from '../../../shared/queryChips';
 import LensShelf from './LensShelf.vue';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -103,10 +103,18 @@ const typed = () => {
 /** A row's `open` when it has one, else its id. See `timeline::query`. */
 const open = (row: QueryRow) => emit('open', row.open ?? row.id, row.node_type);
 
-const drop = (index: number) => {
-    query.value = without(query.value, index);
+/**
+ * Taking a chip off takes **all** of it off.
+ *
+ * A chip is no longer one token: an alternative is one chip spanning several,
+ * because removing half of it would leave `OR` with nothing on one side. See
+ * `shared/queryChips`.
+ */
+const drop = (chip: Chip) => {
+    query.value = without(query.value, chip.from, chip.to);
     active.value = null;
-    void run();
+    if (query.value.trim()) void run();
+    else result.value = null;
 };
 
 /**
@@ -170,20 +178,39 @@ const edit = async () => {
                 @blur="typing = false"
             />
             <span v-else data-chips class="flex min-w-0 flex-grow flex-wrap items-center gap-1.5">
+                <!-- Three looks, because three different things: the table
+                     being read, an alternative, and a plain filter. A chip
+                     asking for the *absence* of something carries a minus —
+                     it used to be drawn identically to the chip asking for its
+                     presence, which made two opposite questions one picture. -->
                 <span
                     v-for="(chip, i) in chips"
                     :key="`${i}-${chip.text}`"
                     data-chip
-                    class="inline-flex h-6 items-center rounded-md border border-indigo-200 bg-indigo-50 pl-2 text-[12px] font-medium text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"
+                    :data-chip-kind="chip.key === 'source' ? 'source' : chip.key === 'group' ? 'group' : undefined"
+                    :data-chip-not="chip.negated ? 'yes' : undefined"
+                    class="inline-flex h-6 items-center rounded-md border pl-2 text-[12px] font-medium"
+                    :class="
+                        chip.key === 'source'
+                            ? 'border-gray-300 bg-gray-100 text-gray-700 dark:border-[#48484a] dark:bg-[#3a3a3c] dark:text-gray-200'
+                            : chip.key === 'group'
+                              ? 'border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200'
+                              : 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200'
+                    "
                 >
-                    <span v-if="chip.key && chip.key !== '#'" class="mr-1 opacity-60">{{ chip.key }}</span>
+                    <span v-if="chip.negated" data-chip-negated class="mr-1 font-bold">−</span>
+                    <span
+                        v-if="chip.key && !['#', 'source', 'group'].includes(chip.key)"
+                        class="mr-1 opacity-60"
+                        >{{ chip.key }}</span
+                    >
                     {{ chip.label }}
                     <button
                         type="button"
                         data-chip-drop
                         :aria-label="$t('nexus.lens_drop_chip', { what: chip.label })"
                         class="px-1.5 opacity-50 transition-opacity hover:opacity-100"
-                        @click="drop(i)"
+                        @click="drop(chip)"
                     >
                         ×
                     </button>

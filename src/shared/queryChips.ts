@@ -1,7 +1,9 @@
 /**
  * The query bar's chips — which are the text itself, sliced.
  *
- * The design is `docs/nexus-lenses-2026-09-19.md`, §6.1 and step 3.
+ * The design is `docs/nexus-lenses-2026-09-19.md` §6.1, and §10 of
+ * `docs/query-grammar-2026-09-20.md` for what a chip is once the grammar has
+ * brackets in it.
  *
  * # Why chips are not a model of their own
  *
@@ -13,32 +15,52 @@
  * that came back as `sort:when` would silently change somebody's saved lens.
  *
  * So there is no second model. **The text is the only state**, and a chip is a
- * span of it. Removing a chip removes its token; adding one appends a token;
+ * span of it. Removing a chip removes its tokens; adding one appends tokens;
  * typing re-slices. Two-way is not a feature that had to be kept working — it
  * is the shape of the thing.
  *
- * # Two rules copied from the Rust side, deliberately
+ * # A chip is a top-level conjunct, not a token
  *
- * `tokenise` keeps quoted phrases whole, because `search.rs` does. And
- * [`SINGULAR`] lists the keys that replace rather than repeat, because over
- * there `when` is an `Option` and `with` is a `Vec`. Both are tested; if the
- * two sides drift, a person clicking twice gets an answer the engine cannot
- * give.
+ * It used to be one token, and that was fine while a question could only ever
+ * mean "all of these". With `OR` and brackets it is wrong, and wrong in the
+ * way that matters: a chip is a thing you can take off, so a chip has to be a
+ * piece that can be taken off **without changing what the rest means**.
+ *
+ * `(#a OR #b)` is one such piece — remove half of it and `OR` has nothing on
+ * one side. So is a bare `#a OR #b`, because `OR` binds loosest: the whole
+ * question is one alternative, and there is no smaller piece to remove.
+ * Brackets are how somebody says otherwise, and then they get their chips
+ * back: `(#a OR #b) with:khánh` is two.
+ *
+ * # Three rules copied from the Rust side, deliberately
+ *
+ * `tokenise` keeps quoted phrases whole and splits brackets the same way
+ * `query.rs` does, including leaving `same-day-as(today)` alone. [`SINGULAR`]
+ * lists the keys that replace rather than repeat, because over there `when` is
+ * an `Option` and `with` is a `Vec`. And `OR` is upper case or it is a word.
+ * All three are tested; if the two sides drift, a person clicking twice gets
+ * an answer the engine cannot give.
  */
 
 export interface Chip {
-  /** The token exactly as it appears in the text. */
+  /** The tokens this chip is made of, joined exactly as they appear. */
   text: string;
-  /** `with`, `when`, `#`, or empty for a bare word. */
+  /** `with`, `when`, `#`, `source`, `group`, or empty for a bare word. */
   key: string;
   /** What to show. The token's value, unquoted; a bare word shows whole. */
   label: string;
+  /** Whether it asks for the absence of the thing rather than its presence. */
+  negated: boolean;
+  /** The first token it covers. */
+  from: number;
+  /** One past the last token it covers. */
+  to: number;
 }
 
 /**
  * Keys where a second one replaces the first, because the engine keeps one.
  *
- * `with:`, `where:`, `about:` and `#tag` are absent on purpose: asking for two
+ * `with:`, `place:`, `about:` and `#tag` are absent on purpose: asking for two
  * people means both were there, which is a question somebody really asks.
  */
 export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort', 'limit', 'date'];
@@ -52,8 +74,20 @@ export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort'
  */
 export const SOURCES = ['notes', 'events'];
 
+/** Structure rather than something to search for. Shouted, as in Lucene. */
+const OR = 'OR';
+const AND = 'AND';
+const NOT = 'NOT';
+
+/** Whether what has been read so far is a name that could take a bracket. */
+function namesACall(word: string): boolean {
+  const name = word.slice(word.lastIndexOf(':') + 1);
+  return name.length > 0 && /[^\W\d_]/u.test(name) && /^[\p{L}\p{N}_-]+$/u.test(name);
+}
+
 /**
- * Split a query the way the parser does: whitespace separates, quotes hold.
+ * Split a query the way the parser does: whitespace separates, quotes hold,
+ * brackets stand alone unless they belong to a name.
  *
  * A trailing unclosed quote is kept as typed rather than repaired — somebody
  * is mid-sentence, and rewriting what they are typing is the one thing a bar
@@ -63,54 +97,193 @@ export function tokenise(text: string): string[] {
   const tokens: string[] = [];
   let token = '';
   let quoted = false;
+  // Brackets opened inside this token, so `same-day-as(today)` stays one and
+  // `(a OR b)` becomes five.
+  let depth = 0;
+
+  const end = () => {
+    if (token) tokens.push(token);
+    token = '';
+    depth = 0;
+  };
 
   for (const ch of text) {
     if (ch === '"' || ch === '“' || ch === '”') {
       quoted = !quoted;
       token += ch;
-    } else if (/\s/.test(ch) && !quoted) {
-      if (token) tokens.push(token);
-      token = '';
+    } else if (quoted) {
+      token += ch;
+    } else if (/\s/.test(ch)) {
+      end();
+    } else if (ch === '(') {
+      if (namesACall(token)) {
+        depth += 1;
+        token += ch;
+      } else {
+        end();
+        tokens.push(ch);
+      }
+    } else if (ch === ')') {
+      if (depth > 0) {
+        depth -= 1;
+        token += ch;
+      } else {
+        end();
+        tokens.push(ch);
+      }
     } else {
       token += ch;
     }
   }
-  if (token) tokens.push(token);
+  end();
   return tokens;
 }
 
 const unquote = (value: string) =>
   value.replace(/^["“”]|["“”]$/g, '').trim();
 
-export function chipsOf(text: string): Chip[] {
-  const tokens = tokenise(text);
-  return tokens.map((token, index) => {
-    // The source, which is the first word or is not the source. Drawn as a
-    // chip of its own so the bar says which table is being read — the thing
-    // choosing it by keyword could never say.
-    if (index === 0 && tokens.length > 1 && SOURCES.includes(token.toLowerCase())) {
-      return { text: token, key: 'source', label: token.toLowerCase() };
-    }
-    if (token.startsWith('#')) {
-      return { text: token, key: '#', label: token };
-    }
-    const at = token.indexOf(':');
-    // A colon at the very start is not a key, and neither is one in a bare
-    // word like `19:30`; a key is what comes before the first colon when
-    // there is something before it.
-    if (at > 0) {
-      const key = token.slice(0, at).toLowerCase().replace(/^-/, '');
-      return { text: token, key, label: unquote(token.slice(at + 1)) || token };
-    }
-    return { text: token, key: '', label: token };
-  });
+/** Whether an `OR` sits outside every bracket, making the whole thing one. */
+function joinedByOr(tokens: string[]): boolean {
+  let depth = 0;
+  for (const token of tokens) {
+    if (token === '(') depth += 1;
+    else if (token === ')') depth = Math.max(0, depth - 1);
+    else if (token === OR && depth === 0) return true;
+  }
+  return false;
 }
 
-/** The text with one token taken out, spacing tidied. */
-export function without(text: string, index: number): string {
+/** One token as a chip, with `from`/`to` filled in by the caller. */
+function chipOf(token: string, from: number, to: number): Chip {
+  const negated = token.startsWith('-') && token.length > 1 && !token.startsWith('--');
+  const body = negated ? token.slice(1) : token;
+  const at = body.indexOf(':');
+  // A colon at the very start is not a key, and neither is one in a bare word
+  // like `19:30`; a key is what comes before the first colon when there is
+  // something before it.
+  const [key, label] = body.startsWith('#')
+    ? ['#', body]
+    : at > 0
+      ? [body.slice(0, at).toLowerCase(), unquote(body.slice(at + 1)) || body]
+      : ['', body];
+  return { text: token, key, label, negated, from, to };
+}
+
+export function chipsOf(text: string): Chip[] {
   const tokens = tokenise(text);
-  tokens.splice(index, 1);
+  const chips: Chip[] = [];
+  let at = 0;
+
+  // The source, which is the first word or is not the source. A chip of its
+  // own so the bar says which table is being read — the thing that chooses it
+  // by keyword could never say.
+  if (tokens.length > 1 && SOURCES.includes(tokens[0].toLowerCase())) {
+    chips.push({
+      text: tokens[0],
+      key: 'source',
+      label: tokens[0].toLowerCase(),
+      negated: false,
+      from: 0,
+      to: 1,
+    });
+    at = 1;
+  }
+
+  const rest = tokens.slice(at);
+  if (!rest.length) return chips;
+
+  // An `OR` outside every bracket makes the whole question one alternative,
+  // because `OR` binds loosest. There is no smaller piece to take off, so
+  // there is no smaller chip.
+  if (joinedByOr(rest)) {
+    chips.push({
+      text: rest.join(' '),
+      key: 'group',
+      label: rest.join(' '),
+      negated: false,
+      from: at,
+      to: tokens.length,
+    });
+    return chips;
+  }
+
+  // Otherwise the chips are the top-level conjuncts.
+  let i = at;
+  while (i < tokens.length) {
+    const start = i;
+    // `AND` was written out. It belongs to the chip that follows, so taking
+    // that chip off takes the word with it.
+    while (i < tokens.length && tokens[i] === AND) i += 1;
+    // `-x` and `NOT x` mark the chip that follows.
+    while (i < tokens.length && tokens[i] === NOT) i += 1;
+
+    if (i >= tokens.length) {
+      // Only separators left — a half-typed question. Show it as it is.
+      chips.push(chipOf(tokens.slice(start).join(' '), start, tokens.length));
+      break;
+    }
+
+    if (tokens[i] === '(') {
+      let depth = 0;
+      do {
+        if (tokens[i] === '(') depth += 1;
+        else if (tokens[i] === ')') depth -= 1;
+        i += 1;
+      } while (i < tokens.length && depth > 0);
+      const span = tokens.slice(start, i);
+      const negated = span.some(t => t === NOT) || span[0]?.startsWith('-');
+      chips.push({
+        text: span.join(' '),
+        key: 'group',
+        label: span.join(' '),
+        negated,
+        from: start,
+        to: i,
+      });
+      continue;
+    }
+
+    i += 1;
+    const span = tokens.slice(start, i);
+    const chip = chipOf(span[span.length - 1], start, i);
+    chips.push({
+      ...chip,
+      text: span.join(' '),
+      negated: chip.negated || span.some(t => t === NOT),
+    });
+  }
+
+  return chips;
+}
+
+/** The text with a run of tokens taken out, spacing tidied. */
+export function without(text: string, from: number, to = from + 1): string {
+  const tokens = tokenise(text);
+  tokens.splice(from, Math.max(0, to - from));
   return tokens.join(' ');
+}
+
+/**
+ * Tokens with a bare top-level `OR` wrapped in brackets.
+ *
+ * Without this, pressing a person while the bar reads `#a OR #b` would write
+ * `#a OR #b with:khánh` — which, because `OR` binds loosest, asks for `#a`, or
+ * for `#b` with Khánh. A gesture on the graph must never quietly change the
+ * question that was already there.
+ */
+function grouped(tokens: string[]): string[] {
+  return joinedByOr(tokens) ? ['(', ...tokens, ')'] : tokens;
+}
+
+/** Where a key sits at the top level, or -1. Inside a bracket is not ours. */
+function topLevel(tokens: string[], key: string): number {
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i] === '(') depth += 1;
+    else if (tokens[i] === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && tokens[i].toLowerCase().startsWith(`${key}:`)) return i;
+  }
+  return -1;
 }
 
 /**
@@ -126,7 +299,7 @@ export function withFilter(text: string, key: string, value: string): string {
   const tokens = tokenise(text);
 
   if (SINGULAR.includes(key.toLowerCase())) {
-    const at = tokens.findIndex(t => t.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+    const at = topLevel(tokens, key.toLowerCase());
     if (at >= 0) {
       // Pressing the one already there takes it off, so the same gesture that
       // added a filter removes it. Without this, clicking the strip twice
@@ -135,12 +308,14 @@ export function withFilter(text: string, key: string, value: string): string {
       tokens[at] = token;
       return tokens.join(' ');
     }
-  } else if (tokens.includes(token)) {
-    return without(text, tokens.indexOf(token));
+  } else {
+    const at = tokens.indexOf(token);
+    // Only when it stands on its own. Taking one name out of an alternative
+    // leaves `OR` with nothing on one side.
+    if (at >= 0 && !joinedByOr(tokens)) return without(text, at);
   }
 
-  tokens.push(token);
-  return tokens.join(' ');
+  return [...grouped(tokens), token].join(' ');
 }
 
 /** A tag, which carries its own mark rather than a key. */
@@ -149,9 +324,9 @@ export function withTag(text: string, tag: string): string {
   if (!clean) return text;
   const token = `#${clean}`;
   const tokens = tokenise(text);
-  if (tokens.includes(token)) return without(text, tokens.indexOf(token));
-  tokens.push(token);
-  return tokens.join(' ');
+  const at = tokens.indexOf(token);
+  if (at >= 0 && !joinedByOr(tokens)) return without(text, at);
+  return [...grouped(tokens), token].join(' ');
 }
 
 function quoteIfNeeded(value: string): string {

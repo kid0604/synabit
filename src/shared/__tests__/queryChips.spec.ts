@@ -31,16 +31,74 @@ describe('The query bar, both ways round', () => {
     });
 
     it('reads a key off a token, and knows when there is not one', () => {
-        expect(chipsOf('with:khánh')[0]).toEqual({
+        expect(chipsOf('with:khánh')[0]).toMatchObject({
             text: 'with:khánh',
             key: 'with',
             label: 'khánh',
+            negated: false,
         });
         expect(chipsOf('#gia-đình')[0].key).toBe('#');
-        expect(chipsOf('cà')[0]).toEqual({ text: 'cà', key: '', label: 'cà' });
+        expect(chipsOf('cà')[0]).toMatchObject({ text: 'cà', key: '', label: 'cà' });
         // A colon inside a bare word is not a key.
         expect(chipsOf('19:30')[0].key).toBe('19');
         expect(chipsOf('-status:done')[0].key).toBe('status');
+    });
+
+    /// The bar used to draw `-with:khánh` and `with:khánh` as the same chip:
+    /// the minus was stripped off to find the key and then never shown. Two
+    /// opposite questions, one picture.
+    it('says when a chip is asking for the absence of something', () => {
+        const away = chipsOf('-with:khánh')[0];
+        expect(away).toMatchObject({ key: 'with', label: 'khánh', negated: true });
+        expect(chipsOf('with:khánh')[0].negated).toBe(false);
+
+        expect(chipsOf('NOT #gia-đình')[0]).toMatchObject({ key: '#', negated: true });
+        expect(chipsOf('-#gia-đình')[0]).toMatchObject({ key: '#', label: '#gia-đình', negated: true });
+    });
+
+    // ─── Groups ─────────────────────────────────────────────────
+
+    /// A chip is a piece that can be taken off without changing what the rest
+    /// means. Half of an alternative is not such a piece.
+    it('draws an alternative as one chip, because there is no smaller piece', () => {
+        const chips = chipsOf('#gia-đình OR #công-việc');
+        expect(chips).toHaveLength(1);
+        expect(chips[0]).toMatchObject({ key: 'group', label: '#gia-đình OR #công-việc' });
+    });
+
+    /// `OR` binds loosest, so an unbracketed one swallows the whole question —
+    /// and brackets are how somebody says otherwise.
+    it('gives the chips back when brackets say where the alternative ends', () => {
+        const chips = chipsOf('(#gia-đình OR #công-việc) with:khánh');
+        expect(chips.map(c => c.key)).toEqual(['group', 'with']);
+        expect(chips[0].text).toBe('( #gia-đình OR #công-việc )');
+        expect(chips[1].label).toBe('khánh');
+    });
+
+    it('takes a whole group off in one press', () => {
+        const text = '(#gia-đình OR #công-việc) with:khánh';
+        const chips = chipsOf(text);
+        expect(without(text, chips[0].from, chips[0].to)).toBe('with:khánh');
+        expect(without(text, chips[1].from, chips[1].to)).toBe('( #gia-đình OR #công-việc )');
+    });
+
+    it('names the table in a chip of its own', () => {
+        const chips = chipsOf('events with:khánh');
+        expect(chips[0]).toMatchObject({ key: 'source', label: 'events' });
+        expect(chips).toHaveLength(2);
+        // Alone it is a word somebody is searching for, as the parser reads it.
+        expect(chipsOf('events')[0].key).toBe('');
+    });
+
+    /// Lower case is a word, not an operator — the Rust side says so too.
+    it('leaves a lower-case or alone', () => {
+        expect(chipsOf('#a or #b')).toHaveLength(3);
+    });
+
+    it('splits brackets the way the parser does, and leaves a call alone', () => {
+        expect(tokenise('(#a OR #b)')).toEqual(['(', '#a', 'OR', '#b', ')']);
+        expect(tokenise('when:same-day-as(today)')).toEqual(['when:same-day-as(today)']);
+        expect(tokenise('-(#a OR #b)')).toEqual(['-', '(', '#a', 'OR', '#b', ')']);
     });
 
     it('shows a quoted value without its quotes', () => {
@@ -50,6 +108,19 @@ describe('The query bar, both ways round', () => {
     it('takes a chip out and leaves the rest tidy', () => {
         expect(without('with:khánh when:2019 #gia-đình', 1)).toBe('with:khánh #gia-đình');
         expect(without('with:khánh', 0)).toBe('');
+    });
+
+    /// The property the design rests on, now that a chip can span tokens:
+    /// what is left after taking a chip off is what the other chips said.
+    it('round-trips a question with brackets in it', () => {
+        for (const text of [
+            '(#gia-đình OR #công-việc) with:khánh',
+            'events (with:khánh OR with:minh) when:2019',
+            '#gia-đình OR #công-việc',
+            'is:note -when:2019',
+        ]) {
+            expect(chipsOf(text).map(c => c.text).join(' ')).toBe(tokenise(text).join(' '));
+        }
     });
 
     // ─── What pressing things does ──────────────────────────────
@@ -72,6 +143,24 @@ describe('The query bar, both ways round', () => {
     it('takes a filter off when the same one is pressed again', () => {
         expect(withFilter('when:2019', 'when', '2019')).toBe('');
         expect(withFilter('with:khánh with:minh', 'with', 'khánh')).toBe('with:minh');
+    });
+
+    /// `OR` binds loosest, so appending to `#a OR #b` would ask for `#a`, or
+    /// for `#b` with Khánh. A gesture on the graph must never quietly change
+    /// the question that was already there.
+    it('brackets an alternative before adding to it', () => {
+        expect(withFilter('#a OR #b', 'with', 'khánh')).toBe('( #a OR #b ) with:khánh');
+        expect(withTag('#a OR #b', 'work')).toBe('( #a OR #b ) #work');
+        // Already bracketed, so nothing to do.
+        expect(withFilter('(#a OR #b)', 'with', 'khánh')).toBe('( #a OR #b ) with:khánh');
+    });
+
+    /// And a key inside a bracket belongs to the bracket, not to the bar.
+    it('replaces a single-valued key only where it stands on its own', () => {
+        expect(withFilter('(when:2019 OR #a) #b', 'when', '2021')).toBe(
+            '( when:2019 OR #a ) #b when:2021',
+        );
+        expect(withFilter('when:2019 #b', 'when', '2021')).toBe('when:2021 #b');
     });
 
     it('quotes a name with a space in it, so it survives the trip back', () => {

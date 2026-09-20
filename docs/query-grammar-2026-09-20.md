@@ -441,7 +441,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | **1** | ~~`Term`/`Expr`/`Query` dựng bên cạnh; `ParsedQuery` thành khung nhìn phẳng~~ — **xong 2026-09-20** | ảnh chụp **không đổi một dòng** ✓ |
 | **2** | ~~Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11~~ — **xong 2026-09-20** | ảnh chụp đổi đúng chỗ đổi tên ✓ |
 | **3** | ~~`OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy~~ — **xong 2026-09-20** | câu cũ không đổi; câu có `OR` chạy ✓ |
-| **4** | Chip biết nhóm và giai đoạn | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 |
+| **4** | ~~Chip biết nhóm~~ — **xong 2026-09-20** (giai đoạn theo bước 5) | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 ✓ |
 | **5** | Dấu `\|` + `stats` + `sort`/`head` | `bars` có dữ liệu |
 | **6** | `seq gaps` + `where` + `same-day-as()` | bốn panel cảm xúc thành thấu kính |
 | **7** | `explode sentences` + `ask` | bước duy nhất tiêu tiền |
@@ -858,3 +858,103 @@ có gì hỏng — đó đúng là việc của bước 4.
 | Test TypeScript | 1868, không đổi |
 | Clippy | không cảnh báo mới trên file nào đụng tới |
 | `ParsedQuery` | thôi là thứ hai bộ chạy đọc — chỉ còn đường FTS dùng |
+
+---
+
+## 21. Bước 4 — đã làm, 2026-09-20
+
+**Chip thôi là một token.**
+
+### Định nghĩa mới, và nó rút ra từ một câu hỏi
+
+Chip cũ là *một token*. Điều đó đúng chừng nào câu hỏi chỉ nói được "tất cả những
+thứ này". Có `OR` và ngoặc rồi thì nó sai — và sai ở đúng chỗ đáng sợ.
+
+Chip là **thứ bấm × là gỡ đi được**. Nên chip phải là một mảnh **gỡ đi mà không đổi
+nghĩa phần còn lại**.
+
+- `(#a OR #b)` là một mảnh như thế. Gỡ nửa của nó thì `OR` mất một vế.
+- `#a OR #b` **trần** cũng là một mảnh: `OR` buộc lỏng nhất, nên cả câu là **một**
+  phép tuyển, không có mảnh nào nhỏ hơn để gỡ.
+- Ngoặc là cách người ta nói khác đi — và khi nói thì được trả chip lại:
+  `(#a OR #b) with:khánh` là **hai** chip.
+
+### Hai lỗi cũ của thanh chip, lộ ra khi viết lại
+
+**1. `-with:khánh` và `with:khánh` vẽ ra **giống hệt nhau**.** Dấu trừ bị bóc đi để
+tìm khoá rồi **không bao giờ được vẽ lại**:
+
+```ts
+const key = token.slice(0, at).toLowerCase().replace(/^-/, '');
+```
+
+Hai câu hỏi ngược nhau, một bức tranh. Giờ chip mang `negated` và thanh vẽ dấu `−`.
+
+**2. Bấm vào đồ thị có thể lặng lẽ đổi câu hỏi đang có.** Thanh đang là `#a OR #b`,
+bấm một người → nối thêm → `#a OR #b with:khánh`. Mà `OR` buộc lỏng nhất, nên câu ấy
+là *"`#a`, **hoặc** `#b` cùng với Khánh"* — không phải thứ ai định hỏi. Giờ
+`withFilter`/`withTag` **đóng ngoặc cho phép tuyển trần trước khi nối**:
+`( #a OR #b ) with:khánh`.
+
+Cái thứ hai đáng kể hơn cái thứ nhất, vì bấm trên đồ thị là **đường dùng chính** của
+thanh này — §6.1 gọi nó là cái biên lai.
+
+### Gate: chạy trên chính bộ câu của Rust
+
+§15.3 nói gate của bước này là *vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1*. Nên
+làm cho nó đúng nghĩa đen: `queryChipsGate.spec.ts` **đọc `search_gate.txt`** —
+đúng cái file vàng mà bộ phân tích và cả hai bộ chạy bị ghim vào — và chạy cả 75 câu
+qua thanh chip. Câu nào thêm bên Rust để ghim một hình dạng ngữ pháp mới thì **tự nó
+sang đây**.
+
+### Gate đầu tiên tao viết **không có răng**
+
+Viết xong vòng chữ→chip→chữ, tao thử **phá `joinedByOr`** cho nó luôn trả `false`.
+Gate vẫn **xanh**.
+
+Đúng thôi: cắt `#a OR #b` thành **ba** mảnh thì ghép lại vẫn ra đúng từng ấy chữ.
+Vòng tròn khít là điều kiện **cần**, không phải **đủ**. Cái sai chỉ lộ ra lúc **gỡ**
+một mảnh.
+
+Nên gate có thêm mệnh đề có răng:
+
+> Gỡ **bất kỳ** chip nào khỏi một câu hợp lệ thì phần còn lại **vẫn là một câu** —
+> ngoặc cân, và không `OR` nào mất vế.
+
+Thử lại cùng phép phá ấy:
+
+```
+× leaves a question behind whichever chip is taken off
+  #gia-đình OR #công-việc → without "#gia-đình" → OR #công-việc
+```
+
+Đây là **lần thứ hai** trong tài liệu này một ảnh chụp lộ ra khiếm khuyết của chính
+nó trước khi lộ ra lỗi nào của sản phẩm (lần đầu: §17, nó sắp tên trước khi cắt nên
+mù với `sort:`). Bài học không đổi: **một ảnh chụp không nhìn thấy thứ nó phải canh
+thì tệ hơn không có**, vì nó cho cảm giác an toàn.
+
+### Ba luật chép từ bên Rust, và vì sao phải chép
+
+`tokenise` bên TS giờ **tách ngoặc y như `query.rs`**, kể cả luật "ngoặc dính ngay
+sau một cái tên là ngoặc của cái tên" (`when:same-day-as(today)` vẫn là một token).
+Cộng với `SINGULAR` và luật `OR` viết hoa, là ba chỗ hai bên phải đồng ý.
+
+Không có cách nào ép hai ngôn ngữ dùng chung một bộ tách từ ở đây, nên cả ba đều có
+test ở **cả hai bên**, và gate đọc file vàng chính là dây nối: nếu bên TS tách khác
+đi, vòng tròn trên 75 câu ấy sẽ lệch.
+
+### Chưa làm, và nói rõ
+
+**Chip giai đoạn** (`| stats count by month`) chưa có, vì `|` chưa phân tích được.
+Dựng ô chứa cho một hình dạng chưa câu nào viết ra được thì đúng là thứ bước 1 đã cố
+ý tránh. Nó đi cùng bước 5.
+
+### Đo
+
+| | |
+| --- | --- |
+| Gate chip | **75 câu** đọc thẳng từ `search_gate.txt`, 5 mệnh đề |
+| Kiểm tra gate có răng | phá `joinedByOr` → gate đỏ đúng chỗ |
+| Test TypeScript | 1885 (thêm 17) |
+| Test Rust | 2377, không đổi |
+| `vue-tsc` | sạch |
