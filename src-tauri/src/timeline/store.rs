@@ -876,24 +876,41 @@ pub fn names_for(cache: &DbBridge, ids: &[&str]) -> HashMap<String, String> {
         return HashMap::new();
     }
     let marks = (0..wanted.len()).map(|i| format!("?{}", i + 1)).collect::<Vec<_>>().join(", ");
+    // Every name an event's links could have used, which is every name
+    // `identity_of` could have produced — the `node_id` property first, then
+    // the stable id, then the path. The two were not inverses before this:
+    // an identity taken from `node_id` came back unresolvable, so a question
+    // about who was there answered with a uuid.
     let Ok(mut stmt) = cache.conn().prepare(&format!(
-        "SELECT id, COALESCE(NULLIF(stable_id, ''), id), title FROM nodes
-          WHERE id IN ({marks}) OR stable_id IN ({marks})"
+        "SELECT id,
+                COALESCE(NULLIF(stable_id, ''), id),
+                COALESCE(NULLIF(json_extract(properties, '$.node_id'), ''), id),
+                title
+           FROM nodes
+          WHERE id IN ({marks})
+             OR stable_id IN ({marks})
+             OR json_extract(properties, '$.node_id') IN ({marks})"
     )) else {
         return HashMap::new();
     };
     let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(wanted.iter()), |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
     }) else {
         return HashMap::new();
     };
     let mut found = HashMap::new();
-    for (id, identity, title) in rows.flatten() {
+    for (id, stable, node_id, title) in rows.flatten() {
         if title.trim().is_empty() {
             continue;
         }
         found.insert(id, title.clone());
-        found.insert(identity, title);
+        found.insert(stable, title.clone());
+        found.insert(node_id, title);
     }
     found
 }

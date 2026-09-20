@@ -28,7 +28,8 @@
 
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
-use crate::query::{Bucket, Query, Stage, Tally};
+use crate::query::{Bucket, Operand, Query, Sequence, Stage, Tally, Test};
+use crate::search::Comparison;
 
 /// The most rows the filter half may hand the pipeline.
 ///
@@ -113,21 +114,203 @@ impl Bucket {
 }
 
 /// Run every stage over an answer, in order.
-pub fn run(query: &Query, mut result: QueryResult) -> AppResult<QueryResult> {
+pub fn run(query: &Query, result: QueryResult) -> AppResult<QueryResult> {
+    run_on(query, result, chrono::Local::now().date_naive())
+}
+
+/// The same, told what day it is — `gaps` measures silence up to now.
+pub fn run_on(
+    query: &Query,
+    mut result: QueryResult,
+    today: chrono::NaiveDate,
+) -> AppResult<QueryResult> {
     for stage in &query.stages {
-        result = one(stage, result)?;
+        result = one(stage, result, today)?;
     }
     Ok(result)
 }
 
-fn one(stage: &Stage, result: QueryResult) -> AppResult<QueryResult> {
+fn one(stage: &Stage, result: QueryResult, today: chrono::NaiveDate) -> AppResult<QueryResult> {
     match stage {
         Stage::Stats { tally, by } => stats(*tally, by, result),
+        Stage::Seq { sequence, by } => seq(*sequence, by, result, today),
+        Stage::Where(test) => keeping(test, result),
         Stage::Sort { key, descending } => Ok(sorted(key, *descending, result)),
         Stage::Head(n) => Ok(QueryResult {
             rows: result.rows.into_iter().take(*n as usize).collect(),
             ..result
         }),
+    }
+}
+
+/// What `seq gaps` says about each thread of rows.
+///
+/// §7.2: `who, times, first, last, span, quiet, longest`. Every number is in
+/// days, and `quiet` is measured **up to today** rather than to the last row —
+/// which is the whole point. A friendship with a six-month hole in the middle
+/// and a coffee last week is not a silence; one with no hole at all and
+/// nothing since March is.
+///
+/// `span` — first to last — is not in §7.2's list. It is here because the
+/// panel this replaces will not go without it: `timeline::silence` says
+/// nothing about somebody it has only known for a fortnight, however loud the
+/// quiet, and `where` cannot subtract one column from another. The spec's list
+/// was written before the panel's own rule was read.
+fn seq(
+    sequence: Sequence,
+    by: &Bucket,
+    result: QueryResult,
+    today: chrono::NaiveDate,
+) -> AppResult<QueryResult> {
+    let Sequence::Gaps = sequence;
+    let dated = dated_column(&result).ok_or_else(|| {
+        AppError::General(
+            "there is no day in this answer to follow through time. \
+             Ask for one — `columns:when,who`."
+                .to_string(),
+        )
+    })?;
+    if let Bucket::Field(name) = by {
+        if !result.columns.iter().any(|c| c == name) {
+            return Err(AppError::General(format!(
+                "'{name}' is not one of the columns of this answer ({}). \
+                 Ask for it with columns: first.",
+                result.columns.join(", ")
+            )));
+        }
+    }
+
+    let mut order: Vec<String> = Vec::new();
+    let mut days: std::collections::HashMap<String, Vec<chrono::NaiveDate>> = Default::default();
+    let mut without = 0usize;
+    for row in &result.rows {
+        let (Some(label), Some(day)) = (
+            by.label(row, &result, Some(dated)),
+            row.cells.get(dated).and_then(|cell| day_of(cell.trim())),
+        ) else {
+            without += 1;
+            continue;
+        };
+        // One row can name several people — `who` comes back as a list — and
+        // each of them was there. Splitting means a gap is a gap in *that*
+        // thread rather than in a coincidence of spellings.
+        for one in label.split(',').map(str::trim).filter(|l| !l.is_empty()) {
+            let seen = days.entry(one.to_string()).or_insert_with(|| {
+                order.push(one.to_string());
+                Vec::new()
+            });
+            seen.push(day);
+        }
+    }
+
+    let total = order.len();
+    let rows = order
+        .into_iter()
+        .map(|label| {
+            let mut seen = days.remove(&label).unwrap_or_default();
+            seen.sort_unstable();
+            let first = seen.first().copied().unwrap_or(today);
+            let last = seen.last().copied().unwrap_or(today);
+            let longest = seen
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).num_days())
+                .max()
+                .unwrap_or(0);
+            QueryRow {
+                id: label.clone(),
+                node_type: String::new(),
+                title: label.clone(),
+                cells: vec![
+                    label,
+                    seen.len().to_string(),
+                    first.format("%Y-%m-%d").to_string(),
+                    last.format("%Y-%m-%d").to_string(),
+                    (last - first).num_days().to_string(),
+                    (today - last).num_days().max(0).to_string(),
+                    longest.to_string(),
+                ],
+                open: None,
+            }
+        })
+        .collect();
+
+    let left_out = (without > 0).then(|| format!("{without} with no {}", by.column()));
+    Ok(QueryResult {
+        columns: vec![
+            by.column(),
+            "times".into(),
+            "first".into(),
+            "last".into(),
+            "span".into(),
+            "quiet".into(),
+            "longest".into(),
+        ],
+        rows,
+        total,
+        query_time_ms: result.query_time_ms,
+        note: match (result.note, left_out) {
+            (Some(had), Some(left)) => Some(format!("{had}; {left}")),
+            (had, left) => had.or(left),
+        },
+    })
+}
+
+/// Keep the rows that pass a test.
+fn keeping(test: &Test, mut result: QueryResult) -> AppResult<QueryResult> {
+    let columns = result.columns.clone();
+    result.rows.retain(|row| passes(test, row, &columns));
+    result.total = result.rows.len();
+    Ok(result)
+}
+
+fn passes(test: &Test, row: &QueryRow, columns: &[String]) -> bool {
+    match test {
+        Test::All(parts) => parts.iter().all(|part| passes(part, row, columns)),
+        Test::Any(parts) => parts.iter().any(|part| passes(part, row, columns)),
+        Test::Nope(inner) => !passes(inner, row, columns),
+        Test::Equals(left, right, same) => {
+            let (a, b) = (read(left, row, columns), read(right, row, columns));
+            (a.eq_ignore_ascii_case(&b)) == *same
+        }
+        Test::Compare(left, operator, right) => {
+            let (a, b) = (read(left, row, columns), read(right, row, columns));
+            // Numbers as numbers, everything else as text — so `quiet > 100`
+            // is arithmetic and `last > 2026-01-01` is still a date comparison,
+            // which works because a day written this way sorts as it counts.
+            match (a.parse::<f64>(), b.parse::<f64>()) {
+                (Ok(a), Ok(b)) => match operator {
+                    Comparison::GreaterThan => a > b,
+                    Comparison::GreaterOrEqual => a >= b,
+                    Comparison::LessThan => a < b,
+                    Comparison::LessOrEqual => a <= b,
+                },
+                _ => match operator {
+                    Comparison::GreaterThan => a > b,
+                    Comparison::GreaterOrEqual => a >= b,
+                    Comparison::LessThan => a < b,
+                    Comparison::LessOrEqual => a <= b,
+                },
+            }
+        }
+    }
+}
+
+/// One side of a comparison, as the text to compare.
+///
+/// A column name nothing matches reads as empty rather than as its own name:
+/// `where nonsense > 5` should find nothing, not compare the word "nonsense".
+fn read(operand: &Operand, row: &QueryRow, columns: &[String]) -> String {
+    match operand {
+        Operand::Column(name) => columns
+            .iter()
+            .position(|c| c == name)
+            .and_then(|at| row.cells.get(at))
+            .map(|cell| cell.trim().to_string())
+            .unwrap_or_default(),
+        Operand::Number(n) | Operand::Days(n) => {
+            if n.fract() == 0.0 { format!("{n:.0}") } else { n.to_string() }
+        }
+        Operand::Text(text) => text.clone(),
     }
 }
 
@@ -344,4 +527,160 @@ mod tests {
         let spelt = parse("events | stats count by year | sort count desc | head 1");
         assert_eq!(sugar.stages, spelt.stages);
     }
+
+    fn day(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).expect("a real day")
+    }
+
+    /// §7.2, and the whole of the silence panel: `quiet` is measured **up to
+    /// today**, not to the last row. A friendship with a six-month hole in the
+    /// middle and a coffee last week is not a silence; one with no hole at all
+    /// and nothing since March is.
+    #[test]
+    fn gaps_measures_the_silence_up_to_now_and_the_longest_one_before_it() {
+        let events = answer(
+            &["when", "who"],
+            &[
+                &["2026-01-01", "Khánh"],
+                &["2026-01-08", "Khánh"],
+                &["2026-06-01", "Khánh"],
+                &["2026-01-01", "Minh"],
+            ],
+        );
+        let got = run_on(
+            &parse("events | seq gaps by who"),
+            events,
+            day(2026, 9, 20),
+        )
+        .expect("runs");
+
+        assert_eq!(
+            got.columns,
+            ["who", "times", "first", "last", "span", "quiet", "longest"]
+        );
+        assert_eq!(
+            got.rows[0].cells,
+            ["Khánh", "3", "2026-01-01", "2026-06-01", "151", "111", "144"]
+        );
+        // Minh has one row, so there is no gap between rows at all — and the
+        // silence since is the whole of it.
+        assert_eq!(
+            got.rows[1].cells,
+            ["Minh", "1", "2026-01-01", "2026-01-01", "0", "262", "0"]
+        );
+    }
+
+    /// One row can name several people, and each of them was there. Splitting
+    /// means a gap is a gap in *that* thread rather than in a coincidence of
+    /// spellings.
+    #[test]
+    fn a_row_naming_two_people_counts_for_both() {
+        let events = answer(&["when", "who"], &[&["2026-01-01", "Khánh, Minh"]]);
+        let got = run_on(&parse("events | seq gaps by who"), events, day(2026, 1, 2))
+            .expect("runs");
+        assert_eq!(
+            got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
+            ["Khánh", "Minh"]
+        );
+        assert!(got.rows.iter().all(|r| r.cells[1] == "1"));
+    }
+
+    /// **The gate for this step.** `timeline::silence` is a hand-written
+    /// module with three thresholds in it; this is the same three thresholds
+    /// written as a question, answering the same about the same people.
+    ///
+    /// Its rule, from `silence.rs`: seen at least 5 times, known at least 183
+    /// days, and quiet for longer than both its own longest gap and 90 days.
+    /// The `max` of the last two is two comparisons joined by `and`, which is
+    /// the same thing.
+    #[test]
+    fn the_silence_panel_is_a_question() {
+        const PANEL: &str = "events | seq gaps by who \
+             | where times >= 5 and span >= 183d and quiet > longest and quiet > 90d";
+        let today = day(2026, 9, 20);
+
+        let cells: Vec<&[&str]> = vec![
+            // Seen plenty over a year, and seen last week: not a silence.
+            &["2025-06-01", "Khánh"],
+            &["2025-09-01", "Khánh"],
+            &["2025-12-01", "Khánh"],
+            &["2026-03-01", "Khánh"],
+            &["2026-09-14", "Khánh"],
+            // Seen just as often over just as long, and nothing for a year.
+            &["2024-06-01", "Minh"],
+            &["2024-09-01", "Minh"],
+            &["2024-12-01", "Minh"],
+            &["2025-03-01", "Minh"],
+            &["2025-06-01", "Minh"],
+            // Known for two days, however loud the quiet since: the panel says
+            // nothing about somebody it has only just met, and neither does
+            // this.
+            &["2020-01-01", "Tuấn"],
+            &["2020-01-01", "Tuấn"],
+            &["2020-01-01", "Tuấn"],
+            &["2020-01-02", "Tuấn"],
+            &["2020-01-02", "Tuấn"],
+        ];
+
+        let got = run_on(&parse(PANEL), answer(&["when", "who"], &cells), today)
+            .expect("runs");
+        assert_eq!(
+            got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
+            ["Minh"],
+            "{:?}",
+            got.rows
+        );
+        assert_eq!(got.total, 1, "the total follows the rows a `where` kept");
+    }
+
+    /// `6mo` is a stretch of days, so it can be compared with a column of
+    /// days. Without that reading it would be the word "6mo" against a number.
+    #[test]
+    fn a_stretch_of_time_compares_against_a_column_of_days() {
+        let events = answer(
+            &["when", "who"],
+            &[&["2026-09-01", "Khánh"], &["2024-01-01", "Minh"]],
+        );
+        let kept = |q: &str| {
+            run_on(&parse(q), events.clone(), day(2026, 9, 20))
+                .expect("runs")
+                .rows
+                .iter()
+                .map(|r| r.cells[0].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(kept("events | seq gaps by who | where quiet > 6mo"), ["Minh"]);
+        assert_eq!(kept("events | seq gaps by who | where quiet < 6mo"), ["Khánh"]);
+    }
+
+    /// `AND`, `OR` and `NOT` inside a `where`, which §7 ships with it.
+    #[test]
+    fn a_where_can_join_two_comparisons() {
+        let events = answer(
+            &["when", "who"],
+            &[
+                &["2026-09-01", "Khánh"],
+                &["2026-09-02", "Khánh"],
+                &["2024-01-01", "Minh"],
+            ],
+        );
+        let kept = |q: &str| {
+            run_on(&parse(q), events.clone(), day(2026, 9, 20))
+                .expect("runs")
+                .rows
+                .iter()
+                .map(|r| r.cells[0].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kept("events | seq gaps by who | where times > 1 and quiet < 6mo"),
+            ["Khánh"]
+        );
+        assert_eq!(
+            kept("events | seq gaps by who | where times > 1 or quiet > 6mo").len(),
+            2
+        );
+        assert_eq!(kept("events | seq gaps by who | where not times > 1"), ["Minh"]);
+    }
 }
+

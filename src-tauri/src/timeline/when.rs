@@ -73,6 +73,15 @@ pub fn open_end() -> NaiveDate {
     NaiveDate::from_ymd_opt(9999, 12, 31).expect("a valid date")
 }
 
+/// The month and day a text names, with the year taken off: `11-05`.
+///
+/// §6.2. `same-day-as(today)` is the whole of "this day in other years", and
+/// it is a **day of the year**, not a span — which is why it cannot be
+/// answered by the same comparison every other `when:` uses.
+pub fn same_day_as(text: &str) -> Option<String> {
+    Some(parse(text)?.from.format("%m-%d").to_string())
+}
+
 /// What to write instead, when what was written could not be read.
 ///
 /// One string in one place: three commands used to each keep their own list of

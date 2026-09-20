@@ -313,6 +313,24 @@ impl Where {
                       END)"
                 )
             }
+            // This day in other years, read off whichever day the note has —
+            // the one it carries, or the one it was made on.
+            (Field::SameDay, Value::Text(written_day)) => {
+                let day = crate::timeline::when::same_day_as(written_day).ok_or_else(|| {
+                    AppError::General(format!(
+                        "'{written_day}' is not a day to take the anniversary of. {}",
+                        crate::timeline::when::HOW_TO_WRITE_ONE
+                    ))
+                })?;
+                let written = "CAST(json_extract(properties, '$.date') AS TEXT)";
+                let at = self.bind(text(&day));
+                format!(
+                    "(CASE WHEN {written} IS NOT NULL AND {written} <> ''
+                           THEN substr({written}, 6, 5) = {at}
+                           ELSE strftime('%m-%d', created_at) = {at}
+                      END)"
+                )
+            }
             // Words are the index's business, asked as a subquery rather than
             // as a separate round trip. One definition of "matches this word"
             // — the one that folds tone marks and knows about `đ` — and it

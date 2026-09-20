@@ -88,6 +88,15 @@ pub enum Field {
     /// `when:2019` — kept as written, because `timeline::when` reads every
     /// shape a date can take and a second reading here would disagree with it.
     When,
+    /// `when:same-day-as(today)` — this day in other years.
+    ///
+    /// Its own field rather than a shape of `when:`, because it is not a span
+    /// and cannot be answered as one: a span is two ends, and this is a day of
+    /// the year with the year taken off. §6.2 — it exists to delete a step
+    /// from the pipeline, because `anniversary` was never a primitive. It is a
+    /// date condition and a derived column, and pretending otherwise is how a
+    /// language grows an operation per question.
+    SameDay,
     /// `with:khánh` — who was there.
     With,
     /// `where:hanoi` — where it happened.
@@ -110,6 +119,7 @@ impl Field {
             Field::Prop(_) => "a note's own field",
             Field::Text => "a bare word",
             Field::When => "when:",
+            Field::SameDay => "when:same-day-as()",
             Field::With => "with:",
             Field::Place => "place:",
             Field::About => "about:",
@@ -235,6 +245,38 @@ impl Bucket {
     }
 }
 
+/// What a `seq` stage works out about each run of rows.
+///
+/// §7.1 again: one slot, an open table of names. `streak`, `since-prev` and
+/// `running` are named in the design and cost an entry here when they arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sequence {
+    Gaps,
+}
+
+/// One side of a comparison inside `| where`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Operand {
+    /// The value in this column of the row.
+    Column(String),
+    /// A plain number.
+    Number(f64),
+    /// A stretch of time, in days: `6mo`, `30d`, `2y`.
+    Days(f64),
+    /// Anything else, compared as text.
+    Text(String),
+}
+
+/// A test one row either passes or does not.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Test {
+    Compare(Operand, Comparison, Operand),
+    Equals(Operand, Operand, bool),
+    All(Vec<Test>),
+    Any(Vec<Test>),
+    Nope(Box<Test>),
+}
+
 /// One step of the pipeline: the answer so far, turned into another answer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stage {
@@ -242,6 +284,10 @@ pub enum Stage {
     Stats { tally: Tally, by: Bucket },
     /// `| sort count desc`
     Sort { key: String, descending: bool },
+    /// `| seq gaps by who`
+    Seq { sequence: Sequence, by: Bucket },
+    /// `| where quiet > longest`
+    Where(Test),
     /// `| head 5`
     Head(u32),
 }
@@ -317,7 +363,13 @@ impl Query {
             match expr {
                 Expr::Term(term) => matches!(
                     term.field,
-                    Field::When | Field::With | Field::Place | Field::About | Field::Shape | Field::Size
+                    Field::When
+                        | Field::SameDay
+                        | Field::With
+                        | Field::Place
+                        | Field::About
+                        | Field::Shape
+                        | Field::Size
                 ),
                 Expr::Not(inner) => timeline(inner),
                 Expr::And(branches) | Expr::Or(branches) => branches.iter().any(timeline),
@@ -611,6 +663,33 @@ fn read_stage(run: &[String], q: &mut Query) {
                     .push("stats needs `by` and something to gather under".into()),
             }
         }
+        "seq" => {
+            let sequence = match rest.first().map(String::as_str) {
+                Some("gaps") => Sequence::Gaps,
+                Some(other) => {
+                    q.refused
+                        .push(format!("'{other}' is not something seq can work out yet"));
+                    return;
+                }
+                None => {
+                    q.refused.push("seq needs to be told what to work out".into());
+                    return;
+                }
+            };
+            match (rest.get(1).map(String::as_str), rest.get(2)) {
+                (Some("by"), Some(key)) => q.stages.push(Stage::Seq {
+                    sequence,
+                    by: Bucket::of(key),
+                }),
+                _ => q
+                    .refused
+                    .push("seq needs `by` and something to follow through time".into()),
+            }
+        }
+        "where" => match read_test(rest) {
+            Ok(test) => q.stages.push(Stage::Where(test)),
+            Err(why) => q.refused.push(why),
+        },
         "sort" => match rest.first() {
             Some(key) => q.stages.push(Stage::Sort {
                 key: key.clone(),
@@ -791,6 +870,21 @@ impl Reader<'_> {
         // read, and a date only where `timeline::when` can read it.
         if let Some(stripped) = lower.strip_prefix("when:") {
             let value = unquoted(stripped);
+            // `same-day-as(x)` is the one call the grammar ships (§6.2). The
+            // tokenizer already keeps a name and its bracket together, so this
+            // arrives whole.
+            if let Some(inner) = value
+                .strip_prefix("same-day-as(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                let inner = inner.trim();
+                if inner.is_empty() {
+                    q.refused
+                        .push("same-day-as() needs a day — `same-day-as(today)`".into());
+                    return None;
+                }
+                return Some(Expr::Term(Term::text(Field::SameDay, inner)));
+            }
             return (!value.is_empty()).then(|| Expr::Term(Term::text(Field::When, value)));
         }
         // `with:`, `where:` and `about:` are three of §4.2's four roles. The
@@ -969,10 +1063,127 @@ impl Reader<'_> {
         }
     }
 
+/// Read `| where …` into a test.
+///
+/// A second little reader rather than a reuse of the filter one, because they
+/// are about different things and saying so is cheaper than a type that means
+/// both. The filter asks about a **node or an event**; this asks about a
+/// **row of the answer** — its columns, by name. `quiet > longest` compares
+/// two columns of the same row, which is not a question the filter half can
+/// even phrase.
+///
+/// Same precedence as everywhere else: `NOT` over `AND` over `OR`.
+fn read_test(words: &[String]) -> Result<Test, String> {
+    let mut at = 0usize;
+    let test = read_any(words, &mut at)?;
+    match words.get(at) {
+        None => Ok(test),
+        Some(extra) => Err(format!("'{extra}' has nothing to join onto in where")),
+    }
+}
+
+fn read_any(words: &[String], at: &mut usize) -> Result<Test, String> {
+    let mut branches = vec![read_all(words, at)?];
+    while words.get(*at).map(String::as_str) == Some("or") {
+        *at += 1;
+        branches.push(read_all(words, at)?);
+    }
+    Ok(if branches.len() == 1 {
+        branches.pop().expect("one branch")
+    } else {
+        Test::Any(branches)
+    })
+}
+
+fn read_all(words: &[String], at: &mut usize) -> Result<Test, String> {
+    let mut branches = vec![read_not(words, at)?];
+    loop {
+        match words.get(*at).map(String::as_str) {
+            Some("and") => *at += 1,
+            Some(word) if word != "or" && word != ")" => {}
+            _ => break,
+        }
+        branches.push(read_not(words, at)?);
+    }
+    Ok(if branches.len() == 1 {
+        branches.pop().expect("one branch")
+    } else {
+        Test::All(branches)
+    })
+}
+
+fn read_not(words: &[String], at: &mut usize) -> Result<Test, String> {
+    if words.get(*at).map(String::as_str) == Some("not") {
+        *at += 1;
+        return Ok(Test::Nope(Box::new(read_not(words, at)?)));
+    }
+    if words.get(*at).map(String::as_str) == Some("(") {
+        *at += 1;
+        let inner = read_any(words, at)?;
+        if words.get(*at).map(String::as_str) != Some(")") {
+            return Err("a bracket was opened and not closed in where".into());
+        }
+        *at += 1;
+        return Ok(inner);
+    }
+    read_comparison(words, at)
+}
+
+fn read_comparison(words: &[String], at: &mut usize) -> Result<Test, String> {
+    let left = words
+        .get(*at)
+        .ok_or_else(|| "where needs something to compare".to_string())?;
+    let operator = words
+        .get(*at + 1)
+        .ok_or_else(|| format!("'{left}' is not a comparison — write `{left} > 5`"))?;
+    let right = words
+        .get(*at + 2)
+        .ok_or_else(|| format!("'{left} {operator}' has nothing on the right of it"))?;
+    let (left, right) = (Operand::of(left), Operand::of(right));
+    *at += 3;
+    Ok(match operator.as_str() {
+        ">" => Test::Compare(left, Comparison::GreaterThan, right),
+        ">=" => Test::Compare(left, Comparison::GreaterOrEqual, right),
+        "<" => Test::Compare(left, Comparison::LessThan, right),
+        "<=" => Test::Compare(left, Comparison::LessOrEqual, right),
+        "=" | "==" | "is" => Test::Equals(left, right, true),
+        "!=" | "<>" => Test::Equals(left, right, false),
+        other => return Err(format!("'{other}' is not a way of comparing two things")),
+    })
+}
+
+impl Operand {
+    /// What one word on either side of a comparison is.
+    ///
+    /// A stretch of time is read here rather than left as text, because
+    /// `quiet > 6mo` is the question the silence panel asks and `quiet` is
+    /// counted in days. Months are 30 days and years 365: this is comparing
+    /// stretches, not naming dates, and a calendar month would make the
+    /// comparison depend on which month nobody is talking about.
+    fn of(word: &str) -> Operand {
+        if let Ok(number) = word.parse::<f64>() {
+            return Operand::Number(number);
+        }
+        for (suffix, days) in [("mo", 30.0), ("y", 365.0), ("w", 7.0), ("d", 1.0)] {
+            if let Some(count) = word.strip_suffix(suffix) {
+                if let Ok(count) = count.parse::<f64>() {
+                    return Operand::Days(count * days);
+                }
+            }
+        }
+        // A bare word is a column name; a quoted one is text somebody meant
+        // literally, which is how a column called `done` is told from the word.
+        match strip_quotes(word) {
+            quoted if quoted != word => Operand::Text(quoted.to_string()),
+            plain => Operand::Column(plain.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::{parse_query, ParsedQuery};
+    use crate::search::{parse_query, Comparison, ParsedQuery};
 
     fn term(field: Field, value: &str) -> Expr {
         Expr::Term(Term::text(field, value))
@@ -1077,14 +1288,71 @@ mod tests {
         assert!(parse("(#a)").refused.is_empty(), "and a closed one is fine");
     }
 
-    /// A name with a bracket after it is one word, not a group — otherwise
-    /// step 6's `same-day-as(today)` could never be written.
+    /// A name with a bracket after it is one word, not a group — which is
+    /// what lets `same-day-as(today)` be written at all.
     #[test]
     fn a_bracket_that_belongs_to_a_name_stays_with_it() {
+        assert_eq!(tokenize("when:same-day-as(today)"), ["when:same-day-as(today)"]);
         assert_eq!(
             parse("when:same-day-as(today)").filter,
-            term(Field::When, "same-day-as(today)")
+            term(Field::SameDay, "today")
         );
+    }
+
+    /// §6.2: this day in other years is **not** a span, so it is not a shape
+    /// of `when:` — a span is two ends, and this is a day of the year with the
+    /// year taken off.
+    #[test]
+    fn this_day_in_other_years_is_a_field_of_its_own() {
+        assert_eq!(parse("when:same-day-as(2019-11-05)").filter, term(Field::SameDay, "2019-11-05"));
+        assert_eq!(parse("when:same-day-as()").filter, Expr::And(vec![]));
+        assert!(!parse("when:same-day-as()").refused.is_empty());
+        // And it is still a question about the timeline.
+        assert_eq!(parse("when:same-day-as(today)").source_of(), Source::Events);
+    }
+
+    /// `| where` reads the columns of the answer, which is a different
+    /// question from the one the filter half asks — `quiet > longest`
+    /// compares two columns of the same row.
+    #[test]
+    fn where_compares_the_columns_of_a_row() {
+        let Stage::Where(test) = &parse("events | seq gaps by who | where quiet > longest").stages[1]
+        else {
+            panic!("the second stage is a where");
+        };
+        assert_eq!(
+            *test,
+            Test::Compare(
+                Operand::Column("quiet".into()),
+                Comparison::GreaterThan,
+                Operand::Column("longest".into())
+            )
+        );
+    }
+
+    /// A stretch of time is read where it is written. `quiet` is counted in
+    /// days, so `6mo` has to become days before anything can be compared.
+    #[test]
+    fn a_stretch_of_time_is_read_as_days() {
+        assert_eq!(Operand::of("6mo"), Operand::Days(180.0));
+        assert_eq!(Operand::of("2y"), Operand::Days(730.0));
+        assert_eq!(Operand::of("3w"), Operand::Days(21.0));
+        assert_eq!(Operand::of("90"), Operand::Number(90.0));
+        assert_eq!(Operand::of("quiet"), Operand::Column("quiet".into()));
+        // Quoted, so it is the word and not a column called `done`.
+        assert_eq!(Operand::of("\"done\""), Operand::Text("done".into()));
+    }
+
+    #[test]
+    fn a_where_that_is_not_a_comparison_says_so() {
+        for broken in [
+            "events | where",
+            "events | where quiet",
+            "events | where quiet >",
+            "events | where quiet ~ longest",
+        ] {
+            assert!(!parse(broken).refused.is_empty(), "'{broken}' was let through");
+        }
     }
 
     /// What the assistant does when requiring every word found nothing. It

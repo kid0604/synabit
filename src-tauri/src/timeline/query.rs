@@ -101,6 +101,25 @@ fn column_sql(name: &str) -> Option<&'static str> {
     })
 }
 
+/// The three roles that can be asked for as a column, and the link role each
+/// reads.
+///
+/// All three, not just `who`: `| seq gaps by about` — what has gone quiet on a
+/// project — is the same question as the one about a person, and leaving the
+/// column out would have made it a question the language could not ask.
+///
+/// The fourth role, `evidence`, is not here for the reason it is not a
+/// keyword either: nobody looks for "events a photograph belongs to", they
+/// look at the photograph.
+fn role_column(name: &str) -> Option<&'static str> {
+    match name {
+        "who" => Some("with"),
+        "place" => Some("where"),
+        "about" => Some("about"),
+        _ => None,
+    }
+}
+
 /// Every character that stands between two words here.
 const BETWEEN_WORDS: &[&str] =
     &[",", ".", ";", ":", "!", "?", "(", ")", "\"", "'", "/", "\u{b7}", "\u{2014}", "\u{2013}", "\u{ab}", "\u{bb}"];
@@ -187,6 +206,20 @@ impl Where<'_> {
                 let to = self.bind(Sql::Text(when::iso(span.to)));
                 let from = self.bind(Sql::Text(when::iso(span.from)));
                 format!("(e.happened_from <= {to} AND e.happened_to >= {from})")
+            }
+            // This day in other years. `strftime` on the start of the event
+            // rather than on both ends: a thing that ran for a week has one
+            // anniversary, the day it began, the way a birthday is a day and
+            // not a stretch.
+            (Field::SameDay, Value::Text(text)) => {
+                let day = when::same_day_as(text).ok_or_else(|| {
+                    AppError::General(format!(
+                        "'{text}' is not a day to take the anniversary of. {}",
+                        when::HOW_TO_WRITE_ONE
+                    ))
+                })?;
+                let at = self.bind(Sql::Text(day));
+                format!("strftime('%m-%d', e.happened_from) = {at}")
             }
             (Field::With | Field::Place | Field::About, Value::Text(name)) => {
                 let role = match term.field {
@@ -317,7 +350,7 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
         let asked = if asked.is_empty() { BY_DEFAULT.to_vec() } else { asked };
         asked
             .into_iter()
-            .filter(|name| *name == "who" || column_sql(name).is_some())
+            .filter(|name| role_column(name).is_some() || column_sql(name).is_some())
             .map(str::to_string)
             .collect()
     };
@@ -325,15 +358,15 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     let reads: Vec<String> = wanted
         .iter()
         .map(|name| {
-            // `who` is not a column of `events`; it is everyone the event
+            // These are not columns of `events`; they are what the event
             // names, gathered from the links in the same statement so a page
             // of rows is one query rather than one query per row.
-            if name == "who" {
-                "(SELECT group_concat(l.node_id, ', ') FROM event_links l \
-                  WHERE l.event_id = e.id AND l.role = 'with')"
-                    .to_string()
-            } else {
-                column_sql(name).unwrap_or("''").to_string()
+            match role_column(name) {
+                Some(role) => format!(
+                    "(SELECT group_concat(l.node_id, ', ') FROM event_links l \
+                      WHERE l.event_id = e.id AND l.role = '{role}')"
+                ),
+                None => column_sql(name).unwrap_or("''").to_string(),
             }
         })
         .collect();

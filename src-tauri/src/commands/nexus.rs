@@ -510,11 +510,53 @@ pub fn run_node_query(
     if let Some(vault_path) = vault_path.as_deref() {
         crate::timeline::store::catch_up_in(state.inner(), &mut timeline, Some(vault_path))?;
     }
-    let found = crate::timeline::query::run(&timeline, &asked, &named)?;
+    let mut found = crate::timeline::query::run(&timeline, &asked, &named)?;
+    {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        name_the_people(&db, &mut found);
+    }
     // One place for both sources: the pipeline works on rows, and by here the
     // rows are rows whichever table they came out of. That is the same claim
     // `QueryResult` has been making since the lenses went in.
     crate::pipeline::run(&asked, found)
+}
+
+/// Put names back where the links left identities.
+///
+/// The way in resolves a name to an identity (`identity_of`); this is the way
+/// back, and it belongs here for the same reason — the vault is readable here
+/// and not inside the timeline's own connection.
+///
+/// Before the pipeline, deliberately. `seq gaps by who` gathers rows under
+/// whatever is in that column, and a silence gathered under `uuid-khanh` is
+/// not the silence panel it was supposed to replace: it is the same answer
+/// written in a language nobody speaks.
+fn name_the_people(db: &crate::db::DbBridge, result: &mut crate::db::QueryResult) {
+    let Some(at) = result.columns.iter().position(|c| c == "who") else {
+        return;
+    };
+    let ids: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| row.cells.get(at))
+        .flat_map(|cell| cell.split(',').map(|id| id.trim().to_string()))
+        .filter(|id| !id.is_empty())
+        .collect();
+    let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let names = crate::timeline::store::names_for(db, &borrowed);
+    for row in &mut result.rows {
+        if let Some(cell) = row.cells.get_mut(at) {
+            *cell = cell
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                // A place that is only words somebody typed has no node and no
+                // title, so it answers for itself and is left as written.
+                .map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ");
+        }
+    }
 }
 
 /// What an event's links would call this name.

@@ -222,7 +222,7 @@ Ngữ pháp **đắt và vĩnh viễn**: đổi là hỏng thấu kính người
 | --- | --- |
 | `stats count by month` | `month, count` |
 | `stats sum(amount) by place` | `place, sum` |
-| `seq gaps by with` | `who, times, first, last, quiet, longest` |
+| `seq gaps by who` | `who, times, first, last, span, quiet, longest` |
 | `where …` `sort …` `head …` | **không đổi** |
 | `explode sentences` | `day, note, text` |
 | `ask <n>` | **không đổi**, ít dòng hơn |
@@ -454,7 +454,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | **3** | ~~`OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy~~ — **xong 2026-09-20** | câu cũ không đổi; câu có `OR` chạy ✓ |
 | **4** | ~~Chip biết nhóm~~ — **xong 2026-09-20** (giai đoạn theo bước 5) | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 ✓ |
 | **5** | ~~Dấu `\|` + `stats` + `sort`/`head`~~ — **xong 2026-09-20** | `bars` có dữ liệu ✓ |
-| **6** | `seq gaps` + `where` + `same-day-as()` | bốn panel cảm xúc thành thấu kính |
+| **6** | ~~`seq gaps` + `where` + `same-day-as()`~~ — **xong 2026-09-20** | ba panel thành thấu kính; cái thứ tư cần bước 7 |
 | **7** | `explode sentences` + `ask` | bước duy nhất tiêu tiền |
 
 **Bước 0 độc lập với mọi quyết định còn lại** — nó không đụng cú pháp, chỉ sửa chỗ
@@ -1083,3 +1083,130 @@ Bước 4 để lại chip giai đoạn vì `|` chưa phân tích được. Gi�
 | Test TypeScript | 1897 (thêm 12) |
 | `vue-tsc` | sạch |
 | Trần ống dẫn | 5.000 dòng, và nói ra khi chạm |
+
+---
+
+## 23. Bước 6 — đã làm, 2026-09-20
+
+**`| seq gaps by …`, `| where …`, `when:same-day-as(…)`.** Ảnh chụp 90 → 105 dòng,
+không dòng cũ nào đổi.
+
+### Gate: panel viết tay, viết lại thành câu hỏi
+
+Đây là phép thử của cả thiết kế (§5.3 tài liệu thấu kính). Không phải "một câu hỏi
+na ná", mà **cùng một luật, cùng những người**.
+
+`timeline/silence.rs` là một module viết tay với ba ngưỡng trong đó:
+
+```rust
+const ENOUGH_TIMES: usize = 5;
+const ENOUGH_MONTHS: i64 = 183;
+const SHORTEST_WORTH_SAYING: i64 = 90;
+if quiet_for <= longest_before.max(SHORTEST_WORTH_SAYING) { return None }
+```
+
+Cùng ba ngưỡng ấy, viết thành câu hỏi:
+
+```
+events | seq gaps by who
+      | where times >= 5 and span >= 183d and quiet > longest and quiet > 90d
+```
+
+`max` của hai cái cuối chính là hai phép so sánh nối bằng `and` — cùng một thứ. Có
+test dựng đủ ba trường hợp phân biệt (gặp nhiều và mới gặp; gặp nhiều mà lâu rồi
+không; mới quen được hai ngày) và câu hỏi chọn đúng một người như module chọn.
+
+| Panel | Câu hỏi | |
+| --- | --- | --- |
+| Ngày này năm xưa | `events when:same-day-as(today)` | ✓ |
+| Khoảng lặng | dòng trên | ✓ đúng từng ngưỡng |
+| Chuyện gì đã xảy ra với | `events columns:when,about \| seq gaps by about \| where quiet > 6mo` | ✓ |
+| Một năm bằng lời mày | `… \| explode sentences \| ask 15` | bước 7 |
+
+Ba trên bốn. Cái thứ tư cần `sentences` và `ask`, đúng như §15.3 chia.
+
+**Nói cho rõ chỗ không thay thế được:** luật "mỗi năm chỉ nhắc một lần" của
+`onthisday.rs` và lớp đồng thuận của `quiet.rs` **không** phải truy vấn và không nên
+thành truy vấn. Chúng là tầng 2 — quyết định của con người. Cái thành thấu kính là
+**câu hỏi**, không phải cái quyền im lặng.
+
+### Ba chỗ đặc tả sai, lộ ra khi chạy
+
+**1. `same-day-as()` không phải một dáng của `when:`.** Một `when:` là một **quãng**
+— hai đầu. "Ngày này những năm xưa" là **một ngày trong năm, bỏ năm đi**, và không
+trả lời được bằng cùng phép so sánh. Nên nó là một trường riêng (`Field::SameDay`),
+dù vẫn **viết** là `when:same-day-as(x)` đúng như §6.2.
+
+**2. §7.2 thiếu một cột.** Danh sách đặc tả là `who, times, first, last, quiet,
+longest`. Nhưng panel không chịu đi nếu thiếu `span` — nó **không nói gì** về người
+mới quen hai tuần, dù khoảng lặng có to đến đâu, mà `where` thì không trừ được cột
+này cho cột kia. Đã thêm `span`. Danh sách ấy viết trước khi đọc luật của panel.
+
+**3. Chỉ có `who` là cột, không có `place` và `about`.** Nên `seq gaps by about` —
+việc gì đã nguội — là câu hỏi ngôn ngữ **không hỏi được**. Đã thêm cả ba vai.
+
+### Một câu trả lời bằng uuid không thay thế được cái panel nào
+
+Chạy `seq gaps by who` lần đầu ra thế này:
+
+```
+uuid-khanh   1   2019-11-05 …
+uuid-minh    1   2019-11-05 …
+```
+
+Đúng số, sai ngôn ngữ. Panel hiện tên người; thấu kính hiện uuid thì **không phải
+cùng một thứ**, nó là cùng câu trả lời viết bằng thứ tiếng không ai nói.
+
+Đường vào đã đổi tên thành danh tính (`identity_of`); giờ có đường về, chạy **trước**
+ống dẫn — vì `seq gaps by who` gom theo thứ nằm trong cột ấy, và gom theo uuid là gom
+theo uuid.
+
+Làm việc ấy lộ ra **`names_for` và `identity_of` chưa bao giờ là nghịch đảo của
+nhau**: `identity_of` lấy `$.node_id` trước, còn `names_for` chỉ tra `id` với
+`stable_id`. Một danh tính lấy từ `node_id` thì tra ngược không ra. Đã sửa.
+
+### Đo trên vault thật, và con số làm tao dừng lại
+
+```
+events when:2016..2026 | seq gaps by who | sort times desc | head 8
+  → ["who","times","first","last","span","quiet","longest"]
+    total 1   note "161 with no who"
+```
+
+**161 trên 162 sự kiện không nêu tên ai.** Một sự kiện duy nhất có liên kết `with`.
+
+Cơ chế đúng, test xanh, câu hỏi viết được — và **không có gì để hỏi**. Nửa cảm xúc
+của dòng thời gian không nghẽn ở ngôn ngữ nữa; nó nghẽn ở chỗ **sự kiện không mang
+người**. Đây cùng một tỉ lệ phiên này đã đo lúc chạy bóc tách (*1 trên 20 đề xuất nêu
+tên một người*), giờ đo trên cả chỉ mục.
+
+Ngôn ngữ giờ hỏi được. Dữ liệu chưa trả lời được. Đó là hai việc khác nhau, và bước
+này chỉ làm xong việc thứ nhất.
+
+`same-day-as` thì có dữ liệu:
+
+```
+events when:same-day-as(2026-05-01)              → 1 ["2026-05-01","meeting",…]
+events when:same-day-as(2026-05-01) | stats count by year → ["2026", "1"]
+```
+
+### `| where` là bộ đọc thứ hai, và cố ý
+
+Nó **không** dùng lại bộ đọc của nửa lọc, vì hai bên hỏi hai thứ khác nhau: nửa lọc
+hỏi về **một node hay một sự kiện**; `where` hỏi về **một dòng của câu trả lời** —
+các cột của nó, theo tên. `quiet > longest` so hai cột **của cùng một dòng**, câu
+mà nửa lọc không phát biểu nổi.
+
+`6mo` `2y` `3w` `30d` đọc ra **ngày**, vì `quiet` đếm bằng ngày. Tháng là 30 ngày,
+năm là 365: đây là so **độ dài**, không phải gọi tên ngày tháng, và lịch thật sẽ làm
+phép so phụ thuộc vào tháng nào mà không ai đang nói đến.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 90 → **105 dòng**, không dòng cũ nào đổi |
+| Test Rust | 2392 (thêm 9) |
+| Test TypeScript | 1897, không đổi |
+| Clippy | không cảnh báo mới |
+| Vault thật | **161/162 sự kiện không nêu tên ai** |

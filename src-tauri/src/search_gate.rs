@@ -184,6 +184,26 @@ const ASKED: &[&str] = &[
     "events when:2016..2026 | stats",
     "events when:2016..2026 | wibble",
     "events when:2016..2026 | head abc",
+    // ── §5.3 of the lens design: the panels, written as questions ──
+    // The gate for this step. Each of these is a hand-written panel today.
+    "events when:same-day-as(2019-11-05)",
+    "events when:same-day-as(2019-11-05) shape:occasion",
+    "notes when:same-day-as(2019-11-05)",
+    "events columns:when,who | seq gaps by who",
+    "events columns:when,who | seq gaps by who | where quiet > longest",
+    "events columns:when,who | seq gaps by who | where times > 1",
+    "events columns:when,who | seq gaps by who | where quiet > 6mo",
+    // `timeline::silence`'s own rule, written out as a question
+    "events | seq gaps by who | where times >= 5 and span >= 183d and quiet > longest and quiet > 90d",
+    "events columns:when,who | seq gaps by who | sort times desc | head 1",
+    // the third panel: what has gone quiet on a project
+    "events columns:when,about | seq gaps by about | where quiet > 6mo",
+    "events columns:when,place,who",
+    // and where it will not answer
+    "events | seq gaps by who",
+    "events columns:when,title | seq gaps by who",
+    "events columns:when,who | seq wibble by who",
+    "events columns:when,who | seq gaps by who | where quiet ~ longest",
     // ── §9: what answers a different question today ──
     "date:today",
     "date:2026-06",
@@ -241,7 +261,33 @@ fn answer(cache: &Mutex<DbBridge>, timeline: &TimelineStore, q: &str) -> String 
                 })
                 .collect(),
         );
-        crate::timeline::query::run(timeline, &asked, &named)
+        crate::timeline::query::run(timeline, &asked, &named).map(|mut found| {
+            // The command names the people before the pipeline runs; so does
+            // this, or the gate would be recording a path nothing takes.
+            if let Some(at) = found.columns.iter().position(|c| c == "who") {
+                let ids: Vec<String> = found
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.cells.get(at))
+                    .flat_map(|cell| cell.split(',').map(|id| id.trim().to_string()))
+                    .filter(|id| !id.is_empty())
+                    .collect();
+                let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
+                let names = crate::timeline::store::names_for(&db, &borrowed);
+                for row in &mut found.rows {
+                    if let Some(cell) = row.cells.get_mut(at) {
+                        *cell = cell
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|id| !id.is_empty())
+                            .map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string()))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                    }
+                }
+            }
+            found
+        })
     } else {
         cache.lock().unwrap().run_node_query(&asked)
     };
