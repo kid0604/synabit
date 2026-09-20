@@ -414,7 +414,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | | Việc | Gate |
 | --- | --- | --- |
 | **0** | ~~Sửa năm lỗi §9~~ — **xong 2026-09-20** | ảnh chụp đổi **đúng 10 dòng**, 37 dòng còn lại không nhúc nhích |
-| **1** | `Term`/`Expr`/`Query` dựng bên cạnh; `ParsedQuery` thành khung nhìn phẳng | ảnh chụp **không đổi một dòng** |
+| **1** | ~~`Term`/`Expr`/`Query` dựng bên cạnh; `ParsedQuery` thành khung nhìn phẳng~~ — **xong 2026-09-20** | ảnh chụp **không đổi một dòng** ✓ |
 | **2** | Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11 | ảnh chụp đổi đúng chỗ đổi tên |
 | **3** | `OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy | câu cũ không đổi; câu có `OR` chạy |
 | **4** | Chip biết nhóm và giai đoạn | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 |
@@ -491,3 +491,95 @@ hơn không có, vì nó cho cảm giác an toàn.
 `-with:khánh` và `-when:2019` vẫn lặng lẽ thành loại trừ thuộc tính frontmatter. Phủ
 định từ khoá dòng thời gian **cần cây biểu thức** (`NOT` của §3), nên nó thuộc bước 3,
 không sửa được ở đây mà không đụng cú pháp.
+
+---
+
+## 18. Bước 1 — đã làm, 2026-09-20
+
+**Không ai nhìn thấy gì.** 47 dòng ảnh chụp: không dòng nào nhúc nhích. Đó là toàn bộ
+gate của bước này và nó đã qua.
+
+### Cây là cách đọc, struct phẳng là hình chiếu
+
+`src/query.rs` mới: `Field` · `Value` · `Term` · `Expr` · `Query`. `search.rs` giữ
+`ParsedQuery`, nhưng nó **không còn tự đọc chữ nữa** — `parse_query` giờ đúng một
+dòng:
+
+```rust
+pub fn parse_query(raw: &str) -> ParsedQuery {
+    ParsedQuery::of(crate::query::parse(raw))
+}
+```
+
+Điểm mấu chốt là **hình chiếu, không phải bộ đọc thứ hai**. Nếu `query::parse` và
+`parse_query` cùng đọc chữ, chúng sẽ trôi ra khỏi nhau — và bước 3 sẽ sửa một bên rồi
+tự hỏi vì sao bên kia vẫn trả lời câu cũ. Giờ chỉ có **một cách đọc**, mười sáu trường
+phẳng chỉ là một góc nhìn của nó.
+
+### Cái mà cây nói được mà struct phẳng không nói được
+
+Struct phẳng chỉ biết nói một câu: **tất cả những thứ này, cùng lúc**. Nó có ba danh
+sách loại trừ riêng (`exclude_terms`, `property_exclusions`, `tag_exclusions`) vì nó
+không có chỗ để nói "không". Cây nói một lần:
+
+```
+-status:done   →   Not(Term(Prop("status"), "done"))
+-#gia-đình     →   Not(Term(Tag,            "gia-đình"))
+-báo           →   Not(Term(Text,           "báo"))
+```
+
+Và đúng chỗ ấy là lý do `-with:khánh` đang trả lời sai: struct phẳng **có ô** cho
+"note nào có khoá frontmatter `with` khác khánh", và **không có ô** cho thứ người ta
+định hỏi. Bước 3 sẽ sửa được vì giờ có chỗ để đặt.
+
+### `Or` chưa phân tích được, nhưng đã từ chối được
+
+`Expr::Or` có mặt trong cây dù chưa câu nào dựng ra nó. Nó không phải giàn giáo chết:
+`ParsedQuery::of` **đã từ chối nó bằng lời**, và có test.
+
+Đó là toàn bộ an toàn của bước 3. Ngày `OR` bắt đầu phân tích được, mười hai file còn
+đang đọc khung nhìn phẳng sẽ **kêu lên**, chứ không lặng lẽ giữ một vế và trả lời một
+câu hỏi nhỏ hơn câu được hỏi. Đúng loại lỗi cả tài liệu này tồn tại để ngăn.
+
+### 961 câu hỏi, không câu nào đọc khác đi
+
+Ảnh chụp 47 dòng là gate, nhưng 47 câu không đủ để tin rằng một bộ phân tích viết lại
+đọc y như cũ. Nên: lấy `parse_query` **ở HEAD** ra khỏi git, đặt cạnh bản mới trong một
+test dùng một lần, chạy **961 câu** (22 khoá × 22 giá trị × có/không dấu trừ, cộng 40
+câu quái) qua cả hai, so `{:?}` từng ký tự.
+
+Không câu nào khác. Test ấy đã xoá — giữ lại nghĩa là nuôi một bản sao của bộ đọc đã
+chết.
+
+### Một lỗi sập hẳn, tìm thấy trên đường đi
+
+`unquoted()` cắt **byte**:
+
+```rust
+value[1..value.len() - 1]      // đọc ổn với "x", và panic với “x”
+```
+
+Dấu ngoặc cong là 3 byte, nên byte 1 nằm **giữa** nó. `with:“Khánh”` làm sập
+`parse_query` — và bàn phím iOS/macOS tự đổi `"` thành `“` mà không hỏi ai. Mọi người
+gọi đều dính: thanh tìm kiếm, thấu kính đã lưu, công cụ của trợ lý.
+
+Đã đổi sang đi theo **ký tự**. Không đổi dòng nào của ảnh chụp, nên nó không nằm trong
+gate — nhưng nó là một cú sập, nên nó được ghi ra đây.
+
+### Cố ý chưa có trong `Query`
+
+`source` (§4) và ống dẫn `|` (§7) **không** được thêm vào `Query` lần này, dù §15.2 vẽ
+chúng. Một trường không bộ phân tích nào ghi vào được là giàn giáo chết, và giàn giáo
+chết là thứ không ai dám gỡ về sau. Bước 2 và bước 5 thêm chúng **khi có chữ để đọc
+vào đó**.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 47 dòng, **0 đổi** |
+| Test Rust | 2365 (thêm 6) |
+| Test TypeScript | 1868, không đổi |
+| Clippy | sạch trên `query.rs`, `search.rs`, `search_gate.rs` |
+| `query.rs` | 511 dòng, trong đó 6 test |
+| `search.rs` | −175 dòng (130 thêm, 305 bớt — vòng lặp token sang `query.rs`) |

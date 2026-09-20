@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::query::{Expr, Field, Query, Term, Value};
+
 /// Parsed representation of a user's search query.
 /// Handles syntax: `is:note`, `#tag`, `"exact phrase"`, `-exclude`, `in:title`, `status:done`, `date:today`
 #[derive(Debug, Default)]
@@ -172,7 +174,7 @@ pub struct SortOrder {
 }
 
 /// Read a comparison off the front of a value: `>2` is greater-than two.
-fn split_comparison(value: &str) -> Option<(Comparison, &str)> {
+pub(crate) fn split_comparison(value: &str) -> Option<(Comparison, &str)> {
     // The two-character forms first: `>=` also starts with `>`.
     for (prefix, op) in [
         (">=", Comparison::GreaterOrEqual),
@@ -191,7 +193,7 @@ fn split_comparison(value: &str) -> Option<(Comparison, &str)> {
 }
 
 /// Whether a name is something a query may sort by or show.
-fn is_queryable_key(key: &str) -> bool {
+pub(crate) fn is_queryable_key(key: &str) -> bool {
     SORTABLE_COLUMNS.contains(&key) || json_path_for(key).is_some()
 }
 
@@ -240,335 +242,157 @@ impl ParsedQuery {
     }
 }
 
-/// A value with its quotes taken off, straight or curly.
+/// A value with one pair of quotes taken off, straight or curly, and nothing
+/// else touched.
+///
+/// Walks characters rather than bytes. Slicing `value[1..len - 1]` reads fine
+/// for `"x"` and **panics** for `“x”`, because a curly quote is three bytes
+/// and byte 1 is inside it — so a name typed on a phone, where the keyboard
+/// turns `"` into `“` without being asked, crashed the parser outright.
+pub(crate) fn strip_quotes(value: &str) -> &str {
+    let quote = |c: char| c == '"' || c == '\u{201c}' || c == '\u{201d}';
+    let mut chars = value.chars();
+    match (chars.next(), chars.next_back()) {
+        (Some(open), Some(close)) if quote(open) && quote(close) => chars.as_str(),
+        _ => value,
+    }
+}
+
+/// A value with its quotes taken off and its edges tidied.
 ///
 /// The tokenizer keeps quotes on so `tag:"one mount"` survives as one token;
 /// every keyword that takes a value then has to take them off again, and doing
 /// it in one place is how they all agree about `“` and `”`.
-fn unquoted(value: &str) -> &str {
-    let value = value.trim();
-    let quote = |c: char| c == '"' || c == '\u{201c}' || c == '\u{201d}';
-    if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
-        return value[1..value.len() - 1].trim();
-    }
-    value
+pub(crate) fn unquoted(value: &str) -> &str {
+    strip_quotes(value.trim()).trim()
 }
 
 pub fn parse_query(raw: &str) -> ParsedQuery {
-    let mut pq = ParsedQuery {
-        is_empty: true,
-        ..Default::default()
-    };
+    ParsedQuery::of(crate::query::parse(raw))
+}
 
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return pq;
-    }
-
-    let mut chars = trimmed.chars().peekable();
-    let mut tokens: Vec<String> = Vec::new();
-
-    // Tokenize: handle quoted phrases and regular words
-    while let Some(&ch) = chars.peek() {
-        if ch.is_whitespace() {
-            chars.next();
-            continue;
-        }
-
-        if ch == '"' {
-            // Quoted phrase
-            chars.next(); // consume opening quote
-            let mut phrase = String::new();
-            while let Some(&c) = chars.peek() {
-                if c == '"' {
-                    chars.next(); // consume closing quote
-                    break;
-                }
-                phrase.push(c);
-                chars.next();
-            }
-            if !phrase.trim().is_empty() {
-                // FTS5 phrase syntax: "word1 word2"
-                tokens.push(format!("\"{}\"", phrase.trim()));
-            }
-        } else {
-            // Regular word (can contain quotes, e.g. tag:"one mount" or tag:“one mount”)
-            let mut word = String::new();
-            let mut in_quote = false;
-            while let Some(&c) = chars.peek() {
-                if c == '"' || c == '“' || c == '”' {
-                    in_quote = !in_quote;
-                    word.push(c);
-                    chars.next();
-                } else if c.is_whitespace() && !in_quote {
-                    break;
-                } else {
-                    word.push(c);
-                    chars.next();
-                }
-            }
-            tokens.push(word);
-        }
-    }
-
-    for token in tokens {
-        let lower = token.to_lowercase();
-
-        // ── The timeline's own words ───────────────────────────────
-        //
-        // Read before `is:` and the property filters so they are never taken
-        // for a property named `with` on a note. Each keeps the person's text
-        // as written: a name becomes a node id only where the vault can be
-        // read, and a date only where `timeline::when` can read it.
-        if let Some(stripped) = lower.strip_prefix("when:") {
-            let value = unquoted(stripped);
-            if !value.is_empty() {
-                pq.when = Some(value.to_string());
-                pq.is_empty = false;
-            }
-            continue;
-        }
-        // `with:`, `where:` and `about:` are three of §4.2's four roles. The
-        // fourth, `evidence`, is not a question anybody asks: nobody looks for
-        // "events a photograph belongs to" — they look at the photograph.
-        //
-        // The value keeps its original casing, because a name is a name.
-        if let Some(role) = ["with:", "where:", "about:"]
-            .into_iter()
-            .find(|word| lower.starts_with(word))
-        {
-            let value = unquoted(&token[role.len()..]).to_string();
-            if !value.is_empty() {
-                match role {
-                    "with:" => pq.with.push(value),
-                    "where:" => pq.place.push(value),
-                    _ => pq.about.push(value),
-                }
-                pq.is_empty = false;
-            }
-            continue;
-        }
-        if let Some(stripped) = lower.strip_prefix("shape:") {
-            let value = unquoted(stripped);
-            if !value.is_empty() {
-                pq.shape = Some(value.to_string());
-                pq.is_empty = false;
-            }
-            continue;
-        }
-        if let Some(stripped) = lower.strip_prefix("magnitude:") {
-            let value = unquoted(stripped);
-            // A bare number means "at least this big", which is what somebody
-            // asking for big things means. `>`, `>=`, `<`, `<=` say it exactly.
-            let (comparison, number) = match split_comparison(value) {
-                Some((comparison, rest)) => (comparison, rest),
-                None => (Comparison::GreaterOrEqual, value),
-            };
-            if let Ok(number) = number.trim().parse::<f64>() {
-                pq.magnitude = Some((comparison, number));
-                pq.is_empty = false;
-            }
-            continue;
-        }
-
-        // is: filter
-        // `type:` and `is:` are the same filter. `is:` came first and is what
-        // the Tasks search bar sends; `type:` is what the frontmatter field is
-        // called, so it is what anyone writing a query — or an assistant
-        // reading `list_schemas` — reaches for first.
-        if let Some(stripped) = lower
-            .strip_prefix("is:")
-            .or_else(|| lower.strip_prefix("type:"))
-        {
-            // Any type, not a list of five.
-            //
-            // This used to accept `note | task | event | quickcap | file` and
-            // silently drop everything else — so `is:book` did not filter to
-            // books, it filtered to nothing at all and returned the whole
-            // vault. The rest of the engine never had that limit: `node_type`
-            // is a free string in the schema, the column is compared through a
-            // bound parameter, and search already indexes every type.
-            //
-            // A list in the code deciding which of the user's types are real
-            // is the same mistake `NodeType::Other` exists to prevent, one
-            // layer up.
-            if !stripped.is_empty() {
-                pq.type_filter = Some(stripped.to_string());
-                pq.is_empty = false;
-            }
-            continue;
-        }
-        if let Some(stripped) = lower.strip_prefix("status:") {
-            // Same widening, and here it was not merely narrow but wrong:
-            // the list read `in-progress` while every task in every vault is
-            // written `in_progress`, and `backlog` and `canceled` — both real
-            // statuses the Tasks app writes — were not on it at all. All three
-            // were dropped without a word.
-            if !stripped.is_empty() {
-                pq.status_filter = Some(stripped.to_string());
-                pq.is_empty = false;
-            }
-            continue;
-        }
-
-        // `date:` used to be read here and stored in `date_filter`, and no
-        // runner ever looked at it — so `date:today` quietly matched
-        // everything. Removing the branch costs no behaviour and removes a
-        // trap: `date:` now reaches the ordinary property filter below, where
-        // `date:2019-11-05` does what it says on a daily note. A date that is
-        // not one day belongs to `when:`.
-
-        // in:title modifier
-        if lower == "in:title" {
-            pq.title_only = true;
-            continue;
-        }
-
-        // #tag or tag:xxx filter
-        if token.starts_with('#') && token.len() > 1 {
-            pq.tag_filters.push(token[1..].to_string());
+impl ParsedQuery {
+    /// The flat view of a question, for the callers that still want one.
+    ///
+    /// §15.2 of `docs/query-grammar-2026-09-20.md`: the tree is the reading,
+    /// this is a projection of it. Twelve files build or read `ParsedQuery`
+    /// and one of them makes it by hand, so they move to the tree one at a
+    /// time rather than all in one unreviewable commit.
+    ///
+    /// The projection is only honest for a plain conjunction — sixteen flat
+    /// fields can say "all of these" and nothing else. Anything the flat
+    /// shape cannot hold is **refused in words** rather than dropped, which is
+    /// what makes step 3 safe to write: the day `OR` starts parsing, a caller
+    /// still on this view says so out loud instead of quietly answering a
+    /// smaller question.
+    pub fn of(query: Query) -> ParsedQuery {
+        let mut pq = ParsedQuery {
+            is_empty: true,
+            title_only: query.title_only,
+            refused: query.refused,
+            ..Default::default()
+        };
+        // Shaping words are a question too: `limit:20` on its own is a page of
+        // the vault, not an empty search bar.
+        if query.sort.is_some() || !query.columns.is_empty() || query.limit.is_some() {
             pq.is_empty = false;
-            continue;
-        } else if lower.starts_with("tag:") && lower.len() > 4 {
-            let mut val = lower[4..].to_string();
-            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
-                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
-                && val.chars().count() >= 2
-            {
-                let mut chars = val.chars();
-                chars.next();
-                chars.next_back();
-                val = chars.collect();
-            }
-            pq.tag_filters.push(val);
-            pq.is_empty = false;
-            continue;
         }
-
-        // -exclude term
-        if token.starts_with('-') && token.len() > 1 && !token.starts_with("--") {
-            // `-#tag` excludes the tag, not the characters. It has to be read
-            // before the property split below, which would otherwise see no
-            // colon and fall through to a word exclusion.
-            if let Some(tag) = token[1..].strip_prefix('#') {
-                if !tag.is_empty() {
-                    pq.tag_exclusions.push(tag.to_string());
-                    pq.is_empty = false;
-                    continue;
-                }
-            }
-            // `-key:value` is a property exclusion, not a word to avoid.
-            if let Some((key, value)) = lower[1..].split_once(':') {
-                if !key.is_empty() && !value.is_empty() && is_queryable_key(key) {
-                    pq.property_exclusions
-                        .push((key.to_string(), value.to_string()));
-                    pq.is_empty = false;
-                    continue;
-                }
-            }
-            let mut val = token[1..].to_string();
-            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
-                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
-                && val.chars().count() >= 2
-            {
-                let mut chars = val.chars();
-                chars.next();
-                chars.next_back();
-                val = chars.collect();
-            }
-            pq.exclude_terms.push(val);
-            continue;
+        pq.sort = query.sort;
+        pq.columns = query.columns;
+        pq.limit = query.limit;
+        for branch in query.filter {
+            pq.take(branch);
         }
-
-        // How a table built from this query should be shaped. These say nothing
-        // about *which* notes match, only about how the ones that do are laid
-        // out, so they are read before the catch-all below claims them.
-        if let Some(rest) = lower.strip_prefix("sort:") {
-            let (key, descending) = match rest.strip_prefix('-') {
-                Some(k) => (k, true),
-                None => (rest, false),
-            };
-            if is_queryable_key(key) {
-                pq.sort = Some(SortOrder {
-                    key: key.to_string(),
-                    descending,
-                });
-                pq.is_empty = false;
-            } else {
-                pq.refused.push(format!("'{key}' is not something a query can sort by"));
-            }
-            continue;
-        }
-
-        if let Some(rest) = lower.strip_prefix("columns:") {
-            pq.columns = rest
-                .split(',')
-                .map(str::trim)
-                .filter(|c| is_queryable_key(c))
-                .map(str::to_string)
-                .collect();
-            if pq.columns.is_empty() {
-                pq.refused.push(format!("'{rest}' is not a column a query can show"));
-            } else {
-                pq.is_empty = false;
-            }
-            continue;
-        }
-
-        if let Some(rest) = lower.strip_prefix("limit:") {
-            match rest.trim().parse::<u32>() {
-                Ok(n) => {
-                    pq.limit = Some(n.clamp(1, MAX_QUERY_LIMIT));
-                    pq.is_empty = false;
-                }
-                Err(_) => pq.refused.push(format!("'{rest}' is not a number of rows")),
-            }
-            continue;
-        }
-
-        // Generic key:value property filter (catch-all for unknown key:value pairs)
-        if let Some(colon_pos) = lower.find(':') {
-            let key = &lower[..colon_pos];
-            let mut val = lower[colon_pos + 1..].to_string();
-            if (val.starts_with('"') || val.starts_with('“') || val.starts_with('”'))
-                && (val.ends_with('"') || val.ends_with('”') || val.ends_with('“'))
-                && val.chars().count() >= 2
-            {
-                let mut chars = val.chars();
-                chars.next();
-                chars.next_back();
-                val = chars.collect();
-            }
-            if !key.is_empty() && !val.is_empty() {
-                match split_comparison(&val) {
-                    Some((op, rest)) => pq.property_ranges.push(PropertyRange {
-                        key: key.to_string(),
-                        op,
-                        value: rest.to_string(),
-                    }),
-                    None => pq.property_filters.push((key.to_string(), val)),
-                }
-                pq.is_empty = false;
-                continue;
-            }
-        }
-
-        // Regular search term or quoted phrase
-        pq.fts_terms.push(token);
-        pq.is_empty = false;
+        pq
     }
 
-    // If we only have filters (type, status, tag) but no search terms, it's not empty
-    if pq.type_filter.is_some()
-        || pq.status_filter.is_some()
-        || !pq.tag_filters.is_empty()
-        || !pq.property_filters.is_empty()
-        || !pq.property_ranges.is_empty()
-    {
-        pq.is_empty = false;
+    /// Fold one branch of the tree into the flat fields.
+    fn take(&mut self, branch: Expr) {
+        match branch {
+            Expr::Term(term) => {
+                if self.keep(term) {
+                    self.is_empty = false;
+                }
+            }
+            Expr::Not(inner) => match *inner {
+                Expr::Term(Term {
+                    field: Field::Tag,
+                    value: Value::Text(tag),
+                }) => {
+                    self.tag_exclusions.push(tag);
+                    self.is_empty = false;
+                }
+                Expr::Term(Term {
+                    field: Field::Prop(key),
+                    value: Value::Text(value),
+                }) => {
+                    self.property_exclusions.push((key, value));
+                    self.is_empty = false;
+                }
+                Expr::Term(Term {
+                    field: Field::Text,
+                    value: Value::Text(word),
+                }) => {
+                    // A word exclusion is not a question on its own. "Not
+                    // draft" asks for the whole vault minus a little, and
+                    // nobody means that by typing `-draft` into a search bar,
+                    // so the query stays empty until something positive joins
+                    // it.
+                    self.exclude_terms.push(word);
+                }
+                other => self.refused.push(format!(
+                    "{} cannot be negated on its own yet",
+                    names(&other)
+                )),
+            },
+            Expr::And(branches) => {
+                for branch in branches {
+                    self.take(branch);
+                }
+            }
+            Expr::Or(_) => self.refused.push(
+                "this question has an OR in it, and the reader it was given to can only \
+                 answer one condition at a time"
+                    .into(),
+            ),
+        }
     }
 
-    pq
+    /// Put one condition in the field that holds it. `false` if none does.
+    fn keep(&mut self, term: Term) -> bool {
+        match (term.field, term.value) {
+            (Field::Kind, Value::Text(value)) => self.type_filter = Some(value),
+            (Field::Status, Value::Text(value)) => self.status_filter = Some(value),
+            (Field::Tag, Value::Text(value)) => self.tag_filters.push(value),
+            (Field::Text, Value::Text(value)) => self.fts_terms.push(value),
+            (Field::When, Value::Text(value)) => self.when = Some(value),
+            (Field::With, Value::Text(value)) => self.with.push(value),
+            (Field::Place, Value::Text(value)) => self.place.push(value),
+            (Field::About, Value::Text(value)) => self.about.push(value),
+            (Field::Shape, Value::Text(value)) => self.shape = Some(value),
+            (Field::Size, Value::Number(op, number)) => self.magnitude = Some((op, number)),
+            (Field::Prop(key), Value::Text(value)) => self.property_filters.push((key, value)),
+            (Field::Prop(key), Value::Compare(op, value)) => {
+                self.property_ranges.push(PropertyRange { key, op, value })
+            }
+            (field, _) => {
+                self.refused
+                    .push(format!("{field:?} cannot be compared that way"));
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// What to call a branch in a refusal a person will read.
+fn names(branch: &Expr) -> &'static str {
+    match branch {
+        Expr::Term(_) => "that condition",
+        Expr::Not(_) => "a double negative",
+        Expr::And(_) => "a group of conditions",
+        Expr::Or(_) => "a group with OR in it",
+    }
 }
 
 /// Build a FTS5 MATCH expression from parsed query terms.
@@ -1186,3 +1010,4 @@ mod query_syntax_tests {
         );
     }
 }
+
