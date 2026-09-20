@@ -54,7 +54,7 @@ onMounted(load);
  *
  * The button sits at the bottom of a long panel whose other content is
  * proposals, and each proposal is written the moment it is kept. Somebody who
- * has just reworded eight of them reaches this and reasonably wonders whether
+ * has just edited eight of them reaches this and reasonably wonders whether
  * their work is unsaved. A button that is dark when there is nothing to save
  * is the question being asked; one that is plainly inert is the answer.
  */

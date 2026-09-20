@@ -110,9 +110,9 @@ describe('ExtractTray', () => {
 
   /// Keep-or-discard makes a nearly right proposal either kept wrong or
   /// thrown away. This is the third thing.
-  it('can be reworded before it is kept', async () => {
+  it('can be edited before it is kept', async () => {
     const wrapper = await withProposal();
-    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-edit]').trigger('click');
 
     const box = wrapper.find('[data-proposal-title]');
     expect((box.element as HTMLTextAreaElement).value).toBe(proposal.title);
@@ -129,9 +129,9 @@ describe('ExtractTray', () => {
 
   /// Opening the box and leaving it as it was is not a decision. Sending the
   /// same sentence back would record one nobody made.
-  it('sends no rewording when the sentence was not changed', async () => {
+  it('sends no edit when the sentence was not changed', async () => {
     const wrapper = await withProposal();
-    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-edit]').trigger('click');
     await wrapper.find('[data-proposal-title]').setValue(`  ${proposal.title}  `);
     await wrapper.find('[data-accept]').trigger('click');
     await flushPromises();
@@ -143,13 +143,13 @@ describe('ExtractTray', () => {
   it('shows the evidence and offers no way to rewrite it', async () => {
     const wrapper = await withProposal();
     expect(wrapper.text()).toContain(proposal.quote);
-    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-edit]').trigger('click');
     expect(wrapper.findAll('textarea')).toHaveLength(1);
   });
 
   it('discards without asking about the sentence', async () => {
     const wrapper = await withProposal();
-    await wrapper.find('[data-reword]').trigger('click');
+    await wrapper.find('[data-edit]').trigger('click');
     await wrapper.find('[data-proposal-title]').setValue('does not matter');
     await wrapper.find('[data-decline]').trigger('click');
     await flushPromises();

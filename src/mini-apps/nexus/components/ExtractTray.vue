@@ -118,7 +118,7 @@ const run = async (scope: 'new' | 'stale' | 'old') => {
 };
 
 /**
- * The proposal being reworded, and what it is being reworded to.
+ * The proposal being edited, and what it is being edited to.
  *
  * A proposal is often nearly right — the right day, the right people, a
  * sentence that is not quite what happened. Keep-or-discard makes a nearly
@@ -141,7 +141,7 @@ const review = async (proposal: Proposal, accept: boolean) => {
     failure.value = '';
     // Only when it differs: sending the same sentence back would record a
     // decision the person did not make.
-    const reworded =
+    const edit =
         accept && editing.value === proposal.id && edited.value.trim() !== proposal.title.trim()
             ? edited.value.trim()
             : null;
@@ -151,7 +151,7 @@ const review = async (proposal: Proposal, accept: boolean) => {
             itemId: proposal.id,
             accept,
             nodeId: proposal.node_id,
-            title: reworded,
+            title: edit,
         });
         editing.value = null;
         if (status.value) status.value.proposals = status.value.proposals.filter(p => p.id !== proposal.id);
@@ -286,7 +286,7 @@ const who = (p: Proposal) => [...p.people.map(person => person.title), ...p.name
                             v-model="edited"
                             data-proposal-title
                             rows="2"
-                            :aria-label="$t('nexus.extract_reword')"
+                            :aria-label="$t('nexus.extract_edit')"
                             class="min-w-0 flex-grow resize-none rounded-md border border-indigo-300 bg-white px-1.5 py-1 text-xs font-semibold text-gray-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-[#1c1c1e] dark:text-gray-100"
                             @keydown.enter.prevent="review(p, true)"
                             @keydown.esc="editing = null"
@@ -315,10 +315,10 @@ const who = (p: Proposal) => [...p.people.map(person => person.title), ...p.name
                         <button
                             v-if="editing !== p.id"
                             type="button"
-                            data-reword
+                            data-edit
                             class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
                             @click="startEditing(p)"
-                        ><Pencil class="h-3 w-3" /> {{ $t('nexus.extract_reword') }}</button>
+                        ><Pencil class="h-3 w-3" /> {{ $t('nexus.extract_edit') }}</button>
                         <button
                             type="button"
                             data-decline
