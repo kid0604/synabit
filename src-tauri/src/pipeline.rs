@@ -29,6 +29,7 @@
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
 use crate::query::{Bucket, Opened, Operand, Query, Sequence, Stage, Tally, Test};
+use crate::refusal::Refusal;
 use crate::search::Comparison;
 
 /// The most rows the filter half may hand the pipeline.
@@ -211,11 +212,7 @@ pub const MOST_LINES: usize = 2_000;
 fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
     let Opened::Sentences = opened;
     let Some(words) = around.words else {
-        return Err(AppError::General(
-            "reading the notes' own words needs the vault, and this question was \
-             asked somewhere there is none"
-                .to_string(),
-        ));
+        return Err(AppError::Refused(Refusal::needs_the_vault()));
     };
     let dated = dated_column(&result);
 
@@ -286,11 +283,7 @@ fn asking(room: usize, result: QueryResult, around: &Around<'_>) -> AppResult<Qu
         // The guardrail, and it is priced. §13.3: a saved lens must not spend
         // money by being opened, and what it would spend has to be visible
         // before anybody agrees to it.
-        return Err(AppError::General(format!(
-            "`ask {room}` would send {} lines to a model. A question that spends \
-             money is not run by opening it — ask for it deliberately.",
-            result.rows.len()
-        )));
+        return Err(AppError::Refused(Refusal::would_spend(room, result.rows.len())));
     };
 
     let picked = asker.keep(&lines_of(&result), room)?;
@@ -349,18 +342,13 @@ fn seq(
 ) -> AppResult<QueryResult> {
     let Sequence::Gaps = sequence;
     let dated = dated_column(&result).ok_or_else(|| {
-        AppError::General(
-            "there is no day in this answer to follow through time. \
-             Ask for one — `columns:when,who`."
-                .to_string(),
-        )
+        AppError::Refused(Refusal::no_day_to_follow())
     })?;
     if let Bucket::Field(name) = by {
         if !result.columns.iter().any(|c| c == name) {
-            return Err(AppError::General(format!(
-                "'{name}' is not one of the columns of this answer ({}). \
-                 Ask for it with columns: first.",
-                result.columns.join(", ")
+            return Err(AppError::Refused(Refusal::not_a_column_of_this_answer(
+                name,
+                &result.columns.join(", "),
             )));
         }
     }
@@ -505,18 +493,13 @@ fn stats(tally: Tally, by: &Bucket, result: QueryResult) -> AppResult<QueryResul
         // §9: refuse rather than answer a different question. Gathering by
         // month when nothing in the rows is a day would silently put every row
         // in one heap called "".
-        return Err(AppError::General(format!(
-            "there is no day in this answer to gather by {}. Ask for one — \
-             `columns:when,title` — or gather by a field instead.",
-            by.column()
-        )));
+        return Err(AppError::Refused(Refusal::no_day_to_gather_by(&by.column())));
     }
     if let Bucket::Field(name) = by {
         if !result.columns.iter().any(|c| c == name) {
-            return Err(AppError::General(format!(
-                "'{name}' is not one of the columns of this answer ({}). \
-                 Ask for it with columns: first.",
-                result.columns.join(", ")
+            return Err(AppError::Refused(Refusal::not_a_column_of_this_answer(
+                name,
+                &result.columns.join(", "),
             )));
         }
     }

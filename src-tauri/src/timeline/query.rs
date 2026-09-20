@@ -38,6 +38,7 @@ use super::when;
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
 use crate::query::{Expr, Field, Query, Term, Value};
+use crate::refusal::Refusal;
 
 /// What a `with:`/`place:`/`about:` name turned out to be.
 ///
@@ -175,7 +176,7 @@ impl Where<'_> {
             // than the one asked is worse than saying no.
             (Field::When, Value::Text(text)) => {
                 let span = when::parse(text).ok_or_else(|| {
-                    AppError::General(format!("'{text}' is not a time. {}", when::HOW_TO_WRITE_ONE))
+                    AppError::Refused(Refusal::not_a_time(text, when::HOW_TO_WRITE_ONE))
                 })?;
                 let to = self.bind(Sql::Text(when::iso(span.to)));
                 let from = self.bind(Sql::Text(when::iso(span.from)));
@@ -187,10 +188,7 @@ impl Where<'_> {
             // not a stretch.
             (Field::SameDay, Value::Text(text)) => {
                 let day = when::same_day_as(text).ok_or_else(|| {
-                    AppError::General(format!(
-                        "'{text}' is not a day to take the anniversary of. {}",
-                        when::HOW_TO_WRITE_ONE
-                    ))
+                    AppError::Refused(Refusal::not_an_anniversary(text, when::HOW_TO_WRITE_ONE))
                 })?;
                 let at = self.bind(Sql::Text(day));
                 format!("strftime('%m-%d', e.happened_from) = {at}")
@@ -257,10 +255,8 @@ impl Where<'_> {
             // and answer a question about the whole year instead. Dropping half
             // a question is the one thing §9 will not have.
             (field, _) => {
-                return Err(AppError::General(format!(
-                    "{} asks about a node, and this question is about the timeline. \
-                     Ask it without the timeline's words, or drop it.",
-                    field.written()
+                return Err(AppError::Refused(Refusal::node_field_on_events(
+                    field.written(),
                 )))
             }
         })
@@ -271,14 +267,10 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     let started = std::time::Instant::now();
 
     if let Some(why) = query.refused.first() {
-        return Err(AppError::General(why.clone()));
+        return Err(AppError::Refused(why.clone()));
     }
     if query.title_only {
-        return Err(AppError::General(
-            "in:title asks about a node, and this question is about the timeline. \
-             Ask it without the timeline's words, or drop it."
-                .to_string(),
-        ));
+        return Err(AppError::Refused(Refusal::node_field_on_events("in:title")));
     }
 
     let mut build = Where {
@@ -518,7 +510,7 @@ mod tests {
         for (old, now) in [("where:hanoi", "place"), ("magnitude:>4", "size")] {
             let refused = crate::query::parse(old).refused;
             assert!(
-                refused.first().is_some_and(|why| why.contains(now)),
+                refused.first().is_some_and(|why| why.to_string().contains(now)),
                 "{old} → {refused:?}"
             );
         }

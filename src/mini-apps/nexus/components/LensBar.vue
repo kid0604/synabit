@@ -33,7 +33,7 @@ import { chosenShape, SHAPES, type Shape } from '../../../shared/views/shapeFor'
 import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
-import { said } from '../../../utils/said';
+import { refusalText } from '../../../shared/refusal';
 import { chipsOf, spends, withFilter, withTag, without, type Chip } from '../../../shared/queryChips';
 import LensShelf from './LensShelf.vue';
 
@@ -81,7 +81,7 @@ const run = async (spending = false) => {
         // A question the engine will not answer says why — an unreadable date,
         // for one. Showing that is the whole point of refusing rather than
         // quietly answering a different question.
-        refused.value = said(e);
+        refused.value = refusalText(e);
         result.value = null;
         logger.error('Could not run the question', e);
     } finally {

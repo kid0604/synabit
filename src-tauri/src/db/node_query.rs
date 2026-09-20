@@ -23,6 +23,7 @@ use serde::Serialize;
 use super::DbBridge;
 use crate::error::{AppError, AppResult};
 use crate::query::{Expr, Field, Query, Term, Value};
+use crate::refusal::Refusal;
 use crate::search::{json_path_for, MAX_QUERY_LIMIT, SORTABLE_COLUMNS};
 
 /// One matching note, with the values the query asked to see.
@@ -290,9 +291,9 @@ impl Where {
             // different string in each.
             (Field::When, Value::Text(written)) => {
                 let span = crate::timeline::when::parse(written).ok_or_else(|| {
-                    AppError::General(format!(
-                        "'{written}' is not a time. {}",
-                        crate::timeline::when::HOW_TO_WRITE_ONE
+                    AppError::Refused(Refusal::not_a_time(
+                        written,
+                        crate::timeline::when::HOW_TO_WRITE_ONE,
                     ))
                 })?;
                 let iso = crate::timeline::when::iso;
@@ -317,9 +318,9 @@ impl Where {
             // the one it carries, or the one it was made on.
             (Field::SameDay, Value::Text(written_day)) => {
                 let day = crate::timeline::when::same_day_as(written_day).ok_or_else(|| {
-                    AppError::General(format!(
-                        "'{written_day}' is not a day to take the anniversary of. {}",
-                        crate::timeline::when::HOW_TO_WRITE_ONE
+                    AppError::Refused(Refusal::not_an_anniversary(
+                        written_day,
+                        crate::timeline::when::HOW_TO_WRITE_ONE,
                     ))
                 })?;
                 let written = "CAST(json_extract(properties, '$.date') AS TEXT)";
@@ -349,10 +350,8 @@ impl Where {
             // chosen the other table themselves — so it is answered with a
             // sentence rather than dropped on the floor.
             (field, _) => {
-                return Err(AppError::General(format!(
-                    "{} asks about an event, and this question is about nodes. \
-                     Start it with `events`, or drop it.",
-                    field.written()
+                return Err(AppError::Refused(Refusal::event_field_on_nodes(
+                    field.written(),
                 )))
             }
         })
@@ -365,13 +364,11 @@ impl DbBridge {
         let start = Instant::now();
 
         if let Some(why) = query.refused.first() {
-            return Err(AppError::General(why.clone()));
+            return Err(AppError::Refused(why.clone()));
         }
 
         if query.asks_nothing() {
-            return Err(AppError::General(
-                "A query needs something to match on.".to_string(),
-            ));
+            return Err(AppError::Refused(Refusal::nothing_to_match()));
         }
 
         let mut build = Where {

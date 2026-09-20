@@ -33,6 +33,15 @@ pub enum AppError {
 
     #[error("General application error: {0}")]
     General(String),
+
+    /// A question the engine will not answer, and why.
+    ///
+    /// Its own variant because it is not a failure: nothing went wrong, the
+    /// question could not be asked. And because it carries a **code**, so the
+    /// screen can say it in the language the rest of the app is in — see
+    /// `crate::refusal`.
+    #[error("{0}")]
+    Refused(crate::refusal::Refusal),
 }
 
 // Convert AppError into a structure that Tauri can serialize and send to JS.
@@ -45,6 +54,8 @@ impl Serialize for AppError {
         struct ErrorDetail {
             code: String,
             message: String,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            args: Vec<String>,
         }
 
         let (code, message) = match self {
@@ -59,11 +70,26 @@ impl Serialize for AppError {
             }
             AppError::AssetTooLarge(msg) => ("ASSET_TOO_LARGE".to_string(), msg.clone()),
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
+            AppError::Refused(why) => (format!("REFUSED:{}", why.code()), why.to_string()),
         };
 
-        log::error!("Backend Error [{}]: {}", code, message);
+        // A refusal is not an error and is not logged as one: somebody typed a
+        // question the engine cannot ask, which is the engine working.
+        match self {
+            AppError::Refused(why) => log::debug!("Refused [{}]: {}", why.code(), message),
+            _ => log::error!("Backend Error [{}]: {}", code, message),
+        }
 
-        let detail = ErrorDetail { code, message };
+        let detail = ErrorDetail {
+            code,
+            message,
+            // The arguments, so the screen can fill in its own translation of
+            // the sentence rather than showing this one.
+            args: match self {
+                AppError::Refused(why) => why.args().to_vec(),
+                _ => Vec::new(),
+            },
+        };
         detail.serialize(serializer)
     }
 }
@@ -99,6 +125,36 @@ pub fn logged(action: &str, subject: &str, result: AppResult<()>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// What a refusal looks like on the wire, which is what `shared/refusal.ts`
+    /// reads. The two sides agree by this test and by the one in
+    /// `crate::refusal`; nothing else makes them.
+    #[test]
+    fn a_refusal_crosses_with_its_code_and_its_arguments() {
+        let refused = AppError::Refused(crate::refusal::Refusal::would_spend(15, 208));
+        let wire: serde_json::Value = serde_json::to_value(&refused).expect("it serialises");
+
+        assert_eq!(wire["code"], "REFUSED:would_spend");
+        assert_eq!(wire["args"], serde_json::json!(["15", "208"]));
+        assert!(
+            wire["message"].as_str().expect("a message").contains("208 lines"),
+            "the English is still there as a fallback: {wire}"
+        );
+    }
+
+    /// And anything that is not a refusal keeps the shape it always had, with
+    /// no `args` at all — an SQL failure is a bug report, not a sentence.
+    #[test]
+    fn an_ordinary_error_is_unchanged() {
+        let wire: serde_json::Value =
+            serde_json::to_value(AppError::General("Query error: disk I/O".into()))
+                .expect("it serialises");
+        assert_eq!(wire["code"], "GENERAL_ERROR");
+        assert_eq!(wire["message"], "Query error: disk I/O");
+        assert!(wire.get("args").is_none(), "{wire}");
+    }
+
 
     /// The contract callers depend on: the answer tells them whether the write
     /// happened, and either way control comes back to them. Several callers

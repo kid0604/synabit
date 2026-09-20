@@ -22,7 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, Loader2 } from 'lucide-vue-next';
 import { useEventBus } from '../../composables/useEventBus';
 import { logger } from '../../utils/logger';
-import { said } from '../../utils/said';
+import { refusalText } from '../../shared/refusal';
 import TableView from '../../shared/views/TableView.vue';
 import type { QueryResult, QueryRow } from '../../shared/views/types';
 
@@ -58,7 +58,7 @@ const run = async () => {
     result.value = null;
     // The backend's message says what is wrong with the query itself, which is
     // more use to whoever wrote it than anything this component could invent.
-    error.value = said(e);
+    error.value = refusalText(e);
   } finally {
     if (mine === token) running.value = false;
   }

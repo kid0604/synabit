@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::query::{Expr, Field, Query, Source, Term, Value};
+use crate::refusal::Refusal;
 
 /// Parsed representation of a user's search query.
 /// Handles syntax: `is:note`, `#tag`, `"exact phrase"`, `-exclude`, `in:title`, `status:done`, `date:today`
@@ -90,7 +91,7 @@ pub struct ParsedQuery {
     /// asked for notes whose `limit` field was "abc" — which is the silent
     /// wrong answer this whole document exists to stop. Now it lands here and
     /// the runner refuses.
-    pub refused: Vec<String>,
+    pub refused: Vec<Refusal>,
     /// Tags a node must NOT carry.
     ///
     /// `-#gia-đình` used to become a *word* exclusion, so it looked for notes
@@ -388,9 +389,7 @@ impl ParsedQuery {
                     // error, which is a search bar that stops answering.
                     self.exclude_terms.push(strip_quotes(&word).to_string());
                 }
-                other => self
-                    .refused
-                    .push(format!("{} has to be asked in the query bar", names(&other))),
+                other => self.refused.push(Refusal::ask_in_the_query_bar(&names(&other))),
             },
             Expr::And(branches) => {
                 for branch in branches {
@@ -400,9 +399,7 @@ impl ParsedQuery {
             // The query bar reads the tree; this is the flat view, and it has
             // no slot for an alternative. Saying where the question *can* be
             // asked beats explaining which reader is reading it.
-            Expr::Or(_) => self
-                .refused
-                .push("a question with OR in it has to be asked in the query bar".into()),
+            Expr::Or(_) => self.refused.push(Refusal::or_in_the_query_bar()),
         }
     }
 
@@ -425,7 +422,7 @@ impl ParsedQuery {
             }
             (field, _) => {
                 self.refused
-                    .push(format!("{field:?} cannot be compared that way"));
+                    .push(Refusal::ask_in_the_query_bar(field.written()));
                 return false;
             }
         }
@@ -698,7 +695,7 @@ mod tests {
         ] {
             let pq = parse_query(q);
             assert!(!pq.refused.is_empty(), "{q} was accepted");
-            assert!(pq.refused[0].contains(about), "{q}: {:?}", pq.refused);
+            assert!(pq.refused[0].to_string().contains(about), "{q}: {:?}", pq.refused);
             assert!(pq.property_filters.is_empty(), "{q} became a property filter");
         }
     }

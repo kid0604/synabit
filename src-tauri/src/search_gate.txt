@@ -21,8 +21,8 @@ events                             → nodes    0 []
 events limit:5                     → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 nodes when:2019                    → nodes    1 [2019-11-05]
 events when:2019                   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
-nodes with:khánh                   → nodes  refused: General application error: with: asks about an event, and this question is about nodes. Start it with `events`, or drop it.
-events #gia-đình                   → events refused: General application error: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+nodes with:khánh                   → nodes  refused: with: asks about an event, and this question is about nodes. Start it with `events`, or drop it.
+events #gia-đình                   → events refused: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
 nodes #gia-đình                    → nodes    1 [2019-11-05]
 events is:note                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 when:2019                          → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
@@ -59,14 +59,14 @@ is:note (#gia-đình OR #công-việc)  → nodes    2 [2021-03-14 · 2019-11-05
 #gia-đình OR )                     → refused: 'OR' needs something on both sides
 events when:2016..2026 | stats count by month → events   2 [2021-03 · 2019-11]
 events when:2016..2026 | stats count by year → events   2 [2021 · 2019]
-events when:2016..2026 | stats count by shape → events refused: General application error: 'shape' is not one of the columns of this answer (when, title, who). Ask for it with columns: first.
+events when:2016..2026 | stats count by shape → events refused: 'shape' is not one of the columns of this answer (when, title, who). Ask for it with columns: first.
 events when:2016..2026 | stats count by month | sort count desc → events   2 [2019-11 · 2021-03]
 events when:2016..2026 | stats count by month | head 1 → events   2 [2021-03]
 events when:2016..2026 | stats count by month | top 1 by count → events   2 [2019-11]
 nodes columns:title,date | stats count by year → nodes    2 [2019 · 2021] — 5 with no year
 events when:2016..2026 columns:when,shape | stats count by shape → events   2 [occasion · chore]
 is:task columns:title,status | stats count by status → nodes    1 [done] — 1 with no status
-is:task | stats count by status    → nodes  refused: General application error: 'status' is not one of the columns of this answer (title, updated_at). Ask for it with columns: first.
+is:task | stats count by status    → nodes  refused: 'status' is not one of the columns of this answer (title, updated_at). Ask for it with columns: first.
 is:note | stats count by month     → nodes    2 [2021-03 · 2019-11]
 events when:2016..2026 |           → refused: '|' needs something after it
 events when:2016..2026 | stats     → refused: stats needs to be told what to work out
@@ -84,23 +84,23 @@ events columns:when,who | seq gaps by who | sort times desc | head 1 → events 
 events columns:when,about | seq gaps by about | where quiet > 6mo → events   0 [] — 4 with no about
 events columns:when,place,who      → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 events | seq gaps by who           → events   2 [Khánh · Minh] — 2 with no who
-events columns:when,title | seq gaps by who → events refused: General application error: 'who' is not one of the columns of this answer (when, title). Ask for it with columns: first.
-events columns:when,who | seq wibble by who → refused: 'wibble' is not something seq can work out yet
+events columns:when,title | seq gaps by who → events refused: 'who' is not one of the columns of this answer (when, title). Ask for it with columns: first.
+events columns:when,who | seq wibble by who → refused: seq cannot work out 'wibble' yet
 events columns:when,who | seq gaps by who | where quiet ~ longest → refused: '~' is not a way of comparing two things
 events when:2019 | explode sentences → events   2 [Hôm nay gặp Khánh ở quán quen. · Nói chuyện hai tiếng.]
-events when:2019 | explode sentences | ask 1 → events refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+events when:2019 | explode sentences | ask 1 → events refused: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
 is:note | explode sentences        → nodes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
 is:note | explode sentences | ask 15 → nodes    4 [Nộp báo cáo quý. · Sếp không nói gì. · Hôm nay gặp Khánh ở quán quen.]
-is:note | explode sentences | ask 1 → nodes  refused: General application error: `ask 1` would send 4 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
-is:note | ask 1                    → nodes  refused: General application error: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | explode sentences | ask 1 → nodes  refused: `ask 1` would send 4 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
+is:note | ask 1                    → nodes  refused: `ask 1` would send 2 lines to a model. A question that spends money is not run by opening it — ask for it deliberately.
 is:note | explode sentences | ask  → refused: ask needs a number of lines to keep
-is:note | explode wibble           → refused: 'wibble' is not something explode can open up yet
+is:note | explode wibble           → refused: explode cannot work out 'wibble' yet
 date:today                         → nodes    0 []
 date:2026-06                       → nodes    0 []
 is:note date:2026-06               → nodes    0 []
 is:note when:2019                  → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
-#gia-đình when:2019                → events refused: General application error: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
-status:done when:2019              → events refused: General application error: status: asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+#gia-đình when:2019                → events refused: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+status:done when:2019              → events refused: status: asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
 limit:abc                          → refused: 'abc' is not a number of rows
 -#gia-đình                         → nodes    6 [Khánh · Minh · 2021-03-14]
 -with:khánh                        → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]

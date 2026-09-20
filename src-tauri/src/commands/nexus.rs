@@ -714,10 +714,8 @@ pub async fn ask_node_query(
         .iter()
         .any(|stage| matches!(stage, crate::query::Stage::Ask(_)))
     {
-        return Err(crate::error::AppError::General(
-            "a question may ask once. Two calls to a model in one question cost \
-             twice and explain half."
-                .into(),
+        return Err(crate::error::AppError::Refused(
+            crate::refusal::Refusal::ask_only_once(),
         ));
     }
 

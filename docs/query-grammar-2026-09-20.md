@@ -1501,10 +1501,8 @@ Ngoặc **đóng vào hư không** thì khác: `#a)` không phải viết dở, 
 
 ### 4. Lời từ chối là tiếng Anh trong một app tiếng Việt
 
-**Chưa sửa.** Mọi câu từ chối của cỗ máy — thứ dạy người ta nhiều nhất — đều là tiếng
-Anh cứng trong Rust, trong khi cả giao diện có en/vi đầy đủ. Sửa đúng là đổi từ chối
-từ **một chuỗi** thành **một mã cộng tham số**, rồi dịch ở phía màn hình. Đó là một
-việc riêng, không phải thứ nhét vào cuối một buổi rà soát.
+Mọi câu từ chối của cỗ máy — thứ dạy người ta nhiều nhất — là tiếng Anh cứng trong
+Rust, trong khi cả giao diện có en/vi đầy đủ. **Đã sửa — xem §28.**
 
 ### Không phải lỗi, đã kiểm
 
@@ -1523,3 +1521,79 @@ việc riêng, không phải thứ nhét vào cuối một buổi rà soát.
 | Test TypeScript | 1903 (thêm 4) |
 | Ảnh chụp | 116 dòng; 2 dòng đổi (ngoặc và `OR` viết dở), 2 dòng mới |
 | `vue-tsc` | sạch |
+
+---
+
+## 28. Từ chối thôi là một chuỗi — 2026-09-20
+
+Món cuối của §27. Một lời từ chối giờ là **một mã cộng tham số**, không phải một câu
+tiếng Anh.
+
+```rust
+Refusal::would_spend(15, 208)
+  → code "would_spend", args ["15", "208"]
+  → en: "`ask 15` would send 208 lines to a model. …"
+  → vi: "`ask 15` sẽ gửi 208 dòng cho model. …"
+```
+
+**39 mã**, mỗi mã một chỗ duy nhất trong Rust và một dòng trong mỗi locale. `{0}`
+`{1}` là chèn theo thứ tự — đúng thứ `vue-i18n` gọi là list interpolation — nên **một
+khuôn phục vụ cả hai phía**.
+
+### Cái giữ cho hai phía không trôi
+
+Một bảng dịch không ai canh là một bảng dịch sẽ mục. Nên có hai cổng:
+
+- `refusal::tests::every_refusal_is_translated` đọc thẳng `en.json` và `vi.json`, đỏ
+  nếu thiếu một mã **hoặc nếu tiếng Anh trong JSON đã trôi khỏi tiếng Anh trong
+  Rust**. Hai bản có thể khác nhau thì tệ hơn một bản, nên chúng không được khác.
+- `error::tests::a_refusal_crosses_with_its_code_and_its_arguments` chốt hình dạng
+  đi trên dây, đúng thứ `shared/refusal.ts` đọc.
+
+### Từ chối không phải là lỗi
+
+`AppError::Refused` là một nhánh riêng, và nó **không ghi log mức error** — không có
+gì hỏng cả, chỉ là có người gõ một câu cỗ máy không hỏi được, tức là cỗ máy đang chạy
+đúng.
+
+Kèm theo, nó xoá luôn một thứ rác: tiền tố `General application error: ` từng đi thẳng
+ra mặt người dùng. Ảnh chụp đổi 12 dòng, tất cả đều là **bớt tiếng lóng của máy**:
+
+```
+- refused: General application error: 'shape' is not one of the columns…
++ refused: 'shape' is not one of the columns…
+```
+
+### Một chỗ thiết kế sai, lộ ra khi test đỏ
+
+`refusalText` ban đầu gọi `useI18n()`. Nó chỉ chạy **bên trong `setup` của một
+component**, mà `useThingsQuery` là một composable không phải lúc nào cũng được gọi từ
+đó — năm test đỏ ngay. Giờ nó nhận bộ dịch **làm tham số**, mặc định là bộ dịch của
+app. Một lời từ chối không được phụ thuộc vào chỗ đoạn code hỏi về nó đang đứng.
+
+### Đo
+
+| | |
+| --- | --- |
+| Mã từ chối | **39**, đủ trong `en.json` và `vi.json` |
+| Test Rust | 2415 (thêm 5) |
+| Test TypeScript | 1909 (thêm 6) |
+| Ảnh chụp | 116 dòng, 12 dòng bớt tiếng lóng của máy |
+| `vue-tsc` | sạch |
+
+---
+
+## 29. Sẵn sàng chưa — 2026-09-20
+
+**Rồi.** Bốn thứ §27 tìm ra đã sửa hết, mỗi cái có test canh:
+
+| | Canh bằng |
+| --- | --- |
+| Từ chối hiện ra `[object Object]` | `utils/said.ts` + test bắt đúng hình dạng thật |
+| Ô tìm kiếm lặng lẽ trả cả vault | `search_fts` từ chối thứ nó không hỏi được |
+| Gõ nửa chừng dấu ngoặc thì trống danh sách | ngoặc bỏ ngỏ ở cuối coi như đã đóng |
+| Từ chối bằng tiếng Anh | 39 mã, hai cổng canh bản dịch |
+
+Còn **một việc không thuộc cỗ máy này**: 161 trên 162 sự kiện không nêu tên ai. Ngôn
+ngữ hỏi được rồi — `seq gaps by who` chạy đúng, có test, có đo trên vault thật — mà
+dữ liệu chưa trả lời được. Đó là việc của phần bóc tách, không phải của ngữ pháp.

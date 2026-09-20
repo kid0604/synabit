@@ -31,6 +31,7 @@
 //! makes step 3 safe to write: the day `OR` starts parsing, every caller still
 //! on the flat view says so out loud rather than answering a smaller question.
 
+use crate::refusal::Refusal;
 use crate::search::{
     is_queryable_key, split_comparison, strip_quotes, unquoted, Comparison, SortOrder,
     MAX_QUERY_LIMIT,
@@ -337,7 +338,7 @@ pub struct Query {
     /// Parsing stays infallible — a dozen callers rely on it — so a word the
     /// grammar cannot make sense of lands here rather than becoming a filter
     /// on a property of that name. That was the whole of §9 and step 0.
-    pub refused: Vec<String>,
+    pub refused: Vec<Refusal>,
     /// How many matching rows to skip, for reaching past the cap.
     ///
     /// Not query syntax and deliberately not: it is a property of the page
@@ -629,10 +630,8 @@ pub fn parse(raw: &str) -> Query {
             // question about notes into a search for the word "notes" — and
             // then, having no node words left, into a question about events.
             // Exactly the silent change of meaning §9 exists to stop.
-            q.refused.push(format!(
-                "'{}' is now '{}'",
-                RENAMED_SOURCE.0, RENAMED_SOURCE.1
-            ));
+            q.refused
+                .push(Refusal::renamed(RENAMED_SOURCE.0, RENAMED_SOURCE.1));
             tokens.remove(0);
         }
     }
@@ -654,7 +653,7 @@ pub fn parse(raw: &str) -> Query {
         // Something is left that nothing could attach to — a stray `)`, or a
         // word after one. Refused rather than dropped: a bracket in the wrong
         // place changes what the rest of the question means.
-        q.refused.push(format!("'{extra}' has nothing to join onto"));
+        q.refused.push(Refusal::nothing_to_join(&extra));
     }
     q.filter = filter.unwrap_or_default();
 
@@ -669,7 +668,7 @@ pub fn parse(raw: &str) -> Query {
 fn read_stage(run: &[String], q: &mut Query) {
     let words: Vec<String> = run.iter().map(|w| w.to_lowercase()).collect();
     let Some(name) = words.first().map(String::as_str) else {
-        q.refused.push("'|' needs something after it".into());
+        q.refused.push(Refusal::pipe_needs_a_stage());
         return;
     };
     let rest = &words[1..];
@@ -681,12 +680,11 @@ fn read_stage(run: &[String], q: &mut Query) {
             let tally = match rest.first().map(String::as_str) {
                 Some("count") => Tally::Count,
                 Some(other) => {
-                    q.refused
-                        .push(format!("'{other}' is not something stats can work out yet"));
+                    q.refused.push(Refusal::stage_cannot_yet("stats", other));
                     return;
                 }
                 None => {
-                    q.refused.push("stats needs to be told what to work out".into());
+                    q.refused.push(Refusal::stage_needs_what("stats"));
                     return;
                 }
             };
@@ -695,21 +693,18 @@ fn read_stage(run: &[String], q: &mut Query) {
                     tally,
                     by: Bucket::of(key),
                 }),
-                _ => q
-                    .refused
-                    .push("stats needs `by` and something to gather under".into()),
+                _ => q.refused.push(Refusal::stats_needs_by()),
             }
         }
         "seq" => {
             let sequence = match rest.first().map(String::as_str) {
                 Some("gaps") => Sequence::Gaps,
                 Some(other) => {
-                    q.refused
-                        .push(format!("'{other}' is not something seq can work out yet"));
+                    q.refused.push(Refusal::stage_cannot_yet("seq", other));
                     return;
                 }
                 None => {
-                    q.refused.push("seq needs to be told what to work out".into());
+                    q.refused.push(Refusal::stage_needs_what("seq"));
                     return;
                 }
             };
@@ -718,23 +713,17 @@ fn read_stage(run: &[String], q: &mut Query) {
                     sequence,
                     by: Bucket::of(key),
                 }),
-                _ => q
-                    .refused
-                    .push("seq needs `by` and something to follow through time".into()),
+                _ => q.refused.push(Refusal::seq_needs_by()),
             }
         }
         "explode" => match rest.first().map(String::as_str) {
             Some("sentences") => q.stages.push(Stage::Explode(Opened::Sentences)),
-            Some(other) => q
-                .refused
-                .push(format!("'{other}' is not something explode can open up yet")),
-            None => q
-                .refused
-                .push("explode needs to be told what to open up".into()),
+            Some(other) => q.refused.push(Refusal::stage_cannot_yet("explode", other)),
+            None => q.refused.push(Refusal::stage_needs_what("explode")),
         },
         "ask" => match rest.first().and_then(|n| n.parse::<u32>().ok()) {
             Some(n) => q.stages.push(Stage::Ask(n)),
-            None => q.refused.push("ask needs a number of lines to keep".into()),
+            None => q.refused.push(Refusal::ask_needs_a_number()),
         },
         "where" => match read_test(rest) {
             Ok(test) => q.stages.push(Stage::Where(test)),
@@ -745,11 +734,11 @@ fn read_stage(run: &[String], q: &mut Query) {
                 key: key.clone(),
                 descending: rest.get(1).is_some_and(|d| d == "desc"),
             }),
-            None => q.refused.push("sort needs something to sort by".into()),
+            None => q.refused.push(Refusal::sort_needs_a_key()),
         },
         "head" => match rest.first().and_then(|n| n.parse::<u32>().ok()) {
             Some(n) => q.stages.push(Stage::Head(n)),
-            None => q.refused.push("head needs a number of rows".into()),
+            None => q.refused.push(Refusal::head_needs_a_number()),
         },
         // Plain sugar, and said to be: `top 5 by count` is the question people
         // actually ask, and writing it out as two stages every time is noise.
@@ -763,11 +752,9 @@ fn read_stage(run: &[String], q: &mut Query) {
                 });
                 q.stages.push(Stage::Head(n));
             }
-            _ => q
-                .refused
-                .push("top needs a number and `by` something — `top 5 by count`".into()),
+            _ => q.refused.push(Refusal::top_needs_a_number_and_key()),
         },
-        other => q.refused.push(format!("'{other}' is not something a question can do")),
+        other => q.refused.push(Refusal::not_a_stage(other)),
     }
 }
 
@@ -824,7 +811,7 @@ impl Reader<'_> {
             match self.all() {
                 Some(next) => branches.push(next),
                 // `OR )` or `OR sort:x` — not half-typed, just wrong.
-                None => self.q.refused.push("'OR' needs something on both sides".into()),
+                None => self.q.refused.push(Refusal::or_needs_both_sides()),
             }
         }
         match branches.len() {
@@ -945,8 +932,7 @@ impl Reader<'_> {
             {
                 let inner = inner.trim();
                 if inner.is_empty() {
-                    q.refused
-                        .push("same-day-as() needs a day — `same-day-as(today)`".into());
+                    q.refused.push(Refusal::same_day_needs_a_day());
                     return None;
                 }
                 return Some(Expr::Term(Term::text(Field::SameDay, inner)));
@@ -978,10 +964,9 @@ impl Reader<'_> {
             .iter()
             .find(|(old, _)| lower.starts_with(old))
         {
-            q.refused.push(format!(
-                "'{}' is now '{}'",
+            q.refused.push(Refusal::renamed(
                 renamed.0.trim_end_matches(':'),
-                renamed.1.trim_end_matches(':')
+                renamed.1.trim_end_matches(':'),
             ));
             return None;
         }
@@ -1010,16 +995,13 @@ impl Reader<'_> {
                         value: Value::Number(comparison, number),
                     })),
                     Err(_) => {
-                        q.refused
-                            .push(format!("'{rest}' is not a size to compare against"));
+                        q.refused.push(Refusal::not_a_size(rest));
                         None
                     }
                 },
                 None if value.is_empty() => None,
                 None => {
-                    q.refused.push(format!(
-                        "'size:{value}' has to say which way — write size:>={value} or size:<={value}"
-                    ));
+                    q.refused.push(Refusal::size_needs_a_comparison(value));
                     None
                 }
             };
@@ -1078,8 +1060,7 @@ impl Reader<'_> {
                     descending,
                 });
             } else {
-                q.refused
-                    .push(format!("'{key}' is not something a query can sort by"));
+                q.refused.push(Refusal::not_sortable(key));
             }
             return None;
         }
@@ -1092,8 +1073,7 @@ impl Reader<'_> {
                 .map(str::to_string)
                 .collect();
             if q.columns.is_empty() {
-                q.refused
-                    .push(format!("'{rest}' is not a column a query can show"));
+                q.refused.push(Refusal::not_a_column(rest));
             }
             return None;
         }
@@ -1101,9 +1081,7 @@ impl Reader<'_> {
         if let Some(rest) = lower.strip_prefix("limit:") {
             match rest.trim().parse::<u32>() {
                 Ok(n) => q.limit = Some(n.clamp(1, MAX_QUERY_LIMIT)),
-                Err(_) => q
-                    .refused
-                    .push(format!("'{rest}' is not a number of rows")),
+                Err(_) => q.refused.push(Refusal::not_a_row_count(rest)),
             }
             return None;
         }
@@ -1139,16 +1117,16 @@ impl Reader<'_> {
 /// even phrase.
 ///
 /// Same precedence as everywhere else: `NOT` over `AND` over `OR`.
-fn read_test(words: &[String]) -> Result<Test, String> {
+fn read_test(words: &[String]) -> Result<Test, Refusal> {
     let mut at = 0usize;
     let test = read_any(words, &mut at)?;
     match words.get(at) {
         None => Ok(test),
-        Some(extra) => Err(format!("'{extra}' has nothing to join onto in where")),
+        Some(extra) => Err(Refusal::where_nothing_to_join(extra)),
     }
 }
 
-fn read_any(words: &[String], at: &mut usize) -> Result<Test, String> {
+fn read_any(words: &[String], at: &mut usize) -> Result<Test, Refusal> {
     let mut branches = vec![read_all(words, at)?];
     while words.get(*at).map(String::as_str) == Some("or") {
         *at += 1;
@@ -1161,7 +1139,7 @@ fn read_any(words: &[String], at: &mut usize) -> Result<Test, String> {
     })
 }
 
-fn read_all(words: &[String], at: &mut usize) -> Result<Test, String> {
+fn read_all(words: &[String], at: &mut usize) -> Result<Test, Refusal> {
     let mut branches = vec![read_not(words, at)?];
     loop {
         match words.get(*at).map(String::as_str) {
@@ -1178,7 +1156,7 @@ fn read_all(words: &[String], at: &mut usize) -> Result<Test, String> {
     })
 }
 
-fn read_not(words: &[String], at: &mut usize) -> Result<Test, String> {
+fn read_not(words: &[String], at: &mut usize) -> Result<Test, Refusal> {
     if words.get(*at).map(String::as_str) == Some("not") {
         *at += 1;
         return Ok(Test::Nope(Box::new(read_not(words, at)?)));
@@ -1187,7 +1165,7 @@ fn read_not(words: &[String], at: &mut usize) -> Result<Test, String> {
         *at += 1;
         let inner = read_any(words, at)?;
         if words.get(*at).map(String::as_str) != Some(")") {
-            return Err("a bracket was opened and not closed in where".into());
+            return Err(Refusal::where_bracket_open());
         }
         *at += 1;
         return Ok(inner);
@@ -1195,16 +1173,16 @@ fn read_not(words: &[String], at: &mut usize) -> Result<Test, String> {
     read_comparison(words, at)
 }
 
-fn read_comparison(words: &[String], at: &mut usize) -> Result<Test, String> {
+fn read_comparison(words: &[String], at: &mut usize) -> Result<Test, Refusal> {
     let left = words
         .get(*at)
-        .ok_or_else(|| "where needs something to compare".to_string())?;
+        .ok_or_else(Refusal::where_needs_a_comparison)?;
     let operator = words
         .get(*at + 1)
-        .ok_or_else(|| format!("'{left}' is not a comparison — write `{left} > 5`"))?;
+        .ok_or_else(|| Refusal::where_not_a_comparison(left))?;
     let right = words
         .get(*at + 2)
-        .ok_or_else(|| format!("'{left} {operator}' has nothing on the right of it"))?;
+        .ok_or_else(|| Refusal::where_nothing_on_the_right(&format!("{left} {operator}")))?;
     let (left, right) = (Operand::of(left), Operand::of(right));
     *at += 3;
     Ok(match operator.as_str() {
@@ -1214,7 +1192,7 @@ fn read_comparison(words: &[String], at: &mut usize) -> Result<Test, String> {
         "<=" => Test::Compare(left, Comparison::LessOrEqual, right),
         "=" | "==" | "is" => Test::Equals(left, right, true),
         "!=" | "<>" => Test::Equals(left, right, false),
-        other => return Err(format!("'{other}' is not a way of comparing two things")),
+        other => return Err(Refusal::where_unknown_operator(other)),
     })
 }
 
@@ -1392,7 +1370,7 @@ mod tests {
     fn the_old_name_for_the_table_says_what_it_is_now_called() {
         let renamed = parse("notes when:2019");
         assert_eq!(renamed.refused.len(), 1, "{renamed:?}");
-        assert!(renamed.refused[0].contains("nodes"), "{renamed:?}");
+        assert!(renamed.refused[0].to_string().contains("nodes"), "{renamed:?}");
 
         assert_eq!(parse("nodes when:2019").source_of(), Source::Nodes);
         assert_eq!(parse("nodes when:2019").refused.len(), 0);

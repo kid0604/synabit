@@ -339,7 +339,7 @@ impl DbBridge {
         // a timeline word belongs in the query bar, and a pipeline belongs
         // there too.
         if let Some(why) = parsed.refused.first() {
-            return Err(AppError::General(why.clone()));
+            return Err(AppError::Refused(why.clone()));
         }
         let elsewhere = [
             (parsed.has_pipeline, "a `|` step"),
@@ -354,8 +354,8 @@ impl DbBridge {
             (parsed.size.is_some(), "size:"),
         ];
         if let Some((_, what)) = elsewhere.into_iter().find(|(carried, _)| *carried) {
-            return Err(AppError::General(format!(
-                "{what} is more than this search box can ask. Ask it in the query bar."
+            return Err(AppError::Refused(crate::refusal::Refusal::beyond_the_search_box(
+                what,
             )));
         }
 
