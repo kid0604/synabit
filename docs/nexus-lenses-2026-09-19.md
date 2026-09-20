@@ -265,10 +265,14 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 | 2 | ~~Thấu kính là một node + kệ thấu kính~~ — **xong 2026-09-19** | lưu được một câu hỏi |
 | 3 | ~~Thanh truy vấn hai chiều với chip~~ — **xong 2026-09-19** | bấm và gõ thành một |
 | 4 | ~~Kết quả tự chọn hình dạng~~ — **xong 2026-09-19** | câu hỏi mới không tốn code |
-| 5 | Ống dẫn: `count by`, `top n by` | thống kê, nhịp sống |
-| 6 | `gaps`, `anniversary`, `sentences`, `ask` | bốn panel cảm xúc thành thấu kính |
+| 5 | ~~Ống dẫn: `count by`, `top n by`~~ — **xong 2026-09-20** | thống kê, nhịp sống |
+| 6 | ~~`gaps`, `anniversary`, `sentences`, `ask`~~ — **xong 2026-09-20** | bốn panel cảm xúc thành thấu kính |
 | 7 | Syn trả lời kèm truy vấn + nút Lưu | đường vào cho người không gõ |
 | 8 | Bỏ tám panel, thay bằng kệ có sẵn | code ít đi |
+
+> **Bước 5 và 6 làm ở tài liệu khác.** Ngôn ngữ hoá ra cần sửa trước khi xây thêm lên
+> nó, nên §15.3 của `query-grammar-2026-09-20.md` nuốt cả hai bước này. Cú pháp cuối
+> cùng khác chỗ viết ở đây — xem §16.
 
 **Nếu chỉ làm được một bước:** làm **bước 1**. Nó là chỗ đứt thật sự — mọi thứ còn
 lại chỉ là cách bày ra thứ bước 1 mở khoá.
@@ -423,3 +427,98 @@ hai chiều.
 
 **Còn lại:** `bars` và `quotes` về cùng bước 5–6. Trợ lý vẫn chưa đi qua bộ định tuyến
 — bước 7.
+---
+
+## 16. Rà soát — 2026-09-20
+
+Bốn bước đầu làm ở tài liệu này; bước 5 và 6 bị `query-grammar-2026-09-20.md` nuốt
+vào, vì ngôn ngữ cần sửa trước khi xây thêm lên nó. **Bước 7 và 8 chưa làm.**
+
+### Phép thử của §5.3, chạy thật
+
+Tám panel, viết thành câu hỏi, chạy trên vault thật (162 sự kiện):
+
+| Panel | Câu hỏi hôm nay | |
+| --- | --- | --- |
+| Ngày này năm xưa | `events when:same-day-as(today) shape:occasion` | ✓ 0 dòng |
+| Khoảng lặng | `events \| seq gaps by who \| where quiet > longest` | ✓ 1 |
+| Chuyện gì xảy ra với | `events columns:when,about \| seq gaps by about \| where quiet > 6mo` | ✓ 0 |
+| Một năm bằng lời mày | `events when:2026 \| explode sentences \| ask 15` | ✓ (cần vault) |
+| Zoom theo độ lớn | `events when:… columns:when,title,size \| top 20 by size` | ✓ 162 |
+| Nhịp sống | `events \| stats count by month` | ✓ 10 |
+| Ăn ở đâu | `events columns:when,place \| stats count by place` | ✓ 2 |
+| Ai còn gặp | `events \| stats count by who \| sort count desc` | ✓ 1 |
+
+**Gate của cả tài liệu — *"một câu hỏi mà hôm nay cần một panel mới, sau khi xong phải
+trả lời được không thêm một dòng Rust hay Vue nào"* — đã đạt.**
+
+### Cú pháp trong tài liệu này đã cũ
+
+Viết trước khi có ngữ pháp, nên §5.3 và §8 dùng cách viết chưa bao giờ tồn tại. Giữ
+nguyên chữ cũ ở trên để đọc lại thấy nó đã đi từ đâu tới đâu, và đây là bảng quy đổi:
+
+| Viết ở đây | Thật ra là |
+| --- | --- |
+| `anniversary` | `when:same-day-as(today)` |
+| `\| gaps` | `\| seq gaps by who` |
+| `\| sentences` | `\| explode sentences` |
+| `\| count by month` | `\| stats count by month` |
+| `count by where` / `by person` | `stats count by place` / `by who` (cần `columns:` trước) |
+| `with:*`, `about:*` | không cần — `seq gaps by who` tự gom |
+| `has:quote`, `-has:ending` | **chưa có**, và chưa ai cần |
+| `is:hush`, `is:pin` | **không chạy** — hush và pin là file trong `Timeline/`, không phải node |
+
+Hai dòng cuối là thứ §5.3 nói quá. "Tám trên tám" đúng với tám panel; "Khay duyệt" và
+"Đã từ chối" thì chỉ đúng nếu những thứ ấy là node, mà chúng không phải.
+
+### Bước 8 chưa làm, và nó là chỗ lời hứa còn nợ
+
+§9 hứa **"code ít đi, không nhiều lên"**. Đo hôm nay:
+
+| | dòng |
+| --- | --- |
+| Tám panel Vue | 1.349 |
+| Bốn module Rust dưới chúng (`onthisday`, `silence`, `asking`, `year`) | 2.157 |
+| Bộ thấu kính thay cho cả hai | 1.375 |
+
+**Code nhiều lên 3.506 dòng**, vì thứ mới đã vào mà thứ cũ chưa ra. Bốn lệnh
+`timeline_on_this_day`, `timeline_silences`, `timeline_ask`, `timeline_year` vẫn đăng
+ký, tám component vẫn còn.
+
+**Nhưng không phải tất cả đều bỏ được.** Phần *câu hỏi* của bốn module ấy đã thành
+truy vấn; phần **quyết định của con người** thì không:
+
+- `quiet.rs` — lớp đồng thuận (seal/hush). Không phải truy vấn, không được thành
+  truy vấn.
+- `onthisday.rs` — luật "mỗi năm chỉ nhắc một lần".
+- `asking.rs` — nhớ đã hỏi ai rồi.
+- `year.rs` — giao thức danh-sách-đánh-số, giờ **dùng chung** với `| ask`.
+
+Nên bước 8 là: bỏ **tám component Vue và bốn lệnh**, giữ phần tầng 2 bên dưới.
+
+### Kệ có sẵn — chưa có, và nó là điều kiện của bước 8
+
+§8 viết *"một thanh truy vấn trống là một lời từ chối phục vụ"*, rồi hứa mười hai
+thấu kính đi kèm vault mới. **Chưa có cái nào.** `readShelf` chỉ chạy `nodes
+type:lens`, và vault mới không có node nào như thế — nên gỡ tám panel bây giờ là đổi
+tám nút lấy **một ô trống**.
+
+Thứ tự đúng: **kệ trước, gỡ sau.**
+
+### Việc còn lại, theo thứ tự
+
+| | Việc | Vì sao theo thứ tự này |
+| --- | --- | --- |
+| **A** | Kệ mười hai thấu kính có sẵn | điều kiện của B; không có nó thì gỡ panel là làm app nghèo đi |
+| **B** | Gỡ tám component + bốn lệnh, giữ tầng 2 | trả món nợ "code ít đi" |
+| **C** | Bước 7 — Syn trả lời kèm truy vấn + nút Lưu | đường vào cho người không gõ |
+
+**A rẻ và có ích ngay.** B chỉ là xoá, nhưng phải chờ A. C là thứ duy nhất còn cần
+thiết kế: hôm nay model gọi `query_nodes` mà **câu hỏi nó viết không hiện ra cho
+người dùng thấy**, nên không lưu lại được.
+
+### Không phải việc của tài liệu này
+
+161 trên 162 sự kiện không nêu tên ai. `seq gaps by who` đúng, có test, đo trên vault
+thật — và nó tìm được **một** người. Thấu kính không chữa được chuyện đó; phần bóc
+tách mới chữa được.
