@@ -40,7 +40,6 @@ pub mod query;
 pub mod quiet;
 pub mod reflect;
 pub mod seal;
-pub mod silence;
 pub mod store;
 pub mod when;
 pub mod year;

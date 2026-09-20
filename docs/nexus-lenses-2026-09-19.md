@@ -267,8 +267,8 @@ Mỗi bước dùng được ngay và lùi lại được, như §16 của tài 
 | 4 | ~~Kết quả tự chọn hình dạng~~ — **xong 2026-09-19** | câu hỏi mới không tốn code |
 | 5 | ~~Ống dẫn: `count by`, `top n by`~~ — **xong 2026-09-20** | thống kê, nhịp sống |
 | 6 | ~~`gaps`, `anniversary`, `sentences`, `ask`~~ — **xong 2026-09-20** | bốn panel cảm xúc thành thấu kính |
-| 7 | Syn trả lời kèm truy vấn + nút Lưu | đường vào cho người không gõ |
-| 8 | Bỏ tám panel, thay bằng kệ có sẵn | code ít đi |
+| 7 | ~~Syn trả lời kèm truy vấn + nút Lưu~~ — **xong 2026-09-20** | đường vào cho người không gõ |
+| 8 | ~~Bỏ panel, thay bằng kệ có sẵn~~ — **xong 2026-09-20** | code ít đi |
 
 > **Bước 5 và 6 làm ở tài liệu khác.** Ngôn ngữ hoá ra cần sửa trước khi xây thêm lên
 > nó, nên §15.3 của `query-grammar-2026-09-20.md` nuốt cả hai bước này. Cú pháp cuối
@@ -522,3 +522,109 @@ người dùng thấy**, nên không lưu lại được.
 161 trên 162 sự kiện không nêu tên ai. `seq gaps by who` đúng, có test, đo trên vault
 thật — và nó tìm được **một** người. Thấu kính không chữa được chuyện đó; phần bóc
 tách mới chữa được.
+
+---
+
+## 17. Bước 7 và 8 — đã làm, 2026-09-20
+
+### Kệ có sẵn: mười hai câu hỏi, không ghi gì vào vault
+
+§8 nói *"một thanh truy vấn trống là một lời từ chối phục vụ"*. Giờ một vault chưa
+lưu gì vẫn có **mười hai câu hỏi trên kệ** — tám cái từng là panel, bốn cái cơ sở dữ
+liệu đầy đủ mở ra.
+
+**Không gieo file nào.** Gieo mười hai node lúc chạy lần đầu sẽ: gieo hai lần trên
+hai máy, mọc lại sau khi người ta xoá, và cần một dấu mốc ở đâu đó để nhớ là đã gieo.
+Không cái nào trong đó mua được gì. Một gợi ý **chỉ là gợi ý thì không cần trạng
+thái nào cả**: nó hiện ra, bấm Lưu thì thành node bình thường, và từ đó `lensesOn`
+thôi gợi ý nó nữa — **khớp theo câu hỏi, không theo tên**, vì tên là của người ta,
+đổi tên một thấu kính đã lưu không được làm gợi ý cũ mọc lại.
+
+Gợi ý vẽ bằng nét đứt và **không có nút xoá**: không có file nào để xoá.
+
+### Bước 8 không thể làm như đã viết, và đó là phát hiện
+
+§9 hứa bỏ tám panel. Đọc kỹ thì **ba trong số đó chưa bao giờ chỉ là câu hỏi**:
+
+| Panel | Cử chỉ của nó |
+| --- | --- |
+| Ngày này năm xưa | `timeline_not_again` — đừng nhắc lại chuyện này |
+| Khoảng lặng | `timeline_set_aside` — tạm để yên người này |
+| Một năm bằng lời mình | `timeline_drop_line` — bỏ câu này ra |
+
+Đó là **tầng 2** — quyết định của con người, cái lớp mà cả dòng thời gian tồn tại
+được là nhờ nó. Xoá panel mà không mang cử chỉ theo thì không phải bớt code, mà là
+**bớt đường để người ta nói không**.
+
+Nên cử chỉ chuyển sang chính câu trả lời, và **không thêm một dòng Rust nào**: ba
+lệnh kia vốn đã đúng độ mịn, mỗi lệnh là một lớp mỏng trên `quiet::write_hush` với
+một `Subject` khác, và không lệnh nào từng biết panel nào gọi mình.
+
+Cái gì chối được thì **đọc từ cột**, y như `shapeFor` đọc hình dạng:
+
+| Câu trả lời có | Chối cái gì |
+| --- | --- |
+| `who` + `quiet` | người ấy |
+| `day, note, text` | câu ấy |
+| một cột ngày + một note | chuyện ấy, ngày ấy |
+| không cái nào | **không vẽ nút** |
+
+Thứ tự là nghĩa, không phải sở thích: một câu trả lời `seq gaps` cũng có ngày trong
+đó, mà chối một dòng của nó là chối **người**, không phải ngày cuối cùng gặp họ.
+
+### Hai thứ lens làm mất, tìm lại trước khi xoá
+
+Đọc kỹ `year.rs` trước khi bỏ nó thì thấy bản thay thế **kém hơn ở hai chỗ**:
+
+1. `explode sentences` **cắt** ở 2.000 dòng đầu. `year::thin` tồn tại đúng để chặn
+   chuyện đó: *"lấy 300 dòng đầu là đưa cho model tháng Giêng rồi gọi đó là một
+   năm."* Giờ nó **lấy cách quãng**, nên các tháng giữ đúng tỉ lệ đã viết. Có test:
+   3.600 dòng trải 12 tháng, cắt còn 2.000, **cả 12 tháng đều còn hơn 100 dòng**.
+2. `year::keep` sắp lại **theo thứ tự đã sống** và gộp câu trùng. `keeping_picked`
+   giữ thứ tự model trả về. Giờ nó trả về **theo thứ tự được mời** — câu hỏi quyết
+   định thứ tự, `sort:` là một phần của nó — và số trùng chỉ tính một lần.
+
+Đây là lý do "xoá code cũ" phải đọc code cũ trước: nó biết những thứ bản mới chưa
+biết.
+
+### Bước 7: câu hỏi trợ lý viết, đưa lại cho người hỏi
+
+§6.2: *trợ lý **viết** truy vấn, không **thay thế** nó.* Trước đây câu nó viết nằm
+trong một lời gọi công cụ rồi biến mất. Giờ dưới mỗi câu trả lời có dùng
+`query_nodes` là **chính câu truy vấn ấy**, kèm nút Lưu.
+
+Hiện **nguyên văn câu truy vấn**, không phải một lời mô tả nó — người không biết
+viết `events | seq gaps by who` học ngôn ngữ bằng cách thấy câu của **mình** được
+viết ra. Đây là mặt dạy duy nhất không cần đọc tài liệu nào.
+
+Một lượt thường hỏi cùng một câu hai lần — hẹp trước, rộng sau khi hẹp không ra gì
+(`tool_query_nodes` tự nới). Gộp lại một, vì hiện hai lần đọc ra như hai phát hiện.
+
+### Code ít đi, đúng như đã hứa
+
+| | |
+| --- | --- |
+| Xoá | 3 component Vue, 3 lệnh đọc, `silence.rs` (385 dòng), 2/3 của `year.rs` |
+| Thêm | `putAway.ts`, `KeepAsLens.vue`, kệ có sẵn |
+| **Ròng** | **−1.178 dòng** |
+
+### Còn giữ, và vì sao
+
+| | |
+| --- | --- |
+| `AskPanel` | app **hỏi người ta** một câu — nudge có đồng thuận, không phải thấu kính |
+| `RefusalsPanel` | hush và pin là **file** trong `Timeline/`, không phải node, nên không hỏi được bằng truy vấn |
+| `MomentsPanel` | vẽ **ảnh thật**; chưa có hình dạng `gallery` để thay |
+| `ExtractTray` | duyệt/từ chối đề xuất — tầng 2 |
+| `ReflectPanel` | không nằm trong tám cái §5.3 |
+| `quiet.rs`, `onthisday.rs`, `asking.rs` | tầng 2: đồng thuận, luật mỗi năm một lần, nhớ đã hỏi ai |
+
+Ba lệnh hush **ở lại** — giờ chính thấu kính gọi chúng.
+
+### Đo
+
+| | |
+| --- | --- |
+| Test Rust | 2400 |
+| Test TypeScript | 1907 |
+| `vue-tsc` | sạch |

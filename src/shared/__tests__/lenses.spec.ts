@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+    isStarter,
     lensesFrom,
+    lensesOn,
+    STARTERS,
     nameFor,
     normalise,
     propertiesOf,
@@ -90,5 +93,40 @@ describe('A lens', () => {
         const long = nameFor('a'.repeat(200));
         expect(long).toHaveLength(58);
         expect(long.endsWith('…')).toBe(true);
+    });
+
+    // ─── The curriculum ─────────────────────────────────────────
+
+    /// §8: an empty query bar is a refusal to serve.
+    it('offers a dozen questions to a shelf with nothing on it', () => {
+        expect(lensesOn([])).toHaveLength(STARTERS.length);
+        expect(STARTERS.length).toBeGreaterThanOrEqual(12);
+        expect(lensesOn([]).every(isStarter)).toBe(true);
+    });
+
+    /// Matched by the question, not the name: the name is theirs to change,
+    /// and renaming a kept lens must not make its suggestion come back.
+    it('stops offering a question somebody has already kept', () => {
+        const kept = {
+            id: 'Lens/mine.md',
+            title: 'Nhịp của tôi',
+            query: STARTERS[0].query,
+            render: 'auto' as const,
+            icon: '',
+        };
+        const shelf = lensesOn([kept]);
+        expect(shelf[0]).toBe(kept);
+        expect(shelf.filter(l => l.query === kept.query)).toHaveLength(1);
+        expect(shelf).toHaveLength(STARTERS.length);
+    });
+
+    /// Every suggestion has to be a question the engine can actually read —
+    /// a curriculum that refuses on sight teaches the wrong thing.
+    it('suggests nothing that is not a question', () => {
+        for (const starter of STARTERS) {
+            expect(starter.query.trim(), starter.id).not.toBe('');
+            expect(starter.title.trim(), starter.id).not.toBe('');
+            expect(isStarter(starter)).toBe(true);
+        }
     });
 });

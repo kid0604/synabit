@@ -34,6 +34,11 @@ const props = defineProps<{
    * dropped any name it could not read.
    */
   groupBy?: string;
+  /**
+   * Whether a row may be put away. See `shared/putAway` — and `DatedView` for
+   * why the caller is asked rather than the view assuming.
+   */
+  offerPutAway?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -46,6 +51,7 @@ const emit = defineEmits<{
    * job is knowing which row was clicked.
    */
   menu: [row: QueryRow | null, at: { x: number; y: number } | null];
+  putAway: [row: QueryRow];
 }>();
 
 const { t } = useI18n();
@@ -179,6 +185,21 @@ const sections = computed(() => {
               {{ cellsFor(row).join(' · ') }}
             </span>
           </span>
+        </button>
+
+        <!-- Saying no to this row, when the answer is one that affords it. -->
+        <button
+          v-if="offerPutAway"
+          type="button"
+          data-put-away
+          :aria-label="t('nexus.put_away_line')"
+          :title="t('nexus.put_away_line')"
+          class="flex-none mt-2 p-1 rounded text-gray-400 opacity-0 transition-opacity cursor-pointer
+                 hover:bg-gray-200/70 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300
+                 focus-visible:opacity-100 group-hover:opacity-100"
+          @click.stop="emit('putAway', row)"
+        >
+          <span class="block h-4 w-4 text-[13px] leading-4">×</span>
         </button>
 
         <!--

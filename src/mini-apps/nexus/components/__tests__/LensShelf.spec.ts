@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { invoke } from '@tauri-apps/api/core';
 import LensShelf from '../LensShelf.vue';
+import { STARTERS } from '../../../../shared/lenses';
 import { i18n } from '../../../../i18n';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -67,8 +68,36 @@ describe('The lens shelf', () => {
     it('shows each saved question by its name, with the question itself to hover', async () => {
         const wrapper = await open();
         const lenses = wrapper.findAll('[data-lens]');
-        expect(lenses.map(l => l.text())).toEqual(['Gặp Khánh', 'Ăn ở đâu']);
+        // What was kept comes first; the suggestions follow.
+        expect(lenses.slice(0, 2).map(l => l.text())).toEqual(['Gặp Khánh', 'Ăn ở đâu']);
         expect(lenses[0].attributes('title')).toBe('with:khánh when:2019/2026');
+    });
+
+    /// §8: an empty query bar is a refusal to serve. A vault with nothing
+    /// saved still has twelve questions on the shelf.
+    it('offers the curriculum when nothing has been kept yet', async () => {
+        vi.mocked(invoke).mockImplementation(async () => ({
+            columns: [], rows: [], total: 0, query_time_ms: 0,
+        }));
+        const wrapper = mount(LensShelf, {
+            props: { vaultPath: '/vault', query: '', active: null, render: 'auto' },
+            global: { plugins: [i18n] },
+        });
+        await flushPromises();
+        expect(wrapper.findAll('[data-lens]')).toHaveLength(STARTERS.length);
+        expect(wrapper.find('[data-lens-empty]').exists()).toBe(false);
+    });
+
+    /// A suggestion has no file behind it, so there is nothing to put away —
+    /// and the shelf does not offer to.
+    it('offers no bin on a suggestion, and draws it as one', async () => {
+        const wrapper = await open();
+        const kept = wrapper.findAll('[data-lens-shelf] > span');
+        const suggestions = kept.filter(s => s.attributes('data-starter') === 'yes');
+        expect(suggestions.length).toBeGreaterThan(0);
+        for (const one of suggestions) {
+            expect(one.find('[data-forget]').exists()).toBe(false);
+        }
     });
 
     it('hands the whole lens back when one is pressed', async () => {
@@ -121,7 +150,9 @@ describe('The lens shelf', () => {
         await flushPromises();
 
         expect(trashNode).toHaveBeenCalledWith({ relPath: 'Lens/khanh.md' });
-        expect(wrapper.findAll('[data-lens]').map(l => l.text())).toEqual(['Ăn ở đâu']);
+        const names = wrapper.findAll('[data-lens]').map(l => l.text());
+        expect(names[0]).toBe('Ăn ở đâu');
+        expect(names).not.toContain('Gặp Khánh');
     });
 
     /// Both actions are real buttons, side by side. A button nested inside a
@@ -134,20 +165,7 @@ describe('The lens shelf', () => {
         expect(forget.attributes('aria-label')).toBeTruthy();
     });
 
-    it('says so plainly when nothing has been saved', async () => {
-        vi.mocked(invoke).mockImplementation(async () => ({
-            columns: [],
-            rows: [],
-            total: 0,
-            query_time_ms: 0,
-        }));
-        const wrapper = mount(LensShelf, {
-            props: { vaultPath: '/vault', query: '', active: null, render: 'auto' },
-            global: { plugins: [i18n] },
-        });
-        await flushPromises();
-        expect(wrapper.find('[data-lens-empty]').exists()).toBe(true);
-    });
+
 
     /// §7: the shape is a property of the question, so it is kept with it.
     it('keeps how the answer was being seen, when that was chosen', async () => {

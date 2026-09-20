@@ -12,12 +12,9 @@ use crate::error::{AppError, AppResult};
 use crate::timeline::frame::{self, TimeFrame};
 use crate::timeline::seal::{self, SealedPeriod, Seals};
 use crate::timeline::store::{self, CatchUp, Snapshot, Event};
-use crate::timeline::onthisday::{self, Looking};
 use crate::timeline::quiet::{self, Hush, Quiet, Subject};
 use crate::timeline::asking::{self, Question};
 use crate::timeline::pin::{self, Pin};
-use crate::timeline::silence::{self, Missing};
-use crate::timeline::year::{self, Line};
 use crate::timeline::{extract, magnitude, media, presence, reflect, when, TimelineState};
 
 fn seals_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Seals>> {
@@ -103,34 +100,6 @@ pub fn timeline_pins(vault_path: String) -> AppResult<Vec<Pin>> {
     Ok(pin::read(&vault_path).pins().to_vec())
 }
 
-/// What this day held in earlier years, in the person's own words.
-///
-/// `day` is the day being looked at, so walking the strip back walks this
-/// back with it; without one it is today.
-///
-/// Returns nothing rather than something vague when there is nothing to quote
-/// — §6.1's last row, and the reason this is worth having at all.
-#[tauri::command]
-pub fn timeline_on_this_day(
-    state: tauri::State<'_, DbState>,
-    timeline: tauri::State<'_, TimelineState>,
-    vault_path: String,
-    day: Option<String>,
-) -> AppResult<Vec<Looking>> {
-    let today = match day.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-        Some(text) => when::parse(text)
-            .map(|span| span.from)
-            .ok_or_else(|| AppError::General(format!("'{text}' is not a day")))?,
-        None => chrono::Local::now().date_naive(),
-    };
-
-    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
-    let seals = seals_of(state.inner(), &vault_path)?;
-    let quiet = quiet_of(state.inner(), &vault_path)?;
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    onthisday::look_back(&timeline, &db, today, &quiet, &seals)
-}
 
 /// Stop offering this day's writing for a year — the one action §7.1 asks for.
 ///
@@ -156,45 +125,6 @@ pub fn timeline_not_again(vault_path: String, node_id: String, day: String) -> A
 /// and a pause shorter than the thing it is pausing would be no pause.
 const SET_ASIDE_DAYS: i64 = 183;
 
-/// Somebody who was there often and then was not, with their name.
-#[derive(Debug, serde::Serialize)]
-pub struct Absent {
-    #[serde(flatten)]
-    pub missing: Missing,
-    /// What to call them. The identity alone is unreadable, and this sentence
-    /// is going to have a person's name in it.
-    pub name: String,
-}
-
-/// Everyone whose absence is unlike anything in their own record — §7.2.
-///
-/// Counts and says the number. It does not say why, and there is nowhere in
-/// this path for a reason to be added.
-#[tauri::command]
-pub fn timeline_silences(
-    state: tauri::State<'_, DbState>,
-    timeline: tauri::State<'_, TimelineState>,
-    vault_path: String,
-) -> AppResult<Vec<Absent>> {
-    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
-    let seals = seals_of(state.inner(), &vault_path)?;
-    let quiet = quiet_of(state.inner(), &vault_path)?;
-    let today = chrono::Local::now().date_naive();
-    let missing = silence::who_went_quiet(&timeline, today, &quiet, &seals)?;
-
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let ids: Vec<&str> = missing.iter().map(|m| m.who.as_str()).collect();
-    let names = store::names_for(&db, &ids);
-    Ok(missing
-        .into_iter()
-        .map(|missing| {
-            let name = names.get(&missing.who).cloned().unwrap_or_else(|| missing.who.clone());
-            Absent { missing, name }
-        })
-        .collect())
-}
-
 /// Leave somebody alone for a while — §7.2's last "must never".
 #[tauri::command]
 pub fn timeline_set_aside(vault_path: String, who: String) -> AppResult<Hush> {
@@ -204,74 +134,6 @@ pub fn timeline_set_aside(vault_path: String, who: String) -> AppResult<Hush> {
     quiet::write_hush(&vault_path, &Subject::Person { who }, Some(&until))
 }
 
-/// A year, told in the person's own sentences — §7.6.
-///
-/// The model is asked to point at sentences by number; it is never asked for
-/// prose, and the reply has nowhere to put any. Everything sealed or hushed is
-/// dropped before the prompt is built, so it is not merely left out of the
-/// answer — it was never sent.
-#[tauri::command(async)]
-pub async fn timeline_year(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, DbState>,
-    timeline: tauri::State<'_, TimelineState>,
-    vault_path: String,
-    year: i32,
-) -> AppResult<Vec<Line>> {
-    let today = chrono::Local::now().date_naive();
-    let (lines, prepared) = {
-        let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
-        store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
-        let seals = seals_of(state.inner(), &vault_path)?;
-        let quiet = quiet_of(state.inner(), &vault_path)?;
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let candidates = year::candidates(&timeline, &db, year, today, &quiet, &seals)?;
-        // A short year needs no choosing, and asking would cost a call to say
-        // back the same list.
-        if candidates.len() <= year::MOST_KEPT {
-            let all: Vec<usize> = (0..candidates.len()).collect();
-            (Some(year::keep(&candidates, &all)), candidates)
-        } else {
-            (None, candidates)
-        }
-    };
-    if let Some(lines) = lines {
-        return Ok(lines);
-    }
-
-    let settings = crate::commands::syn::settings_for(&vault_path);
-    if !settings.enabled {
-        return Err(AppError::General(crate::commands::syn::SWITCHED_OFF.into()));
-    }
-    let config = extract::read_config(&vault_path);
-    let (settings, model) = extract::reader(&config, &settings);
-    let Some(model) = model else {
-        return Err(AppError::General("No model is configured".into()));
-    };
-    if !media::runs_here(&settings) && !config.allow_cloud {
-        return Err(AppError::General(
-            "Your year is read only by a model on this machine, unless sending it elsewhere is allowed for this vault".into(),
-        ));
-    }
-
-    let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
-    let messages = vec![crate::syn::provider::ChatMessage::new(
-        "user",
-        year::prompt(year, &prepared),
-    )];
-    let reply = provider
-        .chat(crate::syn::provider::ChatRequest {
-            model: &model,
-            messages: &messages,
-            temperature: Some(0.0),
-            num_ctx: settings.num_ctx,
-            tools: None,
-        })
-        .await?;
-    let picked = year::parse_reply(&reply.content)
-        .ok_or_else(|| AppError::General("the reply was not the JSON asked for".into()))?;
-    Ok(year::keep(&prepared, &picked))
-}
 
 /// Leave one sentence out of the year, for good.
 #[tauri::command]

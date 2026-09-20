@@ -208,6 +208,25 @@ fn one(stage: &Stage, result: QueryResult, around: &Around<'_>) -> AppResult<Que
 /// more here, because the rows after this one are what a model would be handed.
 pub const MOST_LINES: usize = 2_000;
 
+/// Make a long list fit **without losing its shape**.
+///
+/// Every *n*-th line rather than the first `MOST_LINES`. `timeline::year`
+/// learnt this and wrote down why: taking the first of them would hand the
+/// model January and call it a year. The months stay in proportion to how much
+/// was written in them, which is the one property a year of somebody's writing
+/// has that must not be lost — and the same is true of any stretch somebody
+/// asks about.
+fn thinned(all: Vec<QueryRow>) -> (Vec<QueryRow>, bool) {
+    if all.len() <= MOST_LINES {
+        return (all, false);
+    }
+    let step = all.len() as f64 / MOST_LINES as f64;
+    let kept = (0..MOST_LINES)
+        .map(|n| all[(n as f64 * step) as usize].clone())
+        .collect();
+    (kept, true)
+}
+
 /// One row per sentence: `day, note, text` (§7.2).
 fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
     let Opened::Sentences = opened;
@@ -217,7 +236,6 @@ fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResul
     let dated = dated_column(&result);
 
     let mut rows: Vec<QueryRow> = Vec::new();
-    let mut cut = false;
     // One note is read once, however many rows lead back to it. Three events
     // on one day come from one note, and without this its sentences would be
     // shown three times — to a person as repetition, and to a model as three
@@ -234,10 +252,6 @@ fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResul
             .map(|cell| cell.trim().to_string())
             .unwrap_or_default();
         for (n, text) in words.sentences_of(&note, &day).into_iter().enumerate() {
-            if rows.len() >= MOST_LINES {
-                cut = true;
-                break;
-            }
             rows.push(QueryRow {
                 // One sentence is not a node, but it has to key uniquely — one
                 // note makes many of these.
@@ -248,13 +262,11 @@ fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResul
                 open: Some(note.clone()),
             });
         }
-        if cut {
-            break;
-        }
     }
 
+    let (rows, thin) = thinned(rows);
     let total = rows.len();
-    let left_out = cut.then(|| format!("the first {MOST_LINES} lines"));
+    let left_out = thin.then(|| format!("{MOST_LINES} lines spread across all of them"));
     Ok(QueryResult {
         columns: vec!["day".into(), "note".into(), "text".into()],
         rows,
@@ -304,19 +316,29 @@ pub fn lines_of(result: &QueryResult) -> Vec<String> {
 
 /// The rows the model pointed at, and no others.
 ///
-/// A number nobody offered is dropped rather than wrapped around, so a model
-/// that miscounts cannot reach a line it was never shown. Shared with the
-/// command that does the asking, so there is one reading of the reply.
+/// Three things, each of which `timeline::year` had to learn first:
+///
+/// 1. A number nobody offered is **dropped**, not wrapped around, so a model
+///    that miscounts cannot reach a line it was never shown.
+/// 2. The same number twice is **one row**. A model repeating itself must not
+///    make a sentence appear twice.
+/// 3. They come back **in the order they were offered**, not the order the
+///    model listed them. The question decided the order — `sort:` is part of
+///    it — so for a year of somebody's sentences that is the order it was
+///    lived, which is the only order in which reading them together means
+///    anything.
 pub fn keeping_picked(result: QueryResult, picked: &[usize], room: usize) -> QueryResult {
-    let mut kept: Vec<QueryRow> = Vec::new();
+    let mut wanted: Vec<usize> = Vec::new();
     for n in picked {
-        if let Some(row) = result.rows.get(*n) {
-            kept.push(row.clone());
+        if *n < result.rows.len() && !wanted.contains(n) {
+            wanted.push(*n);
         }
-        if kept.len() >= room {
+        if wanted.len() >= room {
             break;
         }
     }
+    wanted.sort_unstable();
+    let kept: Vec<QueryRow> = wanted.into_iter().map(|n| result.rows[n].clone()).collect();
     let total = kept.len();
     QueryResult { rows: kept, total, ..result }
 }
@@ -925,6 +947,44 @@ mod tests {
         assert_eq!(said.0.borrow().len(), 2, "and the note was read once");
     }
 
+    /// `timeline::year` wrote down why this matters: taking the first of them
+    /// would hand the model January and call it a year.
+    #[test]
+    fn a_list_too_long_to_send_keeps_its_shape_rather_than_its_head() {
+        let mut cells: Vec<Vec<String>> = Vec::new();
+        for month in 1..=12 {
+            for n in 0..300 {
+                cells.push(vec![format!("2026-{month:02}-01"), format!("note {month}/{n}")]);
+            }
+        }
+        let borrowed: Vec<Vec<&str>> =
+            cells.iter().map(|row| row.iter().map(String::as_str).collect()).collect();
+        let rows: Vec<&[&str]> = borrowed.iter().map(Vec::as_slice).collect();
+
+        // One sentence per note, so 3,600 lines — well past the ceiling.
+        let said = Said(Default::default(), vec!["một".into()]);
+        let got = run_around(
+            &parse("nodes | explode sentences"),
+            answer(&["when", "title"], &rows),
+            &Around { today: day(2026, 9, 20), words: Some(&said), asker: None },
+        )
+        .expect("runs");
+
+        assert_eq!(got.rows.len(), MOST_LINES);
+        assert!(got.note.is_some_and(|n| n.contains("spread")), "it says so");
+
+        // Every month is still represented, in proportion.
+        let mut per_month = std::collections::BTreeMap::new();
+        for row in &got.rows {
+            *per_month.entry(row.cells[0][..7].to_string()).or_insert(0) += 1;
+        }
+        assert_eq!(per_month.len(), 12, "{per_month:?}");
+        assert!(
+            per_month.values().all(|n| *n > 100),
+            "no month is a token presence: {per_month:?}"
+        );
+    }
+
     /// **The guardrail.** Opening a saved lens must not spend money, and what
     /// it would spend has to be visible before anybody agrees to it.
     #[test]
@@ -965,10 +1025,58 @@ mod tests {
         assert_eq!(picks.0.borrow().as_slice(), ["a", "b", "c", "d"]);
         assert_eq!(
             got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
-            ["c", "a"],
-            "the two that were offered, in the order chosen"
+            ["a", "c"],
+            "the two that were offered, in the order they were offered"
         );
         assert_eq!(got.total, 2);
+    }
+
+    /// The order the question asked for, not the order the model answered in.
+    /// For a year of somebody's sentences that is the order it was lived, and
+    /// reading them together in any other order means nothing.
+    #[test]
+    fn what_comes_back_is_in_the_order_it_was_offered() {
+        let rows = answer(
+            &["when", "text"],
+            &[
+                &["2026-01-05", "Bắt đầu học đàn."],
+                &["2026-03-02", "Chuyển nhà xong."],
+                &["2026-11-20", "Nghỉ việc."],
+            ],
+        );
+        // The model names them out of order, and repeats one.
+        let picks = Picks(Default::default(), vec![2, 0, 1, 0]);
+        let got = run_around(
+            &parse("nodes | ask 3"),
+            rows,
+            &Around { today: day(2026, 9, 20), words: None, asker: Some(&picks) },
+        )
+        .expect("runs");
+
+        assert_eq!(
+            got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
+            ["2026-01-05", "2026-03-02", "2026-11-20"]
+        );
+    }
+
+    /// A model repeating itself must not make a sentence appear twice — and
+    /// a repeat must not eat one of the places either.
+    #[test]
+    fn the_same_line_chosen_twice_comes_back_once() {
+        // Longer than the room asked for, or there would be nothing to choose
+        // and the model would never be called.
+        let rows = answer(&["text"], &[&["một"], &["hai"], &["ba"], &["bốn"]]);
+        let picks = Picks(Default::default(), vec![1, 1, 1, 3]);
+        let got = run_around(
+            &parse("nodes | ask 2"),
+            rows,
+            &Around { today: day(2026, 9, 20), words: None, asker: Some(&picks) },
+        )
+        .expect("runs");
+        assert_eq!(
+            got.rows.iter().map(|r| r.cells[0].clone()).collect::<Vec<_>>(),
+            ["hai", "bốn"]
+        );
     }
 
     /// `explode` needs the vault. Without it the answer would be every note

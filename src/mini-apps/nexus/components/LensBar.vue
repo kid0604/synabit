@@ -34,6 +34,7 @@ import type { QueryResult, QueryRow } from '../../../shared/views/types';
 import type { Lens } from '../../../shared/lenses';
 import { logger } from '../../../utils/logger';
 import { refusalText } from '../../../shared/refusal';
+import { putAway, putAwayFor } from '../../../shared/putAway';
 import { chipsOf, spends, withFilter, withTag, without, type Chip } from '../../../shared/queryChips';
 import LensShelf from './LensShelf.vue';
 
@@ -119,6 +120,44 @@ const typed = () => {
 const open = (row: QueryRow) => emit('open', row.open ?? row.id, row.node_type);
 
 /**
+ * Whether this answer's rows can be refused.
+ *
+ * Read off the answer, like the shape is. An answer about people, about
+ * sentences, or about things on days affords a refusal; a table of books does
+ * not, and then no button is drawn. See `shared/putAway`.
+ */
+const canPutAway = computed(
+    () => !!result.value?.rows.length && !!putAwayFor(result.value, result.value.rows[0]),
+);
+
+/**
+ * Saying no, from wherever the answer is drawn.
+ *
+ * The views ask; this does it, because a refusal needs the vault and a view
+ * primitive is given a result and nothing else. Three panels used to own this
+ * gesture — that is the whole reason they could not simply be deleted.
+ */
+const putRowAway = async (row: QueryRow) => {
+    const what = putAwayFor(result.value, row);
+    if (!what) return;
+    try {
+        await putAway(props.vaultPath, what);
+        // Gone from the answer as well as from the timeline, so the screen
+        // agrees with what was just decided.
+        if (result.value) {
+            result.value = {
+                ...result.value,
+                rows: result.value.rows.filter(r => r.id !== row.id),
+                total: Math.max(0, result.value.total - 1),
+            };
+        }
+    } catch (e) {
+        refused.value = refusalText(e);
+        logger.error('Could not put the row away', e);
+    }
+};
+
+/**
  * Taking a chip off takes **all** of it off.
  *
  * A chip is no longer one token: an alternative is one chip spanning several,
@@ -167,9 +206,27 @@ const edit = async () => {
             </p>
             <template v-else>
                 <BarsView v-if="drawn === 'bars'" :result="result" />
-                <DatedView v-else-if="drawn === 'dated'" :result="result" @open="open" />
-                <TableView v-else-if="drawn === 'table'" :result="result" @open="open" />
-                <ListView v-else :result="result" @open="open" />
+                <DatedView
+                    v-else-if="drawn === 'dated'"
+                    :result="result"
+                    :offer-put-away="canPutAway"
+                    @open="open"
+                    @put-away="putRowAway"
+                />
+                <TableView
+                    v-else-if="drawn === 'table'"
+                    :result="result"
+                    :offer-put-away="canPutAway"
+                    @open="open"
+                    @put-away="putRowAway"
+                />
+                <ListView
+                    v-else
+                    :result="result"
+                    :offer-put-away="canPutAway"
+                    @open="open"
+                    @put-away="putRowAway"
+                />
 
                 <!-- What the answer had to admit about itself: a ceiling it
                      hit, rows it had nowhere to put. §8 — owning up to a cut

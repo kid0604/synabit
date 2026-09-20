@@ -1272,7 +1272,11 @@
     "compose_field_from": "Từ",
     "compose_field_to": "Đến",
     "compose_field_people": "Với (ngăn cách bằng dấu phẩy)",
-    "compose_field_where": "Ở đâu"
+    "compose_field_where": "Ở đâu",
+    "put_away_person": "Tạm để yên người này",
+    "put_away_line": "Bỏ câu này ra",
+    "put_away_moment": "Đừng nhắc lại chuyện này",
+    "lens_kept": "Đã lên kệ"
   },
   "people": {
     "cancel": "Hủy",

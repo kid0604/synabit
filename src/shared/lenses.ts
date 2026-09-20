@@ -114,11 +114,81 @@ export function nameFor(query: string): string {
   return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
 }
 
+/**
+ * What a shelf holds before anybody has put anything on it.
+ *
+ * §8 of `docs/nexus-lenses-2026-09-19.md`: *an empty query bar is a refusal to
+ * serve.* These are the curriculum — the eight questions that used to be
+ * hand-written panels, and four the full database opens up that nothing could
+ * ask before.
+ *
+ * # Why they are not written into the vault
+ *
+ * Seeding twelve files on first run would put them on two devices twice, would
+ * come back after somebody deleted them, and would need a marker somewhere to
+ * remember it had happened. None of that machinery buys anything: a starter
+ * that is only a suggestion needs no state at all. Pressing Save on one writes
+ * it as an ordinary node, and from then on it is the person's — see
+ * `lensesOn`, which stops offering a starter somebody has already kept.
+ *
+ * `id` is not a path: a starter has no file. The shelf keys rows by it and
+ * `LensShelf` refuses to delete one, because there is nothing to delete.
+ */
+export const STARTERS: Lens[] = [
+  // ── the eight that were panels ──
+  { id: 'starter:on-this-day', title: 'Ngày này năm xưa',
+    query: 'events when:same-day-as(today) shape:occasion', render: 'dated', icon: 'calendar-heart' },
+  { id: 'starter:silence', title: 'Khoảng lặng',
+    query: 'events | seq gaps by who | where times >= 5 and span >= 183d and quiet > longest and quiet > 90d | sort quiet desc',
+    render: 'table', icon: 'user-minus' },
+  { id: 'starter:gone-quiet', title: 'Chuyện gì đã nguội',
+    query: 'events columns:when,about | seq gaps by about | where quiet > 6mo | sort quiet desc',
+    render: 'table', icon: 'archive' },
+  { id: 'starter:year-in-words', title: 'Một năm bằng lời mình',
+    query: 'events when:this-year | explode sentences | ask 15', render: 'list', icon: 'quote' },
+  { id: 'starter:biggest', title: 'Chuyện lớn nhất',
+    query: 'events when:2016..2026 columns:when,title,size | top 20 by size', render: 'table', icon: 'mountain' },
+  { id: 'starter:pictures', title: 'Khoảnh khắc',
+    query: 'nodes is:file sort:-created_at limit:60', render: 'dated', icon: 'image' },
+  { id: 'starter:proposals', title: 'Khay duyệt',
+    query: 'nodes is:proposal sort:-created_at', render: 'list', icon: 'inbox' },
+  { id: 'starter:lenses', title: 'Thấu kính đã lưu',
+    query: 'nodes type:lens columns:title,query sort:title', render: 'table', icon: 'layers' },
+  // ── four the full database opens up ──
+  { id: 'starter:rhythm', title: 'Nhịp sống',
+    query: 'events when:2016..2026 | stats count by month', render: 'bars', icon: 'activity' },
+  { id: 'starter:where-eaten', title: 'Ăn ở đâu',
+    query: 'events when:2016..2026 columns:when,place | stats count by place | sort count desc',
+    render: 'bars', icon: 'utensils' },
+  { id: 'starter:who-still', title: 'Ai còn gặp',
+    query: 'events when:2016..2026 | stats count by who | sort count desc | head 20',
+    render: 'bars', icon: 'users' },
+  { id: 'starter:writing', title: 'Tháng nào viết nhiều',
+    query: 'nodes is:note columns:title,date | stats count by month', render: 'bars', icon: 'pen-line' },
+];
+
+/** Whether a lens is one of the suggestions rather than one somebody kept. */
+export function isStarter(lens: Lens): boolean {
+  return lens.id.startsWith('starter:');
+}
+
+/**
+ * The shelf: what somebody kept, then the suggestions they have not.
+ *
+ * Matched by the question rather than by the name, because the name is theirs
+ * to change and the question is what the starter was for. Renaming a kept lens
+ * must not make its suggestion come back.
+ */
+export function lensesOn(kept: Lens[]): Lens[] {
+  const already = new Set(kept.map(lens => lens.query.trim()));
+  return [...kept, ...STARTERS.filter(starter => !already.has(starter.query.trim()))];
+}
+
 export async function readShelf(vaultPath: string): Promise<Lens[]> {
   const result = await invoke<QueryResult>('run_node_query', {
     vaultPath,
     query: SHELF_QUERY,
     offset: 0,
   });
-  return lensesFrom(result);
+  return lensesOn(lensesFrom(result));
 }

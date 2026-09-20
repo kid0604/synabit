@@ -1272,7 +1272,11 @@
     "compose_field_from": "From",
     "compose_field_to": "To",
     "compose_field_people": "With (commas between names)",
-    "compose_field_where": "Where"
+    "compose_field_where": "Where",
+    "put_away_person": "Leave them be for now",
+    "put_away_line": "Not this sentence",
+    "put_away_moment": "Don’t raise this again",
+    "lens_kept": "On the shelf"
   },
   "people": {
     "cancel": "Cancel",

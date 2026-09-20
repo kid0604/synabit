@@ -24,9 +24,15 @@ const props = defineProps<{
   selectedId?: string | null;
   /** Shown when a row has no title of its own. */
   untitledLabel?: string;
+  /**
+   * Whether a row may be put away — asked of the caller rather than assumed,
+   * because a refusal is a decision about the timeline and this view also
+   * draws ordinary tables of notes. See `shared/putAway`.
+   */
+  offerPutAway?: boolean;
 }>();
 
-const emit = defineEmits<{ open: [row: QueryRow] }>();
+const emit = defineEmits<{ open: [row: QueryRow]; putAway: [row: QueryRow] }>();
 
 const at = computed(() => (props.result ? dateColumn(props.result) : -1));
 
@@ -84,9 +90,8 @@ const cells = (row: QueryRow) =>
       </span>
 
       <div class="flex min-w-0 flex-grow flex-col gap-1">
+        <span v-for="row in group.rows" :key="row.id" class="group flex items-center gap-1">
         <button
-          v-for="row in group.rows"
-          :key="row.id"
           type="button"
           data-dated-row
           class="flex items-baseline gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
@@ -104,6 +109,18 @@ const cells = (row: QueryRow) =>
             {{ cell }}
           </span>
         </button>
+        <button
+          v-if="offerPutAway"
+          type="button"
+          data-put-away
+          :aria-label="$t('nexus.put_away_moment')"
+          :title="$t('nexus.put_away_moment')"
+          class="flex-shrink-0 px-1 text-[13px] leading-none text-gray-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
+          @click="emit('putAway', row)"
+        >
+          ×
+        </button>
+        </span>
       </div>
     </div>
 

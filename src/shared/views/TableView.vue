@@ -23,9 +23,15 @@ const props = defineProps<{
   selectedId?: string | null;
   /** Shown in the first column when a node has no title of its own. */
   untitledLabel?: string;
+  /**
+   * Whether a row may be put away — asked of the caller rather than assumed,
+   * because a refusal is a decision about the timeline and this view also
+   * draws ordinary tables of notes. See `shared/putAway`.
+   */
+  offerPutAway?: boolean;
 }>();
 
-const emit = defineEmits<{ open: [row: QueryRow] }>();
+const emit = defineEmits<{ open: [row: QueryRow]; putAway: [row: QueryRow] }>();
 
 const { t } = useI18n();
 
@@ -46,6 +52,7 @@ const hasMore = computed(
           >
             {{ column }}
           </th>
+          <th v-if="offerPutAway" class="w-6" />
         </tr>
       </thead>
       <tbody>
@@ -53,7 +60,7 @@ const hasMore = computed(
           v-for="row in result.rows"
           :key="row.id"
           @click="emit('open', row)"
-          class="border-b last:border-b-0 border-[#f0f0f0] dark:border-[#2c2c2c] cursor-pointer
+          class="group border-b last:border-b-0 border-[#f0f0f0] dark:border-[#2c2c2c] cursor-pointer
                  hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors"
           :class="row.id === selectedId ? 'bg-gray-100 dark:bg-white/10' : ''"
         >
@@ -67,6 +74,18 @@ const hasMore = computed(
               <span class="truncate">{{ cell || untitledLabel || row.id }}</span>
             </span>
             <span v-else class="text-gray-500 dark:text-gray-400">{{ cell }}</span>
+          </td>
+          <td v-if="offerPutAway" class="px-1 align-top">
+            <button
+              type="button"
+              data-put-away
+              :aria-label="t('nexus.put_away_person')"
+              :title="t('nexus.put_away_person')"
+              class="text-[13px] leading-none text-gray-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
+              @click.stop="emit('putAway', row)"
+            >
+              ×
+            </button>
           </td>
         </tr>
       </tbody>

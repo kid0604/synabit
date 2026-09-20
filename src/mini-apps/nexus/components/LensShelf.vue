@@ -19,7 +19,15 @@ import { computed, ref, watch } from 'vue';
 import { BookMarked, Plus, Trash2 } from 'lucide-vue-next';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
-import { lensPath, nameFor, normalise, propertiesOf, readShelf, type Lens } from '../../../shared/lenses';
+import {
+    isStarter,
+    lensPath,
+    nameFor,
+    normalise,
+    propertiesOf,
+    readShelf,
+    type Lens,
+} from '../../../shared/lenses';
 
 const props = defineProps<{
     vaultPath: string;
@@ -88,7 +96,13 @@ const save = async () => {
     }
 };
 
+/**
+ * A suggestion is offered, not kept: there is no file behind it, so there is
+ * nothing to put away. Pressing it and then Save is how somebody keeps one —
+ * and once they have, `lensesOn` stops offering it.
+ */
 const forget = async (lens: Lens) => {
+    if (isStarter(lens)) return;
     try {
         await ns.trashNode({ relPath: lens.id });
         shelf.value = shelf.value.filter(l => l.id !== lens.id);
@@ -109,14 +123,19 @@ const forget = async (lens: Lens) => {
              a button nested in a button is invalid markup and the inner one is
              unreachable by keyboard, which would make putting a lens away a
              mouse-only gesture. -->
+        <!-- A suggestion is drawn as one: dashed, so the shelf says which of
+             these are yours and which are only offered. -->
         <span
             v-for="lens in shelf"
             :key="lens.id"
+            :data-starter="isStarter(lens) ? 'yes' : undefined"
             class="group inline-flex h-[30px] items-stretch overflow-hidden rounded-full border transition-colors"
             :class="
                 lens.id === active
                     ? 'border-indigo-600 bg-indigo-600 text-white'
-                    : 'border-gray-200 bg-white text-gray-700 dark:border-[#3a3a3c] dark:bg-[#242426] dark:text-gray-200'
+                    : isStarter(lens)
+                      ? 'border-dashed border-gray-300 bg-transparent text-gray-500 dark:border-[#48484a] dark:text-gray-400'
+                      : 'border-gray-200 bg-white text-gray-700 dark:border-[#3a3a3c] dark:bg-[#242426] dark:text-gray-200'
             "
         >
             <button
@@ -130,6 +149,7 @@ const forget = async (lens: Lens) => {
                 {{ lens.title }}
             </button>
             <button
+                v-if="!isStarter(lens)"
                 type="button"
                 data-forget
                 :aria-label="$t('nexus.lens_forget')"
@@ -138,6 +158,7 @@ const forget = async (lens: Lens) => {
             >
                 <Trash2 class="h-3 w-3" />
             </button>
+            <span v-else class="pr-3" />
         </span>
 
         <p v-if="!shelf.length" data-lens-empty class="text-[11px] text-gray-400">

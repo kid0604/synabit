@@ -25,6 +25,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
+import KeepAsLens from './KeepAsLens.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { boardsTouchedBy } from '../keepAsBoard';
@@ -903,6 +904,14 @@ const copyContent = async () => {
             </div>
           </Transition>
         </div>
+
+        <!-- §6.2: the assistant writes a query, it does not replace one. So
+             what it asked is shown, and can be kept. -->
+        <KeepAsLens
+          v-if="message.role === 'assistant' && !isStreaming"
+          :vault-path="vaultPath || ''"
+          :tool-calls="message.tool_calls_log"
+        />
 
         <!-- File Media Previews (when search_files found images/videos) -->
         <div v-if="fileMediaPreviews.length" 
