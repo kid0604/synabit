@@ -2484,7 +2484,8 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         .or_else(|| crate::timeline::asked::span_in(when_text, today).map(|asked| asked.span))
         .ok_or_else(|| {
             AppError::General(format!(
-                "'{when_text}' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30, or words like \"last year\"."
+                "'{when_text}' is not a time. {} Or say it in words: \"last year\", \"tháng trước\".",
+                crate::timeline::when::HOW_TO_WRITE_ONE
             ))
         })?;
     let about = args.get("about").and_then(Value::as_str).map(str::trim).filter(|a| !a.is_empty());

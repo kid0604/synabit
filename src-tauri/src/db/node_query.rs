@@ -165,6 +165,25 @@ impl DbBridge {
             ));
         }
 
+        // A field belongs to a source, the way a column belongs to a table
+        // (§5). Reaching here with one of the timeline's roles means the
+        // question said `notes` out loud — otherwise those words would have
+        // chosen the other table themselves — so it is answered with a
+        // sentence rather than dropped on the floor.
+        let elsewhere = [
+            (!parsed.with.is_empty(), "with:"),
+            (!parsed.place.is_empty(), "place:"),
+            (!parsed.about.is_empty(), "about:"),
+            (parsed.shape.is_some(), "shape:"),
+            (parsed.size.is_some(), "size:"),
+        ];
+        if let Some((_, what)) = elsewhere.into_iter().find(|(carried, _)| *carried) {
+            return Err(AppError::General(format!(
+                "{what} asks about an event, and this question is about notes. \
+                 Start it with `events`, or drop it."
+            )));
+        }
+
         // Built on its own so the count and the page ask the same question.
         // `total` used to be whatever the paged read happened to return, which
         // is a different number from "how many match" whenever a limit bites.
@@ -293,6 +312,45 @@ impl DbBridge {
             };
             params.push(comparable(&value));
             next += 1;
+        }
+
+        // `when:` — one word for both sources (§5).
+        //
+        // A note's day is the `date` it carries, and failing that the day it
+        // was made. Two conditions rather than a `COALESCE` because they are
+        // not the same kind of value: `date` is a written day and `created_at`
+        // is an instant in UTC, so the same local day is a different string in
+        // each. Comparing `created_at` as text against `2019-01-01` would ask
+        // Greenwich's question, not the one the person in front of the screen
+        // asked.
+        if let Some(written_when) = &parsed.when {
+            let span = crate::timeline::when::parse(written_when).ok_or_else(|| {
+                AppError::General(format!(
+                    "'{written_when}' is not a time. {}",
+                    crate::timeline::when::HOW_TO_WRITE_ONE
+                ))
+            })?;
+            let written = "CAST(json_extract(properties, '$.date') AS TEXT)";
+            sql.push_str(&format!(
+                " AND (CASE WHEN {written} IS NOT NULL AND {written} <> ''
+                            THEN substr({written}, 1, 10) BETWEEN ?{next} AND ?{}
+                            ELSE created_at >= ?{} AND created_at < ?{}
+                       END)",
+                next + 1,
+                next + 2,
+                next + 3
+            ));
+            params.push(text(&crate::timeline::when::iso(span.from)));
+            params.push(text(&crate::timeline::when::iso(span.to)));
+            params.push(text(&crate::utils::timestamp::normalize(
+                &crate::timeline::when::iso(span.from),
+            )));
+            // The morning after the last day, so the whole of it is included
+            // however late in it a note was written.
+            params.push(text(&crate::utils::timestamp::normalize(
+                &crate::timeline::when::iso(span.to.succ_opt().unwrap_or(span.to)),
+            )));
+            next += 4;
         }
 
         // Words are the index's business. Asking it for the ids and narrowing
@@ -485,6 +543,52 @@ mod tests {
 
         assert_eq!(found.rows.len(), 1, "{:?}", found.rows);
         assert_eq!(found.rows[0].title, "mới");
+    }
+
+    /// `when:` is one word for both sources (§5). On a note it is the note's
+    /// own day — the `date` it carries, and failing that the day it was made.
+    #[test]
+    fn when_on_a_note_reads_the_day_it_carries_first_and_the_day_it_was_made_after() {
+        let db = db();
+        let dated = NodeMetadata {
+            id: "Notes/diary.md".into(),
+            node_type: "note".into(),
+            title: "nhật ký".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "date": "2019-11-05" }),
+            // Made years after the day it is about, which is the whole point:
+            // reading `created_at` here would answer the wrong question.
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+            updated_at: "2026-01-01T00:00:00.000Z".into(),
+            timestamp: 0,
+            blocks: None,
+        };
+        db.upsert_node(&dated).expect("seed");
+        seed_at(&db, "Notes/plain.md", "không ngày", "2026-01-01 00:00:00");
+
+        let ask = |q: &str| db.run_node_query(&parse_query(q)).expect("query runs");
+
+        let in_2019 = ask("notes when:2019");
+        assert_eq!(in_2019.rows.len(), 1, "{:?}", in_2019.rows);
+        assert_eq!(in_2019.rows[0].title, "nhật ký");
+
+        let in_2026 = ask("notes when:2026");
+        assert_eq!(in_2026.rows.len(), 1, "the one with no date of its own");
+        assert_eq!(in_2026.rows[0].title, "không ngày");
+
+        assert_eq!(ask("notes when:2019-11-05").rows.len(), 1, "to the day");
+        assert_eq!(ask("notes when:2020").rows.len(), 0, "and only that day");
+    }
+
+    /// A field belongs to a source. Saying `notes` and then asking who was
+    /// there is answered with a sentence, not with an empty table.
+    #[test]
+    fn a_question_about_notes_that_asks_an_events_question_is_told_so() {
+        let db = db();
+        seed_at(&db, "Notes/a.md", "a", "2026-01-01 00:00:00");
+        let refused = db.run_node_query(&parse_query("notes with:khánh"));
+        let why = refused.expect_err("with: is not a note's field").to_string();
+        assert!(why.contains("with:") && why.contains("events"), "{why}");
     }
 
     #[test]

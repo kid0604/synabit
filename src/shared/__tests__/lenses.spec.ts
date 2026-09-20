@@ -19,7 +19,8 @@ describe('A lens', () => {
     /// The point of a lens being a node: listing them is an ordinary query, so
     /// the shelf is built out of the machine the shelf is for.
     it('is listed by asking the vault for one, not by a new read path', () => {
-        expect(SHELF_QUERY).toContain('is:lens');
+        expect(SHELF_QUERY).toContain('type:lens');
+        expect(SHELF_QUERY.startsWith('notes ')).toBe(true);
         expect(SHELF_QUERY).toContain('columns:title,query,render,icon');
     });
 

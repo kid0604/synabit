@@ -76,7 +76,20 @@ events  with:khánh when:2019
 notes   #gia-đình status:done
 ```
 
-Không bắt buộc; **mặc định `notes`**, nên mọi câu đang chạy hôm nay vẫn chạy.
+Không bắt buộc.
+
+> **Sửa lại — 2026-09-20, lúc làm bước 2.** Chỗ này vốn viết *"mặc định `notes`"*.
+> **Sai**, và sai vì viết trước khi đọc code: `when:` là từ mà dòng thời gian **được
+> làm ra từ đó**, nên mặc định `notes` sẽ biến mọi câu `with:khánh` từng có thành một
+> lời từ chối. Cái đúng: **nói ra thì theo lời nói, không nói thì từ khoá quyết định**
+> — y như hôm nay. Nêu nguồn ra mặt đáng giá vì nó cho một câu **dùng từ của cả hai
+> nửa** có đúng một nghĩa, chứ không phải vì đoán là sai khi chỉ có một nửa để đoán.
+
+Và **một mình nó thì không phải nguồn, nó là một từ.** `notes` với `events` là tiếng
+Anh bình thường, mà mấy ô tìm kiếm chữ trần (`search_notes`, `search_tasks`…) đưa
+thẳng thứ người ta gõ vào bộ phân tích này. Nuốt một từ đứng một mình ở đó sẽ lặng lẽ
+biến một lượt tìm thành một lượt liệt kê tất cả. "Cả dòng thời gian" vẫn viết được:
+`events sort:-when`, `events limit:200`.
 
 Vì sao nêu ra mặt: hôm nay bảng được chọn **ngầm** theo từ khoá, nên
 `is:note when:2019` lặng lẽ **vứt bỏ `is:note`** và trả về sự kiện. Kusto và Splunk
@@ -152,6 +165,11 @@ khái niệm thứ hai. Thang chữ cho người, thang số cho máy, và chún
 > **Chưa chốt:** ngưỡng cụ thể của năm bậc. Phải đo trên vault thật, và §16 Bước 8 đã
 > đo được rằng trên vault thiếu quan hệ thì độ lớn thoái hoá thành độ dài tiêu đề —
 > nên định ngưỡng lúc này là định cho một phân bố đang hỏng.
+
+> **Làm bước 2 — 2026-09-20.** Thang chữ **chưa làm**, vì lý do trên. Còn `size:4`
+> trần thì **bị từ chối**, không phải đổi thành `=4`: độ lớn là một số thực tính ra,
+> nên `= 4` là bộ lọc gần như không bao giờ khớp và không bao giờ nói vì sao. Câu từ
+> chối chỉ luôn cách viết: *"write size:>=4 or size:<=4"*.
 
 ### 6.4 Hoa thường, dấu, ngoặc kép
 
@@ -301,7 +319,13 @@ lý do phải chốt trước Bước 5.
    không có (nở dòng, gọi model). Đó là cơ sở, không phải bằng chứng.
 2. **Nguồn đứng đầu không làm phiền người non-tech.** Lý lẽ: chip đầu tiên nói rõ
    đang xem gì, mà cách ngầm không nói. Chưa đo.
-3. **`ask` nằm trong ngôn ngữ là đúng.** Nó nghĩa là **một thấu kính đã lưu có thể
+3. **Chữ `notes` gọi đúng cái bảng nó trỏ vào.** Bảng ấy là `nodes` — nó giữ cả
+   người, cả sách, cả task. `notes sort:title` trả về một người và một cuốn sách, mà
+   chữ "notes" không hứa thế. `nodes` thì đúng nhưng là tiếng của máy; `things` thì
+   app đã dùng đúng nghĩa ấy rồi (mini-app Things liệt kê node theo type). Đã giữ
+   `notes` vì đó là chữ trong đặc tả mày đã duyệt — **đổi hay không là quyết định của
+   mày**, và giờ là lúc rẻ nhất.
+4. **`ask` nằm trong ngôn ngữ là đúng.** Nó nghĩa là **một thấu kính đã lưu có thể
    tốn tiền mỗi lần mở**. Hàng rào đề nghị: xem trước số dòng và chi phí trước khi
    chạy, **không bao giờ tự chạy khi mở thấu kính**, và một dấu riêng để nhìn là biết.
 
@@ -415,7 +439,7 @@ Khi câu hỏi có `OR`, khung nhìn phẳng không dựng được — và ch�
 | --- | --- | --- |
 | **0** | ~~Sửa năm lỗi §9~~ — **xong 2026-09-20** | ảnh chụp đổi **đúng 10 dòng**, 37 dòng còn lại không nhúc nhích |
 | **1** | ~~`Term`/`Expr`/`Query` dựng bên cạnh; `ParsedQuery` thành khung nhìn phẳng~~ — **xong 2026-09-20** | ảnh chụp **không đổi một dòng** ✓ |
-| **2** | Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11 | ảnh chụp đổi đúng chỗ đổi tên |
+| **2** | ~~Nguồn đứng đầu, hợp nhất `when:`, đổi tên §11~~ — **xong 2026-09-20** | ảnh chụp đổi đúng chỗ đổi tên ✓ |
 | **3** | `OR` `NOT` ngoặc trong bộ phân tích và cả hai bộ chạy | câu cũ không đổi; câu có `OR` chạy |
 | **4** | Chip biết nhóm và giai đoạn | vòng chữ→chip→chữ vẫn khít cho mọi câu ở §15.1 |
 | **5** | Dấu `\|` + `stats` + `sort`/`head` | `bars` có dữ liệu |
@@ -583,3 +607,111 @@ vào đó**.
 | Clippy | sạch trên `query.rs`, `search.rs`, `search_gate.rs` |
 | `query.rs` | 511 dòng, trong đó 6 test |
 | `search.rs` | −175 dòng (130 thêm, 305 bớt — vòng lặp token sang `query.rs`) |
+
+---
+
+## 19. Bước 2 — đã làm, 2026-09-20
+
+**Nguồn đứng đầu, `when:` cho cả hai bảng, và hai chữ đổi tên.**
+
+### Ảnh chụp đổi ở đâu
+
+Ảnh chụp dài ra 47 → 58 dòng. Mười một dòng mới đều là câu **chưa hỏi được** trước
+bước này:
+
+| Câu | Trước | Sau |
+| --- | --- | --- |
+| `notes when:2019` | không viết được | **1** — note mang ngày ấy |
+| `events when:2019` | không viết được | 3 |
+| `events limit:5` | không viết được | **4** — cả dòng thời gian |
+| `notes with:khánh` | không viết được | **từ chối: `with:` hỏi về sự kiện** |
+| `events #gia-đình` | không viết được | từ chối: `#tag` hỏi về note |
+| `events is:note` | không viết được | 3 |
+
+Và bảy dòng cũ đổi nghĩa, đúng bảy chỗ §11 nói:
+
+| Câu | Trước | Sau |
+| --- | --- | --- |
+| `where:"Hà Nội"` | 1 sự kiện | **từ chối: 'where' is now 'place'** |
+| `place:"Hà Nội"` | lọc thuộc tính `place` → 0 | **1** |
+| `magnitude:>2` | 2 | **từ chối: 'magnitude' is now 'size'** |
+| `size:>2` | lọc thuộc tính `size` → 0 | **2** |
+| `magnitude:2` (nghĩa ≥2) | 2 | `size:2` → **từ chối, chỉ cách viết** |
+| `when:2019..2021` | **từ chối** — `..` chưa đọc được | **4** |
+| `when:2016..2026 gặp` | từ chối | **1** |
+
+### Một chữ đổi tên không được phép chỉ là xoá
+
+Xoá một từ khoá **không làm nó thôi phân tích** — nó làm từ ấy phân tích thành *một
+khoá frontmatter cùng tên*. `where:hanoi` sẽ trả lời **0** và không nói gì. Nên hai
+chữ cũ nằm trong một bảng `RENAMED` và **từ chối kèm tên mới**, chứ không biến mất.
+
+Đây cũng là đường di cư cho §14.4: một thấu kính cũ ở vault khác mang `magnitude:>4`
+sẽ **hiện lên câu "magnitude is now size"**, không phải trả lời sai trong im lặng.
+
+### Nguồn: nói ra thì theo lời, không nói thì theo từ khoá
+
+Đặc tả §4 viết "mặc định `notes`". Đọc code rồi thì thấy **sai** — xem ô sửa lại ở §4.
+Cái làm được: nguồn nói ra **đè lên** suy đoán. Nhờ thế có ba thứ trước đây không nói
+được, và không mất thứ nào:
+
+1. `notes when:2019` — note **mang ngày ấy**. Hôm qua không viết được câu này.
+2. `events limit:5` — cả dòng thời gian.
+3. Một trường không thuộc nguồn là **lỗi nói ra thành lời**, cả hai chiều.
+
+### `when:` phải thật sự trả lời được, chứ không chỉ được trỏ vào
+
+§11 trỏ `date:today` sang `when:today`. Nhưng `when::parse` **chưa từng đọc được chữ
+`today`** — nó chỉ đọc `2016-05-14`, `2016-05`, `2016`, `a/b`, `~x`. Trỏ người ta sang
+một cách viết không chạy thì tệ hơn là không trỏ. Nên `when:` học thêm `today`,
+`yesterday`, `tomorrow`, `this-week`, `last-week`, `this-month`, `last-month`,
+`this-year`, `last-year` — và `..` bên cạnh `/`.
+
+Ngày "hôm nay" là **tham số** (`parse_on`), không phải đồng hồ đọc bên trong, nên test
+của `last-year` là test số học chứ không phải test may mắn cho tới tháng Mười Hai.
+
+### Một lỗi đồng thuận, do chính test bắt được
+
+Cho `when:` đọc được `yesterday` làm **đỏ một test không liên quan gì tới truy vấn**:
+`quiet::a_stretch_that_is_not_a_stretch_is_refused_rather_than_written`.
+
+Nó đúng. Một **hush** và một **seal** lưu quãng thời gian **y như chữ người ta viết**,
+rồi đọc lại bằng cách phân tích lại mỗi lần. Ghi `yesterday` vào đó thì cái quãng bị
+giấu **trượt đi một ngày mỗi sáng** — lặng lẽ, vì không ai đọc lại cho tới lúc có thứ
+bị giấu mà lẽ ra không được giấu. Với seal thì tệ hơn hush: `last-year` trong một seal
+sẽ **rời khỏi đúng cái năm nó sinh ra để che** vào mỗi tháng Giêng.
+
+Nên `when` tách làm hai cửa:
+
+| | đọc được | ai dùng |
+| --- | --- | --- |
+| `parse` | mọi thứ, kể cả chữ trượt theo ngày | truy vấn |
+| `parse_written` | chỉ thứ viết ra hẳn | **seal, hush** — file sống lâu hơn cái ngày viết nó |
+
+Tao **không** tự đi sửa định dạng file đồng thuận trong bước này. Tầng 2 là quyết định
+của con người; đổi cách lưu nó là việc riêng, không phải việc kèm theo một bước ngữ
+pháp.
+
+### Ba câu lỗi từng dạy sai cú pháp
+
+Ba chỗ mỗi chỗ giữ một danh sách ví dụ riêng, và **hai trong ba** vẫn mời
+`2016-05-01/2016-06-30` (dấu §11 vừa thay) với `"last year"` (cách viết chưa bao giờ
+phân tích được). Một câu báo lỗi dạy sai cú pháp còn tệ hơn câu không dạy gì. Giờ một
+hằng, một chỗ: `when::HOW_TO_WRITE_ONE`.
+
+### Hai chỗ §15.4 dặn, đã kiểm
+
+1. **Mô tả công cụ** (`syn/tools.rs`): nó **không** dạy model từ khoá dòng thời gian —
+   model đi cửa `timeline` riêng. Nên không có gì phải đổi, và ngân sách 19.800 ký tự
+   không nhúc nhích. Đã kiểm chứ không đoán.
+2. **Chuỗi i18n**: `query_placeholder` là `type:book rating:>3` — không dính chữ nào bị
+   đổi tên.
+
+### Đo
+
+| | |
+| --- | --- |
+| Ảnh chụp | 47 → **58 dòng**, 11 dòng mới, 7 dòng đổi, 40 dòng đứng yên |
+| Test Rust | 2371 (thêm 6) |
+| Test TypeScript | 1868, không đổi |
+| Clippy | không cảnh báo mới trên file nào đụng tới |

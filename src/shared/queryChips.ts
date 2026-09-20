@@ -41,7 +41,16 @@ export interface Chip {
  * `with:`, `where:`, `about:` and `#tag` are absent on purpose: asking for two
  * people means both were there, which is a question somebody really asks.
  */
-export const SINGULAR = ['is', 'type', 'when', 'shape', 'magnitude', 'status', 'sort', 'limit', 'date'];
+export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort', 'limit', 'date'];
+
+/**
+ * The two words that name a table, and only as the first of several (§4).
+ *
+ * Alone they are ordinary English, and the Rust parser reads them that way for
+ * the same reason — a free-text box would otherwise turn somebody searching
+ * for the word "notes" into a listing of every note.
+ */
+export const SOURCES = ['notes', 'events'];
 
 /**
  * Split a query the way the parser does: whitespace separates, quotes hold.
@@ -74,7 +83,14 @@ const unquote = (value: string) =>
   value.replace(/^["“”]|["“”]$/g, '').trim();
 
 export function chipsOf(text: string): Chip[] {
-  return tokenise(text).map(token => {
+  const tokens = tokenise(text);
+  return tokens.map((token, index) => {
+    // The source, which is the first word or is not the source. Drawn as a
+    // chip of its own so the bar says which table is being read — the thing
+    // choosing it by keyword could never say.
+    if (index === 0 && tokens.length > 1 && SOURCES.includes(token.toLowerCase())) {
+      return { text: token, key: 'source', label: token.toLowerCase() };
+    }
     if (token.startsWith('#')) {
       return { text: token, key: '#', label: token };
     }

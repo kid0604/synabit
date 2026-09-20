@@ -409,7 +409,8 @@ pub fn write_hush(vault_path: &str, subject: &Subject, until: Option<&str>) -> A
     let map = body.as_object_mut().expect("a JSON object was just built");
     map.insert("made".into(), Value::from(made.clone()));
     if let Some(until) = until.map(str::trim).filter(|u| !u.is_empty()) {
-        if super::when::parse(until).is_none() {
+        // Stored and compared as text, so it has to be a fixed day.
+        if super::when::parse_written(until).is_none() {
             return Err(AppError::General(format!("'{until}' is not a day")));
         }
         map.insert("until".into(), Value::from(until));

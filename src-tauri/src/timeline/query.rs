@@ -39,7 +39,7 @@ use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
 use crate::search::ParsedQuery;
 
-/// What a `with:`/`where:`/`about:` name turned out to be.
+/// What a `with:`/`place:`/`about:` name turned out to be.
 ///
 /// Resolving needs the vault cache and running needs the timeline, and they
 /// are different connections — so the caller resolves first and hands the
@@ -154,8 +154,8 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
     if let Some(text) = &parsed.when {
         let span = when::parse(text).ok_or_else(|| {
             AppError::General(format!(
-                "'{text}' is not a time. Use 2016-05-14, 2016-05, 2016, \
-                 2016-05-01/2016-06-30 or ~2012."
+                "'{text}' is not a time. {}",
+                when::HOW_TO_WRITE_ONE
             ))
         })?;
         sql.push_str(&format!(
@@ -197,7 +197,7 @@ pub fn run(store: &TimelineStore, parsed: &ParsedQuery, named: &Named) -> AppRes
         next += 1;
     }
 
-    if let Some((comparison, size)) = &parsed.magnitude {
+    if let Some((comparison, size)) = &parsed.size {
         // The operator comes from a fixed set, never from the person's text.
         sql.push_str(&format!(" AND e.magnitude {} ?{next}", comparison.as_sql()));
         params.push(Sql::Real(*size));
@@ -438,8 +438,24 @@ mod tests {
         for q in ["is:task", "#family", "status:done", "báo cáo"] {
             assert!(!parse_query(q).asks_the_timeline(), "{q}");
         }
-        for q in ["when:2019", "with:khánh", "where:hanoi", "about:synabit", "shape:occasion", "magnitude:>4"] {
+        for q in ["when:2019", "with:khánh", "place:hanoi", "about:synabit", "shape:occasion", "size:>4"] {
             assert!(parse_query(q).asks_the_timeline(), "{q}");
+        }
+        // And saying it out loud beats guessing from the words, both ways.
+        assert!(parse_query("events #family").asks_the_timeline());
+        assert!(!parse_query("notes when:2019").asks_the_timeline());
+    }
+
+    /// The two words §11 renamed say so, rather than quietly becoming a filter
+    /// on a frontmatter key of that name and answering 0.
+    #[test]
+    fn the_old_spellings_say_what_they_are_now_called() {
+        for (old, now) in [("where:hanoi", "place"), ("magnitude:>4", "size")] {
+            let refused = parse_query(old).refused;
+            assert!(
+                refused.first().is_some_and(|why| why.contains(now)),
+                "{old} → {refused:?}"
+            );
         }
     }
 
@@ -499,10 +515,10 @@ mod tests {
     #[test]
     fn size_asks_for_the_big_things() {
         let (cache, timeline) = a_vault();
-        let big = ask(&cache, &timeline, "when:2016/2026 magnitude:>5");
+        let big = ask(&cache, &timeline, "when:2016/2026 size:>5");
         assert!(big.total >= 1, "the job is the big thing here");
         assert!(big.rows.iter().all(|r| r.title.contains("MDP")), "{:?}", big.rows);
-        assert_eq!(ask(&cache, &timeline, "when:2016/2026 magnitude:>99").total, 0);
+        assert_eq!(ask(&cache, &timeline, "when:2016/2026 size:>99").total, 0);
     }
 
     #[test]
@@ -629,7 +645,7 @@ mod tests {
         for q in [
             "when:2026-06",
             "when:2026 shape:chore",
-            "when:2026 magnitude:>4",
+            "when:2026 size:>4",
             "when:2026 ăn",
             "when:2026 văn",
             "when:2026 họp",

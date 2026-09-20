@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::query::{Expr, Field, Query, Term, Value};
+use crate::query::{Expr, Field, Query, Source, Term, Value};
 
 /// Parsed representation of a user's search query.
 /// Handles syntax: `is:note`, `#tag`, `"exact phrase"`, `-exclude`, `in:title`, `status:done`, `date:today`
@@ -67,8 +67,13 @@ pub struct ParsedQuery {
     pub about: Vec<String>,
     /// `shape:occasion` — what sort of thing it is (`timeline::derive::Shape`).
     pub shape: Option<String>,
-    /// `magnitude:>4` — how big, on the scale `timeline::magnitude` computes.
-    pub magnitude: Option<(Comparison, f64)>,
+    /// `size:>4` — how big, on the scale `timeline::magnitude` computes.
+    pub size: Option<(Comparison, f64)>,
+    /// Which table the question named, if it named one (§4).
+    ///
+    /// `None` is not "notes": it means nobody said, and then the words decide
+    /// — see [`ParsedQuery::source_of`].
+    pub source: Option<Source>,
     /// Why this query cannot be answered, if it cannot.
     ///
     /// `parse_query` stays infallible because a dozen callers rely on it being
@@ -233,12 +238,38 @@ impl ParsedQuery {
     /// table to read. A query with none of them means what it has always
     /// meant, so nothing that worked yesterday changes.
     pub fn asks_the_timeline(&self) -> bool {
-        self.when.is_some()
+        self.source_of() == Source::Events
+    }
+
+    /// Which table answers this question.
+    ///
+    /// A question that names its source gets that one. A question that does
+    /// not is read the way it always was: the timeline's words are the
+    /// selector, and they are a fair one — asking who was somewhere is only
+    /// answerable of an *event*, so writing `with:` is already the act of
+    /// saying which table to read.
+    ///
+    /// §4 proposed defaulting to `notes` instead. That was written before this
+    /// code was read: it would turn every `with:khánh` anybody has ever typed
+    /// into a refusal, and `when:` is the word the timeline is *made of*.
+    /// Naming the source is worth having because it lets a question mean one
+    /// thing when it uses words from both halves — not because guessing was
+    /// wrong when it had only one half to guess from.
+    pub fn source_of(&self) -> Source {
+        if let Some(source) = self.source {
+            return source;
+        }
+        let timeline = self.when.is_some()
             || self.shape.is_some()
-            || self.magnitude.is_some()
+            || self.size.is_some()
             || !self.with.is_empty()
             || !self.place.is_empty()
-            || !self.about.is_empty()
+            || !self.about.is_empty();
+        if timeline {
+            Source::Events
+        } else {
+            Source::Notes
+        }
     }
 }
 
@@ -290,8 +321,16 @@ impl ParsedQuery {
             is_empty: true,
             title_only: query.title_only,
             refused: query.refused,
+            source: query.source,
             ..Default::default()
         };
+        // Naming the table is asking a question. `events` on its own is "the
+        // whole timeline", which is a thing somebody means; refusing it as
+        // empty would make the only way to see everything a filter that
+        // excludes nothing.
+        if query.source.is_some() {
+            pq.is_empty = false;
+        }
         // Shaping words are a question too: `limit:20` on its own is a page of
         // the vault, not an empty search bar.
         if query.sort.is_some() || !query.columns.is_empty() || query.limit.is_some() {
@@ -370,7 +409,7 @@ impl ParsedQuery {
             (Field::Place, Value::Text(value)) => self.place.push(value),
             (Field::About, Value::Text(value)) => self.about.push(value),
             (Field::Shape, Value::Text(value)) => self.shape = Some(value),
-            (Field::Size, Value::Number(op, number)) => self.magnitude = Some((op, number)),
+            (Field::Size, Value::Number(op, number)) => self.size = Some((op, number)),
             (Field::Prop(key), Value::Text(value)) => self.property_filters.push((key, value)),
             (Field::Prop(key), Value::Compare(op, value)) => {
                 self.property_ranges.push(PropertyRange { key, op, value })

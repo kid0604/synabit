@@ -498,8 +498,11 @@ pub fn read_periods(vault_path: &str) -> Vec<SealedPeriod> {
 /// A period's first and last day, when both ends are a day, a month or a year
 /// and the end does not come first.
 pub(crate) fn period_bounds(from: &str, to: &str) -> Option<(String, String)> {
+    // `parse_written`, not `parse`: a period in a seal file is a decision that
+    // outlives the day it was made, and `yesterday` in one would mean a
+    // different pair of days every morning. See `when::parse_written`.
     let point = |text: &str| {
-        when::parse(text).filter(|span| {
+        when::parse_written(text).filter(|span| {
             matches!(span.precision, Precision::Day | Precision::Month | Precision::Year)
         })
     };

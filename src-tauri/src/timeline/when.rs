@@ -12,7 +12,9 @@
 //! | `2016-05-14`, `2016-05-14T09:00` | that day | day |
 //! | `2018-07` | the month | month |
 //! | `2012` | the year | year |
-//! | `2009-09/2014-06` | first day of one to last day of the other | range |
+//! | `2009-09..2014-06` | first day of one to last day of the other | range |
+//! | `2009-09/2014-06` | the same, the older spelling | range |
+//! | `today`, `last-year`, `this-month` | read against the day it is | — |
 //! | `~2012` | widened by one unit either side | approx |
 
 use chrono::{Datelike, Months, NaiveDate};
@@ -71,6 +73,16 @@ pub fn open_end() -> NaiveDate {
     NaiveDate::from_ymd_opt(9999, 12, 31).expect("a valid date")
 }
 
+/// What to write instead, when what was written could not be read.
+///
+/// One string in one place: three commands used to each keep their own list of
+/// examples, and two of them still offered `2016-05-01/2016-06-30` and
+/// `"last year"` — a separator §11 replaced and a spelling that never parsed.
+/// An error message that teaches the wrong syntax is worse than one that
+/// teaches none.
+pub const HOW_TO_WRITE_ONE: &str =
+    "Use 2016-05-14, 2016-05, 2016, 2016-05..2016-06, ~2012, or today / this-month / last-year.";
+
 /// A date as the timeline stores it.
 pub fn iso(date: NaiveDate) -> String {
     date.format("%Y-%m-%d").to_string()
@@ -78,13 +90,40 @@ pub fn iso(date: NaiveDate) -> String {
 
 /// The span `text` names, or `None` when it names none.
 pub fn parse(text: &str) -> Option<Span> {
+    parse_on(text, chrono::Local::now().date_naive())
+}
+
+/// The same, told what day it is.
+///
+/// `today` is an argument rather than a clock read inside, so that a test of
+/// `last-year` is a test of arithmetic instead of a test that happens to pass
+/// until December.
+pub fn parse_on(text: &str, today: NaiveDate) -> Option<Span> {
+    relative(&text.trim().to_lowercase(), today).or_else(|| parse_written(text))
+}
+
+/// The span `text` names outright, with no reference to what day it is.
+///
+/// This is what a **stored decision** must be written in. A seal and a hush
+/// outlive the day they were made: keep the word `last-year` in one and every
+/// January it slides off the year it was meant to cover and onto a different
+/// one — silently, because nothing re-reads it until something is hidden that
+/// should not have been. So `timeline::seal` and `timeline::quiet` read their
+/// periods through this and refuse a word that moves.
+pub fn parse_written(text: &str) -> Option<Span> {
     let text = text.trim();
 
     if let Some(inner) = text.strip_prefix('~') {
         return widen(parse_point(inner.trim())?);
     }
 
-    if let Some((start, end)) = text.split_once('/') {
+    // `..` first, and `/` still after it: §11 renames the range separator
+    // because `2016-05/2016-06` reads as a day-and-month to most of the world,
+    // but a query somebody saved last week is still a question they meant.
+    let halves = text
+        .split_once("..")
+        .or_else(|| text.split_once('/'));
+    if let Some((start, end)) = halves {
         let (start, end) = (parse_point(start.trim())?, parse_point(end.trim())?);
         return (start.from <= end.to).then_some(Span {
             from: start.from,
@@ -94,6 +133,66 @@ pub fn parse(text: &str) -> Option<Span> {
     }
 
     parse_point(text)
+}
+
+/// The spans that are named rather than written out.
+///
+/// These are what `date:today` promised and never delivered — it parsed three
+/// of these words into a field no runner ever read, so `date:today` matched
+/// the entire vault. §11 points that spelling at `when:`, which means `when:`
+/// has to actually answer it.
+///
+/// # There is a second reader of words like these, on purpose
+///
+/// [`super::asked::span_in`] finds a time phrase inside a whole sentence, in
+/// Vietnamese and English, for the chat harness. This reads one written
+/// *value*. They are kept apart because they answer different questions, and
+/// they differ in one visible way worth naming: `span_in` reads "this month"
+/// as the 1st **to today**, because it is describing what has already
+/// happened in an answer. Here `this-month` is the whole month, so that it
+/// means the same thing as `when:2026-09` — a query about a month is a query
+/// about a month, including the part of it still to come.
+fn relative(word: &str, today: NaiveDate) -> Option<Span> {
+    let day = |date: NaiveDate| Some(Span::day(date));
+    let from_to = |from: NaiveDate, to: NaiveDate, precision| Some(Span { from, to, precision });
+    let month_of = |date: NaiveDate| {
+        let first = date.with_day(1)?;
+        from_to(
+            first,
+            first.checked_add_months(Months::new(1))?.pred_opt()?,
+            Precision::Month,
+        )
+    };
+    let year_of = |year: i32| {
+        from_to(
+            NaiveDate::from_ymd_opt(year, 1, 1)?,
+            NaiveDate::from_ymd_opt(year, 12, 31)?,
+            Precision::Year,
+        )
+    };
+
+    match word {
+        "today" => day(today),
+        "yesterday" => day(today.pred_opt()?),
+        "tomorrow" => day(today.succ_opt()?),
+        // The week starts on Monday, which is what a Vietnamese calendar and
+        // ISO 8601 both say.
+        "this-week" => {
+            let monday = today - chrono::Duration::days(today.weekday().num_days_from_monday() as i64);
+            from_to(monday, monday + chrono::Duration::days(6), Precision::Range)
+        }
+        "last-week" => {
+            let monday = today
+                - chrono::Duration::days(today.weekday().num_days_from_monday() as i64)
+                - chrono::Duration::days(7);
+            from_to(monday, monday + chrono::Duration::days(6), Precision::Range)
+        }
+        "this-month" => month_of(today),
+        "last-month" => month_of(today.with_day(1)?.checked_sub_months(Months::new(1))?),
+        "this-year" => year_of(today.year()),
+        "last-year" => year_of(today.year() - 1),
+        _ => None,
+    }
 }
 
 fn parse_point(text: &str) -> Option<Span> {
@@ -211,5 +310,48 @@ mod tests {
         for text in ["", "May 2016", "2016-13", "2016-02-30", "16-05-14", "hôm qua", "~2009/2010"] {
             assert_eq!(parse(text), None, "'{text}'");
         }
+    }
+
+    /// §11 points `date:today` at `when:today`, so `when:` has to answer it.
+    /// Told what day it is rather than asking, so this is arithmetic and not a
+    /// test that happens to pass until December.
+    #[test]
+    fn the_words_that_name_a_time_are_read_against_the_day_it_is() {
+        let today = day(2026, 9, 20); // a Sunday
+        let on = |text: &str| parse_on(text, today).map(|s| (s.from, s.to));
+
+        assert_eq!(on("today"), Some((day(2026, 9, 20), day(2026, 9, 20))));
+        assert_eq!(on("yesterday"), Some((day(2026, 9, 19), day(2026, 9, 19))));
+        // Monday to Sunday: the week a Vietnamese calendar and ISO 8601 agree on.
+        assert_eq!(on("this-week"), Some((day(2026, 9, 14), day(2026, 9, 20))));
+        assert_eq!(on("last-week"), Some((day(2026, 9, 7), day(2026, 9, 13))));
+        // The whole month, not the part of it that has happened — so that
+        // `this-month` and `2026-09` are the same question.
+        assert_eq!(on("this-month"), Some((day(2026, 9, 1), day(2026, 9, 30))));
+        assert_eq!(on("last-month"), Some((day(2026, 8, 1), day(2026, 8, 31))));
+        assert_eq!(on("last-year"), Some((day(2025, 1, 1), day(2025, 12, 31))));
+        assert_eq!(on("LAST-YEAR"), on("last-year"), "the words are not shouted at");
+    }
+
+    /// §11 renames the range separator, and keeps reading the old one: a query
+    /// somebody saved last week is still a question they meant.
+    #[test]
+    fn a_range_is_written_with_two_dots_and_still_read_with_a_slash() {
+        assert_eq!(span("2009-09..2014-06"), span("2009-09/2014-06"));
+        assert_eq!(parse("2014-06..2009-09"), None, "a range that ends before it starts");
+    }
+
+    /// A seal and a hush outlive the day they were made, so the words that
+    /// move are not a spelling they may be written in.
+    #[test]
+    fn a_stored_decision_cannot_be_written_in_a_word_that_moves() {
+        let today = day(2026, 9, 20);
+        for moving in ["today", "yesterday", "last-year", "this-month"] {
+            assert!(parse_on(moving, today).is_some(), "'{moving}' reads as a time");
+            assert_eq!(parse_written(moving), None, "but '{moving}' may not be stored");
+        }
+        // What can be written down still can be.
+        assert!(parse_written("2019-11-05").is_some());
+        assert!(parse_written("2019-02..2019-06").is_some());
     }
 }

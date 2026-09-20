@@ -63,8 +63,8 @@ pub fn timeline_query(
 ) -> AppResult<Looked> {
     let span = when::parse(&when).ok_or_else(|| {
         AppError::General(format!(
-            "'{when}' is not a time the timeline can read. Use 2016-05-14, 2016-05, 2016, \
-             2016-05-01/2016-06-30 or ~2012."
+            "'{when}' is not a time the timeline can read. {}",
+            when::HOW_TO_WRITE_ONE
         ))
     })?;
 

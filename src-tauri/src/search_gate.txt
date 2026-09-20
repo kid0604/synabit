@@ -16,20 +16,30 @@ is:task sort:-priority             → notes    2 [Làm công văn · Gửi báo
 is:task sort:title                 → notes    2 [Gửi báo cáo quý · Làm công văn]
 is:task columns:title,priority     → notes    2 [Làm công văn · Gửi báo cáo quý]
 is:task limit:1                    → notes    2 [Làm công văn]
+notes                              → notes    2 [2019-11-05 · 2021-03-14]
+events                             → notes    0 []
+events limit:5                     → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
+notes when:2019                    → notes    1 [2019-11-05]
+events when:2019                   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
+notes with:khánh                   → notes  refused: General application error: with: asks about an event, and this question is about notes. Start it with `events`, or drop it.
+events #gia-đình                   → events refused: General application error: #tag asks about a note, and this question is about the timeline. Ask it without the timeline's words, or drop it.
+notes #gia-đình                    → notes    1 [2019-11-05]
+events is:note                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 when:2019                          → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
 when:2019-11-05                    → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
-when:2019..2021                    → events refused: General application error: '2019..2021' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
+when:2019..2021                    → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 with:khánh                         → events   1 [Gặp Khánh ở quán quen]
 with:Khánh                         → events   1 [Gặp Khánh ở quán quen]
 with:khánh with:minh               → events   0 []
-where:"Hà Nội"                     → events   1 [Gặp Khánh ở quán quen]
+place:"Hà Nội"                     → events   1 [Gặp Khánh ở quán quen]
 shape:occasion                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 shape:chore                        → events   1 [Gửi báo cáo quý]
-magnitude:>2                       → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
-magnitude:2                        → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+size:>2                            → events   2 [Gặp Khánh ở quán quen · Ăn tối với Minh]
+size:2                             → refused: 'size:2' has to say which way — write size:>=2 or size:<=2
+when:today                         → events   0 []
 when:2019 columns:when,title,who   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
-when:2016..2026 gặp                → events refused: General application error: '2016..2026' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
-when:2016..2026 -gặp               → events refused: General application error: '2016..2026' is not a time. Use 2016-05-14, 2016-05, 2016, 2016-05-01/2016-06-30 or ~2012.
+when:2016..2026 gặp                → events   1 [Gặp Khánh ở quán quen]
+when:2016..2026 -gặp               → events   3 [2021-03-14 · Ăn tối với Minh · Gửi báo cáo quý]
 date:today                         → notes    0 []
 date:2026-06                       → notes    0 []
 is:note date:2026-06               → notes    0 []
@@ -42,6 +52,8 @@ limit:abc                          → refused: 'abc' is not a number of rows
 -when:2019                         → notes    7 [Khánh · Minh · 2019-11-05]
 sort:tiêu_đề                       → refused: 'tiêu_đề' is not something a query can sort by
 columns:tiêu_đề                    → refused: 'tiêu_đề' is not a column a query can show
+where:"Hà Nội"                     → refused: 'where' is now 'place'
+magnitude:>2                       → refused: 'magnitude' is now 'size'
 in:title gặp                       → notes    0 []
                                    → refused (nothing to match on)
                                    → refused (nothing to match on)

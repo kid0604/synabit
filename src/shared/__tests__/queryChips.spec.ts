@@ -10,7 +10,7 @@ describe('The query bar, both ways round', () => {
             'with:khánh when:2019',
             'is:task -status:done #gia-đình',
             'when:2019/2026 sort:-when limit:20',
-            'with:"Bùi Văn Phương" magnitude:>4',
+            'with:"Bùi Văn Phương" size:>4',
             'cà phê with:khánh',
         ]) {
             expect(chipsOf(text).map(c => c.text).join(' ')).toBe(text);
@@ -94,10 +94,10 @@ describe('The query bar, both ways round', () => {
     /// The list mirrors which fields are an `Option` on the Rust side. If the
     /// two drift, pressing twice builds a query the engine cannot answer.
     it('treats the timeline keys the way the parser declares them', () => {
-        for (const one of ['when', 'shape', 'magnitude']) {
+        for (const one of ['when', 'shape', 'size']) {
             expect(SINGULAR).toContain(one);
         }
-        for (const many of ['with', 'where', 'about']) {
+        for (const many of ['with', 'place', 'about']) {
             expect(SINGULAR).not.toContain(many);
         }
     });

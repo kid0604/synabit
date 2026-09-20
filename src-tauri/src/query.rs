@@ -36,6 +36,38 @@ use crate::search::{
     MAX_QUERY_LIMIT,
 };
 
+/// Which table a question is asked of.
+///
+/// §4 of the grammar. Today the table is chosen **implicitly**, by whether the
+/// question happens to use one of the timeline's words — which works until a
+/// question uses words from both, and then one half is silently dropped.
+/// Naming it is how a question gets one meaning, and how the bar can say what
+/// it is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Notes,
+    Events,
+}
+
+impl Source {
+    /// The word a person writes, and the word shown back to them.
+    pub fn word(self) -> &'static str {
+        match self {
+            Source::Notes => "notes",
+            Source::Events => "events",
+        }
+    }
+
+    /// The source a leading word names, if it names one.
+    pub fn of(word: &str) -> Option<Source> {
+        match word {
+            "notes" => Some(Source::Notes),
+            "events" => Some(Source::Events),
+            _ => None,
+        }
+    }
+}
+
 /// What a single condition is about.
 ///
 /// Deliberately not one variant per keyword: `with:`, `where:` and `about:`
@@ -124,11 +156,13 @@ pub enum Expr {
 /// about the table, not the question — so putting them in the tree would mean
 /// every walker had to skip over them.
 ///
-/// The source (`notes` / `events`) and the pipeline (`| stats …`) of §1 are
-/// not here yet: steps 2 and 5 add them when there is something to parse into
-/// them.
+/// The pipeline (`| stats …`) of §1 is not here yet: step 5 adds it when there
+/// is something to parse into it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Query {
+    /// Which table, when the question said. `None` means it did not, and the
+    /// words it used decide — see `ParsedQuery::source_of`.
+    pub source: Option<Source>,
     pub filter: Vec<Expr>,
     pub title_only: bool,
     pub sort: Option<SortOrder>,
@@ -141,6 +175,13 @@ pub struct Query {
     /// on a property of that name. That was the whole of §9 and step 0.
     pub refused: Vec<String>,
 }
+
+/// Words that used to mean something and now mean it under another name.
+///
+/// §11. They are listed rather than deleted because deleting a keyword does
+/// not make it stop parsing — it makes it parse as *a frontmatter key of that
+/// name*, which answers 0 and explains nothing.
+const RENAMED: &[(&str, &str)] = &[("where:", "place:"), ("magnitude:", "size:")];
 
 /// Split a raw query into tokens, keeping a quoted phrase whole.
 fn tokenize(trimmed: &str) -> Vec<String> {
@@ -205,7 +246,30 @@ pub fn parse(raw: &str) -> Query {
         return q;
     }
 
-    for token in tokenize(trimmed) {
+    let mut tokens = tokenize(trimmed);
+
+    // A source names what a question is **about**, so it is the first word or
+    // it is not the source at all: `#work events` is about notes tagged work
+    // and the word "events", and reading it the other way would take a word
+    // out of somebody's search.
+    //
+    // And on its own it is not a question — it is the word. `notes` and
+    // `events` are ordinary English, and the free-text boxes (`search_notes`,
+    // `search_tasks`, …) hand whatever was typed straight to this parser.
+    // Swallowing a lone word there would quietly turn a search into a listing
+    // of everything, with nothing on the screen to say so. "The whole
+    // timeline" is still sayable — `events sort:-when` or `events limit:200`
+    // — and those say what they want anyway.
+    let names_a_source = tokens.len() > 1
+        && tokens
+            .first()
+            .and_then(|first| Source::of(&first.to_lowercase()))
+            .is_some();
+    if names_a_source {
+        q.source = Source::of(&tokens.remove(0).to_lowercase());
+    }
+
+    for token in tokens {
         let lower = token.to_lowercase();
 
         // ── The timeline's own words ───────────────────────────────
@@ -226,7 +290,7 @@ pub fn parse(raw: &str) -> Query {
         // "events a photograph belongs to" — they look at the photograph.
         //
         // The value keeps its original casing, because a name is a name.
-        if let Some(word) = ["with:", "where:", "about:"]
+        if let Some(word) = ["with:", "place:", "about:"]
             .into_iter()
             .find(|word| lower.starts_with(word))
         {
@@ -234,11 +298,26 @@ pub fn parse(raw: &str) -> Query {
             if !value.is_empty() {
                 let field = match word {
                     "with:" => Field::With,
-                    "where:" => Field::Place,
+                    "place:" => Field::Place,
                     _ => Field::About,
                 };
                 q.filter.push(Expr::Term(Term::text(field, value)));
             }
+            continue;
+        }
+        // The two words §11 renamed. Refused rather than quietly left to the
+        // property catch-all below, where `where:hanoi` would become a filter
+        // on a frontmatter key named `where` and answer 0 without a word about
+        // why — which is the whole failure this document exists to stop.
+        if let Some(renamed) = RENAMED
+            .iter()
+            .find(|(old, _)| lower.starts_with(old))
+        {
+            q.refused.push(format!(
+                "'{}' is now '{}'",
+                renamed.0.trim_end_matches(':'),
+                renamed.1.trim_end_matches(':')
+            ));
             continue;
         }
         if let Some(stripped) = lower.strip_prefix("shape:") {
@@ -248,19 +327,34 @@ pub fn parse(raw: &str) -> Query {
             }
             continue;
         }
-        if let Some(stripped) = lower.strip_prefix("magnitude:") {
+        if let Some(stripped) = lower.strip_prefix("size:") {
             let value = unquoted(stripped);
-            // A bare number means "at least this big", which is what somebody
-            // asking for big things means. `>`, `>=`, `<`, `<=` say it exactly.
-            let (comparison, number) = match split_comparison(value) {
-                Some((comparison, rest)) => (comparison, rest),
-                None => (Comparison::GreaterOrEqual, value),
-            };
-            if let Ok(number) = number.trim().parse::<f64>() {
-                q.filter.push(Expr::Term(Term {
-                    field: Field::Size,
-                    value: Value::Number(comparison, number),
-                }));
+            // `size:4` used to mean **at least** 4 while `priority:3` meant
+            // exactly 3 — one shape, two meanings (§6.1). The exception is
+            // gone, and it is not replaced by equality: size is a computed
+            // real number, so `= 4` would be a filter that almost never
+            // matches and never says why. So a bare number is refused and the
+            // comparison has to be written.
+            //
+            // The word scale of §6.3 (`size:big`) is the reading for a person
+            // rather than a machine, and it waits on thresholds measured
+            // against a vault — §16 Bước 8 showed the distribution is
+            // currently degenerate, so fixing numbers to words now would be
+            // fixing them to a broken one.
+            match split_comparison(value) {
+                Some((comparison, rest)) => match rest.trim().parse::<f64>() {
+                    Ok(number) => q.filter.push(Expr::Term(Term {
+                        field: Field::Size,
+                        value: Value::Number(comparison, number),
+                    })),
+                    Err(_) => q
+                        .refused
+                        .push(format!("'{rest}' is not a size to compare against")),
+                },
+                None if value.is_empty() => {}
+                None => q.refused.push(format!(
+                    "'size:{value}' has to say which way — write size:>={value} or size:<={value}"
+                )),
             }
             continue;
         }

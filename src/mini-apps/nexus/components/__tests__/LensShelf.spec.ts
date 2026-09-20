@@ -59,7 +59,7 @@ describe('The lens shelf', () => {
         await open();
         expect(invoke).toHaveBeenCalledWith('run_node_query', {
             vaultPath: '/vault',
-            query: expect.stringContaining('is:lens'),
+            query: expect.stringContaining('type:lens'),
             offset: 0,
         });
     });
