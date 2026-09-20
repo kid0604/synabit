@@ -1252,7 +1252,7 @@
     "media_caption_model": "Model Ollama đọc được ảnh, ví dụ llava",
     "media_caption_cloud": "Mô tả ảnh chỉ làm bằng Ollama chạy trên máy này, mà model của Syn ({provider}) thì không.",
     "media_no_faces": "Không nhận diện ai trong ảnh.",
-    "media_save": "Lưu",
+    "media_save": "Lưu hai cài đặt này",
     "media_pending": "{transcripts} ghi âm và {captions} ảnh chưa đọc · {done} đã xong",
     "media_too_large": "{count} tệp quá lớn để đọc ở đây.",
     "media_run": "Đọc ngay",

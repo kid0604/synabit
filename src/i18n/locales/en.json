@@ -1252,7 +1252,7 @@
     "media_caption_model": "Ollama model that reads images, e.g. llava",
     "media_caption_cloud": "Descriptions are made only by Ollama running on this machine, and Syn's model ({provider}) is not.",
     "media_no_faces": "No one in a picture is identified.",
-    "media_save": "Save",
+    "media_save": "Save these settings",
     "media_pending": "{transcripts} recordings and {captions} photos not read yet · {done} done",
     "media_too_large": "{count} files are too large to read here.",
     "media_run": "Read now",

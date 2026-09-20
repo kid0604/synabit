@@ -6,7 +6,7 @@
  * captions only by Ollama: Rust refuses anything else, and this says so before
  * anyone asks. See `src-tauri/src/timeline/media.rs`.
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2 } from 'lucide-vue-next';
@@ -48,6 +48,23 @@ const load = async () => {
 };
 
 onMounted(load);
+
+/**
+ * Whether these two settings differ from what is stored.
+ *
+ * The button sits at the bottom of a long panel whose other content is
+ * proposals, and each proposal is written the moment it is kept. Somebody who
+ * has just reworded eight of them reaches this and reasonably wonders whether
+ * their work is unsaved. A button that is dark when there is nothing to save
+ * is the question being asked; one that is plainly inert is the answer.
+ */
+const changed = computed(() => {
+    const stored = status.value?.config;
+    if (!stored) return false;
+    return (Object.keys(draft.value) as (keyof typeof draft.value)[]).some(
+        key => draft.value[key] !== stored[key],
+    );
+});
 
 const save = async () => {
     failure.value = '';
@@ -106,10 +123,14 @@ const run = async () => {
                 <p class="text-[10px] text-gray-400">{{ $t('nexus.media_no_faces') }}</p>
             </div>
 
+            <!-- Named for what it saves, and inert when that is nothing. The
+                 proposals above are written when they are kept; this button
+                 has never had anything to do with them. -->
             <button
                 type="button"
                 data-media-save
-                class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] dark:border-[#3a3a3c]"
+                :disabled="!changed"
+                class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] transition-opacity disabled:cursor-default disabled:opacity-40 dark:border-[#3a3a3c]"
                 @click="save"
             >{{ $t('nexus.media_save') }}</button>
 
