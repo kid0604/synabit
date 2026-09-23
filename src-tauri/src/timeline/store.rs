@@ -1000,7 +1000,7 @@ fn insert_derived(tx: &Transaction, id: &str, node: &SnapshotNode, derived: &Der
             node.title,
             size,
             props_text(&derived.props),
-            derived.container.then(|| node.id.clone()),
+            derived.written_in.clone().or_else(|| derived.container.then(|| node.id.clone())),
         ],
     )
     .map_err(sql)?;

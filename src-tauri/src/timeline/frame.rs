@@ -23,7 +23,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 
-use super::seal::SealedPeriod;
 use super::derive::Shape;
 use super::store::Event;
 use super::when;
@@ -42,8 +41,6 @@ pub struct TimeFrame {
     pub density: Vec<MonthCount>,
     /// The first month anything happened, or none for a vault with no dates.
     pub earliest: Option<String>,
-    /// Periods the person sealed, drawn on the strip as sealed. See `timeline::seal`.
-    pub sealed: Vec<SealedPeriod>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -229,7 +226,6 @@ pub fn build(items: &[Event], nodes: &[FrameNode], today: NaiveDate) -> TimeFram
         died_on,
         links,
         earliest: months.keys().next().cloned(),
-        sealed: Vec::new(),
         density: months
             .into_iter()
             .map(|(month, (count, weight))| MonthCount { month, count, weight })

@@ -100,11 +100,11 @@ const mountNexus = (answers: Answers = {}) => {
             unreadable: [], proposals: [
                 { id: 'p1', node_id: 'Notes/a.md', node_title: 'a', node_type: 'note', recorded: '2026-04-30',
                   happened_from: '2026-04-30', happened_to: '2026-04-30', precision: 'day',
-                  title: 'Một chuyện', people: [], names: [], quote: 'một câu', confidence: 0.9,
+                  title: 'Một chuyện', people: [], names: [], quote: 'một câu', confidence: 0.9, category: null, amount: null, about: [], time: null, place: null, date_basis: null,
                   model: 'q', stale: false },
                 { id: 'p2', node_id: 'Notes/b.md', node_title: 'b', node_type: 'note', recorded: '2026-04-02',
                   happened_from: '2026-04-02', happened_to: '2026-04-02', precision: 'day',
-                  title: 'Chuyện khác', people: [], names: [], quote: 'câu khác', confidence: 0.9,
+                  title: 'Chuyện khác', people: [], names: [], quote: 'câu khác', confidence: 0.9, category: null, amount: null, about: [], time: null, place: null, date_basis: null,
                   model: 'q', stale: false },
             ],
         };

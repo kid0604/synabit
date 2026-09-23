@@ -216,6 +216,10 @@ pub struct Derived {
     /// Whether a note wrote this event out rather than being it. A daily note
     /// is the box several events came in.
     pub container: bool,
+    /// The note this was written down in, when that is another node than the
+    /// one it was derived from: a moment's file names the note it was read
+    /// out of. Opening the row opens that.
+    pub written_in: Option<String>,
 }
 
 fn item(kind: &'static str, span: Span) -> Derived {
@@ -228,6 +232,7 @@ fn item(kind: &'static str, span: Span) -> Derived {
         links: Vec::new(),
         props: Value::Null,
         container: false,
+        written_in: None,
     }
 }
 
@@ -264,9 +269,29 @@ fn moments(p: &Value) -> Vec<Derived> {
         .collect()
 }
 
+/// A moment kept as a file of its own (`timeline::moments`).
+///
+/// The same fields a `moments[]` entry has, at the top of the frontmatter
+/// instead of in a list, and `source.node` for the note it was read from —
+/// which is what opening it opens, and what it is evidence *from*.
+fn moment_file(p: &Value) -> Option<Derived> {
+    let span = dated(p, "happened")?;
+    let source = p.get("source").and_then(|source| text(source, "node")).map(String::from);
+    let mut links = cast(p);
+    links.extend(source.iter().map(|node| Link { node: node.clone(), role: "evidence", label: None }));
+    Some(Derived {
+        time_source: "user",
+        title: text(p, "title").map(String::from),
+        links,
+        props: rest_of(p),
+        written_in: source,
+        ..item("moment", span)
+    })
+}
+
 /// What the app understands about a moment. Everything else is kept in
 /// [`Derived::props`] rather than dropped.
-const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where", "about"];
+const KNOWN_KEYS: &[&str] = &["id", "title", "happened", "people", "where", "about", "type", "source"];
 
 /// Everyone and everywhere the moment names.
 ///
@@ -351,6 +376,7 @@ fn by_type(node: &NodeView, date_fields: &HashMap<String, Vec<String>>) -> Vec<D
             .into_iter()
             .collect(),
         "decision" => decision(p),
+        "moment" => moment_file(p).into_iter().collect(),
         "project" => dated(p, "start_date")
             .map(|span| item("project_start", span))
             .into_iter()

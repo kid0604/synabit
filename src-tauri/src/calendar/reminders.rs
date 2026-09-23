@@ -404,9 +404,6 @@ const DECISION_HOUR: &str = "09:00:00";
 /// machine asleep that morning would never ask at all.
 fn plan_decision(node: &NodeMetadata, from: NaiveDateTime, to: NaiveDateTime, out: &mut Vec<PlannedReminder>) {
     let p = &node.properties;
-    if p.get("sealed").and_then(|v| v.as_bool()) == Some(true) {
-        return;
-    }
     let Some(review_on) = p
         .get("review_on")
         .and_then(|v| v.as_str())
@@ -462,11 +459,6 @@ fn plan_person(
     scan_until: NaiveDate,
     out: &mut Vec<PlannedReminder>,
 ) {
-    // A sealed person is not brought back, not on their birthday and not as
-    // someone to get in touch with. See `timeline::seal`.
-    if node.properties.get("sealed").and_then(|v| v.as_bool()) == Some(true) {
-        return;
-    }
     plan_birthday(node, from, to, scan_until, out);
     plan_keep_in_touch(node, from, to, scan_until, out);
 }
@@ -755,16 +747,6 @@ mod tests {
         plan.iter().map(|r| format!("{} @ {}", r.delivery_key(), r.trigger_at)).collect()
     }
 
-    #[test]
-    fn a_sealed_person_is_not_brought_back_by_a_reminder() {
-        let open = node("People/mai.md", "person", json!({ "birthday": "03-02" }));
-        let sealed = node("People/ex.md", "person", json!({
-            "birthday": "03-02", "sealed": true, "contact_frequency": "monthly", "last_contacted": "2025-01-01"
-        }));
-        let planned = plan(&[open, sealed], dt("2026-03-02T00:00"), dt("2026-03-02T23:59"), "");
-        assert_eq!(planned.len(), 1, "{:?}", keys(&planned));
-        assert!(!keys(&planned).iter().any(|k| k.contains("ex.md")), "{:?}", keys(&planned));
-    }
 
     /// The debts ledger is one file holding a list, so one node has to produce
     /// a reminder per debt — and each has to be addressable on its own or the

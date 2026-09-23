@@ -27,6 +27,8 @@ export interface Dated {
   day: Date;
   /** The cell as written, `YYYY-MM-DD`. */
   iso: string;
+  /** The last day it covers, `YYYY-MM-DD`: `iso` itself for a single day. */
+  last: string;
 }
 
 export interface Bucket {
@@ -70,8 +72,10 @@ export function datedRows(result: QueryResult | null): { dated: Dated[]; undated
   let undated = 0;
   for (const row of result.rows) {
     const day = dayOf(row.cells[at]);
-    if (day) dated.push({ row, day, iso: isoOf(day) });
-    else undated += 1;
+    if (day) {
+      const iso = isoOf(day);
+      dated.push({ row, day, iso, last: lastDay(row, iso) });
+    } else undated += 1;
   }
   return { dated, undated };
 }
@@ -140,6 +144,31 @@ export function inRange(iso: string, range: DayRange): boolean {
 }
 
 /**
+ * The last day a row covers, given the day it starts on.
+ *
+ * `until` only counts when it runs *on* from that day: were the day column
+ * the end rather than the start (`columns:to`), reading `until` again would
+ * say nothing new, and one before the start would say something wrong.
+ */
+function lastDay(row: QueryRow, iso: string): string {
+  const until = row.until ? dayOf(row.until) : null;
+  const last = until ? isoOf(until) : iso;
+  return last > iso ? last : iso;
+}
+
+/**
+ * Whether something from `first` to `last` touches a range.
+ *
+ * Touching, not starting inside. Four years at university began before any
+ * "last five years" window, and a job still going began before "the last
+ * year" — read off the start alone, both were missing from the very stretch
+ * they filled. The query language's `when:` has always asked it this way.
+ */
+export function overlaps(first: string, last: string, range: DayRange): boolean {
+  return first <= range.to && last >= range.from;
+}
+
+/**
  * The answer with only the rows inside a range, for the list beside the chart.
  *
  * Rows with no day are dropped when a range is set: they are not in *any*
@@ -152,7 +181,9 @@ export function within(result: QueryResult | null, range: DayRange | null): Quer
   if (at < 0) return result;
   const rows = result.rows.filter(row => {
     const day = dayOf(row.cells[at]);
-    return !!day && inRange(isoOf(day), range);
+    if (!day) return false;
+    const iso = isoOf(day);
+    return overlaps(iso, lastDay(row, iso), range);
   });
   return { ...result, rows, total: rows.length };
 }
@@ -198,11 +229,11 @@ export function autoWindow(result: QueryResult | null, today: Date): WindowChoic
   const { dated } = datedRows(result);
   if (dated.length <= MANY) return 'all';
   const lastYear = windowRange('1y', today)!;
-  return dated.some(item => inRange(item.iso, lastYear)) ? '1y' : 'all';
+  return dated.some(item => overlaps(item.iso, item.last, lastYear)) ? '1y' : 'all';
 }
 
 /** How many dated rows a window leaves out, so the view can say so. */
 export function outside(result: QueryResult | null, range: DayRange | null): number {
   if (!range) return 0;
-  return datedRows(result).dated.filter(item => !inRange(item.iso, range)).length;
+  return datedRows(result).dated.filter(item => !overlaps(item.iso, item.last, range)).length;
 }

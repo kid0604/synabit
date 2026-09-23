@@ -75,6 +75,11 @@ pub struct ChatRequest<'a> {
     /// ignore it, and that is the point of having more than one.
     pub num_ctx: u32,
     pub tools: Option<&'a [ToolDefinition]>,
+    /// A JSON schema the reply must follow, where the provider can be held to
+    /// one: Ollama's `format`, OpenAI's `response_format`, Gemini's JSON mode.
+    /// A server that does not know the field may refuse the request, so a
+    /// caller that sets it asks again without on an error.
+    pub json_schema: Option<&'a serde_json::Value>,
 }
 
 /// What a turn cost, as the provider counted it.

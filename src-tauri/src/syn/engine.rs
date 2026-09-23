@@ -440,7 +440,8 @@ impl SynEngine {
                 num_ctx: req.num_ctx,
                 // `None` rather than an empty array when there are no tools.
                 // An instant turn runs against `Registry::none()`, and several
-                // servers speaking this API reject `tools: []` outright rather
+                // servers speaking this API reject `tools: []` outright rather,
+json_schema: None,
                 // than reading it as "no tools".
                 tools: (!tools.is_empty()).then_some(&tools),
             };
@@ -1023,6 +1024,7 @@ impl SynEngine {
                     temperature: req.temperature,
                     num_ctx: req.num_ctx,
                     tools: None,
+                    json_schema: None,
                 },
                 &StreamSink {
                     on_token: &emit_token,

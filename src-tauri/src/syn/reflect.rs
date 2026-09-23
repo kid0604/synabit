@@ -215,6 +215,7 @@ pub async fn reflect(
             temperature: Some(0.2),
             num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await
     {
@@ -355,6 +356,7 @@ pub async fn suggest_skill(
             temperature: Some(0.2),
             num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await
     {
@@ -477,6 +479,7 @@ pub async fn suggest_revision(
             temperature: Some(0.2),
             num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await
     {

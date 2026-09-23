@@ -150,3 +150,32 @@ describe('The axis', () => {
     expect(labels.length).toBeGreaterThan(1);
   });
 });
+
+describe('A stretch of time', () => {
+  /// Four years at university added to every column it crossed would put a 1
+  /// on forty-eight months, and the columns would stop meaning anything.
+  it('is a bar of its own above the columns, and is not counted in them', () => {
+    const result = answer([...YEAR, '2025-02-01']);
+    result.rows[result.rows.length - 1].until = '2026-03-31';
+    result.rows[result.rows.length - 1].title = 'Làm ở MDP';
+    const wrapper = mountChart(result);
+
+    const lanes = wrapper.findAll('[data-over-time-span]');
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0].text()).toContain('Làm ở MDP');
+    // Six days and one stretch: the stretch is not a dot either.
+    expect(wrapper.findAll('[data-over-time-dot]')).toHaveLength(6);
+    // And the columns count what they counted before it was there.
+    const counted = (w: ReturnType<typeof mountChart>) =>
+      w.findAll('[data-over-time-bar]').map(bar => Number(bar.attributes('data-count')));
+    expect(counted(wrapper)).toEqual(counted(mountChart(answer(YEAR))));
+    expect(counted(wrapper).reduce((sum, n) => sum + n, 0)).toBe(6);
+  });
+
+  it('says so when it runs past the edge of the chart', () => {
+    const result = answer(['2025-01-05', '2025-06-02', '2026-06-15']);
+    result.rows[0].until = '2030-12-31';
+    const wrapper = mountChart(result);
+    expect(wrapper.find('[data-over-time-span]').text()).toContain('→');
+  });
+});

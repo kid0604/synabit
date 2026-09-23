@@ -42,6 +42,15 @@ pub struct QueryRow {
     /// See `timeline::query`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<String>,
+    /// The last day a timeline row covers, when it covers more than one.
+    ///
+    /// A row's day column says when it began. Three years at university, or a
+    /// job still going, began long before a "last year" window — and a window
+    /// read off the start alone left them out of the very years they filled.
+    /// Carried beside the cells rather than as one, so it is there whichever
+    /// columns were asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -470,6 +479,7 @@ impl DbBridge {
                 node_type,
                 title,
                 open: None,
+                until: None,
                 cells,
             });
         }

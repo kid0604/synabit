@@ -83,6 +83,9 @@ struct OpenAiChatRequest {
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<ToolDefinition>>,
+    /// Holds the reply to a JSON schema. See `ChatRequest::json_schema`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
     /// Only ever present when the user asked for it. Servers that do not know
     /// the field reject a request that carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -398,6 +401,12 @@ impl OpenAiCompatProvider {
             stream,
             temperature: req.temperature,
             tools: req.tools.map(|t| t.to_vec()),
+            response_format: req.json_schema.map(|schema| {
+                serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": { "name": "reply", "schema": schema, "strict": false }
+                })
+            }),
             reasoning_effort,
             // Only on a stream, because a plain response reports usage without
             // being asked and the field would be one more thing for a server to
@@ -979,6 +988,7 @@ mod tests {
             temperature: None,
             num_ctx: 8192,
             tools: None,
+            json_schema: None,
         };
         serde_json::to_value(provider.body(&req, false, provider.effort_for(model), true))
             .expect("serialises")
@@ -1087,6 +1097,7 @@ mod tests {
             temperature: None,
             num_ctx: 8192,
             tools: None,
+            json_schema: None,
         };
 
         let streamed = serde_json::to_value(p.body(&req, true, None, true)).expect("serialises");

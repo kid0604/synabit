@@ -48,6 +48,7 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "quickcap" => "QuickCaps".to_string(),
         "whiteboard" => "Whiteboards".to_string(),
         "decision" => crate::timeline::reflect::FOLDER.to_string(),
+        "moment" => crate::timeline::moments::FOLDER.to_string(),
         // Not `Memory`, which is where a user's own `memory` kind would land.
         "syn_memory" => crate::syn::memory::MEMORY_FOLDER.to_string(),
         // Nor `Skills`, for the same reason.
@@ -93,6 +94,7 @@ pub(crate) fn is_internal_type(node_type: &str) -> bool {
             | "view"
             | "syn_memory"
             | "syn_skill"
+            | "moment"
     ) || node_type.starts_with("finance_")
 }
 
@@ -1163,24 +1165,6 @@ pub fn execute_tool<R: tauri::Runtime>(
 ) -> AppResult<String> {
     log::info!("[Syn Tools] Executing tool: {} with args: {}", name, args);
 
-    // What the person sealed is not the assistant's to read, count or name.
-    // Checked here once, for every tool, on the way in and on the way out; see
-    // `timeline::seal`. Seals that cannot be read refuse the call rather than
-    // let it through unchecked.
-    let seals = match lock(ctx).and_then(|db| crate::timeline::seal::current(&db, ctx.vault_path)) {
-        Ok(seals) => seals,
-        Err(e) => {
-            log::error!("[Syn Tools] Could not read seals: {}", e);
-            return Ok(serde_json::json!({
-                "error": "The vault's seals could not be read, so nothing was looked up."
-            })
-            .to_string());
-        }
-    };
-    if let Some(refused) = seals.refuse_argument(args) {
-        return Ok(refused);
-    }
-
     let result = match name {
         // Generic — these reach every type in the vault, including ones this
         // app has never heard of.
@@ -1245,7 +1229,7 @@ pub fn execute_tool<R: tauri::Runtime>(
 
     // Ensure the result is truncated to the size limit
     match result {
-        Ok(json_str) => Ok(truncate_result(&seals.withhold_results(name, json_str))),
+        Ok(json_str) => Ok(truncate_result(&json_str)),
         Err(e) => {
             log::error!("[Syn Tools] Tool '{}' failed: {}", name, e);
             Ok(serde_json::json!({"error": format!("{}", e)}).to_string())
@@ -2374,8 +2358,7 @@ where
 /// offering it back as though it were would be quoting itself on work the user
 /// stopped.
 fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
-    let seals = crate::timeline::seal::current(&*lock(ctx)?, ctx.vault_path)?;
-    look_back(ctx.vault_path, args, ctx.run_id, &seals)
+    look_back(ctx.vault_path, args, ctx.run_id)
 }
 
 /// The reading, without the runtime.
@@ -2387,7 +2370,6 @@ fn look_back(
     vault_path: &str,
     args: &Value,
     this_run: Option<&str>,
-    seals: &crate::timeline::seal::Seals,
 ) -> AppResult<String> {
     let query = args
         .get("query")
@@ -2420,18 +2402,6 @@ fn look_back(
         // what it is saying now, and returning it would have the model quoting
         // a half-written answer back at itself.
         .filter(|run| this_run != Some(run.id.as_str()))
-        // An earlier answer that read something since sealed would quote it
-        // back. The whole run is left out, not only the line that names it.
-        .filter(|run| {
-            seals.is_empty()
-                || (!seals.mentions(&serde_json::to_string(run).unwrap_or_default())
-                    && match &run.retrieved {
-                        Some(ids) => !ids.iter().any(|id| seals.hides(id)),
-                        // From before retrieval was recorded: what it read is
-                        // unknown, so only an answer that read nothing is safe.
-                        None => run.footing == Some(crate::syn::footing::Footing::Guessing),
-                    })
-        })
         .filter(|run| match &query {
             None => true,
             Some(q) => {
@@ -2474,7 +2444,6 @@ fn look_back(
 /// the harness (`timeline::asked`). This door is for a time the question did
 /// not name, and for one person's side of a time.
 fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
-    use tauri::Manager;
     let when_text = args
         .get("when")
         .and_then(Value::as_str)
@@ -2497,7 +2466,6 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
     let mut store = state.lock().unwrap_or_else(|e| e.into_inner());
     crate::timeline::store::catch_up_in(ctx.db, &mut store, Some(ctx.vault_path))?;
     let db = lock(ctx)?;
-    let seals = crate::timeline::seal::current(&db, ctx.vault_path)?;
     let (from, to) = (crate::timeline::when::iso(span.from), crate::timeline::when::iso(span.to));
     let mut items = match about {
         Some(about) => {
@@ -2525,8 +2493,6 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         }
         None => store.query(span, today)?,
     };
-    items.retain(|item| !seals.hides_item(item));
-
     // What to call everyone and everywhere the page names. One lookup, not one
     // per event. See `timeline::store::names_in`.
     let called = crate::timeline::store::names_in(&db, &items);
@@ -4240,7 +4206,7 @@ mod tests {
 
     fn look_back_for_test(vault: &str, args: serde_json::Value) -> serde_json::Value {
         serde_json::from_str(
-            &look_back(vault, &args, None, &crate::timeline::seal::Seals::default()).expect("reads"),
+            &look_back(vault, &args, None).expect("reads"),
         )
         .expect("json")
     }
@@ -4402,57 +4368,6 @@ mod tests {
         assert!(runs[0]["answered"].as_str().expect("text").contains("12/8"));
     }
 
-    /// An earlier answer that read a note since sealed is not read back to
-    /// the assistant, however it is asked for.
-    #[test]
-    fn looking_back_leaves_out_an_answer_that_read_something_now_sealed() {
-        let dir = tempfile::tempdir().expect("temp vault");
-        let vault = dir.path().to_str().expect("utf8");
-
-        let mut quoting = finished_run(vault, "note nhật ký nói gì");
-        quoting.record_assistant(1, "Theo Notes/sealed.md, năm đó rất khó.", Default::default(), 5);
-        crate::syn::run::save_run(vault, &quoting).expect("saved");
-        let mut other = finished_run(vault, "hoá đơn FPT");
-        other.record_assistant(1, "Đã thanh toán.", Default::default(), 5);
-        other.retrieved = Some(Vec::new());
-        crate::syn::run::save_run(vault, &other).expect("saved");
-        // Retrieval read the diary, and the answer never names it.
-        let mut retrieved = finished_run(vault, "năm đó thế nào");
-        retrieved.record_assistant(1, "Năm đó rất khó.", Default::default(), 5);
-        retrieved.retrieved = Some(vec!["Notes/sealed.md#blk001".into()]);
-        crate::syn::run::save_run(vault, &retrieved).expect("saved");
-        // From before retrieval was recorded: what it read cannot be known.
-        let mut unrecorded = finished_run(vault, "chuyện cũ");
-        unrecorded.record_assistant(1, "Chuyện cũ rồi.", Default::default(), 5);
-        crate::syn::run::save_run(vault, &unrecorded).expect("saved");
-
-        let db = DbBridge::new_in_memory_full().expect("schema");
-        db.upsert_node(&crate::models::node::NodeMetadata {
-            id: "Notes/sealed.md".into(),
-            node_type: "note".into(),
-            title: "Diary".into(),
-            content: String::new(),
-            properties: serde_json::json!({ "sealed": true }),
-            created_at: "2026-01-01T12:00:00.000Z".into(),
-            updated_at: "2026-01-01T12:00:00.000Z".into(),
-            timestamp: 0,
-            blocks: None,
-        })
-        .expect("node");
-        let seals = crate::timeline::seal::Seals::read(&db, vault).expect("seals");
-
-        let found: Value = serde_json::from_str(
-            &look_back(vault, &serde_json::json!({}), None, &seals).expect("reads"),
-        )
-        .expect("json");
-        let asked: Vec<&str> = found["runs"]
-            .as_array()
-            .expect("runs")
-            .iter()
-            .filter_map(|r| r["asked"].as_str())
-            .collect();
-        assert_eq!(asked, ["hoá đơn FPT"], "{found}");
-    }
 
     /// The query reaches the answer as well as the question. Somebody asking
     /// *"what did you say about the invoice"* is remembering the reply, not
@@ -5397,8 +5312,7 @@ mod tests {
     #[test]
     fn a_bulk_edit_waits_until_it_is_told_how_many_files_it_will_change() {
         use crate::models::node::NodeMetadata;
-        use tauri::Manager;
-
+    
         let holder = tempfile::tempdir().expect("tempdir");
         let vault = holder.path().join("vault");
         std::fs::create_dir_all(vault.join("Tasks")).expect("vault dir");
@@ -5666,74 +5580,3 @@ mod tests {
 }
 
 
-#[cfg(test)]
-mod sealed_tests {
-    use super::*;
-    use crate::db::DbBridge;
-    use crate::models::node::NodeMetadata;
-    use serde_json::json;
-    use tauri::Manager;
-
-    fn node(id: &str, node_type: &str, title: &str, properties: Value) -> NodeMetadata {
-        NodeMetadata {
-            id: id.to_string(),
-            node_type: node_type.to_string(),
-            title: title.to_string(),
-            content: "pricing".to_string(),
-            properties,
-            created_at: "2026-01-01T12:00:00.000Z".to_string(),
-            updated_at: "2026-01-01T12:00:00.000Z".to_string(),
-            timestamp: 0,
-            blocks: None,
-        }
-    }
-
-    /// The gate for B2: nothing sealed reaches the assistant through a tool,
-    /// whether it was sealed by its own flag, by its person or by its period.
-    #[test]
-    fn nothing_sealed_reaches_the_assistant_through_a_tool() {
-        let holder = tempfile::tempdir().expect("temp");
-        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
-        let vault_path = vault.to_string_lossy().to_string();
-        crate::timeline::seal::write_period(&vault_path, "2019-02", "2019-09").expect("sealed");
-
-        let app = tauri::test::mock_builder()
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("mock app");
-        let handle = app.handle().clone();
-        let db = DbBridge::new_in_memory_full().expect("schema");
-        for n in [
-            node("Notes/open.md", "note", "Pricing plan", json!({})),
-            node("Notes/sealed.md", "note", "Pricing secret", json!({ "sealed": true })),
-            node("Notes/2019.md", "note", "2019-05-01", json!({ "date": "2019-05-01" })),
-            node("People/ex.md", "person", "Ex", json!({ "node_id": "uuid-ex", "sealed": true })),
-            node("People/Interactions/c.md", "interaction", "Coffee", json!({ "person_id": "uuid-ex", "date": "2024-01-01" })),
-        ] {
-            db.upsert_node(&n).expect("seeded");
-        }
-        handle.manage(crate::db::DbState::new(db));
-
-        let call = |tool: &str, args: Value| -> Value {
-            let state = handle.state::<crate::db::DbState>();
-            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None };
-            serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs")).expect("json")
-        };
-
-        for hidden in ["Notes/sealed.md", "Notes/2019.md", "People/ex.md", "People/Interactions/c.md", "uuid-ex"] {
-            let read = call("get_node", json!({ "node_id": hidden }));
-            assert_eq!(read["error"], "Node not found", "{hidden}: {read}");
-            assert!(!read.to_string().contains("pricing"), "{hidden}: {read}");
-        }
-        assert_eq!(call("get_node", json!({ "node_id": "Notes/open.md" }))["title"], "Pricing plan");
-
-        let listed = call("query_nodes", json!({ "query": "type:note" }));
-        let ids: Vec<&str> = listed["results"]
-            .as_array()
-            .unwrap_or_else(|| panic!("results: {listed}"))
-            .iter()
-            .filter_map(|r| r["id"].as_str())
-            .collect();
-        assert_eq!(ids, ["Notes/open.md"], "{listed}");
-        assert_eq!(listed["total_matches"], 1, "a count that still includes the sealed says they exist");
-    }
-}

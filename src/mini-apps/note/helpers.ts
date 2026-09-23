@@ -18,13 +18,6 @@ export interface NoteItem {
   path: string;
   pinned: boolean;
   full_width: boolean;
-  /**
-   * `sealed: true` in the frontmatter: the note is not brought back by Syn,
-   * reminders or the timeline. Written on its own patch, never by a save, so a
-   * save that does not mention it leaves it as it is. See
-   * `src-tauri/src/timeline/seal.rs`.
-   */
-  sealed?: boolean;
   linked_projects?: string[];
   /**
    * The note's sync identity, carried so a save can hand it back.

@@ -37,6 +37,9 @@ pub enum NodeType {
     /// A choice made, what was expected of it, and what happened. See
     /// `timeline::reflect`.
     Decision,
+    /// Something that happened in the person's life, kept as a file of its
+    /// own under `Moments/`. See `timeline::moments`.
+    Moment,
     /// Something Syn was told or worked out, kept between conversations.
     ///
     /// Storage in the sense `Schema` is: written by the app, read by the app,
@@ -97,6 +100,7 @@ impl NodeType {
         "pdf_drawing",
         "filter",
         "decision",
+        "moment",
         "view",
         "syn_memory",
         "syn_skill",
@@ -125,6 +129,7 @@ impl NodeType {
             NodeType::PdfDrawing => "pdf_drawing",
             NodeType::Filter => "filter",
             NodeType::Decision => "decision",
+            NodeType::Moment => "moment",
             NodeType::View => "view",
             NodeType::Memory => "syn_memory",
             NodeType::Skill => "syn_skill",
@@ -162,6 +167,7 @@ impl From<&str> for NodeType {
             "pdf_drawing" => NodeType::PdfDrawing,
             "filter" => NodeType::Filter,
             "decision" => NodeType::Decision,
+            "moment" => NodeType::Moment,
             "view" => NodeType::View,
             "syn_memory" => NodeType::Memory,
             "syn_skill" => NodeType::Skill,

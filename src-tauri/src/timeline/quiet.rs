@@ -58,8 +58,8 @@ use std::time::SystemTime;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::seal::{period_bounds, Seals};
 use super::store::Event;
+use super::when::{self, Precision};
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
 
@@ -233,28 +233,39 @@ impl Offered {
 }
 
 /// Everything the app offers unasked passes here, and most of it does not come
-/// out the other side.
-///
-/// Both gates are asked at once because they answer different questions and a
-/// caller that remembered one would forget the other: a seal means *withheld
-/// entirely*, a hush means *not raised first*, and a reminder is stopped by
-/// either.
-pub fn allow(nudges: Vec<Nudge>, quiet: &Quiet, seals: &Seals) -> Vec<Offered> {
+/// out the other side: a hush means *not raised first*, and a reminder about a
+/// hushed day, moment or person is not offered at all.
+pub fn allow(nudges: Vec<Nudge>, quiet: &Quiet) -> Vec<Offered> {
     nudges
         .into_iter()
         .filter(|nudge| {
-            if seals.covers(&nudge.day) || quiet.hushes_day(&nudge.day) {
+            if quiet.hushes_day(&nudge.day) {
                 return false;
             }
             if let Some(node) = &nudge.node {
-                if seals.hides(node) || quiet.hushes_moment(node, &nudge.day) {
+                if quiet.hushes_moment(node, &nudge.day) {
                     return false;
                 }
             }
-            !nudge.people.iter().any(|who| seals.hides_person(who) || quiet.hushes_person(who))
+            !nudge.people.iter().any(|who| quiet.hushes_person(who))
         })
         .map(Offered)
         .collect()
+}
+
+/// The first and last day a written period covers: `2019`, `2019-02`,
+/// `2019-02-14`, or a pair of those.
+///
+/// `parse_written`, not `parse`: a hush is a decision that outlives the day it
+/// was made, and `yesterday` in one would mean a different pair of days every
+/// morning. See `when::parse_written`.
+pub(crate) fn period_bounds(from: &str, to: &str) -> Option<(String, String)> {
+    let point = |text: &str| {
+        when::parse_written(text)
+            .filter(|span| matches!(span.precision, Precision::Day | Precision::Month | Precision::Year))
+    };
+    let (start, end) = (point(from)?, point(to)?);
+    (start.from <= end.to).then(|| (when::iso(start.from), when::iso(end.to)))
 }
 
 // ─── Reading the vault ───────────────────────────────────────────────
@@ -621,19 +632,7 @@ mod tests {
     /// §16 Bước 3's gate, on the road the real feature takes: nothing else can
     /// build an [`Offered`].
     #[test]
-    fn a_sealed_a_hushed_and_a_dead_person_reach_no_reminder() {
-        let sealed = crate::timeline::seal::compute(
-            Vec::new(),
-            &[crate::timeline::seal::SealNode {
-                id: "People/ex.md".into(),
-                stable_id: "uuid-ex".into(),
-                node_type: "person".into(),
-                title: "Ex".into(),
-                properties: json!({ "sealed": true, "node_id": "uuid-ex" }),
-                created_at: String::new(),
-            }],
-            &[],
-        );
+    fn a_hushed_and_a_dead_person_reach_no_reminder() {
         let quiet = compute(
             vec![hush(Subject::Person { who: "People/khanh.md".into() }, None)],
             &[
@@ -646,13 +645,11 @@ mod tests {
 
         let offered = allow(
             vec![
-                Nudge::on("2020-05-14").naming(["uuid-ex".into()]),
                 Nudge::on("2020-05-14").naming(["uuid-khanh".into()]),
                 Nudge::on("2020-05-14").naming(["uuid-ba".into()]),
                 Nudge::on("2020-05-14").naming(["uuid-lan".into()]),
             ],
             &quiet,
-            &sealed,
         );
 
         let named: Vec<&str> =
@@ -671,7 +668,6 @@ mod tests {
             vec![Nudge::on("2020-05-14")
                 .naming(["People/lan.md".into(), "People/khanh.md".into()])],
             &quiet,
-            &Seals::default(),
         );
         assert!(offered.is_empty(), "a dinner cannot be half-raised");
     }
@@ -705,33 +701,11 @@ mod tests {
                 Nudge::on("2021-05-14").from_note("Notes/2021-05-14.md"),
             ],
             &quiet,
-            &Seals::default(),
         );
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0].nudge().day, "2021-05-14");
     }
 
-    #[test]
-    fn a_sealed_stretch_stops_a_reminder_nobody_hushed() {
-        let seals = crate::timeline::seal::compute(
-            vec![crate::timeline::seal::SealedPeriod {
-                id: "s".into(),
-                from: "2019-01-01".into(),
-                to: "2019-12-31".into(),
-                from_text: "2019".into(),
-                to_text: "2019".into(),
-            }],
-            &[],
-            &[],
-        );
-        let offered = allow(
-            vec![Nudge::on("2019-06-01"), Nudge::on("2020-06-01")],
-            &Quiet::default(),
-            &seals,
-        );
-        assert_eq!(offered.len(), 1);
-        assert_eq!(offered[0].nudge().day, "2020-06-01");
-    }
 
     #[test]
     fn a_hush_round_trips_through_the_vault() {

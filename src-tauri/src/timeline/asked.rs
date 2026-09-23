@@ -714,7 +714,7 @@ mod tests {
                 .render();
                 let messages = vec![ChatMessage::new("system", system), ChatMessage::new("user", question.to_string())];
                 let reply = provider
-                    .chat(ChatRequest { model: &model, messages: &messages, temperature: Some(settings.temperature), num_ctx: settings.num_ctx, tools: None })
+                    .chat(ChatRequest { model: &model, messages: &messages, temperature: Some(settings.temperature), num_ctx: settings.num_ctx, tools: None , json_schema: None})
                     .await
                     .expect("the model answers");
                 let answer = reply.content;

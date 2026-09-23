@@ -26,6 +26,7 @@
 
 pub mod asked;
 pub mod asking;
+pub mod blocks;
 pub mod derive;
 pub mod extract;
 pub mod fold;
@@ -33,13 +34,15 @@ pub mod frame;
 pub mod ledger;
 pub mod magnitude;
 pub mod media;
+pub mod moments;
 pub mod onthisday;
 pub mod pin;
 pub mod presence;
 pub mod query;
 pub mod quiet;
+pub mod reader;
+pub mod reset;
 pub mod reflect;
-pub mod seal;
 pub mod store;
 pub mod when;
 pub mod year;

@@ -22,6 +22,12 @@ export interface QueryRow {
    * So: open `row.open ?? row.id`, and no view needs to know which it got.
    */
   open?: string;
+  /**
+   * The last day a timeline row covers, `YYYY-MM-DD`, when it covers more
+   * than one. The day column says when it began; this says when it ended,
+   * so a stretch still going is found in a window over the years it filled.
+   */
+  until?: string;
 }
 
 export interface QueryResult {

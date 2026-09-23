@@ -623,6 +623,13 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
             id,
         );
     }
+    // A moment is a file of its own (`timeline::moments`). Nexus opens it in a
+    // sheet of its own; anywhere else — a `type:moment` search, a link — opens
+    // the file, where its frontmatter is all there is to read.
+    else if (type === 'moment') {
+        activeTool.value = 'note';
+        callWhenReady(() => noteAppRef.value, 'openNoteById', id);
+    }
     else if (type === 'person') {
         activeTool.value = 'people';
         callWhenReady(() => peopleAppRef.value, 'openPersonById', id);

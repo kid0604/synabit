@@ -12,8 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['select-person', 'updated']);
 
-// A sealed person is not brought back by a reminder. See `src-tauri/src/timeline/seal.rs`.
-const people = computed(() => props.people.filter(p => !p.properties?.sealed));
+const people = computed(() => props.people);
 
 // Answering the nudge without leaving the list. Anything that takes three
 // clicks to resolve gets dismissed instead of resolved.

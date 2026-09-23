@@ -30,6 +30,15 @@ const props = defineProps<{
    * draws ordinary tables of notes. See `shared/putAway`.
    */
   offerPutAway?: boolean;
+  /**
+   * The stretch of time being looked at, when one was chosen.
+   *
+   * Only for the rows that began before it and were still going inside it:
+   * a job of three years belongs under the day it began, which may be years
+   * above the top of this list, and «nothing happened» would be the wrong
+   * reading of a window it filled. Those are pinned at the top instead.
+   */
+  range?: { from: string; to: string } | null;
 }>();
 
 const emit = defineEmits<{ open: [row: QueryRow]; putAway: [row: QueryRow] }>();
@@ -55,11 +64,25 @@ interface Day {
  * The query decided the order — `sort:` is part of the question — so this
  * groups without reordering. Sorting here would quietly overrule `sort:when`.
  */
+const dayOfRow = (row: QueryRow) => (at.value >= 0 ? row.cells[at.value] : '')?.trim() || '';
+
+/** Stretches that began before this window and were still going in it. */
+const ongoing = computed<QueryRow[]>(() => {
+  const range = props.range;
+  if (!range || !props.result) return [];
+  return props.result.rows.filter(row => {
+    const day = dayOfRow(row);
+    return !!day && day < range.from && !!row.until && row.until >= range.from;
+  });
+});
+
 const days = computed<Day[]>(() => {
   if (!props.result) return [];
+  const pinned = new Set(ongoing.value.map(row => row.id));
   const out: Day[] = [];
   for (const row of props.result.rows) {
-    const day = (at.value >= 0 ? row.cells[at.value] : '')?.trim() || '';
+    if (pinned.has(row.id)) continue;
+    const day = dayOfRow(row);
     const last = out[out.length - 1];
     if (last && last.day === day) last.rows.push(row);
     else out.push({ day, rows: [row] });
@@ -73,6 +96,18 @@ const hasMore = computed(
 
 const cells = (row: QueryRow) =>
   rest.value.map(c => (row.cells[c.index] ?? '').trim()).filter(Boolean);
+
+/**
+ * A stretch says where it ends, beside its title.
+ *
+ * Under the day it began, like everything else — a job that ran three years
+ * is not three years of rows — but «2019-01-01» alone would read as the day
+ * it happened, which it is not.
+ */
+const until = (row: QueryRow) => {
+  const day = (at.value >= 0 ? row.cells[at.value] : '')?.trim() || '';
+  return row.until && row.until > day ? row.until : '';
+};
 </script>
 
 <template>
@@ -80,6 +115,27 @@ const cells = (row: QueryRow) =>
     <p v-if="!result.rows.length" data-dated-empty class="py-2 text-[12px] text-gray-400">
       {{ $t('nexus.lens_nothing') }}
     </p>
+
+    <!-- What was already going on: the job, the course, the trip that began
+         before this stretch and ran into it. -->
+    <div v-if="ongoing.length" data-ongoing class="flex gap-4 py-1.5">
+      <span class="w-[86px] flex-shrink-0 pt-[3px] text-[11px] text-gray-400">{{ $t('nexus.dated_ongoing') }}</span>
+      <div class="flex min-w-0 flex-grow flex-col gap-1">
+        <button
+          v-for="row in ongoing"
+          :key="row.id"
+          type="button"
+          data-dated-row
+          class="flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+          @click="emit('open', row)"
+        >
+          <span class="min-w-0 flex-grow break-words text-[13px] text-gray-900 dark:text-gray-100">
+            {{ row.title || untitledLabel || $t('nexus.lens_untitled') }}
+          </span>
+          <span class="flex-shrink-0 text-[11px] tabular-nums text-gray-400">{{ dayOfRow(row) }} → {{ row.until }}</span>
+        </button>
+      </div>
+    </div>
 
     <div v-for="group in days" :key="group.day" data-day class="flex gap-4 py-1.5">
       <span
@@ -105,6 +161,9 @@ const cells = (row: QueryRow) =>
                that says what happened, and an ellipsis takes exactly that. -->
           <span data-dated-title class="min-w-0 flex-grow break-words text-[13px] text-gray-900 dark:text-gray-100">
             {{ row.title || untitledLabel || $t('nexus.lens_untitled') }}
+            <span v-if="until(row)" data-dated-until class="text-[11px] tabular-nums text-gray-400">
+              → {{ until(row) }}
+            </span>
           </span>
           <span
             v-for="cell in cells(row)"

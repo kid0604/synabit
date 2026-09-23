@@ -462,7 +462,7 @@ pub struct Run {
     /// The notes retrieval put in front of the model, by id.
     ///
     /// Kept so an answer can be left out of `look_back` once one of them is
-    /// sealed: the transcript records tool calls, not what retrieval read.
+    /// the transcript records tool calls, not what retrieval read.
     /// `None` on a run from before this was recorded.
     #[serde(default)]
     pub retrieved: Option<Vec<String>>,

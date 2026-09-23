@@ -1786,6 +1786,7 @@ mod memory_changes_the_answer {
                             temperature: Some(settings.temperature),
                             num_ctx: settings.num_ctx,
                             tools: None,
+                            json_schema: None,
                         })
                         .await
                     {

@@ -469,6 +469,7 @@ mod tests {
                     title: format!("task {i}"),
                     cells: Vec::new(),
                     open: None,
+                    until: None,
                 })
                 .collect(),
             total: 9,

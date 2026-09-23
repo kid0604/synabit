@@ -369,8 +369,18 @@ fn request_body(req: &ChatRequest<'_>) -> Value {
         body.insert("tools".into(), json!([{ "functionDeclarations": declarations(tools) }]));
     }
 
+    let mut generation = Map::new();
     if let Some(t) = req.temperature.filter(|_| sends_temperature(req.model)) {
-        body.insert("generationConfig".into(), json!({ "temperature": t }));
+        generation.insert("temperature".into(), json!(t));
+    }
+    // JSON mode. The schema itself is left out: Gemini reads a subset of JSON
+    // schema of its own, and a schema it half-understands is worse than the
+    // one in the instructions, which the reply is checked against anyway.
+    if req.json_schema.is_some() {
+        generation.insert("responseMimeType".into(), json!("application/json"));
+    }
+    if !generation.is_empty() {
+        body.insert("generationConfig".into(), Value::Object(generation));
     }
 
     Value::Object(body)
@@ -813,7 +823,7 @@ mod tests {
     }
 
     fn request<'a>(messages: &'a [ChatMessage], model: &'a str) -> ChatRequest<'a> {
-        ChatRequest { model, messages, temperature: Some(0.7), num_ctx: 8192, tools: None }
+        ChatRequest { model, messages, temperature: Some(0.7), num_ctx: 8192, tools: None , json_schema: None}
     }
 
     /// The one that matters. A call replayed without its signature is a 400
@@ -991,6 +1001,7 @@ mod tests {
             temperature: None,
             num_ctx: 0,
             tools: Some(&tools),
+            json_schema: None,
         };
         let body = request_body(&req);
         let d = &body["tools"][0]["functionDeclarations"][0];

@@ -104,6 +104,9 @@ struct OllamaChatRequest {
     options: Option<OllamaChatOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<ToolDefinition>>,
+    /// A JSON schema the reply must follow. Ollama's own name for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -167,6 +170,7 @@ impl OllamaProvider {
                 num_ctx: Some(req.num_ctx),
             }),
             tools: req.tools.map(|t| t.to_vec()),
+            format: req.json_schema.cloned(),
         }
     }
 

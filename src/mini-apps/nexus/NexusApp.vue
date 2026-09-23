@@ -15,14 +15,13 @@ import ExtractTray from './components/ExtractTray.vue';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import EventCompose from '../../shared/components/EventCompose.vue';
+import MomentSheet from '../../shared/components/MomentSheet.vue';
 import { logger } from '../../utils/logger';
 import { refusalText } from '../../shared/refusal';
 import { onSource, withRoomFor } from '../../shared/queryChips';
 import { localDay } from '../../shared/localDay';
 import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useAppLockStore } from '../../stores/useAppLockStore';
-import { useAppStore } from '../../stores/useAppStore';
-import { storeToRefs } from 'pinia';
 
 const bus = useEventBus();
 
@@ -285,8 +284,31 @@ const showAs = async (shape: 'graph' | 'timeline') => {
 };
 
 /** A row of the timeline opens the thing behind it, as the list does. */
-const openFromTimeline = (row: QueryRow) =>
+/**
+ * A row on the timeline, opened.
+ *
+ * A moment opens **itself**, in a sheet where every field of it can be put
+ * right or the whole thing let go: it is a file of its own now, and the note
+ * it was read from is one press further on. Anything else opens the node it
+ * came from, as it always did.
+ */
+const editingMoment = ref<string | null>(null);
+/** The row the sheet is open on, so the list marks it. */
+const editingRow = ref<string | null>(null);
+const openFromTimeline = (row: QueryRow) => {
+    if (row.node_type === 'moment') {
+        // A derived row's id is `<path>#<kind>#<n>`; the file is the first part.
+        editingMoment.value = row.id.split('#')[0];
+        editingRow.value = row.id;
+        return;
+    }
     emit('edit-item', row.open ?? row.id, row.node_type);
+};
+
+const closeMoment = () => {
+    editingMoment.value = null;
+    editingRow.value = null;
+};
 const searchQuery = ref('');
 const isSearching = ref(false);
 const queryTimeMs = ref(0);
@@ -359,7 +381,6 @@ const nudgeEdge = (by: number) => {
 };
 
 const appLockStore = useAppLockStore();
-const { dailyNoteFormat, dailyNoteTag } = storeToRefs(useAppStore());
 
 const hideSyntaxHints = () => {
     setTimeout(() => {
@@ -712,7 +733,21 @@ const cleanSnippet = (snippet: string) => {
                     <div class="h-64 px-8 pb-4">
                         <EventsOverTime v-model="timeRange" :result="windowed" :span="windowDays" @open="openFromTimeline" />
                     </div>
-                    <DatedView :result="within(windowed, timeRange)" @open="openFromTimeline" />
+                    <MomentSheet
+                        v-if="editingMoment"
+                        class="mb-3"
+                        :vault-path="vaultPath"
+                        :path="editingMoment"
+                        @close="closeMoment()"
+                        @changed="eventsChanged"
+                        @open="(id: string, quote: string) => emit('edit-item', id, 'note', quote)"
+                    />
+                    <DatedView
+                        :result="within(windowed, timeRange)"
+                        :range="timeRange ?? windowDays"
+                        :selected-id="editingRow"
+                        @open="openFromTimeline"
+                    />
                 </template>
                 <p v-else data-timeline-empty class="px-8 text-[12px] text-gray-400">
                     {{ $t('nexus.lens_nothing') }}
@@ -775,8 +810,6 @@ const cleanSnippet = (snippet: string) => {
             >
                 <EventCompose
                     :vault-path="vaultPath"
-                    :format="dailyNoteFormat"
-                    :tag="dailyNoteTag"
                     @changed="eventsChanged"
                 />
                 <button
@@ -1092,7 +1125,21 @@ const cleanSnippet = (snippet: string) => {
                                 @click="pickWindow('all')"
                             >{{ $t('nexus.window_show_all') }}</button>
                         </p>
-                        <DatedView :result="within(windowed, timeRange)" @open="openFromTimeline" />
+                        <MomentSheet
+                        v-if="editingMoment"
+                        class="mb-3"
+                        :vault-path="vaultPath"
+                        :path="editingMoment"
+                        @close="closeMoment()"
+                        @changed="eventsChanged"
+                        @open="(id: string, quote: string) => emit('edit-item', id, 'note', quote)"
+                    />
+                    <DatedView
+                        :result="within(windowed, timeRange)"
+                        :range="timeRange ?? windowDays"
+                        :selected-id="editingRow"
+                        @open="openFromTimeline"
+                    />
                     </div>
                 </template>
             </div>

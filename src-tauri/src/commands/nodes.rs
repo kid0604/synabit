@@ -114,7 +114,16 @@ pub fn scan_all_nodes(
     state: tauri::State<'_, DbState>,
     vault_path: String,
 ) -> AppResult<ScanReport> {
-    scan_vault_into_db(&app_handle, state.inner(), &vault_path)
+    let report = scan_vault_into_db(&app_handle, state.inner(), &vault_path)?;
+    // Moments still kept inside notes — from before they had files of their
+    // own, or synced in from a device that has not caught up — go to theirs.
+    // After the scan, because it reads what the scan indexed. A failure here
+    // leaves the moments where they were, still read from there, and is no
+    // reason to fail opening the vault.
+    if let Err(e) = crate::timeline::moments::move_out_of_notes(&app_handle, state.inner(), &vault_path) {
+        log::warn!("moments: could not move them out of notes: {e}");
+    }
+    Ok(report)
 }
 
 /// The vault scan itself, with Tauri's command plumbing peeled off.

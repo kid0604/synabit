@@ -763,10 +763,6 @@ pub fn retrieve_context(
                 if result.item_type == crate::syn::memory::MEMORY_TYPE {
                     continue;
                 }
-                // Sealed: not the assistant's to read. See `timeline::seal`.
-                if config.withheld.hides(&result.id) {
-                    continue;
-                }
                 if seen_ids.contains(&result.id) {
                     continue;
                 }
@@ -937,7 +933,7 @@ pub fn retrieve_context(
         for source_id in &expansion_ids {
             let related = db.get_related_nodes_for_rag(source_id, 3);
             for (rel_id, rel_title, rel_type) in &related {
-                if seen_ids.contains(rel_id) || config.withheld.hides(rel_id) {
+                if seen_ids.contains(rel_id) {
                     continue;
                 }
                 seen_ids.insert(rel_id.clone());
@@ -960,8 +956,6 @@ pub fn retrieve_context(
         }
     }
 
-    // Whatever road a chunk arrived by, a sealed node leaves here.
-    all_chunks.retain(|chunk| !config.withheld.hides(&chunk.source_id));
 
     // Step 7: Sort by relevance score (descending) and truncate to max context chars
     all_chunks.sort_by(|a, b| {
@@ -1919,7 +1913,6 @@ mod rag_vs_agentic {
                 include_finance: settings.include_finance,
                 include_feeds: settings.include_feeds,
                 graph_expansion_depth: settings.graph_expansion_depth,
-                withheld: Default::default(),
             };
             let retrieval =
                 retrieve_context(&db, question.ask, &[], &config).expect("retrieval runs");
@@ -2530,7 +2523,6 @@ mod rag_vs_agentic {
             include_finance: true,
             include_feeds: true,
             graph_expansion_depth: 1,
-            withheld: Default::default(),
         };
 
         // What the pipeline returns, after both filters.
@@ -2697,62 +2689,3 @@ mod rag_vs_agentic {
     }
 }
 
-#[cfg(test)]
-mod sealed_tests {
-    use super::*;
-    use crate::db::{DbBridge, NodeEdge};
-    use crate::models::node::NodeMetadata;
-
-    fn note(db: &DbBridge, id: &str, title: &str, body: &str, sealed: bool) {
-        let properties = if sealed { serde_json::json!({ "sealed": true }) } else { serde_json::json!({}) };
-        db.upsert_node(&NodeMetadata {
-            id: id.into(),
-            node_type: "note".into(),
-            title: title.into(),
-            content: body.into(),
-            properties: properties.clone(),
-            created_at: "2026-08-01T00:00:00.000Z".into(),
-            updated_at: "2026-08-01T00:00:00.000Z".into(),
-            timestamp: 0,
-            blocks: None,
-        })
-        .expect("node");
-        db.upsert_search_entry(id, "note", title, "", body, &properties.to_string(), None, "2026-08-01T00:00:00Z", id);
-    }
-
-    /// Retrieval must not bring a sealed note into the prompt, whether it
-    /// matched the question itself or hangs off a note that did.
-    #[test]
-    fn a_sealed_note_is_not_retrieved_by_its_words_or_through_its_links() {
-        let dir = tempfile::tempdir().expect("temp");
-        let vault = dir.path().to_string_lossy().to_string();
-        let db = DbBridge::new_in_memory_full().expect("schema");
-        note(&db, "Notes/open.md", "Pricing decision", "We decided the pricing on Monday.", false);
-        note(&db, "Notes/sealed.md", "Pricing argument", "The pricing argument we decided never to repeat.", true);
-        note(&db, "Notes/aside.md", "Aside", "Nothing about money.", true);
-        db.upsert_node_edge(&NodeEdge {
-            id: "e".into(),
-            source_id: "Notes/open.md".into(),
-            target_id: "Notes/aside.md".into(),
-            edge_type: "wikilink".into(),
-            relation: None,
-            created_at: "2026-08-01T00:00:00Z".into(),
-        })
-        .expect("edge");
-
-        let question = "what did we decide about pricing";
-        let open = retrieve_context(&db, question, &[], &RagConfig::default()).expect("retrieval");
-        let ids = |r: &RetrievalResult| r.context_chunks.iter().map(|c| c.source_id.clone()).collect::<Vec<_>>();
-        assert!(ids(&open).contains(&"Notes/sealed.md".to_string()), "the fixture has to be reachable: {:?}", ids(&open));
-        assert!(ids(&open).contains(&"Notes/aside.md".to_string()), "and reachable by its link: {:?}", ids(&open));
-
-        let config = RagConfig {
-            withheld: std::sync::Arc::new(crate::timeline::seal::Seals::read(&db, &vault).expect("seals")),
-            ..RagConfig::default()
-        };
-        let sealed = retrieve_context(&db, question, &[], &config).expect("retrieval");
-        assert!(ids(&sealed).contains(&"Notes/open.md".to_string()), "{:?}", ids(&sealed));
-        assert!(!ids(&sealed).contains(&"Notes/sealed.md".to_string()), "{:?}", ids(&sealed));
-        assert!(!ids(&sealed).contains(&"Notes/aside.md".to_string()), "{:?}", ids(&sealed));
-    }
-}

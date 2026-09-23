@@ -117,9 +117,9 @@ impl Bucket {
 /// The vault's own words, for `explode sentences`.
 ///
 /// A trait rather than a `&DbBridge`, and for one reason: **what comes back
-/// has already been through the consent layer**. A sentence in a sealed note,
-/// on a hushed day, or hushed by itself must not be here at all — not filtered
-/// out further down, not left out of the answer. Never read.
+/// has already been through the consent layer**. A sentence on a hushed day,
+/// or hushed by itself, must not be here at all — not filtered out further
+/// down, not left out of the answer. Never read.
 ///
 /// Passing the database would have made that a rule somebody has to remember.
 /// Passing this makes it a rule the caller cannot avoid having thought about.
@@ -127,9 +127,8 @@ pub trait Words {
     /// The sentences of one note on one day, or nothing.
     ///
     /// The day is passed because the consent layer works on pairs: a hush can
-    /// cover a stretch of time rather than a note, and a seal can cover a
-    /// period. Reading the note without knowing which day it was reached
-    /// through would let a lens walk round both.
+    /// cover a stretch of time rather than a note. Reading the note without
+    /// knowing which day it was reached through would let a lens walk round it.
     fn sentences_of(&self, node: &str, day: &str) -> Vec<String>;
 }
 
@@ -260,6 +259,7 @@ fn explode(opened: Opened, result: QueryResult, around: &Around<'_>) -> AppResul
                 title: text.clone(),
                 cells: vec![day.clone(), note.clone(), text],
                 open: Some(note.clone()),
+                until: None,
             });
         }
     }
@@ -425,6 +425,7 @@ fn seq(
                     longest.to_string(),
                 ],
                 open: None,
+                until: None,
             }
         })
         .collect();
@@ -566,6 +567,7 @@ fn stats(tally: Tally, by: &Bucket, result: QueryResult) -> AppResult<QueryResul
                 title: label.clone(),
                 cells: vec![label.clone(), counts[&label].to_string()],
                 open: None,
+                until: None,
             })
             .collect(),
         total,
@@ -636,6 +638,7 @@ mod tests {
                     title: format!("row {i}"),
                     cells: cells.iter().map(|c| c.to_string()).collect(),
                     open: None,
+                    until: None,
                 })
                 .collect(),
             total: rows.len(),

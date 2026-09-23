@@ -45,7 +45,6 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::quiet::{Nudge, Quiet, self as hush};
-use super::seal::Seals;
 use super::store::TimelineStore;
 use super::when;
 use crate::db::DbBridge;
@@ -106,7 +105,6 @@ pub fn open_questions(
     cache: &DbBridge,
     today: NaiveDate,
     quiet: &Quiet,
-    seals: &Seals,
 ) -> AppResult<Vec<Question>> {
     let mut days: HashMap<String, Vec<String>> = HashMap::new();
     for (about, day) in store.days_about_things(today)? {
@@ -134,7 +132,7 @@ pub fn open_questions(
         .filter(|question| {
             let nudge =
                 Nudge::on(question.last.clone()).naming([question.about.clone()]);
-            !hush::allow(vec![nudge], quiet, seals).is_empty()
+            !hush::allow(vec![nudge], quiet).is_empty()
         })
         .collect();
 
@@ -254,11 +252,10 @@ pub fn ask(
     vault_path: &str,
     today: NaiveDate,
     quiet: &Quiet,
-    seals: &Seals,
 ) -> AppResult<Option<Question>> {
     let asked = already_asked(vault_path);
     let cutoff = when::iso(today - chrono::Duration::days(NOT_AGAIN_FOR));
-    let open = open_questions(store, cache, today, quiet, seals)?;
+    let open = open_questions(store, cache, today, quiet)?;
     let Some(question) = open
         .into_iter()
         .find(|q| asked.get(&q.about).is_none_or(|on| on.as_str() <= cutoff.as_str()))
@@ -442,12 +439,12 @@ mod tests {
         let today = day("2026-09-19");
 
         let open =
-            open_questions(&timeline, &db, today, &Quiet::default(), &Seals::default()).unwrap();
+            open_questions(&timeline, &db, today, &Quiet::default()).unwrap();
         let named: Vec<&str> = open.iter().map(|q| q.name.as_str()).collect();
         assert_eq!(named, ["Synabit 1.0"], "the one whose ending nobody wrote: {open:?}");
         assert_eq!(open[0].times, 14);
 
-        let first = ask(&timeline, &db, vault_path, today, &Quiet::default(), &Seals::default())
+        let first = ask(&timeline, &db, vault_path, today, &Quiet::default())
             .unwrap()
             .expect("asked once");
         assert_eq!(first.name, "Synabit 1.0");
@@ -460,7 +457,6 @@ mod tests {
                 vault_path,
                 day(later),
                 &Quiet::default(),
-                &Seals::default(),
             )
             .unwrap();
             assert!(again.is_none(), "asked again on {later}: {again:?}");
@@ -473,14 +469,13 @@ mod tests {
             vault_path,
             day("2027-09-20"),
             &Quiet::default(),
-            &Seals::default(),
         )
         .unwrap();
         assert_eq!(after.map(|q| q.name), Some("Synabit 1.0".into()));
     }
 
     #[test]
-    fn a_sealed_or_hushed_thing_is_never_asked_about() {
+    fn a_hushed_thing_is_never_asked_about() {
         let (cache, timeline) = a_vault();
         let db = cache.lock().unwrap();
         let vault = tempfile::tempdir().unwrap();
@@ -491,8 +486,8 @@ mod tests {
             .unwrap();
         let quiet = Quiet::read(&db, vault_path, "2026-09-19").unwrap();
 
-        assert!(open_questions(&timeline, &db, today, &quiet, &Seals::default()).unwrap().is_empty());
-        assert!(ask(&timeline, &db, vault_path, today, &quiet, &Seals::default()).unwrap().is_none());
+        assert!(open_questions(&timeline, &db, today, &quiet).unwrap().is_empty());
+        assert!(ask(&timeline, &db, vault_path, today, &quiet).unwrap().is_none());
         // And nothing was written down about having asked, because nothing was.
         assert!(already_asked(vault_path).is_empty());
     }
@@ -519,7 +514,7 @@ mod tests {
             *per_thing.entry(about.as_str()).or_default() += 1;
         }
         let open =
-            open_questions(&timeline, &db, today, &Quiet::default(), &Seals::default()).unwrap();
+            open_questions(&timeline, &db, today, &Quiet::default()).unwrap();
 
         eprintln!("\n═══ what happened to… ═══  {} events", built.items);
         eprintln!("  things written about:        {}", per_thing.len());

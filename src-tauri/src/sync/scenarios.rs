@@ -2207,43 +2207,6 @@ async fn a_list_inside_one_file_is_merged_by_character_not_by_entry() {
 // A seal is a decision, and a decision made on one device holds on the other
 // ---------------------------------------------------------------------------
 
-/// The gate for sealing, §8.1 of `docs/timeline-2026-09-17.md`: seal a note and a period
-/// on A, and B withholds them too; lift the period on A, and B lets it go.
-#[tokio::test]
-async fn a_seal_made_on_one_device_holds_on_the_other() {
-    use crate::timeline::seal;
-
-    const DIARY: &str = "Notes/diary.md";
-    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
-    let (a, b) = (&devices[0], &devices[1]);
-    let vault_a = a.vault_path().to_string_lossy().to_string();
-    let vault_b = b.vault_path().to_string_lossy().to_string();
-
-    a.write(DIARY, "---\ntitle: Diary\ntype: note\n---\nwhat happened that year\n");
-    a.sync_ok().await;
-    b.sync_ok().await;
-    assert!(b.exists(DIARY), "the note has to reach B before its seal can");
-
-    // Read back after the first sync, which gives the note its identity.
-    let sealed_text = a.read(DIARY).expect("A has it").replacen("---\n", "---\nsealed: true\n", 1);
-    a.write(DIARY, &sealed_text);
-    let period = seal::write_period(&vault_a, "2019-02", "2019-09").expect("sealed on A");
-    for _ in 0..2 {
-        a.sync_ok().await;
-        b.sync_ok().await;
-    }
-
-    let on_b = b.with_db(|db| seal::Seals::read(db, &vault_b)).expect("seals on B");
-    assert!(on_b.hides(DIARY), "B holds: {:?}", b.read(DIARY));
-    assert_eq!(on_b.periods().len(), 1, "the period reached B");
-
-    seal::remove_period(&vault_a, &period.id).expect("lifted on A");
-    for _ in 0..2 {
-        a.sync_ok().await;
-        b.sync_ok().await;
-    }
-    assert!(seal::read_periods(&vault_b).is_empty(), "lifting the seal on A lifts it on B");
-}
 
 // ---------------------------------------------------------------------------
 // "Đừng nhắc" is a decision too, and two devices can make one at once
@@ -2348,7 +2311,7 @@ async fn two_devices_keep_their_own_ledgers_and_meet_without_a_conflict() {
 /// Gate for Nhát E: what one device read from a note, another does not read again.
 #[tokio::test]
 async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
-    use crate::timeline::{extract, seal::Seals, TimelineStore};
+    use crate::timeline::{blocks::History, extract, reader, TimelineStore};
     const DAILY: &str = "Notes/2024-06-02.md";
     let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
     let (a, b) = (&devices[0], &devices[1]);
@@ -2362,11 +2325,11 @@ async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
     let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
     let plan = |d: &HarnessDevice, store: &TimelineStore| {
         extract::load(store.conn(), &vault(d)).expect("loaded");
-        let inputs = d.with_db(|db| {
-            let seals = Seals::read(db, &vault(d)).expect("seals");
-            extract::inputs(db, &vault(d), &config, &seals, today, None).expect("inputs")
-        });
-        extract::plan(store.conn(), inputs).expect("plan")
+        d.with_db(|db| {
+            reader::plan_in(db, store.conn(), &vault(d), &config, today, None, &|_| History::default())
+                .expect("plan")
+                .0
+        })
     };
 
     a.write(DAILY, "---\ntitle: 2024-06-02\ndate: 2024-06-02\n---\nHôm qua đưa mẹ đi khám mắt ở bệnh viện Mắt, bác sĩ bảo phải mổ.\n");
@@ -2378,15 +2341,26 @@ async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
     let store_a = TimelineStore::open_in_memory().unwrap();
     let on_a = plan(a, &store_a);
     assert_eq!(on_a.pending.len(), 1, "{on_a:?}");
-    let read = &on_a.pending[0];
-    let raw = extract::parse_reply(
-        r#"{"moments": [{"what": "Khám mắt cho mẹ", "when": "hôm qua", "people": [], "quote": "đưa mẹ đi khám mắt"}]}"#,
+    let bag = &on_a.pending[0];
+    let raw = reader::parse_reply(
+        r#"{"moments": [{"title": "Khám mắt cho mẹ", "date": "2024-06-01", "date_basis": "relative", "category": "family", "quote": {"source": "b1", "text": "đưa mẹ đi khám mắt"}}]}"#,
     )
     .unwrap();
-    let (items, dropped) = extract::settle(read, raw, &extract::People::default(), "scripted");
-    assert_eq!(items.len(), 1);
+    let (items, dropped) = reader::settle(bag, raw, &reader::Directory::default(), "scripted");
+    assert_eq!((items.len(), dropped.total()), (1, 0), "{dropped:?}");
     let now = chrono::Utc::now();
-    let run = extract::SourceRun::new(read, "scripted", &items, dropped.total(), 900, now);
+    let run = extract::SourceRun {
+        node: format!("day:{}", bag.key),
+        hash: bag.hash.clone(),
+        version: extract::EXTRACTOR_VERSION,
+        model: "scripted".into(),
+        at: crate::utils::timestamp::canonical(now),
+        items: items.iter().map(|i| i.id.clone()).collect(),
+        dropped: 0,
+        chars: bag.chars(),
+        ms: 900,
+        blocks: bag.block_hashes(),
+    };
     extract::record(&vault(a), &a.device_id, run, &items, now).expect("recorded");
 
     for _ in 0..3 {
@@ -2399,7 +2373,7 @@ async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
 
     let store_b = TimelineStore::open_in_memory().unwrap();
     let on_b = plan(b, &store_b);
-    assert_eq!((on_b.pending.len(), on_b.stale.len(), on_b.done), (0, 0, 1), "{on_b:?}");
+    assert_eq!((on_b.pending.len(), on_b.old_version.len(), on_b.done), (0, 0, 1), "{on_b:?}");
 
     for device in [a, b] {
         let conflicts: Vec<String> = crate::sync::utils::collect_local_files(&vault(device))

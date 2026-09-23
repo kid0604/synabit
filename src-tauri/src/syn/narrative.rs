@@ -49,7 +49,7 @@ pub struct Narrative {
     pub sources: Vec<Source>,
     /// Sentences the model wrote that rested on no record, and were removed.
     pub dropped: usize,
-    /// The person is sealed, so nothing was asked. See `timeline::seal`.
+    /// Nothing was asked.
     pub withheld: bool,
 }
 

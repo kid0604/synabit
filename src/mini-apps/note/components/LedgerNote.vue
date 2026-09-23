@@ -4,7 +4,7 @@
  *
  * One line: when it was first recorded, and whether what was written has
  * changed since. The ledger fingerprints a note's body, not its frontmatter,
- * so pinning or sealing a note is not counted as an edit. When a device's
+ * so pinning a note is not counted as an edit. When a device's
  * ledger has been altered, that is said instead, because a record that cannot
  * be relied on should not be read as one that can.
  * See `src-tauri/src/timeline/ledger.rs`.

@@ -60,8 +60,6 @@ const recentGifts = computed(() => gifts.value.slice(0, 5));
 // All notable dates (birthday + important_dates) with countdown
 const upcomingDates = computed(() => {
     const now = new Date();
-    // No countdown brings a sealed person's dates round again.
-    if (props.person?.properties?.sealed) return [];
     const dates: Array<{ label: string; date: string; daysUntil: number | null; isUpcoming: boolean }> = [];
 
     // Birthday
@@ -122,9 +120,9 @@ const hasOverviewContent = computed(() => {
         <!-- What to know before you see them, and what has passed between you -->
         <BriefCard :person="person" @open-node="(id: string, type: string) => emit('open-node', id, type)" />
 
-        <!-- Told back by Syn, on request, every sentence resting on a record. Not for a sealed person. -->
+        <!-- Told back by Syn, on request, every sentence resting on a record. -->
         <SynNarrative
-            v-if="vaultPath && !person?.properties?.sealed"
+            v-if="vaultPath"
             :person="person"
             :vault-path="vaultPath"
             @open-node="(id: string, type: string) => emit('open-node', id, type)"

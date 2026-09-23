@@ -281,9 +281,15 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
     let mut params = build.params;
     let next = params.len() + 1;
 
+    // Moments only. A task ticked off, a birthday, a job on somebody's page,
+    // a note with a date in its name are facts about nodes: true, and shown
+    // where those nodes are, but not the person's life told as a timeline.
+    // Half the old timeline was finished tasks. See §3 of
+    // `docs/timeline-extract-v3-2026-09-22.md`.
     let sql = format!(
         "FROM events e \
-         WHERE e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL \
+         WHERE e.kind = 'moment' \
+           AND e.superseded_by IS NULL AND e.source != 'extract' AND e.folded_into IS NULL \
            AND ({condition})"
     );
 
@@ -342,7 +348,8 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
 
     let statement = format!(
         "SELECT e.id, e.node_type, e.title, \
-                COALESCE(NULLIF(e.container_node, ''), e.node_id){}{} \
+                COALESCE(NULLIF(e.container_node, ''), e.node_id), \
+                NULLIF(e.happened_to, e.happened_from){}{} \
          {sql} ORDER BY {order_by} {direction}, e.id LIMIT ?{next} OFFSET ?{}",
         if reads.is_empty() { "" } else { ", " },
         reads.join(", "),
@@ -361,7 +368,7 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
         .query_map(bound.as_slice(), |r| {
             let mut cells = Vec::with_capacity(columns);
             for n in 0..columns {
-                cells.push(r.get::<_, Option<String>>(4 + n)?.unwrap_or_default());
+                cells.push(r.get::<_, Option<String>>(5 + n)?.unwrap_or_default());
             }
             Ok(QueryRow {
                 id: r.get(0)?,
@@ -369,6 +376,7 @@ pub fn run(store: &TimelineStore, query: &Query, named: &Named) -> AppResult<Que
                 title: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 cells,
                 open: r.get::<_, Option<String>>(3)?,
+                until: r.get::<_, Option<String>>(4)?,
             })
         })
         .map_err(|e| AppError::General(format!("timeline query: {e}")))?;
@@ -448,6 +456,14 @@ mod tests {
                 }),
             ),
             node("Tasks/a.md", "task", "Gửi báo cáo quý", json!({ "completed_at": "2019-11-05" })),
+            // A stretch of a life, kept as a moment of its own rather than
+            // read off a job on somebody's page.
+            node(
+                "Moments/9b1d0c52-0000-4000-8000-000000000001.md",
+                "moment",
+                "Làm ở MDP",
+                json!({ "type": "moment", "title": "Làm ở MDP", "happened": "2019-01-01/2021-06-30", "about": ["MDP"] }),
+            ),
         ] {
             db.upsert_node(&n).unwrap();
         }
@@ -557,23 +573,35 @@ mod tests {
         assert!(refused.is_err(), "answering a different question is worse than saying no");
     }
 
+    /// The timeline is moments. A task ticked off and a job listed on
+    /// somebody's page are true, and shown on those pages — not here.
     #[test]
-    fn shape_separates_a_job_from_an_evening() {
+    fn facts_about_nodes_are_not_moments() {
         let (cache, timeline) = a_vault();
-        let jobs = ask(&cache, &timeline, "shape:spell");
-        assert_eq!(jobs.total, 1);
-        assert!(jobs.rows[0].title.contains("MDP"), "{:?}", jobs.rows[0]);
+        assert_eq!(ask(&cache, &timeline, "shape:chore").total, 0, "a finished task");
+        assert_eq!(ask(&cache, &timeline, "shape:spell").total, 0, "the job on Tao's page");
+        let everything = ask(&cache, &timeline, "when:1900/2100 columns:when,title");
+        let titles: Vec<&str> = everything.rows.iter().map(|r| r.title.as_str()).collect();
+        assert!(!titles.contains(&"Gửi báo cáo quý"), "{titles:?}");
+        assert!(!titles.iter().any(|t| t.contains("Dev")), "{titles:?}");
+        assert!(titles.contains(&"Làm ở MDP"), "the stretch kept as a moment is: {titles:?}");
+    }
 
-        let chores = ask(&cache, &timeline, "shape:chore");
-        assert_eq!(chores.rows.len(), 1);
-        assert_eq!(chores.rows[0].title, "Gửi báo cáo quý");
+    /// A moment in a file of its own opens the file, having no note it was
+    /// read out of — and one read out of a note would open the note.
+    #[test]
+    fn a_moment_kept_as_a_file_is_answered_like_any_other() {
+        let (cache, timeline) = a_vault();
+        let found = ask(&cache, &timeline, "about:MDP");
+        assert_eq!(found.total, 1, "{:?}", found.rows);
+        assert_eq!(found.rows[0].open.as_deref(), Some("Moments/9b1d0c52-0000-4000-8000-000000000001.md"));
     }
 
     #[test]
     fn size_asks_for_the_big_things() {
         let (cache, timeline) = a_vault();
         let big = ask(&cache, &timeline, "when:2016/2026 size:>5");
-        assert!(big.total >= 1, "the job is the big thing here");
+        assert!(big.total >= 1, "the two and a half years are the big thing here");
         assert!(big.rows.iter().all(|r| r.title.contains("MDP")), "{:?}", big.rows);
         assert_eq!(ask(&cache, &timeline, "when:2016/2026 size:>99").total, 0);
     }
@@ -654,6 +682,17 @@ mod tests {
         assert_eq!(row.open.as_deref(), Some("Notes/2019-11-05.md"), "what a click opens");
         assert_eq!(row.cells[0], "2019-11-05");
         assert_eq!(row.cells[2], "Notes/2019-11-05.md");
+    }
+
+    /// A row that covers more than a day says where it ends, whatever columns
+    /// were asked for, so a window over the years it filled can find it.
+    #[test]
+    fn a_row_that_lasts_says_when_it_ends() {
+        let (cache, timeline) = a_vault();
+        let job = ask(&cache, &timeline, "about:MDP columns:title");
+        assert_eq!(job.rows[0].until.as_deref(), Some("2021-06-30"), "{:?}", job.rows[0]);
+        let evening = ask(&cache, &timeline, "with:khánh when:2019");
+        assert_eq!(evening.rows[0].until, None, "one day needs no end");
     }
 
     #[test]

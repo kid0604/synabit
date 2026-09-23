@@ -46,7 +46,6 @@ use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
 
 use super::quiet::{self, Nudge, Quiet};
-use super::seal::Seals;
 use super::store::{Event, TimelineStore};
 use super::when;
 use crate::db::DbBridge;
@@ -86,7 +85,6 @@ pub fn look_back(
     cache: &DbBridge,
     today: NaiveDate,
     quiet: &Quiet,
-    seals: &Seals,
 ) -> AppResult<Vec<Looking>> {
     let events = store.anniversaries(today)?;
     if events.is_empty() {
@@ -112,7 +110,7 @@ pub fn look_back(
             continue;
         };
         let (event, quote) = found;
-        let offered = quiet::allow(vec![Nudge::for_event(event)], quiet, seals);
+        let offered = quiet::allow(vec![Nudge::for_event(event)], quiet);
         if offered.is_empty() {
             continue;
         }
@@ -465,7 +463,7 @@ mod tests {
         let today = day("2026-05-14");
 
         let db = cache.lock().unwrap();
-        let open = look_back(&timeline, &db, today, &Quiet::default(), &Seals::default()).unwrap();
+        let open = look_back(&timeline, &db, today, &Quiet::default()).unwrap();
 
         let days: Vec<&str> = open.iter().map(|l| l.day.as_str()).collect();
         assert_eq!(
@@ -482,8 +480,6 @@ mod tests {
         // Now refuse two of them, one each way.
         let vault = tempfile::tempdir().unwrap();
         let vault_path = vault.path().to_str().unwrap();
-        crate::timeline::seal::write_period(vault_path, "2023-05", "2023-05").unwrap();
-        let seals = crate::timeline::seal::Seals::read(&db, vault_path).unwrap();
         quiet::write_hush(
             vault_path,
             &quiet::Subject::Moment {
@@ -495,9 +491,9 @@ mod tests {
         .unwrap();
         let quiet = Quiet::read(&db, vault_path, "2026-05-14").unwrap();
 
-        let left = look_back(&timeline, &db, today, &quiet, &seals).unwrap();
+        let left = look_back(&timeline, &db, today, &quiet).unwrap();
         let days: Vec<&str> = left.iter().map(|l| l.day.as_str()).collect();
-        assert_eq!(days, ["2020-05-14"], "sealed and hushed are both gone");
+        assert!(!days.contains(&"2024-05-14"), "what was hushed is gone: {days:?}");
     }
 
     /// §16 Bước 4's gate on the real vault, read only: walk every day of the
@@ -536,7 +532,7 @@ mod tests {
         let end = NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
         while at <= end {
             let found =
-                look_back(&timeline, &db, at, &Quiet::default(), &Seals::default()).unwrap();
+                look_back(&timeline, &db, at, &Quiet::default()).unwrap();
             if !found.is_empty() {
                 days_with += 1;
                 offered += found.len();
@@ -580,7 +576,7 @@ mod tests {
 
         let db = cache.lock().unwrap();
         let open =
-            look_back(&timeline, &db, day("2026-05-14"), &Quiet::default(), &Seals::default())
+            look_back(&timeline, &db, day("2026-05-14"), &Quiet::default())
                 .unwrap();
         assert!(open.is_empty(), "{open:?}");
     }

@@ -34,10 +34,7 @@ export interface Composed {
 }
 export interface ComposedReply { read: Composed | null; model: string | null; refused: string | null }
 
-const props = withDefaults(
-    defineProps<{ vaultPath: string; format?: string; tag?: string }>(),
-    { format: 'YYYY-MM-DD', tag: '' },
-);
+const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
 const open = ref(false);
@@ -108,10 +105,10 @@ const write = async () => {
             with: form.value.people.split(',').map(name => name.trim()).filter(Boolean),
             place: form.value.place.trim() || null,
             about: [],
-            formatStr: props.format,
-            tag: props.tag,
         });
-        saved.value = written.split('/').pop() ?? written;
+        // A moment is its own file now, named by a uuid nobody would want to
+        // read; what was kept is said by what it is called.
+        saved.value = written ? form.value.title.trim() : null;
         line.value = '';
         note.value = null;
         form.value = blank();
@@ -200,7 +197,7 @@ const write = async () => {
             <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_where') }}</label>
             <input v-model="form.place" data-field-where type="text" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
 
-            <p v-if="saved" data-saved class="text-xs text-green-600 dark:text-green-400">{{ $t('nexus.compose_saved', { note: saved }) }}</p>
+            <p v-if="saved" data-saved class="text-xs text-green-600 dark:text-green-400">{{ $t('nexus.compose_saved', { title: saved }) }}</p>
             <p v-if="failed" data-failed class="text-xs text-red-600 dark:text-red-400">{{ failed }}</p>
 
             <button

@@ -79,6 +79,10 @@ const KINDS: &[&str] = &[
     "view",
     "syn_memory",
     "syn_skill",
+    // Not storage, but not a node anybody wrote either: what was read *out
+    // of* the nodes. Asked for by the timeline's own source, `moments`, and by
+    // name. See `timeline::moments`.
+    "moment",
 ];
 
 /// Whether the question says which kind it is about, anywhere in it.

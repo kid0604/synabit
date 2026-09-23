@@ -1,7 +1,4 @@
 //! Asking the timeline what happened. See `crate::timeline`.
-//!
-//! Every answer here passes through the seals (`timeline::seal`): what the
-//! person sealed is not brought back by the timeline either.
 
 use std::sync::Arc;
 
@@ -10,17 +7,11 @@ use chrono::Datelike;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::timeline::frame::{self, TimeFrame};
-use crate::timeline::seal::{self, SealedPeriod, Seals};
 use crate::timeline::store::{self, CatchUp, Snapshot, Event};
 use crate::timeline::quiet::{self, Hush, Quiet, Subject};
 use crate::timeline::asking::{self, Question};
 use crate::timeline::pin::{self, Pin};
-use crate::timeline::{extract, magnitude, media, presence, reflect, when, TimelineState};
-
-fn seals_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Seals>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    seal::current(&db, vault_path)
-}
+use crate::timeline::{blocks, extract, magnitude, media, presence, reader, reflect, when, TimelineState};
 
 fn quiet_of(state: &DbState, vault_path: &str) -> AppResult<Arc<Quiet>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -41,7 +32,7 @@ pub struct Looked {
     pub pinned: usize,
 }
 
-/// Everything the vault says happened during `when`, less what is sealed.
+/// Everything the vault says happened during `when`.
 ///
 /// `when` is any time the timeline reads: `2016-05-14`, `2016-05`, `2016`,
 /// `2016-05-01/2016-06-30` or `~2012`. The timeline catches up with the vault
@@ -68,8 +59,6 @@ pub fn timeline_query(
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
     let mut items = timeline.query(span, chrono::Local::now().date_naive())?;
-    let seals = seals_of(state.inner(), &vault_path)?;
-    items.retain(|item| !seals.hides_item(item));
 
     let pinned = pin::read(&vault_path);
     let held = items.iter().filter(|item| pinned.holds(item)).count();
@@ -159,10 +148,9 @@ pub fn timeline_ask(
 ) -> AppResult<Option<Question>> {
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
-    let seals = seals_of(state.inner(), &vault_path)?;
     let quiet = quiet_of(state.inner(), &vault_path)?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    asking::ask(&timeline, &db, &vault_path, chrono::Local::now().date_naive(), &quiet, &seals)
+    asking::ask(&timeline, &db, &vault_path, chrono::Local::now().date_naive(), &quiet)
 }
 
 /// Derive the whole timeline again from the vault cache.
@@ -210,47 +198,12 @@ pub fn timeline_frame(
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         frame::read_nodes(&db)?
     };
-    let seals = seals_of(state.inner(), &vault_path)?;
-    Ok(sealed_frame(items, &nodes, today, &seals, reveal.unwrap_or(false)))
+    let _ = reveal;
+    Ok(frame::build(&items, &nodes, today))
 }
 
-/// A frame with what is sealed taken out of it, apart from the command so it
-/// can be tested without a runtime.
-pub(crate) fn sealed_frame(
-    items: Vec<Event>,
-    nodes: &[frame::FrameNode],
-    today: chrono::NaiveDate,
-    seals: &Seals,
-    reveal: bool,
-) -> TimeFrame {
-    let shown: Vec<Event> = if reveal {
-        items
-    } else {
-        // Nothing dated inside a sealed period is drawn: not as density, not
-        // as the day somebody arrived, not as a relationship beginning.
-        items
-            .into_iter()
-            .filter(|item| !seals.hides_item(item) && !seals.covers(&item.happened_from))
-            .collect()
-    };
-    let mut built = frame::build(&shown, nodes, today);
-    if !reveal {
-        // A withheld node keeps its place in the present graph, which is the
-        // app's own view of it. What it loses is a place in time: placing it
-        // would draw the sealed period back in, one node at a time.
-        built.first_seen.retain(|id, day| !seals.hides(id) && !seals.covers(day));
-        built.density.retain(|month| !seals.covers_month(&month.month));
-        built.died_on.retain(|id, _| !seals.hides(id));
-        built
-            .links
-            .retain(|link| !seals.hides(&link.source) && !seals.hides(&link.target));
-    }
-    built.sealed = seals.periods().to_vec();
-    built
-}
 
-/// What the timeline holds about one node, under its path and its identity,
-/// less what is sealed.
+/// What the timeline holds about one node, under its path and its identity.
 #[tauri::command]
 pub fn timeline_about(
     state: tauri::State<'_, DbState>,
@@ -275,10 +228,8 @@ pub fn timeline_about(
     }
     let items = timeline.about(&names, chrono::Local::now().date_naive())?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let seals = seal::current(&db, &vault_path)?;
     let path_of = person_paths(&db)?;
     drop(db);
-    let items = items.into_iter().filter(|item| !seals.hides_item(item)).collect();
     Ok(one_side_of_each_relationship(items, &names, &path_of))
 }
 
@@ -333,18 +284,6 @@ pub(crate) fn one_side_of_each_relationship(
             .then_with(|| a.id.cmp(&b.id))
     });
     items
-}
-
-/// Seal a period: `from` and `to` as 2019, 2019-02 or 2019-02-14.
-#[tauri::command]
-pub fn seal_period(vault_path: String, from: String, to: String) -> AppResult<SealedPeriod> {
-    seal::write_period(&vault_path, &from, &to)
-}
-
-/// Lift the seal on a period.
-#[tauri::command]
-pub fn remove_seal(vault_path: String, id: String) -> AppResult<()> {
-    seal::remove_period(&vault_path, &id)
 }
 
 /// A person the app has gone quiet about, and why.
@@ -461,7 +400,6 @@ pub fn ledger_verify(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::frame::FrameNode;
 
     fn item(kind: &str, node_id: &str, from: &str) -> Event {
         Event {
@@ -484,33 +422,6 @@ mod tests {
         }
     }
 
-    /// The strip shows a sealed period as sealed: no density in it, no node
-    /// placed inside it, and the period itself to draw.
-    #[test]
-    fn a_frame_does_not_draw_what_happened_in_a_sealed_period_unless_asked() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path().to_string_lossy().to_string();
-        seal::write_period(&vault, "2019-02", "2019-09").unwrap();
-        let db = crate::db::DbBridge::new_in_memory_full().unwrap();
-        let seals = seal::Seals::read(&db, &vault).unwrap();
-
-        let nodes = [FrameNode {
-            id: "Notes/then.md".into(),
-            stable_id: "Notes/then.md".into(),
-            created_at: "2026-01-01T12:00:00.000Z".into(),
-        }];
-        let items = vec![item("note", "Notes/then.md", "2019-05-11"), item("note", "Notes/after.md", "2020-01-01")];
-        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
-
-        let sealed = sealed_frame(items.clone(), &nodes, today, &seals, false);
-        assert_eq!(sealed.sealed.len(), 1);
-        assert!(sealed.density.iter().all(|m| m.month != "2019-05"), "{:?}", sealed.density);
-        assert_ne!(sealed.first_seen.get("Notes/then.md").map(String::as_str), Some("2019-05-11"));
-
-        let revealed = sealed_frame(items, &nodes, today, &seals, true);
-        assert!(revealed.density.iter().any(|m| m.month == "2019-05"));
-        assert_eq!(revealed.sealed.len(), 1, "revealed for one look, still sealed");
-    }
 }
 
 // ─── Reading notes into proposals (Nhát E) ───────────────────────
@@ -523,6 +434,68 @@ struct Extracting;
 impl Drop for Extracting {
     fn drop(&mut self) {
         EXTRACTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// What is left to read, by day, and who is who — `timeline::reader`.
+///
+/// The vault's identity is looked up before the cache is locked: it takes the
+/// same lock, which is not reentrant. Each note's history comes from its Loro
+/// document, where there is one; a note never saved here has none, and its
+/// blocks take the day it was made.
+fn reading_plan<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    state: &DbState,
+    timeline: &crate::timeline::store::TimelineStore,
+    vault_path: &str,
+    config: &extract::Config,
+    settled_before: Option<chrono::DateTime<chrono::Utc>>,
+) -> AppResult<(reader::Plan, reader::Directory)> {
+    let vault_id = crate::sync::core::identity::load_or_register_vault_identity(app_handle, vault_path)
+        .map(|identity| identity.vault_id.to_string())
+        .ok();
+    let today = chrono::Local::now().date_naive();
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let history = |rel: &str| -> blocks::History {
+        let Some(vault_id) = vault_id.as_deref() else { return blocks::History::default() };
+        match db.get_node_id_by_path(vault_id, rel) {
+            Ok(Some(doc_id)) => db
+                .get_crdt_doc(vault_id, &doc_id)
+                .map(|doc| blocks::History::of(&doc))
+                .unwrap_or_default(),
+            _ => blocks::History::default(),
+        }
+    };
+    reader::plan_in(&db, timeline.conn(), vault_path, config, today, settled_before, &history)
+}
+
+/// A note as it is now, for the tray to judge what was read from it by: at
+/// the path it was read at, or — moved since — wherever the quoted words are.
+fn note_now(state: &DbState) -> impl Fn(&str, &str) -> Option<(String, extract::NoteNow)> + '_ {
+    move |id: &str, quote: &str| {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        let as_now = |node: crate::models::node::NodeMetadata| {
+            (node.id, extract::NoteNow { title: node.title, node_type: node.node_type, content: node.content })
+        };
+        if let Some(node) = db.get_node(id).ok().flatten() {
+            return Some(as_now(node));
+        }
+        // Words long enough to find it by, from the quote as the model wrote
+        // it. The candidates are then held to the whole quote.
+        let words: String = quote.split_whitespace().take(5).collect::<Vec<_>>().join(" ");
+        if words.chars().count() < 12 {
+            return None;
+        }
+        let candidates: Vec<String> = db
+            .conn()
+            .prepare("SELECT id FROM nodes WHERE instr(content, ?1) > 0 AND node_type != 'moment' LIMIT 5")
+            .and_then(|mut stmt| stmt.query_map([&words], |r| r.get(0)).map(|rows| rows.flatten().collect()))
+            .unwrap_or_default();
+        candidates
+            .into_iter()
+            .filter_map(|id| db.get_node(&id).ok().flatten())
+            .find(|node| extract::find_quote(&node.content, quote).is_some())
+            .map(as_now)
     }
 }
 
@@ -550,6 +523,32 @@ pub struct ExtractStatus {
     pub estimate_measured: bool,
     pub unreadable: Vec<String>,
     pub proposals: Vec<extract::Proposal>,
+    /// Kept moments whose source changed under them, waiting to be asked about.
+    pub changes: usize,
+    /// Everybody in the vault, for saying who a name belongs to.
+    pub people: Vec<extract::PersonRef>,
+    /// The kinds a moment can be here: the vault's list, or the defaults
+    /// while it has none. What the review offers, and what a reading is held
+    /// to (`extract::Config::categories`).
+    pub categories: Vec<String>,
+    /// The moments the changes above are about, as they are kept now, so the
+    /// review can show what would change.
+    pub moments: std::collections::HashMap<String, MomentView>,
+}
+
+/// A kept moment as the review shows it, beside the change proposed to it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MomentView {
+    pub path: String,
+    pub title: String,
+    pub happened: String,
+    pub people: Vec<String>,
+    pub place: Option<String>,
+    pub category: Option<String>,
+    pub time: Option<String>,
+    pub amount: Option<serde_json::Value>,
+    /// Fields the person wrote themselves; a change never touches these.
+    pub hand: Vec<String>,
 }
 
 #[tauri::command(async)]
@@ -562,31 +561,59 @@ pub fn timeline_extract_status(
     let settings = crate::commands::syn::settings_for(&vault_path);
     let config = extract::read_config(&vault_path);
     let device = crate::commands::sync::ensure_device_id(&app_handle).map_err(AppError::General)?;
-    let today = chrono::Local::now().date_naive();
 
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     let loaded = extract::load(timeline.conn(), &vault_path)?;
-    let (inputs, seals, people) = {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let seals = seal::current(&db, &vault_path)?;
-        let inputs = extract::inputs(&db, &vault_path, &config, &seals, today, None)?;
-        (inputs, seals, extract::People::read(&db)?)
-    };
+    let (plan, directory) = reading_plan(&app_handle, state.inner(), &timeline, &vault_path, &config, None)?;
     let proposals = extract::proposals(
         timeline.conn(),
-        &inputs,
+        &note_now(state.inner()),
         &extract::reviewed(&vault_path),
-        &seals,
-        &people,
+        &|id| directory.title(id).map(String::from),
     )?;
-    let plan = extract::plan(timeline.conn(), inputs)?;
-    let chars = |inputs: &[extract::Input]| inputs.iter().map(|i| i.text.chars().count()).sum::<usize>();
+    let chars = |bags: &[reader::Bag]| bags.iter().map(reader::Bag::chars).sum::<usize>();
     let local = media::runs_here(&settings);
     let (estimate_ms, measured) = extract::estimate_ms(timeline.conn(), &device, chars(&plan.pending), local)?;
-    let everything = chars(&plan.pending) + chars(&plan.stale) + chars(&plan.old_version);
+    let everything = chars(&plan.pending) + chars(&plan.old_version);
     let (estimate_all_ms, _) = extract::estimate_ms(timeline.conn(), &device, everything, local)?;
 
+    let moments = {
+        let wanted: std::collections::HashSet<&str> =
+            proposals.iter().filter_map(|p| p.about_moment.as_deref()).collect();
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        crate::timeline::moments::kept(&db)?
+            .into_iter()
+            .filter(|moment| wanted.contains(moment.path.as_str()))
+            .map(|moment| {
+                let text = |key: &str| moment.fields.get(key).and_then(serde_json::Value::as_str).map(String::from);
+                let view = MomentView {
+                    path: moment.path.clone(),
+                    title: moment.title.clone(),
+                    happened: text("happened").unwrap_or_default(),
+                    people: moment
+                        .fields
+                        .get("people")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|p| p.as_str())
+                                .map(|id| directory.title(id).unwrap_or(id).to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    place: text("where"),
+                    category: text("category"),
+                    time: text("time"),
+                    amount: moment.fields.get("amount").cloned(),
+                    hand: moment.hand.clone(),
+                };
+                (moment.path, view)
+            })
+            .collect()
+    };
+
     Ok(ExtractStatus {
+        categories: config.categories(),
         config,
         syn_enabled: settings.enabled,
         provider: settings.provider.key_slot().to_string(),
@@ -595,7 +622,9 @@ pub fn timeline_extract_status(
         desktop: cfg!(desktop),
         running: EXTRACTING.load(std::sync::atomic::Ordering::SeqCst),
         pending: plan.pending.len(),
-        stale: plan.stale.len(),
+        // An edit is read as its blocks now: what changed is new, what did
+        // not was read. Nothing is left "edited since".
+        stale: 0,
         old_version: plan.old_version.len(),
         done: plan.done,
         estimate_ms,
@@ -603,6 +632,13 @@ pub fn timeline_extract_status(
         estimate_measured: measured,
         unreadable: loaded.unreadable,
         proposals,
+        changes: plan.changes.len(),
+        people: directory
+            .people
+            .iter()
+            .map(|person| extract::PersonRef { id: person.id.clone(), title: person.name.clone() })
+            .collect(),
+        moments,
     })
 }
 
@@ -616,6 +652,9 @@ pub struct ExtractSettings {
     pub tags: Vec<String>,
     #[serde(default)]
     pub conversations: bool,
+    /// The kinds a moment can be in this vault. Empty means the defaults.
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 /// Turn reading on or off for this vault, and say what it may read.
@@ -627,6 +666,16 @@ pub fn timeline_extract_configure(vault_path: String, settings: ExtractSettings)
     config.folders = settings.folders;
     config.tags = settings.tags;
     config.conversations = settings.conversations;
+    // Kept as the person wrote them, less the blanks and the duplicates. The
+    // list is theirs; the reader is held to it (`Config::categories`).
+    let mut kinds: Vec<String> = Vec::new();
+    for kind in &settings.categories {
+        let kind = kind.trim().to_lowercase();
+        if !kind.is_empty() && !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    config.categories = kinds;
     extract::write_config(&vault_path, &mut config, chrono::Utc::now())?;
     Ok(config)
 }
@@ -690,45 +739,52 @@ pub async fn timeline_extract_run(
     let now = chrono::Utc::now();
     let settled_before = auto.then(|| now - chrono::Duration::minutes(extract::SETTLE_MINUTES));
 
-    let (work, people, remaining) = {
+    let (work, changes, directory, remaining) = {
         let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
         extract::load(timeline.conn(), &vault_path)?;
-        let (inputs, people) = {
-            let db = state.lock().unwrap_or_else(|e| e.into_inner());
-            let seals = seal::current(&db, &vault_path)?;
-            let today = chrono::Local::now().date_naive();
-            let inputs = extract::inputs(&db, &vault_path, &config, &seals, today, settled_before)?;
-            (inputs, extract::People::read(&db)?)
-        };
-        let plan = extract::plan(timeline.conn(), inputs)?;
+        let (plan, directory) =
+            reading_plan(&app_handle, state.inner(), &timeline, &vault_path, &config, settled_before)?;
+        let asked_for_changes = matches!(scope.as_str(), "new" | "all");
+        let changes = if asked_for_changes { plan.changes.clone() } else { Vec::new() };
         let mut work = match (scope.as_str(), auto) {
             ("new", _) => plan.pending,
             (_, true) => return skip("scope"),
-            ("stale", false) => plan.stale,
+            // Edits are read as new blocks; there is nothing else "stale".
+            ("stale", false) => Vec::new(),
             ("old", false) => plan.old_version,
-            ("all", false) => [plan.pending, plan.stale, plan.old_version].concat(),
+            ("all", false) => [plan.pending, plan.old_version].concat(),
             (other, false) => return refuse(&format!("'{other}' is not a scope: use new, stale, old or all")),
         };
-        // A note that keeps failing rests before an automatic run tries it
+        // A day that keeps failing rests before an automatic run tries it
         // again, and waits behind the rest when asked for by hand.
         if auto {
-            work.retain(|input| !extract::resting(&extract::failure_key(input)));
+            work.retain(|bag| !extract::resting(&reader::failure_key(bag)));
         } else {
-            work.sort_by_key(|input| extract::resting(&extract::failure_key(input)));
+            work.sort_by_key(|bag| extract::resting(&reader::failure_key(bag)));
         }
         let limit = limit.unwrap_or(if auto { extract::AUTO_LIMIT } else { usize::MAX });
-        let remaining = work.len().saturating_sub(limit);
-        work.truncate(limit);
-        (work, people, remaining)
+        // A moment whose source changed under it is asked about first: it is
+        // about something the person already decided to keep.
+        let changes: Vec<reader::Change> = changes.into_iter().take(limit).collect();
+        let left = limit.saturating_sub(changes.len());
+        let remaining = work.len().saturating_sub(left);
+        work.truncate(left);
+        (work, changes, directory, remaining)
     };
 
-    if work.is_empty() {
+    if work.is_empty() && changes.is_empty() {
         return Ok(extract::ExtractRun::default());
     }
 
     let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
     let mut report =
-        extract::extract_all(provider.as_ref(), &model, settings.num_ctx, &work, &people, &vault_path, &device).await;
+        reader::read_all(provider.as_ref(), &model, settings.num_ctx, &work, &directory, &vault_path, &device).await;
+    let about_changes =
+        reader::read_all_changes(provider.as_ref(), &model, settings.num_ctx, &changes, &directory, &vault_path, &device)
+            .await;
+    report.read += about_changes.read;
+    report.items += about_changes.items;
+    report.failed.extend(about_changes.failed);
     report.remaining = remaining;
     log::info!(
         "timeline extract: read {}, {} proposals, {} left out, {} failed, {} remaining",
@@ -740,16 +796,43 @@ pub async fn timeline_extract_run(
     );
 
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    // Why things were left out is worth keeping, not worth failing a run over.
+    if let Err(e) = extract::remember_drops(timeline.conn(), &report.drops) {
+        log::warn!("timeline extract: could not keep what was left out: {e}");
+    }
     extract::load(timeline.conn(), &vault_path)?;
     Ok(report)
 }
 
-/// Accept a proposal into the note it came from, or decline it.
+/// Who a name belongs to, said by the person in the review.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Assigned {
+    /// The name as the note wrote it: "Cam", "chị Yến".
+    pub name: String,
+    /// The person's node: `People/<uuid>.md`.
+    pub node: String,
+}
+
+/// Keep a proposal, or decline it.
 ///
-/// Accepting writes a `moments` entry into that note's frontmatter, which is
-/// the first moment anything reaches the vault's own notes (§4.7). Declining
-/// writes only the decision, so no device offers it again.
+/// Keeping writes the moment to a file of its own, `Moments/<uuid>.md`, which
+/// names the note it was read from (`timeline::moments`). The note itself is
+/// not touched. Declining writes only the decision, so no device offers it
+/// again.
+///
+/// Every field is the person's to put right first (`extract::Edits`), and what
+/// they put right is remembered twice over: the fields they wrote are marked
+/// `hand` in the moment, so a later reading never proposes over them (§15.2),
+/// and the correction itself is kept for the next reading to be told about
+/// (§8.2). A name they say belongs to somebody becomes that person's alias, so
+/// nobody is asked who "Cam" is twice.
+///
+/// A proposal that is a **change** to a moment already kept (§15) is applied
+/// to that moment instead of writing a new one; accepting one that says the
+/// words are gone is how a moment is let go, and it goes to the trash rather
+/// than being deleted.
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn timeline_extract_review(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -758,21 +841,19 @@ pub fn timeline_extract_review(
     item_id: String,
     accept: bool,
     node_id: Option<String>,
-    // The sentence the person wants kept, when it is not the one the model
-    // wrote. See the note on editing below.
-    title: Option<String>,
+    edits: Option<extract::Edits>,
+    assigned: Option<Vec<Assigned>>,
 ) -> AppResult<()> {
     let device = crate::commands::sync::ensure_device_id(&app_handle).map_err(AppError::General)?;
-    let item = {
+    let proposed = {
         let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
         extract::load(timeline.conn(), &vault_path)?;
         extract::item(timeline.conn(), &item_id)?
     }
     .ok_or_else(|| AppError::General(format!("No proposal {item_id}")))?;
 
-    // The sentence is the person's to fix; the quote is not theirs to write.
-    // See `extract::as_kept`.
-    let item = extract::as_kept(&item, title.as_deref())?;
+    let edits = edits.unwrap_or_default();
+    let (item, hand) = extract::as_kept(&proposed, &edits)?;
     // Where the note is now, as the tray saw it: a note moved since it was
     // read is kept into at its new path.
     let node = node_id
@@ -789,50 +870,397 @@ pub fn timeline_extract_review(
 
     if !accept {
         extract::decide(&vault_path, &device, decision("declined", None), now)?;
-    } else {
-        let seals = seals_of(state.inner(), &vault_path)?;
-        let base = node.split('#').next().unwrap_or_default();
-        if seals.hides(base) || item.payload.people.iter().any(|person| seals.hides(person)) {
-            return Err(AppError::General("That proposal is about something sealed".into()));
-        }
-        if base.starts_with("Syn/") {
-            // A conversation has no frontmatter; the decision keeps the moment.
-            extract::decide(&vault_path, &device, decision("accepted", Some(item.clone())), now)?;
-        } else {
-            let existing = {
+        let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+        extract::load(timeline.conn(), &vault_path)?;
+        return Ok(());
+    }
+
+    let base = node.split('#').next().unwrap_or_default();
+
+    match proposed.about_moment.as_deref() {
+        // A change to a moment already kept.
+        Some(path) => {
+            let kept = {
                 let db = state.lock().unwrap_or_else(|e| e.into_inner());
-                db.get_node(base)?
+                crate::timeline::moments::kept(&db)?.into_iter().find(|moment| moment.path == path)
             }
-            .ok_or_else(|| AppError::General(format!("{base} is no longer in the vault")))?;
-            if !extract::still_reads_as_read(&existing.content, &item) {
-                return Err(AppError::General(
-                    "The note has changed since this was read from it. Read it again before keeping this.".into(),
-                ));
+            .ok_or_else(|| AppError::General(format!("{path} is no longer in the vault")))?;
+
+            match proposed.verdict.as_deref() {
+                Some("retracted") | Some("gone") => {
+                    // Letting it go, to the trash: a moment kept once was a
+                    // decision, and undoing a decision is not deleting a file.
+                    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+                    crate::commands::trash::apply_trash(&db, &vault_path, path)?;
+                }
+                _ => {
+                    let serde_json::Value::Object(mut fields) = extract::moment_entry_with(&item, &hand) else {
+                        return Err(AppError::General("a moment is an object".into()));
+                    };
+                    fields.remove("id");
+                    fields.remove("extract");
+                    // What the person wrote in the review is theirs from now on,
+                    // as much as what they wrote when they kept it.
+                    let mut theirs = kept.hand.clone();
+                    theirs.extend(hand.iter().cloned());
+                    theirs.sort();
+                    theirs.dedup();
+                    fields.insert("hand".into(), serde_json::json!(theirs));
+                    let source = item.evidence.first().map(|e| (e.node.clone(), e.hash.clone(), item.payload.quote.clone()));
+                    crate::timeline::moments::apply(
+                        &app_handle,
+                        state.inner(),
+                        &vault_path,
+                        &kept,
+                        fields,
+                        source.as_ref().map(|(node, hash, quote)| (node.as_str(), hash.as_str(), quote.as_str())),
+                    )?;
+                }
             }
-            // From the file, not the cache: a moment kept on another device may
-            // have arrived on disk and not been read in yet.
-            let abs = crate::path_utils::resolve_safe_path(&vault_path, base).map_err(|e| AppError::General(e.to_string()))?;
-            let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
-            let moments = extract::moments_after_keeping(&on_disk, &item);
-            let title = on_disk.get("title").and_then(serde_json::Value::as_str).map(String::from).unwrap_or_else(|| existing.title.clone());
-            let node_type = on_disk.get("type").and_then(serde_json::Value::as_str).map(String::from).unwrap_or_else(|| existing.node_type.clone());
-            crate::commands::nodes::write_node_inner(
+        }
+        // Something new.
+        None => {
+            if !base.starts_with("Syn/") {
+                let existing = {
+                    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+                    db.get_node(base)?
+                }
+                .ok_or_else(|| AppError::General(format!("{base} is no longer in the vault")))?;
+                if !extract::still_reads_as_read(&existing.content, &item) {
+                    return Err(AppError::General(
+                        "The words this was read from are no longer in the note, so nothing shows it happened.".into(),
+                    ));
+                }
+            }
+            let serde_json::Value::Object(entry) = extract::moment_entry_with(&item, &hand) else {
+                return Err(AppError::General("a moment is an object".into()));
+            };
+            let id = entry.get("id").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+            crate::timeline::moments::write(
                 &app_handle,
                 state.inner(),
-                vault_path.clone(),
-                base.to_string(),
-                title,
-                node_type,
-                serde_json::json!({ "moments": moments }),
-                None,
+                &vault_path,
+                &id,
+                crate::timeline::moments::frontmatter(
+                    &entry,
+                    Some(base),
+                    Some(&item.payload.quote),
+                    item.evidence.first().map(|e| e.hash.as_str()),
+                ),
             )?;
-            extract::decide(&vault_path, &device, decision("accepted", None), now)?;
         }
     }
+
+    learn_from(&app_handle, state.inner(), &timeline, &vault_path, &proposed, &item, assigned.unwrap_or_default())?;
+    extract::decide(&vault_path, &device, decision("accepted", None), now)?;
 
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     extract::load(timeline.conn(), &vault_path)?;
     Ok(())
+}
+
+/// Keep what the person put right, so the next reading is told (§8.2).
+///
+/// A name they said belongs to somebody becomes that person's alias in their
+/// own note — which is where a nickname belongs, and what makes the next
+/// reading resolve it without being told again.
+fn learn_from(
+    app_handle: &tauri::AppHandle,
+    state: &DbState,
+    timeline: &tauri::State<'_, TimelineState>,
+    vault_path: &str,
+    proposed: &extract::Extracted,
+    kept: &extract::Extracted,
+    assigned: Vec<Assigned>,
+) -> AppResult<()> {
+    let mut learned: Vec<reader::Correction> = Vec::new();
+    if kept.payload.title != proposed.payload.title {
+        learned.push(reader::Correction {
+            field: "title".into(),
+            before: proposed.payload.title.clone(),
+            after: kept.payload.title.clone(),
+        });
+    }
+    if kept.payload.category != proposed.payload.category {
+        if let Some(after) = kept.payload.category.clone() {
+            learned.push(reader::Correction {
+                field: "category".into(),
+                before: proposed.payload.category.clone().unwrap_or_default(),
+                after,
+            });
+        }
+    }
+
+    for who in assigned {
+        let (name, node) = (who.name.trim().to_string(), who.node.trim().to_string());
+        if name.is_empty() || node.is_empty() {
+            continue;
+        }
+        let person = {
+            let db = state.lock().unwrap_or_else(|e| e.into_inner());
+            db.get_node(&node)?
+        };
+        let Some(person) = person.filter(|node| node.node_type == "person") else {
+            continue;
+        };
+        let abs = crate::path_utils::resolve_safe_path(vault_path, &node).map_err(|e| AppError::General(e.to_string()))?;
+        let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
+        let mut aliases: Vec<String> = match on_disk.get("aliases") {
+            Some(serde_json::Value::Array(list)) => list.iter().filter_map(|a| a.as_str()).map(String::from).collect(),
+            Some(serde_json::Value::String(one)) => vec![one.clone()],
+            _ => Vec::new(),
+        };
+        if aliases.iter().any(|alias| alias.eq_ignore_ascii_case(&name)) || person.title.eq_ignore_ascii_case(&name) {
+            continue;
+        }
+        aliases.push(name.clone());
+        crate::commands::nodes::write_node_inner(
+            app_handle,
+            state,
+            vault_path.to_string(),
+            node.clone(),
+            person.title.clone(),
+            "person".to_string(),
+            serde_json::json!({ "aliases": aliases }),
+            None,
+        )?;
+        learned.push(reader::Correction { field: "person".into(), before: name, after: person.title.clone() });
+    }
+
+    if learned.is_empty() {
+        return Ok(());
+    }
+    let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    for correction in &learned {
+        // Worth keeping, not worth failing the keep over.
+        if let Err(e) = reader::remember_correction(timeline.conn(), correction) {
+            log::warn!("timeline reader: could not keep a correction: {e}");
+        }
+    }
+    Ok(())
+}
+
+// ─── A moment already kept (§4.5) ────────────────────────────────
+
+/// One kept moment, as the sheet that edits it needs it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MomentDetail {
+    pub path: String,
+    pub title: String,
+    pub happened_from: String,
+    pub happened_to: String,
+    pub precision: String,
+    pub time: Option<String>,
+    pub place: Option<String>,
+    pub category: Option<String>,
+    pub amount: Option<serde_json::Value>,
+    pub about: Vec<String>,
+    /// Who took part, as far as anybody knows who they are…
+    pub people: Vec<extract::PersonRef>,
+    /// …and the names nobody has claimed yet.
+    pub names: Vec<String>,
+    /// Fields the person wrote themselves. Everything they edit here joins it.
+    pub hand: Vec<String>,
+    /// The note it was read from, and the words, when it was read from one.
+    pub source_node: Option<String>,
+    pub quote: Option<String>,
+    pub origin: Option<String>,
+    /// The kinds this vault keeps moments in, for the picker.
+    pub categories: Vec<String>,
+    /// Everybody, for saying who a name belongs to.
+    pub known_people: Vec<extract::PersonRef>,
+}
+
+/// A moment as it is kept, for the sheet that edits it.
+///
+/// Read from the vault's cache rather than the timeline index: what is being
+/// edited is the file, and the index is only a reading of it.
+#[tauri::command(async)]
+pub fn timeline_moment(
+    state: tauri::State<'_, DbState>,
+    vault_path: String,
+    path: String,
+) -> AppResult<MomentDetail> {
+    let config = extract::read_config(&vault_path);
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    let moment = crate::timeline::moments::one(&db, &path)?
+        .ok_or_else(|| AppError::General(format!("{path} is not a moment this vault holds")))?;
+    let directory = reader::Directory::read(&db)?;
+
+    let text = |key: &str| moment.fields.get(key).and_then(serde_json::Value::as_str).map(String::from);
+    let span = text("happened").as_deref().and_then(when::parse);
+    let (mut people, mut names) = (Vec::new(), Vec::new());
+    if let Some(serde_json::Value::Array(list)) = moment.fields.get("people") {
+        for who in list.iter().filter_map(serde_json::Value::as_str) {
+            match directory.title(who) {
+                Some(title) => people.push(extract::PersonRef { id: who.to_string(), title: title.to_string() }),
+                None => names.push(who.to_string()),
+            }
+        }
+    }
+    Ok(MomentDetail {
+        happened_from: span.map(|s| when::iso(s.from)).unwrap_or_default(),
+        happened_to: span.map(|s| when::iso(s.to)).unwrap_or_default(),
+        precision: span.map(|s| s.precision.as_str().to_string()).unwrap_or_else(|| "day".into()),
+        title: moment.title.clone(),
+        time: text("time"),
+        place: text("where"),
+        category: text("category"),
+        amount: moment.fields.get("amount").cloned(),
+        about: moment
+            .fields
+            .get("about")
+            .and_then(serde_json::Value::as_array)
+            .map(|list| list.iter().filter_map(|a| a.as_str()).map(String::from).collect())
+            .unwrap_or_default(),
+        people,
+        names,
+        hand: moment.hand.clone(),
+        source_node: moment.source_node.clone(),
+        quote: moment.quote.clone(),
+        origin: text("origin"),
+        path: moment.path.clone(),
+        categories: config.categories(),
+        known_people: directory
+            .people
+            .iter()
+            .map(|person| extract::PersonRef { id: person.id.clone(), title: person.name.clone() })
+            .collect(),
+    })
+}
+
+/// Change a moment already kept.
+///
+/// Whatever the person writes here is theirs: every field they change joins
+/// `hand`, so no later reading of the note proposes over it (§15.2). The
+/// moment's own file is written; the note it was read from is not touched.
+#[tauri::command(async)]
+pub fn timeline_moment_write(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    path: String,
+    edits: extract::Edits,
+) -> AppResult<()> {
+    let moment = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        crate::timeline::moments::one(&db, &path)?
+    }
+    .ok_or_else(|| AppError::General(format!("{path} is not a moment this vault holds")))?;
+
+    let mut fields = serde_json::Map::new();
+    if let Some(title) = edits.title.as_deref().map(str::trim) {
+        if title.is_empty() {
+            return Err(AppError::General("A moment with no title is not a moment".into()));
+        }
+        fields.insert("title".into(), serde_json::Value::String(title.to_string()));
+    }
+    if let Some(from) = edits.happened_from.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        let to = edits.happened_to.as_deref().map(str::trim).filter(|d| !d.is_empty()).unwrap_or(from);
+        let (from, to) = if from <= to { (from, to) } else { (to, from) };
+        let precision = edits.precision.clone().unwrap_or_else(|| if from == to { "day".into() } else { "range".into() });
+        fields.insert("happened".into(), serde_json::Value::String(happened(&precision, from, to)));
+    }
+    let word = |value: Option<&String>| match value.map(|v| v.trim()) {
+        Some(text) if !text.is_empty() => Some(serde_json::Value::String(text.to_string())),
+        Some(_) => Some(serde_json::Value::Null),
+        None => None,
+    };
+    for (key, value) in [("time", word(edits.time.as_ref())), ("where", word(edits.place.as_ref())), ("category", word(edits.category.as_ref()))] {
+        if let Some(value) = value {
+            fields.insert(key.into(), value);
+        }
+    }
+    if let Some(people) = &edits.people {
+        let people: Vec<String> = people.iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+        fields.insert("people".into(), serde_json::json!(people));
+    }
+    if let Some(about) = &edits.about {
+        let about: Vec<String> = about.iter().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).collect();
+        fields.insert("about".into(), serde_json::json!(about));
+    }
+    if let Some(value) = edits.amount {
+        let unit = edits.unit.as_deref().map(str::trim).filter(|u| !u.is_empty()).unwrap_or("VND").to_uppercase();
+        let amount = if value.is_finite() && value > 0.0 {
+            serde_json::json!({ "value": value, "unit": unit })
+        } else {
+            serde_json::Value::Null
+        };
+        fields.insert("amount".into(), amount);
+    }
+
+    crate::timeline::moments::edit(&app_handle, state.inner(), &vault_path, &moment, fields)?;
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    Ok(())
+}
+
+/// Let a moment go: its file to the trash, and off the timeline with it.
+///
+/// To the trash rather than deleted: keeping it was a decision, and undoing a
+/// decision is not the same as destroying the record of it.
+#[tauri::command(async)]
+pub fn timeline_moment_delete(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    path: String,
+) -> AppResult<String> {
+    let moved = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        if crate::timeline::moments::one(&db, &path)?.is_none() {
+            return Err(AppError::General(format!("{path} is not a moment this vault holds")));
+        }
+        crate::commands::trash::apply_trash(&db, &vault_path, &path)?
+    };
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    Ok(moved)
+}
+
+/// What starting the timeline again would take away, before it takes any.
+#[tauri::command(async)]
+pub fn timeline_reset_plan(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+) -> AppResult<crate::timeline::reset::Plan> {
+    let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    extract::load(timeline.conn(), &vault_path)?;
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    crate::timeline::reset::plan(&db, timeline.conn(), &vault_path)
+}
+
+/// Start the timeline again: every moment to the trash, every reading and
+/// decision forgotten, the index emptied and rebuilt.
+///
+/// For when the timeline was read by a model that was not up to it. The notes
+/// it was read from are untouched, the settings stay, and every file goes to
+/// the trash rather than away — see `timeline::reset`.
+#[tauri::command(async)]
+pub fn timeline_reset(
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+    expect_moments: Option<usize>,
+) -> AppResult<crate::timeline::reset::Done> {
+    let done = {
+        let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+        crate::timeline::reset::reset(state.inner(), timeline.conn(), &vault_path, expect_moments)?
+    };
+    let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    // Everything derived is gone with the index; this reads the vault again,
+    // which now says nothing about moments.
+    store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
+    log::info!(
+        "timeline reset: {} moments to the trash, {} month files emptied, {} transcripts kept, {} failed",
+        done.moments,
+        done.month_files,
+        done.surrogates_kept,
+        done.failed.len()
+    );
+    Ok(done)
 }
 
 /// When a node was part of the life, in stretches. See `timeline::presence`.
@@ -865,10 +1293,6 @@ pub fn timeline_presence(
         names.push(identity);
     }
 
-    let seals = seals_of(state.inner(), &vault_path)?;
-    if names.iter().any(|name| seals.hides(name)) {
-        return Ok(Vec::new());
-    }
 
     // From the events themselves, through the same seal filter every other
     // read goes through: what is sealed never reaches the stretches, rather
@@ -877,7 +1301,6 @@ pub fn timeline_presence(
     let events: Vec<_> = timeline
         .about(&names, today)?
         .into_iter()
-        .filter(|event| !seals.hides_item(event) && !seals.covers(&event.happened_from))
         .collect();
     let spans: Vec<(&str, &str)> = events
         .iter()
@@ -965,34 +1388,20 @@ pub async fn timeline_read_line(
         return Ok(ComposedReply { read: None, model: Some(model), refused: None });
     }
 
+    // The same reading as a day's (§9): one line, on today, which is what a
+    // line with no time of its own is about.
     let today = chrono::Local::now().date_naive();
-    let input = extract::Input {
-        node_id: String::new(),
-        node_type: "note".into(),
-        title: when::iso(today),
-        recorded: today,
-        // A line with no time of its own happened today, which is what the
-        // person sees and can correct.
-        dated_by_day: true,
-        hash: blake3::hash(line.as_bytes()).to_hex().to_string(),
-        text: line,
-        person_id: None,
-    };
-    let people = {
+    let directory = {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        extract::People::read(&db)?
+        reader::Directory::read(&db)?
+    };
+    let Some(bag) = reader::bag_of_line(&line, today, &directory) else {
+        return Ok(ComposedReply { read: None, model: Some(model), refused: None });
     };
     let provider = crate::commands::syn::provider_for(&app_handle, &settings).await;
 
-    let (items, _) = extract::extract_one(
-        provider.as_ref(),
-        &model,
-        settings.num_ctx,
-        &input,
-        &people,
-        chrono::Utc::now(),
-    )
-    .await?;
+    let (items, _, _) =
+        reader::read_bag(provider.as_ref(), &model, settings.num_ctx, &bag, &directory, chrono::Utc::now()).await?;
     let Some(item) = items.into_iter().next() else {
         return Ok(ComposedReply {
             read: None,
@@ -1005,15 +1414,16 @@ pub async fn timeline_read_line(
         .payload
         .people
         .iter()
-        .map(|id| ComposedPerson { name: people.title(id).unwrap_or(id).to_string(), node_id: Some(id.clone()) })
+        .map(|id| ComposedPerson { name: directory.title(id).unwrap_or(id).to_string(), node_id: Some(id.clone()) })
         .chain(item.payload.names.iter().map(|name| ComposedPerson { name: name.clone(), node_id: None }))
         .collect();
 
-    let today_iso = when::iso(today);
     Ok(ComposedReply {
         read: Some(ComposedView {
+            // Dated by the words, not by default: a line that named no time
+            // was put on today, and the person should see that was a guess.
+            dated: item.payload.date_basis.as_deref() != Some("the_day"),
             title: item.payload.title,
-            dated: !(item.happened_from == today_iso && item.happened_to == today_iso),
             happened_from: item.happened_from,
             happened_to: item.happened_to,
             precision: item.precision,
@@ -1025,15 +1435,14 @@ pub async fn timeline_read_line(
     })
 }
 
-/// Write an event into the note for the day it happened on.
+/// Write a moment somebody entered by hand.
 ///
-/// Into `moments[]` in that note's frontmatter, which is where a person's own
-/// moments already live (Nhát E) and what `derive::moments` reads. The note is
-/// made if the day has none. Returns the note it was written into.
+/// To a file of its own, `Moments/<uuid>.md`, the same as a kept proposal —
+/// see `timeline::moments`. It used to go into `moments[]` in the day's note,
+/// making the note if the day had none. Returns the moment's file.
 ///
 /// Everything goes through `write_node_inner`, the one way a node reaches
-/// disk, which merges with what is on the file rather than with the cache —
-/// so a key somebody added by hand survives this.
+/// disk.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn timeline_write_event(
@@ -1050,8 +1459,6 @@ pub fn timeline_write_event(
     // What it was about: a project or anything else that is not a person and
     // not a place. §4.2's fourth role.
     about: Vec<String>,
-    format_str: String,
-    tag: String,
 ) -> AppResult<String> {
     let written = write_event_inner(
         &app_handle,
@@ -1064,8 +1471,6 @@ pub fn timeline_write_event(
         &with,
         place.as_deref(),
         &about,
-        &format_str,
-        &tag,
     )?;
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     store::catch_up_in(state.inner(), &mut timeline, Some(&vault_path))?;
@@ -1085,8 +1490,6 @@ pub(crate) fn write_event_inner<R: tauri::Runtime>(
     with: &[String],
     place: Option<&str>,
     about: &[String],
-    format_str: &str,
-    tag: &str,
 ) -> AppResult<String> {
     let title = title.trim().to_string();
     if title.is_empty() {
@@ -1107,10 +1510,6 @@ pub(crate) fn write_event_inner<R: tauri::Runtime>(
     // What is sealed stays sealed, including from this side: an event about a
     // sealed person would be written into the vault and then hidden from the
     // person who wrote it.
-    let seals = seals_of(state, vault_path)?;
-    if let Some(hidden) = people.iter().find(|person| seals.hides(person)) {
-        return Err(AppError::General(format!("{hidden} is sealed")));
-    }
 
     let mut moment = serde_json::Map::new();
     moment.insert("title".into(), serde_json::Value::String(title.clone()));
@@ -1127,51 +1526,13 @@ pub(crate) fn write_event_inner<R: tauri::Runtime>(
         moment.insert("about".into(), serde_json::json!(about));
     }
 
-    let (id, note_title) = daily_note(state, vault_path, from, format_str)?;
-    let making_the_note = id.is_none();
-    let (moments, on_disk_title) = match &id {
-        Some(id) => {
-            let abs = crate::path_utils::resolve_safe_path(vault_path, id)
-                .map_err(|e| AppError::General(e.to_string()))?;
-            let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
-            let mut moments = on_disk
-                .get("moments")
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            moments.push(serde_json::Value::Object(moment));
-            let title = on_disk
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .map(String::from)
-                .unwrap_or_else(|| note_title.clone());
-            (moments, title)
-        }
-        None => (vec![serde_json::Value::Object(moment)], note_title.clone()),
-    };
-
-    let rel_path = id.unwrap_or_else(|| format!("Notes/{}.md", uuid::Uuid::new_v4()));
-    let mut properties = serde_json::Map::new();
-    properties.insert("moments".into(), serde_json::Value::Array(moments));
-    // `date` and `tags` are the note's own, and `resolve_properties` replaces a
-    // key rather than merging inside it — so setting them on a note that
-    // already exists would take whatever the person had put there. They are
-    // only ours to write on a note this call is making.
-    if making_the_note {
-        properties.insert("date".into(), serde_json::Value::String(when::iso(from)));
-        if let Some(tag) = Some(tag.trim()).filter(|t| !t.is_empty()) {
-            properties.insert("tags".into(), serde_json::json!([tag]));
-        }
-    }
-    crate::commands::nodes::write_node_inner(
+    let id = uuid::Uuid::new_v4().to_string();
+    let rel_path = crate::timeline::moments::write(
         app_handle,
         state,
-        vault_path.to_string(),
-        rel_path.clone(),
-        on_disk_title,
-        "note".to_string(),
-        serde_json::Value::Object(properties),
-        None,
+        vault_path,
+        &id,
+        crate::timeline::moments::frontmatter(&moment, None, None, None),
     )?;
 
     // Somebody you had lunch with was contacted that day. The interaction form
@@ -1230,41 +1591,6 @@ fn happened(precision: &str, from: &str, to: &str) -> String {
     }
 }
 
-/// The note for a day, and what it would be called. `None` means no note has
-/// that name yet, and the caller makes one.
-fn daily_note(
-    state: &DbState,
-    vault_path: &str,
-    day: chrono::NaiveDate,
-    format_str: &str,
-) -> AppResult<(Option<String>, String)> {
-    let noon = day.and_hms_opt(12, 0, 0).unwrap_or_default();
-    let local = chrono::TimeZone::from_local_datetime(&chrono::Local, &noon)
-        .single()
-        .unwrap_or_else(chrono::Local::now);
-    // The person's own naming, the same one the Notes app opens a day with.
-    let named = crate::commands::nodes::date_string_from_pattern(format_str, local)
-        .unwrap_or_else(|| when::iso(day));
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let found = db
-        .get_nodes_by_type("note")
-        .unwrap_or_default()
-        .into_iter()
-        .find(|note| note.title == named)
-        // A row's id is the path inside the vault — but it is only ever as
-        // right as whatever wrote it, and everything below treats it as
-        // relative. One that is not is made so rather than believed.
-        .map(|note| {
-            let path = std::path::Path::new(&note.id);
-            if path.is_absolute() {
-                crate::path_utils::to_relative(path, vault_path)
-            } else {
-                note.id
-            }
-        });
-    Ok((found, named))
-}
-
 // ─── Chiêm nghiệm (Nhát F) ───────────────────────────────────────
 
 /// Decisions, which are due a look back, and what they share, or only the
@@ -1276,8 +1602,7 @@ pub fn reflect_overview(state: tauri::State<'_, DbState>, vault_path: String) ->
         return Ok(reflect::overview(&config, Vec::new()));
     }
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let seals = seal::current(&db, &vault_path)?;
-    let decisions = reflect::decisions(&db, &seals, chrono::Local::now().date_naive())?;
+    let decisions = reflect::decisions(&db, chrono::Local::now().date_naive())?;
     Ok(reflect::overview(&config, decisions))
 }
 
@@ -1396,8 +1721,7 @@ pub async fn reflect_pattern(
 
     let (tag, sources) = {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let seals = seal::current(&db, &vault_path)?;
-        let decisions = reflect::decisions(&db, &seals, chrono::Local::now().date_naive())?;
+        let decisions = reflect::decisions(&db, chrono::Local::now().date_naive())?;
         let Some(group) = reflect::groups(&decisions)
             .into_iter()
             .find(|group| group.tag.to_lowercase() == tag.trim().trim_start_matches('#').to_lowercase())
@@ -1428,6 +1752,7 @@ pub async fn reflect_pattern(
             temperature: Some(0.2),
             num_ctx: settings.num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await
         .map_err(|e| AppError::General(format!("Syn could not look back: {e}")))?;
@@ -1482,8 +1807,7 @@ pub fn timeline_media_status(
     extract::load(timeline.conn(), &vault_path)?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     media::mirror_into_search(timeline.conn(), &db)?;
-    let seals = seal::current(&db, &vault_path)?;
-    let (inputs, too_large) = media::inputs(&db, &config, &seals, locate(&db))?;
+    let (inputs, too_large) = media::inputs(&db, &config, locate(&db))?;
     let plan = media::plan(timeline.conn(), inputs)?;
     Ok(MediaStatus {
         desktop: cfg!(desktop),
@@ -1575,8 +1899,7 @@ pub async fn timeline_media_run(
         extract::load(timeline.conn(), &vault_path)?;
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         media::mirror_into_search(timeline.conn(), &db)?;
-        let seals = seal::current(&db, &vault_path)?;
-        let (inputs, _) = media::inputs(&db, &config, &seals, locate(&db))?;
+        let (inputs, _) = media::inputs(&db, &config, locate(&db))?;
         let mut work: Vec<media::MediaInput> = media::plan(timeline.conn(), inputs)?
             .pending
             .into_iter()
@@ -1648,14 +1971,12 @@ pub fn timeline_media_clusters(
     extract::load(timeline.conn(), &vault_path)?;
     let items = timeline.including_folded(span, chrono::Local::now().date_naive())?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let seals = seal::current(&db, &vault_path)?;
-    media::clusters(timeline.conn(), &db, &seals, &items)
+    media::clusters(timeline.conn(), &db, &items)
 }
 
 #[cfg(test)]
 mod review_fixes {
     use super::*;
-    use serde_json::json;
 
     fn item(id: &str, kind: &str, node_id: &str, related: Option<&str>, from: &str) -> Event {
         Event {
@@ -1709,29 +2030,6 @@ mod review_fixes {
         assert_eq!(kept, vec!["mine-a".to_string(), "mine-b".to_string()], "own side kept, the other person still there");
     }
 
-    #[test]
-    fn nothing_dated_in_a_sealed_period_is_drawn() {
-        let seals = seal::compute(
-            vec![seal::SealedPeriod {
-                id: "p".into(),
-                from: "2019-02-01".into(),
-                to: "2019-09-30".into(),
-                from_text: "2019-02".into(),
-                to_text: "2019-09".into(),
-            }],
-            &[],
-            &[],
-        );
-        let items = vec![
-            item("c", "connection", "People/me.md", Some("People/a.md"), "2019-05-01"),
-            item("n", "note", "Notes/x.md", None, "2020-01-01"),
-        ];
-        let frame = sealed_frame(items, &[], chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap(), &seals, false);
-        assert!(frame.links.is_empty());
-        assert!(frame.density.iter().all(|m| !m.month.starts_with("2019")), "{:?}", frame.density);
-        assert!(frame.first_seen.values().all(|day| !day.starts_with("2019")), "{:?}", frame.first_seen);
-        let _ = json!({});
-    }
 }
 
 /// The gate for Bước 4: what is written comes back the way it went in, and a
@@ -1742,6 +2040,7 @@ mod writing_an_event {
     use std::sync::Mutex;
 
     use serde_json::json;
+
 
     use tauri::Manager;
 
@@ -1760,119 +2059,151 @@ mod writing_an_event {
             .expect("a mock app")
     }
 
-    /// A tag the person put on their day is not this feature's to remove.
+    fn vault() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::fs::canonicalize(dir.path()).unwrap().to_string_lossy().to_string();
+        (dir, path)
+    }
+
+    /// The day's note is the person's. Writing a moment used to add a list
+    /// to it, and make the note if the day had none.
     #[test]
-    fn an_event_written_keeps_the_tags_the_note_already_had() {
+    fn a_moment_written_leaves_the_day_s_note_alone() {
         let app = app();
-        let vault = tempfile::tempdir().unwrap();
-        let vault_path = std::fs::canonicalize(vault.path()).unwrap().to_string_lossy().to_string();
+        let (_dir, vault_path) = vault();
         let managed = app.state::<crate::db::DbState>();
         let state = managed.inner();
 
-        let note = super::write_event_inner(
-            app.handle(), state, &vault_path, "Đám cưới", "2016-05-14", "2016-05-14",
-            "day", &[], None, &[], "YYYY-MM-DD", "daily",
-        )
-        .expect("the first event");
-
-        // The person tags their own day, the way they would in the editor.
         crate::commands::nodes::write_node_inner(
-            app.handle(), state, vault_path.clone(), note.clone(),
+            app.handle(), state, vault_path.clone(), "Notes/2016-05-14.md".into(),
             "2016-05-14".to_string(), "note".to_string(),
-            json!({ "tags": ["daily", "công-việc", "hà-nội"] }), None,
+            json!({ "date": "2016-05-14", "tags": ["daily"] }), Some("Hôm nay.".into()),
         )
-        .expect("the person's tags");
+        .unwrap();
+        let before = std::fs::read_to_string(std::path::Path::new(&vault_path).join("Notes/2016-05-14.md")).unwrap();
 
-        super::write_event_inner(
-            app.handle(), state, &vault_path, "Ăn tối", "2016-05-14", "2016-05-14",
-            "day", &[], None, &[], "YYYY-MM-DD", "daily",
+        let written = super::write_event_inner(
+            app.handle(), state, &vault_path, "Đám cưới", "2016-05-14", "2016-05-14", "day", &[], None, &[],
         )
-        .expect("the second event");
+        .expect("the moment");
+        assert!(written.starts_with("Moments/") && written.ends_with(".md"), "{written}");
 
-        let abs = crate::path_utils::resolve_safe_path(&vault_path, &note).unwrap();
-        let tags = crate::commands::nodes::existing_properties(&abs, "md");
-        assert_eq!(
-            tags.get("tags"),
-            Some(&json!(["daily", "công-việc", "hà-nội"])),
-            "writing an event took the day's other tags with it"
-        );
+        let after = std::fs::read_to_string(std::path::Path::new(&vault_path).join("Notes/2016-05-14.md")).unwrap();
+        assert_eq!(before, after, "the day's note was written into");
+        let notes = std::fs::read_dir(std::path::Path::new(&vault_path).join("Notes")).unwrap().count();
+        assert_eq!(notes, 1, "no note was made for the day");
     }
 
     #[test]
-    fn an_event_written_is_an_event_derived_and_nothing_else_is_lost() {
+    fn a_moment_written_is_a_moment_derived_and_nothing_else_is_lost() {
         let app = app();
-        let vault = tempfile::tempdir().unwrap();
-        let vault_path = std::fs::canonicalize(vault.path())
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let (_dir, vault_path) = vault();
         let managed = app.state::<crate::db::DbState>();
         let state = managed.inner();
 
         let write = |title: &str, people: Vec<String>, place: Option<&str>| {
             super::write_event_inner(
-                app.handle(),
-                state,
-                &vault_path,
-                title,
-                "2016-05-14",
-                "2016-05-14",
-                "day",
-                &people,
-                place,
-                &[],
-                "YYYY-MM-DD",
-                "",
+                app.handle(), state, &vault_path, title, "2016-05-14", "2016-05-14", "day", &people, place, &[],
             )
-            .expect("the event was written")
+            .expect("the moment was written")
         };
 
-        let note = write("Đám cưới Tuấn và Thuỳ", vec!["Tuấn".into()], Some("Hà Nội"));
-        let abs = crate::path_utils::resolve_safe_path(&vault_path, &note).unwrap();
-        assert!(abs.exists(), "the day had no note, so one was made");
+        let wedding = write("Đám cưới Tuấn và Thuỳ", vec!["Tuấn".into()], Some("Hà Nội"));
+        let abs = crate::path_utils::resolve_safe_path(&vault_path, &wedding).unwrap();
+        assert!(abs.exists());
 
         // A key this app has no meaning for, added the way a person would.
         crate::commands::nodes::write_node_inner(
-            app.handle(),
-            state,
-            vault_path.clone(),
-            note.clone(),
-            "2016-05-14".to_string(),
-            "note".to_string(),
-            json!({ "mood": "tốt" }),
-            None,
+            app.handle(), state, vault_path.clone(), wedding.clone(),
+            "Đám cưới Tuấn và Thuỳ".to_string(), "moment".to_string(), json!({ "mood": "tốt" }), None,
         )
         .expect("the hand-added key");
 
-        let again = write("Ăn tối", Vec::new(), None);
-        assert_eq!(again, note, "the same day is the same note");
+        let dinner = write("Ăn tối", Vec::new(), None);
+        assert_ne!(dinner, wedding, "one moment, one file");
 
         let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
-        assert_eq!(
-            on_disk.get("mood").and_then(serde_json::Value::as_str),
-            Some("tốt"),
-            "a key nobody here understands is still a key somebody wrote"
+        assert_eq!(on_disk["type"], json!("moment"));
+        assert_eq!(on_disk["mood"], json!("tốt"), "a key nobody here understands is still a key somebody wrote");
+        assert_eq!(on_disk["title"], json!("Đám cưới Tuấn và Thuỳ"));
+        assert_eq!(on_disk["happened"], json!("2016-05-14"));
+        assert_eq!(on_disk["people"], json!(["Tuấn"]), "no such person yet, so the name stands");
+        assert_eq!(on_disk["where"], json!("Hà Nội"));
+        assert_eq!(on_disk["origin"], json!("manual"));
+        assert!(!on_disk.contains_key("source"), "written by hand, read from nothing");
+        let dinner_on_disk = crate::commands::nodes::existing_properties(
+            &crate::path_utils::resolve_safe_path(&vault_path, &dinner).unwrap(), "md",
         );
-        let moments = on_disk.get("moments").and_then(serde_json::Value::as_array).expect("moments");
-        assert_eq!(moments.len(), 2, "{moments:?}");
-        assert_eq!(moments[0]["title"], json!("Đám cưới Tuấn và Thuỳ"));
-        assert_eq!(moments[0]["happened"], json!("2016-05-14"));
-        assert_eq!(moments[0]["people"], json!(["Tuấn"]), "no such person yet, so the name stands");
-        assert_eq!(moments[0]["where"], json!("Hà Nội"));
-        assert!(moments[1].get("people").is_none(), "nobody was named: {:?}", moments[1]);
+        assert!(dinner_on_disk.get("people").is_none(), "nobody was named: {dinner_on_disk:?}");
 
         // And the timeline reads back what was written.
         let properties = serde_json::Value::Object(on_disk.clone());
         let derived = derive::derive(
-            &NodeView { id: &note, node_type: "note", title: "2016-05-14", properties: &properties },
+            &NodeView { id: &wedding, node_type: "moment", title: "Đám cưới Tuấn và Thuỳ", properties: &properties },
             &HashMap::new(),
         );
-        let wedding = derived
-            .iter()
-            .find(|d| d.title.as_deref() == Some("Đám cưới Tuấn và Thuỳ"))
-            .expect("the event that was just written");
-        assert_eq!(wedding.kind, "moment");
-        assert_eq!(wedding.span, when::parse("2016-05-14").unwrap());
-        assert_eq!(wedding.links, vec![Link::with("Tuấn"), Link::at("Hà Nội")]);
+        assert_eq!(derived.len(), 1, "{derived:?}");
+        assert_eq!(derived[0].kind, "moment");
+        assert_eq!(derived[0].title.as_deref(), Some("Đám cưới Tuấn và Thuỳ"));
+        assert_eq!(derived[0].span, when::parse("2016-05-14").unwrap());
+        assert_eq!(derived[0].links, vec![Link::with("Tuấn"), Link::at("Hà Nội")]);
+    }
+
+    /// A moment already kept is the person's to change and theirs to let go.
+    /// What they change becomes theirs — no later reading proposes over it.
+    #[test]
+    fn a_kept_moment_can_be_put_right_and_let_go() {
+        let app = app();
+        let (_dir, vault_path) = vault();
+        let managed = app.state::<crate::db::DbState>();
+        let state = managed.inner();
+        let path = "Moments/6f3c9a2e-0000-4000-8000-000000000001.md";
+
+        crate::commands::nodes::write_node_inner(
+            app.handle(), state, vault_path.clone(), path.into(),
+            "Ăn trưa".to_string(), "moment".to_string(),
+            json!({
+                "type": "moment", "title": "Ăn trưa", "happened": "2026-07-21",
+                "people": ["People/nga.md", "Đức"], "category": "meal", "origin": "extract",
+                "source": { "node": "Notes/2026-07-21.md", "quote": "Trưa ăn bún chả", "block": "b1" }
+            }),
+            Some(String::new()),
+        )
+        .unwrap();
+
+        let moment = crate::timeline::moments::one(&state.lock().unwrap(), path).unwrap().expect("kept");
+        crate::timeline::moments::edit(
+            app.handle(),
+            state,
+            &vault_path,
+            &moment,
+            serde_json::from_value(json!({
+                "title": "Ăn trưa bún chả với Nga",
+                "where": "Hàng Mành",
+                "category": "meal",
+                "people": ["People/nga.md"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let abs = crate::path_utils::resolve_safe_path(&vault_path, path).unwrap();
+        let on_disk = crate::commands::nodes::existing_properties(&abs, "md");
+        assert_eq!(on_disk["title"], json!("Ăn trưa bún chả với Nga"));
+        assert_eq!(on_disk["where"], json!("Hàng Mành"));
+        assert_eq!(on_disk["people"], json!(["People/nga.md"]));
+        // Changed is theirs; left alone is not.
+        assert_eq!(on_disk["hand"], json!(["people", "title", "where"]), "{on_disk:?}");
+        assert_eq!(
+            on_disk["source"],
+            json!({ "node": "Notes/2026-07-21.md", "quote": "Trưa ăn bún chả", "block": "b1" }),
+            "what it was read from is not theirs to rewrite"
+        );
+
+        // And letting it go moves the file to the trash rather than destroying it.
+        let db = state.lock().unwrap();
+        let moved = crate::commands::trash::apply_trash(&db, &vault_path, path).unwrap();
+        assert!(!abs.exists(), "gone from Moments/");
+        assert!(crate::path_utils::resolve_safe_path(&vault_path, &moved).unwrap().exists(), "{moved}");
     }
 }

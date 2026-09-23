@@ -113,11 +113,11 @@ pub fn parse_on(text: &str, today: NaiveDate) -> Option<Span> {
 
 /// The span `text` names outright, with no reference to what day it is.
 ///
-/// This is what a **stored decision** must be written in. A seal and a hush
+/// This is what a **stored decision** must be written in. A hush
 /// outlive the day they were made: keep the word `last-year` in one and every
 /// January it slides off the year it was meant to cover and onto a different
 /// one — silently, because nothing re-reads it until something is hidden that
-/// should not have been. So `timeline::seal` and `timeline::quiet` read their
+/// should not have been. So `timeline::quiet` reads its
 /// periods through this and refuse a word that moves.
 pub fn parse_written(text: &str) -> Option<Span> {
     let text = text.trim();
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(parse("2014-06..2009-09"), None, "a range that ends before it starts");
     }
 
-    /// A seal and a hush outlive the day they were made, so the words that
+    /// A hush outlives the day it was made, so the words that
     /// move are not a spelling they may be written in.
     #[test]
     fn a_stored_decision_cannot_be_written_in_a_word_that_moves() {

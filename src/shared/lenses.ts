@@ -5,7 +5,7 @@
  *
  * # Why a node, and why that costs almost nothing
  *
- * A lens could have been a file in `Timeline/`, like a seal or a hush. It is a
+ * A lens could have been a file in `Timeline/`, like a hush. It is a
  * node instead, and the reasons are all about what a node already gets for
  * free: it syncs, it can be tagged and searched, it shows up on the graph, it
  * can be shared, and it has a history.

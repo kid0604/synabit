@@ -23,10 +23,18 @@ const proposal: Proposal = {
   confidence: 0.9,
   model: 'gemma',
   stale: false,
+  category: 'health',
+  amount: null,
+  about: [],
+  time: null,
+  place: null,
+  date_basis: 'relative',
+  about_moment: null,
+  verdict: null,
 };
 
 const status = (overrides: Partial<ExtractStatus> = {}): ExtractStatus => ({
-  config: { enabled: false, allow_cloud: false, folders: [], tags: [], conversations: false },
+  config: { enabled: false, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
   syn_enabled: true,
   provider: 'ollama',
   local: true,
@@ -42,6 +50,10 @@ const status = (overrides: Partial<ExtractStatus> = {}): ExtractStatus => ({
   estimate_measured: false,
   unreadable: [],
   proposals: [],
+  changes: 0,
+  people: [],
+  categories: ['meal', 'spending', 'meeting', 'work', 'health', 'trip', 'family', 'feeling', 'thought', 'milestone', 'other'],
+  moments: {},
   ...overrides,
 });
 
@@ -74,13 +86,13 @@ describe('ExtractTray', () => {
   });
 
   it('never reads anything just by being opened', async () => {
-    await mountTray(status({ config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false } }));
+    await mountTray(status({ config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] } }));
     expect(vi.mocked(invoke).mock.calls.map(call => call[0])).not.toContain('timeline_extract_run');
   });
 
   it('keeps a proposal only when asked, and says where it came from', async () => {
     const wrapper = await mountTray(status({
-      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
       proposals: [proposal],
     }));
     const row = wrapper.find('[data-proposal]');
@@ -89,13 +101,14 @@ describe('ExtractTray', () => {
 
     await row.find('[data-accept]').trigger('click');
     await flushPromises();
-    // `title: null` — the sentence was left as the model wrote it.
+    // `edits: null` — nothing was put right, so nothing is the person's.
     expect(invoke).toHaveBeenCalledWith('timeline_extract_review', {
       vaultPath: '/vault',
       itemId: 'x1',
       accept: true,
       nodeId: 'Notes/2024-06-02.md',
-      title: null,
+      edits: null,
+      assigned: [],
     });
     expect(wrapper.findAll('[data-proposal]')).toHaveLength(0);
     expect(wrapper.emitted('changed')).toHaveLength(1);
@@ -105,7 +118,7 @@ describe('ExtractTray', () => {
 
   const withProposal = () =>
     mountTray(status({
-      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
       proposals: [proposal],
     }));
 
@@ -114,32 +127,59 @@ describe('ExtractTray', () => {
 
   /// Keep-or-discard makes a nearly right proposal either kept wrong or
   /// thrown away. This is the third thing.
-  it('can be edited before it is kept', async () => {
+  /// Every field, not only the sentence: a proposal is wrong in whichever
+  /// field it is wrong in, and the day and the people are the ones that make
+  /// it worth keeping at all.
+  it('can be put right in full before it is kept', async () => {
     const wrapper = await withProposal();
     await wrapper.find('[data-edit]').trigger('click');
 
     const box = wrapper.find('[data-proposal-title]');
     expect((box.element as HTMLTextAreaElement).value).toBe(proposal.title);
     await box.setValue('Took Mum to her eye appointment');
+    await wrapper.find('[data-field-from]').setValue('2024-06-02');
+    await wrapper.find('[data-field-time]').setValue('09:30');
+    await wrapper.find('[data-field-where]').setValue('Mắt Trung ương');
+    await wrapper.find('[data-field-category]').setValue('health');
+    await wrapper.find('[data-field-amount]').setValue('300000');
+    await wrapper.find('[data-add-person]').setValue('bác sĩ Long');
+    await wrapper.find('[data-add-person]').trigger('keydown.enter');
     await wrapper.find('[data-accept]').trigger('click');
     await flushPromises();
 
     expect(lastReview()).toMatchObject({
       itemId: 'x1',
       accept: true,
-      title: 'Took Mum to her eye appointment',
+      edits: {
+        title: 'Took Mum to her eye appointment',
+        happened_from: '2024-06-02',
+        happened_to: '2024-06-01',
+        time: '09:30',
+        people: ['p-me', 'bác sĩ Long'],
+        place: 'Mắt Trung ương',
+        category: 'health',
+        amount: 300000,
+      },
     });
   });
 
-  /// Opening the box and leaving it as it was is not a decision. Sending the
-  /// same sentence back would record one nobody made.
-  it('sends no edit when the sentence was not changed', async () => {
-    const wrapper = await withProposal();
+  /// Saying who a name is teaches the next reading: it becomes that person's
+  /// alias, and nobody is asked who "Cam" is twice.
+  it('can say who a name nobody matched belongs to', async () => {
+    const unmatched: Proposal = { ...proposal, people: [], names: ['Cam'] };
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [unmatched],
+      people: [{ id: 'People/cam.md', title: 'Cam Nguyễn' }],
+    }));
     await wrapper.find('[data-edit]').trigger('click');
-    await wrapper.find('[data-proposal-title]').setValue(`  ${proposal.title}  `);
+    await wrapper.find('[data-assign]').setValue('People/cam.md');
     await wrapper.find('[data-accept]').trigger('click');
     await flushPromises();
-    expect(lastReview()).toMatchObject({ title: null });
+    expect(lastReview()).toMatchObject({
+      assigned: [{ name: 'Cam', node: 'People/cam.md' }],
+      edits: { people: ['People/cam.md'] },
+    });
   });
 
   /// The quote is the line in the note this was read from — what makes the
@@ -157,7 +197,172 @@ describe('ExtractTray', () => {
     await wrapper.find('[data-proposal-title]').setValue('does not matter');
     await wrapper.find('[data-decline]').trigger('click');
     await flushPromises();
-    expect(lastReview()).toMatchObject({ accept: false, title: null });
+    expect(lastReview()).toMatchObject({ accept: false, edits: null });
+  });
+
+  /// A day that reads right the way it stands is kept as a day.
+  it('keeps a whole day at once', async () => {
+    const second: Proposal = { ...proposal, id: 'x2', title: 'Lunch with Nga' };
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [proposal, second],
+    }));
+    expect(wrapper.findAll('[data-day]')).toHaveLength(1);
+    await wrapper.find('[data-keep-day]').trigger('click');
+    await flushPromises();
+    const kept = vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_review');
+    expect(kept.map(c => (c[1] as { itemId: string }).itemId)).toEqual(['x1', 'x2']);
+  });
+
+  /// A pass of twenty is not a pass done by pointing at three buttons a card.
+  it('moves and decides from the keyboard', async () => {
+    const second: Proposal = { ...proposal, id: 'x2', title: 'Lunch with Nga' };
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [proposal, second],
+    }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+    await flushPromises();
+    expect(wrapper.find('[data-selected]').attributes('data-proposal')).toBe('x1');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+    await flushPromises();
+    expect(wrapper.find('[data-selected]').attributes('data-proposal')).toBe('x2');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ itemId: 'x2', accept: true });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ accept: false });
+  });
+
+  /// The kinds a moment can be are the vault's, not the app's: a life is not
+  /// a list somebody else wrote.
+  it('offers the kinds the vault keeps, and lets one be added where it is missing', async () => {
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [proposal],
+      categories: ['ăn uống', 'sự cố', 'other'],
+    }));
+    await wrapper.find('[data-edit]').trigger('click');
+    const options = wrapper.find('[data-field-category]').findAll('option').map(o => o.text());
+    expect(options).toEqual(['ăn uống', 'sự cố', 'Other', 'add a kind…']);
+
+    // Adding one saves it to the vault, and "other" stays last.
+    await wrapper.find('[data-field-category]').setValue('__new');
+    await wrapper.find('[data-new-kind]').setValue('  Cắm Trại ');
+    await wrapper.find('[data-new-kind]').trigger('keydown.enter');
+    await flushPromises();
+    const saved = vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_configure').pop()?.[1] as { settings: { categories: string[] } };
+    expect(saved.settings.categories).toEqual(['ăn uống', 'sự cố', 'cắm trại', 'other']);
+  });
+
+  /// And the list itself is a list, editable where the rest of the settings are.
+  it('shows the kinds in the settings and can drop one', async () => {
+    const wrapper = await mountTray(status({
+      config: { enabled: false, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      categories: ['meal', 'work', 'other'],
+    }));
+    const chips = wrapper.find('[data-kinds]').findAll('[data-kind]').map(c => c.text());
+    expect(chips[0]).toContain('Meal');
+    expect(chips[2]).toBe('Other');
+    expect(wrapper.find('[data-kinds]').findAll('[data-drop-kind]')).toHaveLength(2);
+
+    await wrapper.findAll('[data-drop-kind]')[1].trigger('click');
+    await flushPromises();
+    const saved = vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_configure').pop()?.[1] as { settings: { categories: string[] } };
+    expect(saved.settings.categories).toEqual(['meal', 'other']);
+  });
+
+  /// Starting again takes something away, so it says what and asks twice.
+  it('counts what starting again would take before it takes any of it', async () => {
+    const showing = status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+    });
+    const wrapper = await mountTray(showing);
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'timeline_extract_status') return showing;
+      if (command === 'timeline_reset_plan') return { moments: 37, proposals: 66, readings: 79, decisions: 12, month_files: 10, surrogates: 3 };
+      if (command === 'timeline_reset') return { moments: 37, month_files: 10, review_files: 1, surrogates_kept: 3, failed: [] };
+      return null;
+    });
+
+    // Nothing happens until it has said what it would do.
+    await wrapper.find('[data-reset-ask]').trigger('click');
+    await flushPromises();
+    const said = wrapper.find('[data-reset-plan]').text();
+    expect(said).toContain('37');
+    expect(said).toContain('66');
+    expect(vi.mocked(invoke).mock.calls.some(c => c[0] === 'timeline_reset')).toBe(false);
+
+    await wrapper.find('[data-reset-confirm]').trigger('click');
+    await flushPromises();
+    // Confirmed against the same count it showed: a moment arriving by sync
+    // in between would make the answer mean something else.
+    expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_reset').pop()?.[1]).toMatchObject({
+      vaultPath: '/vault',
+      expectMoments: 37,
+    });
+    expect(wrapper.find('[data-reset-done]').text()).toContain('37');
+    expect(wrapper.emitted('changed')).toBeTruthy();
+  });
+
+  /// A change to a moment already kept: what it says now against what the
+  /// note says now, and the fields the person wrote left out of it (§15).
+  it('shows a change to a moment already kept, and what it would change', async () => {
+    const change: Proposal = {
+      ...proposal,
+      id: 'u1',
+      title: 'Took Mum and Dad to the eye clinic',
+      people: [{ id: 'p-me', title: 'Mum' }, { id: 'p-dad', title: 'Dad' }],
+      about_moment: 'Moments/6f3c.md',
+      verdict: 'changed',
+    };
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [change],
+      moments: {
+        'Moments/6f3c.md': {
+          path: 'Moments/6f3c.md',
+          title: 'A sentence of my own',
+          happened: '2024-06-01',
+          people: ['Mum'],
+          place: null,
+          category: 'health',
+          time: null,
+          amount: null,
+          hand: ['title'],
+        },
+      },
+    }));
+    const card = wrapper.find('[data-proposal]');
+    expect(card.find('[data-change]').text()).toBe('The source changed');
+    expect(card.text()).toContain('A sentence of my own');
+    const rows = card.find('[data-diff]').text();
+    expect(rows).toContain('Mum, Dad');
+    expect(rows).not.toContain('Took Mum and Dad to the eye clinic');
+    expect(card.find('[data-hand]').text()).toContain('Title');
+
+    await card.find('[data-accept]').trigger('click');
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ itemId: 'u1', accept: true });
+  });
+
+  /// The words it stood on are gone: keeping it is a decision, letting it go
+  /// is the other one, and neither is made for the person.
+  it('offers to keep or let go a moment whose words are gone', async () => {
+    const gone: Proposal = { ...proposal, id: 'u2', about_moment: 'Moments/6f3c.md', verdict: 'retracted' };
+    const wrapper = await mountTray(status({
+      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+      proposals: [gone],
+      moments: {
+        'Moments/6f3c.md': { path: 'Moments/6f3c.md', title: 'Took Mum to the eye clinic', happened: '2024-06-01', people: [], place: null, category: null, time: null, amount: null, hand: [] },
+      },
+    }));
+    const card = wrapper.find('[data-proposal]');
+    expect(card.find('[data-change]').text()).toBe('The words are gone');
+    await card.find('[data-decline]').trigger('click');
+    await flushPromises();
+    expect(lastReview()).toMatchObject({ itemId: 'u2', accept: false });
   });
 });
 describe('Checking a proposal against the note it came from', () => {
@@ -167,7 +372,7 @@ describe('Checking a proposal against the note it came from', () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'timeline_extract_status') {
         return status({
-          config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+          config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
           proposals: [proposal],
         });
       }
@@ -231,11 +436,29 @@ describe('A quote that carries markup', () => {
   /// was still written out, so the card read
   /// «Trao đổi với [Nguyễn Lê Vũ Phương Hoàng:](synabit://person/People/77a…md)»
   /// — the name was there, buried in forty characters of uuid.
+  /// What the reader read besides the day and the people: the kind of
+  /// thing, where, how much, and whether the day was only a guess.
+  it('says what kind of moment it is, where, and what it cost', async () => {
+    const lunch: Proposal = {
+      ...proposal, id: 'x2', title: 'Lunch with Nga', category: 'meal', place: 'Hàng Mành',
+      amount: { value: 50000, unit: 'VND' }, time: '12:15', date_basis: 'inferred',
+    };
+    const wrapper = await mountTray(status({ config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] }, proposals: [lunch] }));
+    const card = wrapper.find('[data-proposal]');
+    expect(card.text()).toContain('2024-06-01 12:15');
+    const details = card.find('[data-proposal-details]').text();
+    expect(details).toContain('Meal');
+    expect(details).toContain('Hàng Mành');
+    expect(details).toMatch(/50,000|50\.000/);
+    expect(card.find('[data-day-guessed]').exists()).toBe(true);
+    expect(card.text()).not.toMatch(/\d+%/);
+  });
+
   it('shows the words, not the link syntax', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) =>
       command === 'timeline_extract_status'
         ? status({
-            config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+            config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
             proposals: [{
               ...proposal,
               quote: 'Trao đổi với [Nguyễn Lê Vũ Phương Hoàng:](synabit://person/People/77a70830-72a1-4548-a6ef-4e8fafff8d44.md)',

@@ -20,7 +20,7 @@ const lunch: ComposedReply = {
     refused: null,
 };
 
-const open = async (replies: ComposedReply[], written = 'Notes/day.md') => {
+const open = async (replies: ComposedReply[], written = 'Moments/6f3c9a2e-0000-4000-8000-000000000000.md') => {
     let at = 0;
     vi.mocked(invoke).mockImplementation(async (command: string) => {
         if (command === 'timeline_read_line') return replies[Math.min(at++, replies.length - 1)];
@@ -28,7 +28,7 @@ const open = async (replies: ComposedReply[], written = 'Notes/day.md') => {
         return null;
     });
     const wrapper = mount(EventCompose, {
-        props: { vaultPath: '/vault', format: 'YYYY-MM-DD', tag: 'daily' },
+        props: { vaultPath: '/vault' },
         global: { plugins: [i18n] },
     });
     await flushPromises();
@@ -84,10 +84,9 @@ describe('EventCompose', () => {
             with: ['People/khanh.md', 'Hải'],
             place: 'quán cũ',
             about: [],
-            formatStr: 'YYYY-MM-DD',
-            tag: 'daily',
         });
-        expect(wrapper.find('[data-saved]').text()).toContain('day.md');
+        expect(wrapper.find('[data-saved]').text()).toContain('ăn trưa với sếp');
+        expect(wrapper.find('[data-saved]').text()).not.toContain('Moments/');
         expect(wrapper.emitted('changed')).toHaveLength(1);
     });
 

@@ -39,7 +39,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::seal::Seals;
 use super::store::Event;
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -266,7 +265,6 @@ pub struct MediaInput {
 pub fn inputs(
     db: &DbBridge,
     config: &Config,
-    seals: &Seals,
     locate: impl Fn(&str) -> Option<(String, u64)>,
 ) -> AppResult<(Vec<MediaInput>, usize)> {
     let mut stmt = db
@@ -293,15 +291,6 @@ pub fn inputs(
         let (Some(kind), Some(hash)) = (kind_for(&extension, config), hash_of(&id)) else {
             continue;
         };
-        if seals.hides(&id) || properties.get("sealed").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
-        if let Some((at, _)) = when_made(&properties, name) {
-            let day = at.format("%Y-%m-%d").to_string();
-            if seals.periods().iter().any(|p| p.from.as_str() <= day.as_str() && day.as_str() <= p.to.as_str()) {
-                continue;
-            }
-        }
         let Some((path, size)) = locate(&id) else {
             continue;
         };
@@ -512,6 +501,7 @@ pub async fn caption(
             temperature: Some(0.2),
             num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await?;
     let text = tidy_caption(&reply.content)
@@ -789,13 +779,13 @@ pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaCluster> {
 }
 
 /// The clusters among these timeline items, with what stands in for each file.
-pub fn clusters(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[Event]) -> AppResult<Vec<MediaCluster>> {
+pub fn clusters(conn: &Connection, db: &DbBridge, items: &[Event]) -> AppResult<Vec<MediaCluster>> {
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     // A file node derives nothing but its own picture or recording, so asking
     // what the node is answers this without a `kind` list (§16 Bước 9).
     for item in items.iter().filter(|item| item.node_type == "file") {
-        if seals.hides_item(item) || !seen.insert(item.node_id.clone()) {
+        if !seen.insert(item.node_id.clone()) {
             continue;
         }
         let Some(node) = db.get_node(&item.node_id)? else {
@@ -982,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn what_is_read_leaves_out_the_sealed_the_absent_and_the_huge() {
+    fn what_is_read_leaves_out_the_absent_and_the_huge() {
         let dir = tempfile::tempdir().unwrap();
         let vault = dir.path().canonicalize().unwrap().to_string_lossy().to_string();
         let db = DbBridge::new_in_memory_full().unwrap();
@@ -1006,7 +996,6 @@ mod tests {
         for node in [
             file("aa", "memo.m4a", json!({})),
             file("bb", "IMG_20240912_101010.jpg", json!({})),
-            file("cc", "sealed.m4a", json!({ "sealed": true })),
             file("dd", "IMG_20190210_101010.jpg", json!({})),
             file("ee", "elsewhere.m4a", json!({})),
             file("ff", "huge.m4a", json!({})),
@@ -1015,21 +1004,22 @@ mod tests {
         ] {
             db.upsert_node(&node).unwrap();
         }
-        crate::timeline::seal::write_period(&vault, "2019-02", "2019-02").unwrap();
-        let seals = Seals::read(&db, &vault).unwrap();
         let config = Config { transcripts: true, captions: true, ..Config::default() };
         let locate = |id: &str| match id {
             "Files/ee.md" => None,
             "Files/ff.md" => Some(("/vault/assets/huge.m4a".to_string(), MAX_AUDIO_BYTES + 1)),
             other => Some((format!("/vault/{other}"), 1_000)),
         };
-        let (read, too_large) = inputs(&db, &config, &seals, locate).unwrap();
+        let (read, too_large) = inputs(&db, &config, locate).unwrap();
         let kinds: Vec<(&str, &str)> = read.iter().map(|i| (i.node_id.as_str(), i.kind)).collect();
-        assert_eq!(kinds, vec![("Files/aa.md", "transcript"), ("Files/bb.md", "caption")]);
+        assert_eq!(
+            kinds,
+            vec![("Files/aa.md", "transcript"), ("Files/bb.md", "caption"), ("Files/dd.md", "caption")]
+        );
         assert_eq!(too_large, 1);
 
         let only_captions = Config { captions: true, ..Config::default() };
-        assert_eq!(inputs(&db, &only_captions, &seals, locate).unwrap().0.len(), 1);
+        assert_eq!(inputs(&db, &only_captions, locate).unwrap().0.len(), 2);
     }
 
     /// A transcript is found by search, read by Syn, and says how to cite a moment.

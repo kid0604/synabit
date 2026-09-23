@@ -63,10 +63,9 @@ pub fn plan_for_schedule(app: &tauri::AppHandle) -> Vec<PlannedReminder> {
     let (nodes, subscribed) = {
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         (
-            crate::timeline::seal::without_sealed(
-                &db,
-                vault_path.as_deref().unwrap_or(""),
-                crate::timeline::reflect::keep_if_on(vault_path.as_deref(), db.get_active_tasks_and_events().unwrap_or_default()),
+            crate::timeline::reflect::keep_if_on(
+                vault_path.as_deref(),
+                db.get_active_tasks_and_events().unwrap_or_default(),
             ),
             db.subscribed_events_to_remind().unwrap_or_default(),
         )

@@ -89,6 +89,23 @@ describe('Narrowing to a range', () => {
     expect(narrowed.total).toBe(2);
   });
 
+  /// Four years at university began before the window, and filled it.
+  it('keeps what began before the range and ran into it', () => {
+    const result = answer(['2009-09-01', '2026-03-10', '2026-02-01']);
+    result.rows[0].until = '2013-06-30';
+    result.rows[2].until = '2026-03-05';
+    expect(within(result, { from: '2011-01-01', to: '2011-12-31' })!.rows.map(r => r.id)).toEqual(['e0']);
+    expect(within(result, range)!.rows.map(r => r.id)).toEqual(['e1', 'e2']);
+  });
+
+  /// Were the day column the end, `until` says nothing new — and an `until`
+  /// before the day must not stretch it backwards.
+  it('never reads an end earlier than the start', () => {
+    const result = answer(['2026-03-10']);
+    result.rows[0].until = '2026-01-01';
+    expect(within(result, { from: '2026-01-01', to: '2026-01-31' })!.rows).toHaveLength(0);
+  });
+
   it('leaves the answer alone when nothing is selected', () => {
     const result = answer(['2026-02-28']);
     expect(within(result, null)).toBe(result);
@@ -126,6 +143,13 @@ describe('Which stretch to look at', () => {
     const result = answer(['1991-05-01', '1992-01-01', '2026-09-01']);
     expect(outside(result, windowRange('1y', today))).toBe(2);
     expect(outside(result, null)).toBe(0);
+  });
+
+  /// A job still going is in "the last year", however long ago it began.
+  it('does not count as left out what is still going', () => {
+    const result = answer(['2019-01-01', '1992-01-01']);
+    result.rows[0].until = '2026-09-22';
+    expect(outside(result, windowRange('1y', today))).toBe(1);
   });
 });
 

@@ -590,32 +590,8 @@ const openPersonById = async (id: string) => {
  * themselves — see `plan_birthday` — and `source_person_id` is what tells the
  * reminder engine not to say it twice.
  */
-/**
- * Seal or unseal the open person: they stay in the contacts, but no reminder
- * brings them back and Syn does not read about them. One key on its own
- * patch. See `src-tauri/src/timeline/seal.rs`.
- */
-const toggleSealPerson = async () => {
-    const person = selectedPerson.value;
-    if (!person) return;
-    const sealing = !person.properties?.sealed;
-    try {
-        await ns.writeNode({
-            relPath: person.id,
-            title: person.title,
-            nodeType: 'person',
-            properties: { sealed: sealing ? true : null },
-        });
-        person.properties = { ...(person.properties || {}), sealed: sealing || undefined };
-        await fetchPeople();
-    } catch (e) {
-        logger.error('Failed to seal person', e);
-    }
-};
-
 const syncBirthdaysToCalendar = async () => {
-    // A sealed person's birthday is not put on the calendar to come round again.
-    const withBirthdays = people.value.filter(p => !p.properties?.sealed && parseAnnualDate(p.properties?.birthday ?? ''));
+    const withBirthdays = people.value.filter(p => parseAnnualDate(p.properties?.birthday ?? ''));
     if (withBirthdays.length === 0) return;
 
     let synced = 0;
@@ -1096,9 +1072,6 @@ defineExpose({ openPersonById });
                             </button>
                             <button @click="showGiftModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-pink-500 hover:bg-pink-50 dark:hover:bg-pink-900/20 rounded-lg transition-colors">
                                 <Gift class="w-3.5 h-3.5" /> {{ $t('people.log_gift') }}
-                            </button>
-                            <button @click="toggleSealPerson" :title="$t('people.seal_hint')" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800/40 rounded-lg transition-colors">
-                                <EyeOff class="w-3.5 h-3.5" /> {{ selectedPerson?.properties?.sealed ? $t('people.unseal') : $t('people.seal') }}
                             </button>
                         </div>
                     </div>

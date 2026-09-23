@@ -67,14 +67,9 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             let mut delivered: Vec<String> = Vec::new();
 
             // Decisions leave the list when reflection is off for this vault.
-            // Nothing sealed is announced, by flag, person or period. See `timeline::seal`.
-            let active_nodes = crate::timeline::seal::without_sealed(
-                &db,
-                &vault_path,
-                crate::timeline::reflect::keep_if_on(
-                    Some(&vault_path),
-                    db.get_active_tasks_and_events().unwrap_or_default(),
-                ),
+            let active_nodes = crate::timeline::reflect::keep_if_on(
+                Some(&vault_path),
+                db.get_active_tasks_and_events().unwrap_or_default(),
             );
             // Subscribed calendars are a cache, not files, so they never reach
             // the loop as nodes. Only the ones the user asked to be reminded

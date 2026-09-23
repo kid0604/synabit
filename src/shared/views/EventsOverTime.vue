@@ -23,7 +23,7 @@ import { useI18n } from 'vue-i18n';
 import { scaleLinear, scaleTime, timeDay } from 'd3';
 import type { QueryResult, QueryRow } from './types';
 import {
-  bucketsOf, datedRows, dayOf, grainFor, inRange, intervalOf, isoOf, rangeOf,
+  bucketsOf, datedRows, dayOf, grainFor, inRange, intervalOf, isoOf, overlaps, rangeOf,
   type Bucket, type Dated, type DayRange,
 } from './overTime';
 
@@ -81,18 +81,35 @@ const TOP = 8;
 const AXIS = 22;
 const DOTS = 44;
 const GAP = 10;
+/** The lane stretches sit in, above the columns. One row is this tall. */
+const SPAN_ROW = 12;
+const SPAN_ROWS = 3;
 /** One dot and the space around it; dots on the same spot stack by this. */
 const STEP = 9;
 const LEVELS = 4;
 
 const plotRight = computed(() => Math.max(LEFT + 40, width.value - RIGHT));
-const barsBottom = computed(() => Math.max(TOP + 60, height.value - AXIS - DOTS - GAP));
+/** How much of the top the stretches take, which is none when there are none. */
+const spanLane = computed(() => (spans.value.length ? Math.min(SPAN_ROWS, spans.value.length) * SPAN_ROW + 4 : 0));
+const barsTop = computed(() => TOP + spanLane.value);
+const barsBottom = computed(() => Math.max(barsTop.value + 60, height.value - AXIS - DOTS - GAP));
 const dotsBase = computed(() => barsBottom.value + GAP + DOTS - 6);
 const axisY = computed(() => height.value - AXIS + 15);
 
 // ── data ────────────────────────────────────────────────────────────────
 const placed = computed(() => datedRows(props.result));
 const dated = computed(() => placed.value.dated);
+
+/**
+ * Stretches — a job, years at a school, a trip of five days — and the rest.
+ *
+ * Counted apart, and drawn apart. A stretch adds one to every column it
+ * crosses if it is counted like a day, so four years at university would put
+ * a 1 on forty-eight months and the columns would stop meaning anything.
+ * Above the columns it says what it is: a line, with when it began and ended.
+ */
+const spans = computed(() => dated.value.filter(item => item.last > item.iso));
+const points = computed(() => dated.value.filter(item => item.last === item.iso));
 
 /** The window as days, if there is one. */
 const spanDays = computed(() => {
@@ -107,14 +124,22 @@ const grain = computed(() => {
   if (!all.length) return 'day' as const;
   let first = all[0].day;
   let last = all[0].day;
-  for (const { day } of all) {
-    if (day < first) first = day;
-    if (day > last) last = day;
+  for (const item of all) {
+    if (item.day < first) first = item.day;
+    // A stretch is on the axis until it ends, or the chart stops before it does.
+    const ends = dayOf(item.last) ?? item.day;
+    if (ends > last) last = ends;
   }
   return grainFor(first, last);
 });
 
-const buckets = computed(() => bucketsOf(dated.value, grain.value, spanDays.value ?? undefined));
+const buckets = computed(() => {
+  const span = spanDays.value ?? undefined;
+  if (span || points.value.length) return bucketsOf(points.value, grain.value, span);
+  // Stretches and nothing else: the axis is theirs.
+  const ends = dated.value.map(item => ({ ...item, day: dayOf(item.last) ?? item.day }));
+  return bucketsOf([...dated.value, ...ends], grain.value, span);
+});
 
 /**
  * Columns only when there is something to compare. One busy bucket is a
@@ -134,7 +159,7 @@ const x = computed(() => {
 
 const y = computed(() => {
   const peak = buckets.value.reduce((most, b) => Math.max(most, b.count), 1);
-  return scaleLinear().domain([0, peak]).nice(3).range([barsBottom.value, TOP]);
+  return scaleLinear().domain([0, peak]).nice(3).range([barsBottom.value, barsTop.value]);
 });
 
 /** Whole numbers only: there is no such thing as half an event. */
@@ -161,10 +186,31 @@ const bars = computed(() =>
   }),
 );
 
-/** One dot per row, stacked where several share a spot. */
+/** One line per stretch, in the lane above the columns. */
+const lanes = computed(() => {
+  const first = buckets.value[0]?.start;
+  const last = buckets.value[buckets.value.length - 1]?.end;
+  if (!first || !last) return [];
+  return spans.value.slice(0, SPAN_ROWS * 2).map((item, n) => {
+    const ends = dayOf(item.last) ?? item.day;
+    // Cut to the chart, and said to run on where it does.
+    const from = Math.max(LEFT, x.value(item.day < first ? first : item.day));
+    const to = Math.min(plotRight.value, x.value(ends > last ? last : ends));
+    return {
+      item,
+      left: from,
+      width: Math.max(3, to - from),
+      y: TOP + (n % SPAN_ROWS) * SPAN_ROW,
+      label: `${item.iso} – ${item.last}`,
+      runsOn: ends > last,
+    };
+  });
+});
+
+/** One dot per row that happened on a day, stacked where several share a spot. */
 const dots = computed(() => {
   const used = new Map<number, number>();
-  return dated.value.map(item => {
+  return points.value.map(item => {
     const cx = (x.value(item.day) + x.value(timeDay.offset(item.day, 1))) / 2;
     const column = Math.round(cx / STEP);
     const level = used.get(column) ?? 0;
@@ -225,7 +271,7 @@ const count = (n: number) => t('nexus.over_time_count', { n }, n);
 
 const selectedCount = computed(() => {
   const range = props.modelValue;
-  return range ? dated.value.filter(item => inRange(item.iso, range)).length : 0;
+  return range ? dated.value.filter(item => overlaps(item.iso, item.last, range)).length : 0;
 });
 
 /** The chart draws what it was given. When that is a page, it says so. */
@@ -356,7 +402,7 @@ const tooltip = computed(() => {
   const h = hover.value;
   if (!h) return null;
   const at = h.kind === 'bar' ? h.at : h.cx;
-  const top = h.kind === 'bar' ? TOP : h.cy - 10;
+  const top = h.kind === 'bar' ? barsTop.value : h.cy - 10;
   return {
     left: Math.min(width.value - 90, Math.max(90, at)),
     top,
@@ -433,7 +479,7 @@ const tooltip = computed(() => {
           <rect
             v-if="selection"
             data-over-time-band
-            :x="selection.left" :y="TOP" :width="selection.width" :height="dotsBase + 6 - TOP"
+            :x="selection.left" :y="barsTop" :width="selection.width" :height="dotsBase + 6 - barsTop"
             class="fill-indigo-600/10 dark:fill-indigo-500/15"
           />
 
@@ -443,6 +489,7 @@ const tooltip = computed(() => {
               v-show="bar.path"
               :key="bar.bucket.start.getTime()"
               data-over-time-bar
+              :data-count="bar.bucket.count"
               :d="bar.path"
               class="fill-indigo-600 transition-opacity dark:fill-indigo-500"
               :class="
@@ -466,7 +513,7 @@ const tooltip = computed(() => {
           <rect
             v-if="drawBars"
             data-over-time-hit
-            :x="LEFT" :y="TOP" :width="plotRight - LEFT" :height="barsBottom - TOP"
+            :x="LEFT" :y="barsTop" :width="plotRight - LEFT" :height="barsBottom - barsTop"
             fill="transparent"
             class="cursor-crosshair touch-none outline-none focus-visible:stroke-indigo-500"
             tabindex="0"
@@ -479,6 +526,30 @@ const tooltip = computed(() => {
             @keydown="onKey"
             @blur="onBlur"
           />
+
+          <!-- Stretches, above the columns and not counted in them: a bar
+               from when it began to when it ended, named. -->
+          <g v-if="lanes.length">
+            <g
+              v-for="lane in lanes"
+              :key="`span-${lane.item.row.id}`"
+              data-over-time-span
+              class="cursor-pointer"
+              @pointerenter="hover = { kind: 'dot', item: lane.item, cx: lane.left + lane.width / 2, cy: lane.y + 8 }"
+              @pointerleave="hover = null"
+              @click="emit('open', lane.item.row)"
+            >
+              <rect
+                :x="lane.left" :y="lane.y" :width="lane.width" height="4" rx="2"
+                class="fill-indigo-400 dark:fill-indigo-500"
+                :class="modelValue && !overlaps(lane.item.iso, lane.item.last, modelValue) ? 'opacity-30' : ''"
+              />
+              <text
+                :x="lane.left + 4" :y="lane.y + SPAN_ROW - 1"
+                class="fill-gray-500 text-[9px] dark:fill-gray-400"
+              >{{ lane.item.row.title }}<tspan v-if="lane.runsOn"> →</tspan></text>
+            </g>
+          </g>
 
           <!-- One dot per row, with a ring in the surface colour so the ones
                that overlap stay apart. Not in the tab order: a thousand stops
@@ -498,7 +569,7 @@ const tooltip = computed(() => {
                 :cx="dot.cx" :cy="dot.cy" r="4"
                 class="fill-indigo-600 stroke-[#fdfdfc] dark:fill-indigo-500 dark:stroke-[#1a1a1c]"
                 stroke-width="2"
-                :class="modelValue && !inRange(dot.item.iso, modelValue) ? 'opacity-30' : ''"
+                :class="modelValue && !overlaps(dot.item.iso, dot.item.last, modelValue) ? 'opacity-30' : ''"
               />
             </g>
           </g>

@@ -24,6 +24,24 @@ pub struct GraphData {
     pub links: Vec<GraphLink>,
 }
 
+/// What the Nexus list and graph do not show: fleeting captures, messages,
+/// the assistant's conversations — and moments, which are what was read *out
+/// of* the nodes rather than nodes anybody wrote (`timeline::moments`). They
+/// have the timeline; drawn here, every note would appear twice.
+///
+/// One rule for both, so the list and the graph cannot disagree about what is
+/// in the vault.
+fn left_out_of_nexus(item_type: &str, path: &str) -> bool {
+    matches!(item_type, "quickcap" | "message" | "notification")
+        || item_type == crate::timeline::moments::TYPE
+        || path.starts_with("Messages/")
+        || path.contains("/Messages/")
+        || path.starts_with("Messages\\")
+        || path.contains("\\Messages\\")
+        || path.starts_with("Syn/")
+        || path.starts_with("Syn\\")
+}
+
 #[tauri::command]
 pub fn get_nexus_items(
     _app_handle: tauri::AppHandle,
@@ -37,19 +55,7 @@ pub fn get_nexus_items(
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(rows) = db.get_all_nexus_items() {
             for r in rows {
-                if r.item_type == "quickcap"
-                    || r.item_type == "message"
-                    || r.item_type == "notification"
-                {
-                    continue;
-                }
-                if r.path.starts_with("Messages/")
-                    || r.path.contains("/Messages/")
-                    || r.path.starts_with("Messages\\")
-                    || r.path.contains("\\Messages\\")
-                    || r.path.starts_with("Syn/")
-                    || r.path.starts_with("Syn\\")
-                {
+                if left_out_of_nexus(&r.item_type, &r.path) {
                     continue;
                 }
                 let title = if r.title.is_empty() {
@@ -293,16 +299,7 @@ pub(crate) fn graph_data(db: &crate::db::DbBridge) -> AppResult<GraphData> {
 
     // 1. Build graph nodes from items
     for r in &items {
-        if r.item_type == "quickcap" || r.item_type == "message" || r.item_type == "notification" {
-            continue;
-        }
-        if r.path.starts_with("Messages/")
-            || r.path.contains("/Messages/")
-            || r.path.starts_with("Messages\\")
-            || r.path.contains("\\Messages\\")
-            || r.path.starts_with("Syn/")
-            || r.path.starts_with("Syn\\")
-        {
+        if left_out_of_nexus(&r.item_type, &r.path) {
             continue;
         }
 
@@ -558,7 +555,6 @@ fn answer(
 /// or the language is a hole in the layer above it.
 pub(crate) struct VaultWords<'a> {
     db: &'a crate::db::DbBridge,
-    seals: std::sync::Arc<crate::timeline::seal::Seals>,
     quiet: std::sync::Arc<crate::timeline::quiet::Quiet>,
 }
 
@@ -573,7 +569,6 @@ impl<'a> VaultWords<'a> {
     pub(crate) fn of(db: &'a crate::db::DbBridge, vault_path: &str) -> AppResult<VaultWords<'a>> {
         Ok(VaultWords {
             db,
-            seals: crate::timeline::seal::current(db, vault_path)?,
             quiet: crate::timeline::quiet::current(db, vault_path)?,
         })
     }
@@ -582,9 +577,7 @@ impl<'a> VaultWords<'a> {
 impl crate::pipeline::Words for VaultWords<'_> {
     fn sentences_of(&self, node: &str, day: &str) -> Vec<String> {
         // Every gate the year feature passes through, in the same order.
-        let withheld = self.seals.hides(node)
-            || (!day.is_empty() && self.seals.covers(day))
-            || (!day.is_empty() && self.quiet.hushes_day(day))
+        let withheld = (!day.is_empty() && self.quiet.hushes_day(day))
             || (!day.is_empty() && self.quiet.hushes_moment(node, day));
         if withheld {
             return Vec::new();
@@ -741,6 +734,7 @@ pub async fn ask_node_query(
             temperature: Some(0.0),
             num_ctx: settings.num_ctx,
             tools: None,
+            json_schema: None,
         })
         .await?;
     let picked = crate::timeline::year::parse_reply(&reply.content).ok_or_else(|| {
@@ -1149,20 +1143,7 @@ mod consent_gate {
         assert_eq!(read(&dir, &db).len(), 2, "{:?}", read(&dir, &db));
     }
 
-    #[test]
-    fn a_sealed_note_gives_up_nothing() {
-        let (dir, db) = vault_with(serde_json::json!({ "date": DAY, "sealed": true }));
-        assert!(read(&dir, &db).is_empty());
-    }
 
-    #[test]
-    fn a_note_inside_a_sealed_period_gives_up_nothing() {
-        let (dir, db) = vault_with(serde_json::json!({ "date": DAY }));
-        let vault = dir.path().to_str().expect("a path");
-        crate::timeline::seal::write_period(vault, "2019-11-01", "2019-11-30")
-            .expect("the period is sealed");
-        assert!(read(&dir, &db).is_empty());
-    }
 
     /// A hush is quieter than a seal — the app simply does not raise it first
     /// — and one sentence can be hushed on its own. Both have to hold here.

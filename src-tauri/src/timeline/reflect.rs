@@ -36,7 +36,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use super::seal::Seals;
 use super::when::{self, Precision};
 use crate::db::DbBridge;
 use crate::error::{AppError, AppResult};
@@ -198,16 +197,8 @@ pub fn read_decision(node: &NodeMetadata, today: NaiveDate) -> Option<Decision> 
     })
 }
 
-fn in_sealed_period(seals: &Seals, day: &str) -> bool {
-    seals
-        .periods()
-        .iter()
-        .any(|period| period.from.as_str() <= day && day <= period.to.as_str())
-}
-
-/// Every decision in the vault, newest first, less what is sealed: the note,
-/// or a decision made or looked back on inside a sealed period.
-pub fn decisions(db: &DbBridge, seals: &Seals, today: NaiveDate) -> AppResult<Vec<Decision>> {
+/// Every decision in the vault, newest first.
+pub fn decisions(db: &DbBridge, today: NaiveDate) -> AppResult<Vec<Decision>> {
     let mut stmt = db
         .conn()
         .prepare(
@@ -236,13 +227,7 @@ pub fn decisions(db: &DbBridge, seals: &Seals, today: NaiveDate) -> AppResult<Ve
 
     let mut out: Vec<Decision> = nodes
         .iter()
-        .filter(|node| node.properties.get("sealed").and_then(Value::as_bool) != Some(true))
-        .filter(|node| !seals.hides(&node.id))
         .filter_map(|node| read_decision(node, today))
-        .filter(|decision| {
-            !in_sealed_period(seals, &decision.decided_on)
-                && !decision.reviews.iter().any(|review| in_sealed_period(seals, &review.on))
-        })
         .collect();
     out.sort_by(|a, b| b.decided_on.cmp(&a.decided_on).then_with(|| a.id.cmp(&b.id)));
     Ok(out)
@@ -580,9 +565,7 @@ mod tests {
             json!({ "decided_on": "2026-01-01", "review_on": "2026-09-01", "reviews": [{ "on": "2026-09-02", "happened": "fine" }] }),
             "",
         );
-        let sealed = decision_node("Decisions/ex.md", json!({ "decided_on": "2026-01-01", "review_on": "2026-09-01", "sealed": true }), "");
-
-        let asked = reminders::plan(&[waiting.clone(), answered, sealed], at("2026-09-01T00:00"), at("2026-09-15T23:59"), "");
+        let asked = reminders::plan(&[waiting.clone(), answered], at("2026-09-01T00:00"), at("2026-09-15T23:59"), "");
         let when_asked: Vec<(String, bool)> = asked.iter().map(|r| (r.trigger_at.to_string(), r.overdue)).collect();
         assert_eq!(
             when_asked,
@@ -708,15 +691,10 @@ mod tests {
             reviewed("Decisions/a.md", "2018-05-01", "otherwise", json!({})),
             reviewed("Decisions/b.md", "2020-05-01", "partly", json!({})),
             reviewed("Decisions/c.md", "2022-05-01", "otherwise", json!({})),
-            reviewed("Decisions/MARK-SEALED-NOTE.md", "2021-05-01", "otherwise", json!({ "sealed": true })),
-            reviewed("Decisions/MARK-SEALED-PERIOD.md", "2019-02-10", "otherwise", json!({})),
         ] {
             db.upsert_node(&node).unwrap();
         }
-        crate::timeline::seal::write_period(&vault, "2019-02", "2019-02").unwrap();
-        let seals = Seals::read(&db, &vault).unwrap();
-
-        let read = decisions(&db, &seals, day("2026-09-15")).unwrap();
+        let read = decisions(&db, day("2026-09-15")).unwrap();
         assert_eq!(read.len(), 3, "{:?}", read.iter().map(|d| &d.id).collect::<Vec<_>>());
         let group = &groups(&read)[0];
         assert!(group.enough);
