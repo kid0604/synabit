@@ -78,6 +78,8 @@ let asked: string[] = [];
 interface Answers {
     events?: () => unknown;
     nodes?: () => unknown;
+    /** Overrides the whole extraction status, for an empty queue. */
+    status?: () => unknown;
 }
 
 const mountNexus = (answers: Answers = {}) => {
@@ -92,7 +94,7 @@ const mountNexus = (answers: Answers = {}) => {
         if (command === 'search_nexus_ids') return ['Notes/an.md'];
         if (command === 'get_nexus_items') return [];
         if (command === 'get_nexus_graph_data') return { nodes: [], links: [] };
-        if (command === 'timeline_extract_status') return {
+        if (command === 'timeline_extract_status') return answers.status ? answers.status() : {
             config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
             syn_enabled: true, provider: 'ollama', local: true, model: 'q', desktop: true,
             running: false, pending: 4, stale: 0, old_version: 0, done: 0,
@@ -302,6 +304,34 @@ describe('A timeline count is a floor, not a total', () => {
         await flushPromises();
         expect(vi.mocked(invoke).mock.calls.some(c => c[0] === 'timeline_extract_status')).toBe(true);
         expect(wrapper.find('[data-review-proposals]').text()).toContain('2');
+    });
+
+    /// Behind that door are the reading settings and the way to clear the
+    /// timeline and start again. It used to appear only when something was
+    /// waiting — so the moment the queue emptied, which is exactly when
+    /// somebody wants to change how reading works or start over, the door
+    /// was gone.
+    it('is there with an empty queue too, without a count', async () => {
+        const wrapper = mountNexus({
+            status: () => ({
+                config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
+                syn_enabled: true, provider: 'ollama', local: true, model: 'q', desktop: true,
+                running: false, pending: 0, stale: 0, old_version: 0, done: 12,
+                estimate_ms: 0, estimate_all_ms: 0, estimate_measured: true,
+                unreadable: [], proposals: [], changes: 0, people: [], moments: {}, categories: [],
+            }),
+        });
+        await flushPromises();
+        const door = wrapper.find('[data-review-proposals]');
+        expect(door.exists()).toBe(true);
+        expect(door.text()).not.toMatch(/\d/);
+
+        await door.trigger('click');
+        await flushPromises();
+        expect(wrapper.find('[data-review-screen]').exists()).toBe(true);
+        // And what is behind it: the settings, and starting again.
+        expect(wrapper.find('[data-extract-settings]').exists()).toBe(true);
+        expect(wrapper.find('[data-reset-ask]').exists()).toBe(true);
     });
 
     /// And pressing it opens the review, which is a screen and not a popover.

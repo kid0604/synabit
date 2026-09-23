@@ -812,8 +812,13 @@ const cleanSnippet = (snippet: string) => {
                     :vault-path="vaultPath"
                     @changed="eventsChanged"
                 />
+                <!-- Always here, with or without a queue. Behind this door
+                     are the reading settings and the way to clear the
+                     timeline and start again — and an empty queue is exactly
+                     when somebody wants them. It used to appear only when
+                     there was something waiting, so the one moment you needed
+                     it was the moment it was gone. -->
                 <button
-                    v-if="proposals?.waiting"
                     data-review-proposals
                     type="button"
                     class="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
@@ -822,7 +827,10 @@ const cleanSnippet = (snippet: string) => {
                 >
                     <Sparkles class="h-4 w-4 text-indigo-500" />
                     {{ $t('nexus.review_title') }}
-                    <span class="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white">{{ proposals.waiting }}</span>
+                    <span
+                        v-if="proposals?.waiting"
+                        class="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white"
+                    >{{ proposals.waiting }}</span>
                 </button>
             </div>
         </div>
