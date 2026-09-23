@@ -607,7 +607,7 @@ mod tests {
         seed_at(&db, "Notes/a.md", "a", "2026-01-01 00:00:00");
         let refused = db.run_node_query(&parse_query("nodes with:khánh"));
         let why = refused.expect_err("with: is not a note's field").to_string();
-        assert!(why.contains("with:") && why.contains("events"), "{why}");
+        assert!(why.contains("with:") && why.contains("moments"), "{why}");
     }
 
     /// A tag or a value with a Vietnamese capital in it used to be

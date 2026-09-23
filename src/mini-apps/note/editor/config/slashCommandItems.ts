@@ -336,7 +336,15 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
       description: 'Toggles can hide and show content inside',
       icon: ChevronRightIcon,
       command: ({ editor, range }: any) => {
-        editor.chain().focus().deleteRange(range).setDetails({ summary: 'Toggle heading' }).run();
+        // Empty, so the placeholder in `DetailsNodeView.vue` does its job.
+        //
+        // It used to insert the words "Toggle heading" as real text. A
+        // placeholder that is actually content follows the note everywhere:
+        // into the file, into the search index, and out again — a search for
+        // `cam đi học` came back with the snippet «Toggle heading Đưa Cam đi
+        // phỏng vấn nhập học», which is the editor's own scaffolding showing
+        // up in an answer about somebody's life.
+        editor.chain().focus().deleteRange(range).setDetails({ summary: '' }).run();
       },
     },
   ];

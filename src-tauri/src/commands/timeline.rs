@@ -1635,12 +1635,12 @@ pub async fn timeline_media_run(
 /// Pictures and recordings during `when`, grouped into moments, with what
 /// stands in for each and whether the file itself is on this device.
 #[tauri::command(async)]
-pub fn timeline_media_moments(
+pub fn timeline_media_clusters(
     state: tauri::State<'_, DbState>,
     timeline: tauri::State<'_, TimelineState>,
     vault_path: String,
     when: String,
-) -> AppResult<Vec<media::MediaMoment>> {
+) -> AppResult<Vec<media::MediaCluster>> {
     let span = when::parse(&when)
         .ok_or_else(|| AppError::General(format!("'{when}' is not a time the timeline can read")))?;
     let mut timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
@@ -1649,7 +1649,7 @@ pub fn timeline_media_moments(
     let items = timeline.including_folded(span, chrono::Local::now().date_naive())?;
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let seals = seal::current(&db, &vault_path)?;
-    media::moments(timeline.conn(), &db, &seals, &items)
+    media::clusters(timeline.conn(), &db, &seals, &items)
 }
 
 #[cfg(test)]

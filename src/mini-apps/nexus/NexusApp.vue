@@ -1,28 +1,25 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, History, Scale, Share2, CalendarDays } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
 import DatedView from '../../shared/views/DatedView.vue';
+import EventsOverTime from '../../shared/views/EventsOverTime.vue';
+import TimeWindowPicker from '../../shared/views/TimeWindowPicker.vue';
+import { autoWindow, outside, windowRange, within, type DayRange, type WindowChoice } from '../../shared/views/overTime';
 import type { QueryResult, QueryRow } from '../../shared/views/types';
-import { asTimeline } from './searchAsTimeline';
-import TimeStrip from './components/TimeStrip.vue';
 import ExtractTray from './components/ExtractTray.vue';
-import ReflectPanel from './components/ReflectPanel.vue';
-import MomentsPanel from './components/MomentsPanel.vue';
-import AskPanel from './components/AskPanel.vue';
-import RefusalsPanel from './components/RefusalsPanel.vue';
-import LensBar from './components/LensBar.vue';
-import type { TimeFrame } from './timeFrame';
 import NexusTagManager from './components/NexusTagManager.vue';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import EventCompose from '../../shared/components/EventCompose.vue';
 import { logger } from '../../utils/logger';
 import { refusalText } from '../../shared/refusal';
+import { onSource, withRoomFor } from '../../shared/queryChips';
 import { localDay } from '../../shared/localDay';
+import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
@@ -110,39 +107,170 @@ const searchResults = ref<SearchResult[]>([]);
 const searchRefused = ref<string | null>(null);
 
 /**
- * Which way this screen is drawing what it holds.
+ * Which way the pane draws the vault **when nothing has been asked**.
  *
- * One vault, two shapes. The graph answers *what is connected to what*; the
- * timeline answers *when*. Everything here has always had both — every node
- * carries a day — and only one of them was ever drawn.
+ * One vault, two shapes: the graph answers *what is connected to what*, the
+ * timeline answers *when*. This is how somebody browses without a question.
  *
- * Not a second screen, and not a second engine: the same matches, laid out
- * down the days instead of pulled into a hairball.
+ * It does not survive a search, and that is the point. While a question is
+ * open the answer is read in the two tabs beside it, and the word "Timeline"
+ * appeared **twice on one screen** — once as a tab, once as this — drawing
+ * the same rows in both. Two controls for one thing is worse than either.
+ * So a search takes the pane back to the graph, which is the one thing the
+ * tabs cannot show.
  */
 const shownAs = ref<'graph' | 'timeline'>('graph');
+
+/**
+ * What the pane draws.
+ *
+ * With a question open, it **follows the tab**: nodes are drawn as the graph,
+ * because for a thing what matters is what it is connected to; events are
+ * drawn across time, because for something that happened what matters is
+ * when. The pane used to show the graph whichever tab was open — and the
+ * graph is built from the *node* matches, so on the events tab the two halves
+ * of the screen were answering two different questions.
+ */
+const paneShows = computed<'graph' | 'timeline' | 'events'>(() =>
+    searchQuery.value ? (searchTab.value === 'events' ? 'events' : 'graph') : shownAs.value,
+);
+
+/**
+ * The stretch of time the events list is narrowed to, picked on the chart.
+ *
+ * Forgotten when the question changes: a range picked for one answer, still
+ * applied to the next, would hide rows of it for a reason nobody can see.
+ */
+const timeRange = ref<DayRange | null>(null);
+
+/**
+ * The stretch of time the timeline is looked at through.
+ *
+ * `null` until somebody picks one, and until then the answer decides: all of
+ * it when there is little, the last year when there is a lot (`autoWindow`).
+ * A vault holding a few things from 1991 and two hundred from this year drew
+ * this year as a single column at the edge of a thirty-five-year axis.
+ *
+ * Kept across questions once picked — it is how somebody wants to look, not
+ * part of what they asked — and it scopes the chart and the list alike, so
+ * the two can never be counting different stretches.
+ */
+const windowPicked = ref<WindowChoice | null>(null);
+
+/** The events the window applies to: the question's, or the vault's own. */
+const timelineSource = computed(() => (searchQuery.value ? eventsAnswer.value : wholeTimeline.value));
+const windowChoice = computed<WindowChoice>(() => windowPicked.value ?? autoWindow(timelineSource.value, new Date()));
+const windowDays = computed(() => windowRange(windowChoice.value, new Date()));
+const windowed = computed(() => within(timelineSource.value, windowDays.value));
+const windowHidden = computed(() => outside(timelineSource.value, windowDays.value));
+
+/** A new window lets go of any stretch picked inside the old one. */
+const pickWindow = (choice: WindowChoice) => {
+    windowPicked.value = choice;
+    timeRange.value = null;
+};
 
 /** The whole timeline, for when nothing has been asked. */
 const wholeTimeline = ref<QueryResult | null>(null);
 
 /**
- * What the timeline draws.
+ * Which half of the vault the answer is being read on.
  *
- * With a search, **the same rows the list beside it is showing** — built from
- * them rather than queried again, so the two halves of the screen can never
- * disagree about what matched. Without one, the vault's own timeline.
+ * One box, two tables. What was typed is asked of **both** — of `nodes`, which
+ * is every thing the vault holds, and of `events`, which is what happened —
+ * and the two answers sit in two tabs rather than one pretending to be the
+ * other.
+ *
+ * It used to pretend. The timeline, while a search was open, drew
+ * `asTimeline(searchResults)`: the **node** hits laid out on the day each node
+ * carries. So the same word on the same screen meant a thing on one side and
+ * an event on the other, and nothing said so. A vault that holds both has to
+ * answer as both.
  */
-const timelineAnswer = computed<QueryResult | null>(() =>
-    searchQuery.value
-        ? asTimeline(searchResults.value, totalCount.value, queryTimeMs.value)
-        : wholeTimeline.value,
-);
+const searchTab = ref<'nodes' | 'events'>('nodes');
+
+/**
+ * The proposals waiting to be looked at, and the screen for looking at them.
+ *
+ * # Where this sits, and why
+ *
+ * Three things decide it, and none of them is "wherever there was room":
+ *
+ * 1. **It fills while nobody is watching.** `App.vue` reads notes into
+ *    proposals every ten minutes, in the background. A queue that grows on its
+ *    own has to say so where somebody will see it, so the count lives next to
+ *    the search box — the one part of this screen that is always there.
+ * 2. **Reviewing is a long, repetitive read.** Each row is a sentence, a day,
+ *    a list of people and the line it came from, and there can be dozens. It
+ *    used to be a 384px popover, opened from a row of buttons inside another
+ *    popover, behind a button called "Look back" — three presses away from a
+ *    screen it has nothing to do with. It gets the whole window now.
+ * 3. **Its output is the timeline.** So the line on the timeline tab that
+ *    owns up to being partial opens this same screen: seeing that the answer
+ *    is short and being able to do something about it belong together.
+ */
+const proposals = ref<{ waiting: number; unread: number } | null>(null);
+const reviewing = ref(false);
+
+const loadProposals = async () => {
+    try {
+        const status = await invoke<{ pending: number; proposals: unknown[] }>(
+            'timeline_extract_status',
+            { vaultPath: props.vaultPath },
+        );
+        proposals.value = { waiting: status.proposals.length, unread: status.pending };
+    } catch (e) {
+        // A count nobody can read is not worth an error in front of whatever
+        // they were doing; the badge simply does not appear.
+        logger.error('Could not count what is waiting to be reviewed', e);
+    }
+};
+
+/**
+ * Something changed what the timeline holds.
+ *
+ * One handler for both doors — a proposal kept and an event written by hand
+ * are the same news — so the timeline in the pane, the answer in the tab and
+ * the count on the button can never be three different opinions.
+ */
+const eventsChanged = async () => {
+    wholeTimeline.value = null;
+    if (searchQuery.value.trim()) await performSearch();
+    else if (paneShows.value === 'timeline') await loadWholeTimeline();
+    await loadProposals();
+};
+
+/**
+ * What the timeline does not know yet, so its count can be read honestly.
+ *
+ * A count on that tab is a **floor, not a total**. The vault held a note
+ * saying «Chứng kiến Cam tập đi» and the timeline answered `1` for
+ * `cam đi học`, because nothing had read that note into an event yet — and
+ * nothing on the screen said so. A number nobody can tell is partial is the
+ * worst kind, which is the same rule `QueryResult.note` already follows.
+ *
+ * Asked once, and only when somebody opens that tab: `timeline_extract_status`
+ * walks the vault's inputs, and nobody reading the node side should pay for
+ * it. `null` means not asked.
+ */
+/** Pressing a tab. */
+const showTab = (tab: 'nodes' | 'events') => {
+    searchTab.value = tab;
+};
+
+/** What the question matched on the timeline, and why it could not be asked. */
+const eventsAnswer = ref<QueryResult | null>(null);
+const eventsRefused = ref<string | null>(null);
 
 const loadWholeTimeline = async () => {
     if (wholeTimeline.value) return;
     try {
         wholeTimeline.value = await invoke<QueryResult>('run_node_query', {
             vaultPath: props.vaultPath,
-            query: 'events sort:-when limit:300',
+            // As many as the engine gives: the chart above the list is
+            // drawn from these, and a page of the newest would say every
+            // busy month was a recent one.
+            query: 'moments sort:-when limit:1000',
             offset: 0,
         });
     } catch (e) {
@@ -168,70 +296,66 @@ const caseSensitive = ref(false);
 const currentView = ref('graph_search'); // 'graph_search' | 'tag_manager'
 
 /**
- * Looking back. Off until the reader asks: the graph is the present, and the
- * frame that makes the past drawable is only fetched when it is wanted.
+ * How wide the answer column is, and dragging its edge to change it.
+ *
+ * Three things have to agree about this number: the column, the pane beside
+ * it, and the omnibar that steps aside for it. They agreed by each spelling
+ * out `sm:left-[420px] lg:left-[480px]`, which is the same number written
+ * three times — so it becomes one CSS variable on their common ancestor, and
+ * the breakpoint stays in CSS where it belongs. Below `sm` the column is the
+ * whole screen and there is no edge to drag, which `sm:w-(--answers)` says
+ * without any JavaScript needing to know the window's width.
+ *
+ * The shared resizer rather than a fourth implementation of dragging: it
+ * already owns the clamp and the rule for a button released outside the
+ * window. Remembered per device, because re-dragging this every launch is
+ * exactly the kind of small tax nobody reports.
  */
-const lookingBack = ref(false);
-const atDate = ref<string | null>(null);
-const timeFrame = ref<TimeFrame | null>(null);
-/** Sealed periods shown for this look only. Never saved; leaving seals them again. */
-const revealSealed = ref(false);
+const ANSWERS = { initial: 480, min: 320 };
 
-const loadTimeFrame = async () => {
-    try {
-        timeFrame.value = await invoke<TimeFrame>('timeline_frame', {
-            vaultPath: props.vaultPath,
-            reveal: revealSealed.value,
-        });
-    } catch (e) {
-        logger.error('Failed to load the timeline frame', e);
-    }
+/** What the graph keeps no matter how wide the answers get. */
+const ROOM_FOR_THE_PANE = 360;
+
+/** The screen the two of them share, measured rather than assumed. */
+const screen = ref<HTMLElement | null>(null);
+
+const answers = useSidebarResize({
+    left: {
+        ...ANSWERS,
+        // Read when asked, not fixed: a ceiling of 900 is right on a big
+        // display and broken on a laptop, where dragging all the way over
+        // left the graph 224px on a 1024px window. Measured off the element
+        // the two panes actually share, so the icon rail's width is never
+        // written down a second time.
+        max: () =>
+            Math.max(ANSWERS.min, (screen.value?.clientWidth ?? window.innerWidth) - ROOM_FOR_THE_PANE),
+        remember: 'nexus.answers.width',
+    },
+});
+
+/**
+ * Taking hold of the edge.
+ *
+ * The capture is the part that is easy to leave out and hard to notice: once
+ * the pointer is over the graph, cytoscape would otherwise see every move as
+ * a pan and the drag would fight the canvas. Capturing routes them to the
+ * handle instead, and they still reach the window listener by bubbling.
+ */
+const beginResize = (event: PointerEvent) => {
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    answers.startDragLeft(event);
 };
 
-const startLookingBack = async () => {
-    lookingBack.value = true;
-    await loadTimeFrame();
-};
-
-/** A decision to open the Chiêm nghiệm panel on, from a reminder. */
-const reflectFocus = ref<string | null>(null);
-
-/** Open the Chiêm nghiệm panel on one decision. Called by `App.vue` for route `decision`. */
-const openDecision = (id: string) => {
-    reflectFocus.value = null;
-    // A fresh value each time, so asking about the same decision twice opens it twice.
-    queueMicrotask(() => { reflectFocus.value = id; });
-};
-
-defineExpose({ openDecision });
-
-const stopLookingBack = () => {
-    lookingBack.value = false;
-    atDate.value = null;
-    revealSealed.value = false;
-};
-
-const sealPeriod = async (from: string, to: string) => {
-    try {
-        await invoke('seal_period', { vaultPath: props.vaultPath, from, to });
-        await loadTimeFrame();
-    } catch (e) {
-        logger.error('Failed to seal a period', e);
-    }
-};
-
-const removeSeal = async (id: string) => {
-    try {
-        await invoke('remove_seal', { vaultPath: props.vaultPath, id });
-        await loadTimeFrame();
-    } catch (e) {
-        logger.error('Failed to lift a seal', e);
-    }
-};
-
-const setRevealSealed = async (revealed: boolean) => {
-    revealSealed.value = revealed;
-    await loadTimeFrame();
+/**
+ * Arrow keys move the edge too, so it is not a pointer-only control.
+ *
+ * It moves and then asks for the same clamp the drag uses, rather than
+ * writing the bounds out a second time here. Two clamps is two chances for
+ * the keyboard and the pointer to stop at different places.
+ */
+const nudgeEdge = (by: number) => {
+    answers.leftWidth.value += by;
+    answers.reclamp();
 };
 
 const appLockStore = useAppLockStore();
@@ -269,12 +393,37 @@ const performSearch = async () => {
         totalCount.value = 0;
         queryTimeMs.value = 0;
         graphMatchIds.value = null;
+        eventsAnswer.value = null;
+        eventsRefused.value = null;
         return;
     }
 
     isSearching.value = true;
     searchRefused.value = null;
+    eventsRefused.value = null;
     const searchId = ++currentSearchId;
+    // The timeline half, asked at the same time and refused on its own.
+    //
+    // Its own `try` because the two halves fail separately and neither
+    // failure is the other's: `#gia-đình` is a question `events` cannot
+    // answer, and `when:2019` is one this search box cannot. Sharing a
+    // `catch` would let either one empty the other's tab.
+    const askedOfEvents = withRoomFor(onSource(searchQuery.value, 'moments'), EVENTS_AT_MOST);
+    invoke<QueryResult>('run_node_query', {
+        vaultPath: props.vaultPath,
+        query: askedOfEvents,
+        offset: 0,
+    })
+        .then(answer => {
+            if (searchId === currentSearchId) eventsAnswer.value = answer;
+        })
+        .catch(e => {
+            if (searchId === currentSearchId) {
+                eventsRefused.value = refusalText(e);
+                eventsAnswer.value = null;
+            }
+            logger.error('Could not ask the timeline', e);
+        });
     try {
         // Two questions about one query. The list shows the first page, ranked
         // and with snippets; the graph needs every id that matched, which is
@@ -312,7 +461,30 @@ const performSearch = async () => {
     }
 };
 
+/** What `timeline::query` will return at most in one go (`AT_MOST`). */
+const EVENTS_AT_MOST = 1000;
+
+/**
+ * A search starts where the person was standing, and ends there too.
+ *
+ * Asking something while looking at the timeline and landing on the node
+ * tab — with the graph in the pane — threw away the one thing the screen
+ * already knew: which half they were reading. So the first keystroke picks
+ * the tab that matches the shape on screen, and clearing the box returns to
+ * the shape that matches the tab they finished on.
+ */
+watch(searchQuery, (now, before) => {
+    const asking = !!now.trim();
+    const wasAsking = !!before?.trim();
+    if (asking && !wasAsking) {
+        searchTab.value = shownAs.value === 'timeline' ? 'events' : 'nodes';
+    } else if (!asking && wasAsking) {
+        void showAs(searchTab.value === 'events' ? 'timeline' : 'graph');
+    }
+});
+
 watch(searchQuery, () => {
+    timeRange.value = null;
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         performSearch();
@@ -339,11 +511,20 @@ const debouncedLoad = (fn: () => void, ms = 300) => {
 const reload = () => {
     loadAllData();
     if (searchQuery.value.trim()) performSearch();
-    if (lookingBack.value) loadTimeFrame();
 };
 
 onMounted(() => {
+    // Pointer rather than mouse: a `PointerEvent` is a `MouseEvent`, so the
+    // shared handlers read it unchanged, and the edge works under a finger.
+    window.addEventListener('pointermove', answers.onMouseMove);
+    window.addEventListener('pointerup', answers.onMouseUp);
+    window.addEventListener('pointercancel', answers.onMouseUp);
+    // A window that shrank must not leave the column wider than the room it
+    // now has — including the width remembered from a larger screen.
+    window.addEventListener('resize', answers.reclamp);
+    answers.reclamp();
     loadAllData();
+    loadProposals();
     bus.on('vault:file-modified', () => debouncedLoad(reload));
     bus.on('vault:file-created-deleted', () => debouncedLoad(reload));
     bus.on('vault:sync-completed', () => debouncedLoad(reload));
@@ -352,6 +533,13 @@ onMounted(() => {
     bus.on('node:created', () => debouncedLoad(reload));
     bus.on('node:updated', () => debouncedLoad(reload));
     bus.on('node:deleted', () => debouncedLoad(reload));
+});
+
+onUnmounted(() => {
+    window.removeEventListener('pointermove', answers.onMouseMove);
+    window.removeEventListener('pointerup', answers.onMouseUp);
+    window.removeEventListener('pointercancel', answers.onMouseUp);
+    window.removeEventListener('resize', answers.reclamp);
 });
 
 const getTypeIcon = (type: string) => {
@@ -384,31 +572,30 @@ const openPreview = async (item: NexusItem | SearchResult) => {
     emit('edit-item', item.id, item.item_type, searchQuery.value.trim() || undefined);
 };
 
-const bar = ref<{ press: (key: string, value: string) => Promise<void> } | null>(null);
-
 /**
  * Pressing something on the graph is asking a question about it.
  *
- * §6.1: everything on this screen is already a filter, and the bar is the
- * receipt. A person becomes `with:`, a tag becomes `#tag`, and anything else
- * opens the way it always did — so nothing that worked before this is taken
- * away, and the bar fills itself for the people who never look at it.
+ * It fills the search box, which is now the only place a question lives. It
+ * used to fill the query bar inside "Look back" — and since that bar only
+ * existed while looking back, pressing a person or a tag anywhere else was a
+ * **dead click**: the optional call did nothing and the `return` swallowed
+ * the ordinary open as well.
+ *
+ * A person becomes their name rather than `with:`. `with:` is a word only
+ * the timeline can answer, so it would refuse on the tab in front and answer
+ * on the one behind — for a gesture the person did not type. Their name is a
+ * question both halves can answer.
  */
-const openPreviewFromGraph = async (node: GraphNode) => {
+const openPreviewFromGraph = (node: GraphNode) => {
     if (node.item_type === 'tag') {
-        await bar.value?.press('#', node.title.replace(/^#/, ''));
+        searchQuery.value = `#${node.title.replace(/^#/, '')}`;
         return;
     }
     if (node.item_type === 'person') {
-        await bar.value?.press('with', node.title);
+        searchQuery.value = node.title;
         return;
     }
     emit('edit-item', node.id, node.item_type);
-};
-
-/** Dragging the strip to a year is asking about that year. */
-const askAboutTime = async (when: string) => {
-    await bar.value?.press('when', when);
 };
 
 const closePreview = () => {
@@ -456,18 +643,32 @@ const cleanSnippet = (snippet: string) => {
   <div class="h-full w-full flex relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] font-sans">
     
     <!-- Main UI -->
-    <div v-show="!selectedItem" class="flex-1 flex flex-col h-full relative transition-all">
+    <!-- `--answers` is the one place the column's width is written. The
+         column, the pane beside it and the omnibar above it all read it, so
+         they cannot drift apart, and `sm:` keeps the breakpoint in CSS. -->
+    <div
+        v-show="!selectedItem"
+        ref="screen"
+        class="flex-1 flex flex-col h-full relative transition-all"
+        :style="{ '--answers': answers.leftWidth.value + 'px' }"
+        :class="answers.isDraggingLeft.value ? 'resizing cursor-col-resize select-none' : ''"
+    >
         
         <template v-if="currentView === 'graph_search'">
             <!-- Background Graph View -->
         <div
             class="absolute inset-y-0 right-0 z-0"
-            :class="searchQuery ? 'left-0 sm:left-[420px] lg:left-[480px]' : 'left-0'"
+            :class="searchQuery ? 'left-0 sm:left-(--answers)' : 'left-0'"
         >
             <!-- One vault, two shapes: what is connected to what, and when.
                  Sits opposite the graph's own controls so neither hides the
-                 other. -->
+                 other.
+
+                 Only while browsing. With a question open the answer is read
+                 in the tabs, and this drew the same rows a second time under
+                 the same word. -->
             <div
+                v-if="!searchQuery"
                 data-shown-as
                 class="absolute top-[100px] left-6 z-20 flex items-center gap-0.5 rounded-full border border-gray-200 bg-white/80 p-0.5 shadow-lg backdrop-blur-md dark:border-[#3a3a3c] dark:bg-[#242426]/80"
             >
@@ -490,93 +691,122 @@ const cleanSnippet = (snippet: string) => {
                 </button>
             </div>
 
-            <!-- The same matches, laid out down the days instead of pulled
-                 into a hairball. -->
+            <!-- The vault's own timeline, for somebody browsing it with
+                 nothing asked. -->
             <div
-                v-if="shownAs === 'timeline'"
+                v-if="paneShows === 'timeline'"
                 data-timeline-pane
                 class="absolute inset-0 overflow-y-auto bg-[#fdfdfc] pt-[150px] dark:bg-[#1a1a1c]"
             >
-                <DatedView
-                    v-if="timelineAnswer?.rows.length"
-                    :result="timelineAnswer"
-                    @open="openFromTimeline"
-                />
+                <template v-if="wholeTimeline?.rows.length">
+                    <!-- The picture first, then the rows it is a picture of;
+                         a stretch picked on one narrows the other. -->
+                    <div class="px-8 pb-3">
+                        <TimeWindowPicker
+                            :model-value="windowChoice"
+                            :range="windowDays"
+                            :hidden="windowHidden"
+                            @update:model-value="pickWindow"
+                        />
+                    </div>
+                    <div class="h-64 px-8 pb-4">
+                        <EventsOverTime v-model="timeRange" :result="windowed" :span="windowDays" @open="openFromTimeline" />
+                    </div>
+                    <DatedView :result="within(windowed, timeRange)" @open="openFromTimeline" />
+                </template>
                 <p v-else data-timeline-empty class="px-8 text-[12px] text-gray-400">
                     {{ $t('nexus.lens_nothing') }}
                 </p>
+            </div>
+
+            <!-- A question's events, drawn across time beside the list of
+                 them. The whole pane, because here it is the picture. -->
+            <div
+                v-else-if="paneShows === 'events'"
+                data-events-pane
+                class="absolute inset-0 bg-[#fdfdfc] px-8 pb-24 pt-[120px] dark:bg-[#1a1a1c]"
+            >
+                <!-- The window row sits above what it scopes: this chart,
+                     and the list in the tab beside it. -->
+                <div v-if="eventsAnswer && !eventsRefused" class="flex h-full flex-col gap-4">
+                    <TimeWindowPicker
+                        :model-value="windowChoice"
+                        :range="windowDays"
+                        :hidden="windowHidden"
+                        @update:model-value="pickWindow"
+                    />
+                    <div class="min-h-0 flex-1">
+                        <EventsOverTime
+                            v-model="timeRange"
+                            :result="windowed"
+                            :span="windowDays"
+                            @open="openFromTimeline"
+                        />
+                    </div>
+                </div>
+                <p v-else class="text-[12px] text-gray-400">{{ eventsRefused ?? $t('nexus.lens_nothing') }}</p>
             </div>
 
             <GraphView
                 v-else-if="graphData"
                 :graph-data="graphData"
                 :match-ids="graphMatchIds"
-                :at-date="lookingBack ? atDate : null"
-                :time-frame="lookingBack ? timeFrame : null"
                 @node-click="openPreviewFromGraph"
             />
             <div v-else class="w-full h-full flex items-center justify-center">
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
             </div>
 
-            <template v-if="graphData && shownAs === 'graph'">
-                <TimeStrip
-                    v-if="lookingBack && timeFrame"
-                    v-model="atDate"
-                    class="absolute inset-x-0 bottom-0 z-20"
-                    :frame="timeFrame"
-                    :revealed="revealSealed"
-                    @update:revealed="setRevealSealed"
-                    @ask-time="askAboutTime"
-                    @seal-period="sealPeriod"
-                    @remove-seal="removeSeal"
-                    @close="stopLookingBack"
+            <!-- The two doors into the timeline, in one place.
+                 One is the person saying what happened; the other is Syn
+                 saying what it thinks happened and asking. They were at
+                 opposite corners of the screen, so nothing suggested they
+                 were two halves of the same thing — and every word on them
+                 said "write" and "note", which is what they are **not**.
+                 One frame, and both labels say *event*. -->
+            <!-- No `overflow-hidden` on this frame: the compose form opens
+                 upward out of it, and clipping that is how the button became
+                 a button that did nothing. A smaller radius instead, so a
+                 child's square hover still sits right inside it. -->
+            <div
+                v-if="!selectedItem"
+                data-timeline-doors
+                class="absolute bottom-6 left-6 z-20 flex items-stretch divide-x divide-gray-200 rounded-2xl border border-gray-200 bg-white/85 shadow-lg backdrop-blur-md dark:divide-[#3a3a3c] dark:border-[#3a3a3c] dark:bg-[#242426]/85"
+            >
+                <EventCompose
+                    :vault-path="vaultPath"
+                    :format="dailyNoteFormat"
+                    :tag="dailyNoteTag"
+                    @changed="eventsChanged"
+                />
+                <button
+                    v-if="proposals?.waiting"
+                    data-review-proposals
+                    type="button"
+                    class="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
+                    :title="$t('nexus.review_title')"
+                    @click="reviewing = true"
                 >
-                    <template #ask>
-                        <LensBar
-                            ref="bar"
-                            :vault-path="vaultPath"
-                            @open="(id: string, type: string) => emit('edit-item', id, type)"
-                        />
-                    </template>
-                    <template #actions>
-                        <MomentsPanel
-                            :vault-path="vaultPath"
-                            :at-date="atDate"
-                            @open="(id: string, route: string, query?: string) => emit('edit-item', id, route, query)"
-                        />
-                        <AskPanel
-                            :vault-path="vaultPath"
-                            :format="dailyNoteFormat"
-                            :tag="dailyNoteTag"
-                            @changed="loadTimeFrame"
-                        />
-                        <RefusalsPanel :vault-path="vaultPath" @changed="loadTimeFrame" />
-                        <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" @changed="loadTimeFrame" />
-                        <ExtractTray :vault-path="vaultPath" @changed="loadTimeFrame" />
-                    </template>
-                </TimeStrip>
-                <div v-else-if="!lookingBack" class="absolute bottom-6 left-6 z-20 flex items-center gap-2">
-                    <button
-                        type="button"
-                        class="flex items-center gap-2 rounded-full border border-gray-200 bg-white/80 px-4 py-2 text-xs font-semibold text-gray-700 shadow-lg backdrop-blur-md transition-all hover:bg-gray-50 dark:border-[#3a3a3c] dark:bg-[#242426]/80 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
-                        @click.stop="startLookingBack"
-                    >
-                        <History class="h-4 w-4" /> {{ $t('nexus.time_travel') }}
-                    </button>
-                    <EventCompose
-                        :vault-path="vaultPath"
-                        :format="dailyNoteFormat"
-                        :tag="dailyNoteTag"
-                        @changed="loadTimeFrame"
-                    />
-                    <ReflectPanel :vault-path="vaultPath" :focus="reflectFocus" align="left" />
-                </div>
-            </template>
+                    <Sparkles class="h-4 w-4 text-indigo-500" />
+                    {{ $t('nexus.review_title') }}
+                    <span class="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white">{{ proposals.waiting }}</span>
+                </button>
+            </div>
         </div>
 
-        <!-- Header / Search OmniBar (Floating) -->
-        <div class="absolute top-0 inset-x-0 pt-10 px-8 pb-6 z-20 pointer-events-none">
+        <!-- Header / Search OmniBar (Floating)
+             Steps aside for the results column, the same way the pane does.
+             It is `max-w-3xl mx-auto` inside a full-width box, so on a wide
+             window it centred over the **whole** screen — which put it
+             entirely to the right of the 480px column, while the column went
+             on reserving 116px of blank for a bar that was no longer above
+             it. On a phone the column is full width and the bar really is
+             overhead, so the offset starts at `sm`, exactly where the column
+             stops being full width. -->
+        <div
+            class="absolute top-0 right-0 pt-10 px-8 pb-6 z-20 pointer-events-none"
+            :class="searchQuery ? 'left-0 sm:left-(--answers)' : 'left-0'"
+        >
             <div class="max-w-3xl mx-auto flex items-center gap-6 pointer-events-auto">
                 <NavButtons />
                 <div class="flex-1 relative group">
@@ -637,9 +867,72 @@ const cleanSnippet = (snippet: string) => {
              Full width on a phone, where there is no room for both; a column
              beside the graph everywhere else, so one query is answered as a
              list and as a picture at the same time. -->
-        <div v-if="searchQuery" class="absolute inset-y-0 left-0 z-10 w-full sm:w-[420px] lg:w-[480px] sm:border-r border-gray-200 dark:border-[#2c2c2e] bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in slide-in-from-left-4 duration-200">
-            <!-- OmniBar Backdrop Spacer to prevent scroll overlap -->
-            <div class="h-[116px] flex-shrink-0 w-full bg-[#fdfdfc]/90 dark:bg-[#1a1a1c]/90 backdrop-blur-3xl border-b border-gray-200 dark:border-[#2c2c2e] z-10 shadow-sm"></div>
+        <div v-if="searchQuery" data-answers class="absolute inset-y-0 left-0 z-10 w-full sm:w-(--answers) sm:border-r border-gray-200 dark:border-[#2c2c2e] bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in slide-in-from-left-4 duration-200">
+            <!-- The edge, draggable. A focusable `separator` is the ARIA
+                 pattern for a window splitter, so the arrow keys move it for
+                 anybody not using a pointer. Hidden below `sm`, where the
+                 column is the whole screen and there is nothing to divide. -->
+            <div
+                data-answers-handle
+                role="separator"
+                aria-orientation="vertical"
+                tabindex="0"
+                :aria-label="$t('nexus.resize_answers')"
+                :aria-valuenow="answers.leftWidth.value"
+                :aria-valuemin="320"
+                :aria-valuemax="900"
+                class="group absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize touch-none sm:block focus-visible:outline-none"
+                @pointerdown.stop.prevent="beginResize($event)"
+                @keydown.left.prevent="nudgeEdge(-24)"
+                @keydown.right.prevent="nudgeEdge(24)"
+                @dblclick="answers.leftWidth.value = 480"
+            >
+                <div
+                    class="mx-auto h-full w-0.5 transition-colors group-hover:bg-indigo-400/60 group-focus-visible:bg-indigo-500"
+                    :class="answers.isDraggingLeft.value ? 'bg-indigo-500' : ''"
+                ></div>
+            </div>
+            <!-- Room for the omnibar, and only where the omnibar is.
+                 Below `sm` it floats over this column and results would
+                 scroll under it; from `sm` up it has stepped aside, so this
+                 is a small gap rather than a band. The tab bar below carries
+                 its own edge, so this one no longer draws a border. -->
+            <div class="h-[116px] sm:h-4 flex-shrink-0 w-full bg-[#fdfdfc]/90 backdrop-blur-3xl sm:backdrop-blur-none dark:bg-[#1a1a1c]/90"></div>
+
+            <!-- One question, both tables.
+                 The count sits on the tab because that is the thing being
+                 chosen between: "nothing here, plenty over there" is the
+                 answer somebody needs before they press, not after. A tab
+                 whose half refused carries no count — a refusal is not a
+                 zero, and drawing it as one would say the timeline holds
+                 nothing when it was never asked. -->
+            <div
+                data-search-tabs
+                class="flex flex-shrink-0 items-center gap-1 border-b border-gray-200 px-4 pt-3 sm:px-6 dark:border-[#2c2c2e]"
+            >
+                <button
+                    v-for="tab in (['nodes', 'events'] as const)"
+                    :key="tab"
+                    type="button"
+                    data-search-tab
+                    :data-tab="tab"
+                    :aria-pressed="searchTab === tab"
+                    class="-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2 text-[13px] font-semibold transition-colors"
+                    :class="
+                        searchTab === tab
+                            ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
+                            : 'border-transparent text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    "
+                    @click="showTab(tab)"
+                >
+                    {{ $t(`nexus.search_tab_${tab}`) }}
+                    <span
+                        v-if="tab === 'nodes' ? !searchRefused : !eventsRefused"
+                        data-tab-count
+                        class="rounded-full bg-gray-100 px-1.5 text-[11px] font-bold tabular-nums text-gray-600 dark:bg-[#2c2c2e] dark:text-gray-300"
+                    >{{ tab === 'nodes' ? totalCount : (eventsAnswer?.total ?? 0) }}</span>
+                </button>
+            </div>
             
             <div class="flex-1 overflow-y-auto px-4 sm:px-6 pb-16 pt-8">
                 <div class="max-w-3xl mx-auto">
@@ -647,13 +940,32 @@ const cleanSnippet = (snippet: string) => {
                     <div class="w-5 h-5 rounded-full border-2 border-black dark:border-white border-t-transparent animate-spin"></div>
                 </div>
                 
-                <div v-else-if="searchResults.length === 0" class="text-center py-16">
-                    <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
-                        <Search class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                <!-- ── what the vault holds ── -->
+                <template v-else-if="searchTab === 'nodes'">
+                    <!-- The engine says which half of the app can answer it;
+                         showing that is the whole point of refusing rather
+                         than quietly answering something else.
+
+                         Ahead of the empty state, not inside the list below
+                         it: a refused question leaves no results, so it used
+                         to read «No results found» — the one sentence that
+                         turns "I cannot ask that" into "there is nothing
+                         there". -->
+                    <p
+                        v-if="searchRefused"
+                        data-search-refused
+                        class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[13px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+                    >
+                        {{ searchRefused }}
+                    </p>
+
+                    <div v-else-if="searchResults.length === 0" class="text-center py-16">
+                        <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
+                            <Search class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                        </div>
+                        <p class="text-[#52525b] dark:text-[#a1a1aa] font-medium">No results found for "{{ searchQuery }}"</p>
                     </div>
-                    <p class="text-[#52525b] dark:text-[#a1a1aa] font-medium">No results found for "{{ searchQuery }}"</p>
-                </div>
-                
+
                 <div v-else class="space-y-3">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">Search Results</h3>
@@ -662,17 +974,6 @@ const cleanSnippet = (snippet: string) => {
                             <span class="text-xs font-semibold text-gray-400">{{ totalCount }} items</span>
                         </div>
                     </div>
-
-                    <!-- The engine says which half of the app can answer it;
-                         showing that is the whole point of refusing rather
-                         than quietly answering something else. -->
-                    <p
-                        v-if="searchRefused"
-                        data-search-refused
-                        class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[13px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
-                    >
-                        {{ searchRefused }}
-                    </p>
 
                     <div v-for="item in searchResults" :key="item.id"
                          @click="openPreview(item)"
@@ -687,10 +988,22 @@ const cleanSnippet = (snippet: string) => {
 
                         <!-- Content -->
                         <div class="flex-1 min-w-0 flex flex-col justify-center">
-                            <div class="flex items-start justify-between gap-4 mb-1">
-                                <h4 class="font-bold text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{{ item.title }}</h4>
+                            <!-- Wraps rather than squeezes. With the column
+                                 dragged narrow, the date badge kept its
+                                 width and the title was truncated to two
+                                 letters — «Mộ…», «Tôi …». Now the badge
+                                 drops under the title when there is not
+                                 room for both, and the title keeps its
+                                 words. -->
+                            <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 mb-1">
+                                <h4 data-hit-title class="min-w-[8rem] flex-1 break-words line-clamp-2 font-bold text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{{ item.title }}</h4>
+                                <!-- `date` is the node's `updated_at`, which
+                                     on a daily note is a different day from
+                                     its own title. Unlabelled, one card
+                                     carried two dates and the louder of them
+                                     was the one nobody meant. -->
                                 <span class="flex-shrink-0 text-[10px] font-bold text-gray-400 flex items-center gap-1 bg-gray-50 dark:bg-[#1a1a1c] px-2 py-0.5 rounded-md border border-gray-100 dark:border-[#2c2c2e]">
-                                    {{ localDay(item.date) }}
+                                    <span class="font-medium opacity-60">{{ $t('nexus.hit_edited') }}</span>{{ localDay(item.date) }}
                                 </span>
                             </div>
                             
@@ -709,6 +1022,79 @@ const cleanSnippet = (snippet: string) => {
                         </div>
                     </div>
                 </div>
+                </template>
+
+                <!-- ── what happened ──
+                     The same words asked of `events`, drawn down the days.
+                     `DatedView` was written for notes long before the
+                     timeline had a language; it needs no telling what an
+                     event is, because both halves come back as one
+                     `QueryResult`. -->
+                <template v-else>
+                    <p
+                        v-if="eventsRefused"
+                        data-events-refused
+                        class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[13px] leading-relaxed text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+                    >
+                        {{ eventsRefused }}
+                    </p>
+
+                    <div v-else-if="!eventsAnswer?.rows.length" data-events-empty class="text-center py-16">
+                        <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
+                            <CalendarDays class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                        </div>
+                        <p class="text-[#52525b] dark:text-[#a1a1aa] font-medium">{{ $t('nexus.lens_nothing') }}</p>
+                    </div>
+
+                    <div v-else data-events-results>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">{{ $t('nexus.search_tab_events') }}</h3>
+                            <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-500/20">{{ eventsAnswer.query_time_ms }}ms</span>
+                        </div>
+
+                        <!-- What this answer could not have known about. -->
+                        <p
+                            v-if="proposals && (proposals.waiting || proposals.unread)"
+                            data-events-backlog
+                            class="mb-3 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400"
+                        >
+                            {{ proposals.waiting
+                                ? $t('nexus.events_partial_proposals', { count: proposals.waiting }, proposals.waiting)
+                                : $t('nexus.events_partial_unread', { count: proposals.unread }, proposals.unread) }}
+                            <!-- Seeing the answer is short and being able to
+                                 do something about it belong together. -->
+                            <button
+                                v-if="proposals.waiting"
+                                type="button"
+                                data-review-from-timeline
+                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                @click="reviewing = true"
+                            >{{ $t('nexus.review_open') }}</button>
+                        </p>
+                        <!-- Narrowed by whatever stretch is picked on the
+                             chart; the count up top stays the whole answer. -->
+                        <p v-if="timeRange" data-events-narrowed class="mb-3 text-[12px] text-gray-500 dark:text-gray-400">
+                            {{ $t('nexus.events_narrowed', { from: timeRange.from, to: timeRange.to }) }}
+                            <button
+                                type="button"
+                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                @click="timeRange = null"
+                            >{{ $t('nexus.over_time_clear') }}</button>
+                        </p>
+                        <!-- The window scopes this list too, and says what
+                             it leaves out: a list shorter than its tab's
+                             count, with no reason given, reads as missing. -->
+                        <p v-if="windowHidden" data-events-windowed class="mb-3 text-[12px] text-gray-500 dark:text-gray-400">
+                            {{ $t('nexus.window_hidden', { n: windowHidden }, windowHidden) }}
+                            <button
+                                type="button"
+                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                @click="pickWindow('all')"
+                            >{{ $t('nexus.window_show_all') }}</button>
+                        </p>
+                        <DatedView :result="within(windowed, timeRange)" @open="openFromTimeline" />
+                    </div>
+                </template>
             </div>
             </div>
         </div>
@@ -721,6 +1107,45 @@ const cleanSnippet = (snippet: string) => {
             @back="currentView = 'graph_search'" 
             @search-tag="(tag) => { searchQuery = `tag:&#34;${tag}&#34;`; currentView = 'graph_search'; }"
         />
+    </div>
+
+    <!-- Reviewing what Syn read out of the notes.
+         The whole window, not a popover: every row is a sentence, a day, a
+         list of people and the line it was read from, and there can be
+         dozens of them. The settings sit under the queue rather than over
+         it — the queue is what somebody came for. -->
+    <div
+        v-if="reviewing"
+        data-review-screen
+        class="absolute inset-0 z-40 flex flex-col bg-[#fdfdfc] dark:bg-[#1a1a1c] animate-in fade-in duration-150"
+    >
+        <div class="h-16 flex-shrink-0 flex items-center justify-between border-b border-gray-200 bg-white/80 px-6 backdrop-blur-md dark:border-[#2c2c2e] dark:bg-[#242426]/80">
+            <div class="flex items-center gap-3">
+                <button
+                    data-review-close
+                    class="group -ml-2 flex items-center gap-1 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+                    @click="reviewing = false"
+                >
+                    <ChevronRight class="h-5 w-5 rotate-180 transition-transform group-hover:-translate-x-0.5" />
+                    <span class="text-sm font-semibold">{{ $t('nexus.review_back') }}</span>
+                </button>
+                <div class="h-4 w-px bg-gray-300 dark:bg-[#444]"></div>
+                <h2 class="text-sm font-bold text-gray-800 dark:text-gray-200">{{ $t('nexus.review_title') }}</h2>
+            </div>
+            <span v-if="proposals?.waiting" class="text-xs font-semibold tabular-nums text-gray-400">
+                {{ $t('nexus.review_waiting', { count: proposals.waiting }) }}
+            </span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-6 py-8 sm:px-10">
+            <div class="mx-auto max-w-6xl">
+                <ExtractTray
+                    :vault-path="vaultPath"
+                    @changed="eventsChanged"
+                    @open="(id: string, type: string, quote: string) => { reviewing = false; emit('edit-item', id, type, quote); }"
+                />
+            </div>
+        </div>
     </div>
 
     <!-- Full-page Preview Panel (Unchanged logic, floating on top when active) -->
@@ -776,6 +1201,23 @@ const cleanSnippet = (snippet: string) => {
 </template>
 
 <style scoped>
+/*
+ * Nothing re-blurs while the split is being dragged.
+ *
+ * The answers column, the omnibar and the band under it are all
+ * `backdrop-blur`, and a backdrop filter is re-computed over its whole area
+ * every time that area changes — which, during a drag, is every frame. Notes
+ * feels smooth partly because its sidebar is a flat colour.
+ *
+ * Switching it off costs nothing to look at: these surfaces sit on
+ * `bg-…/95`, so the blur is doing almost no work even when it is on, and
+ * nobody is reading through them while their hand is on the edge.
+ */
+.resizing :deep([class*='backdrop-blur']) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
 .preview-markdown :deep(img) {
     display: inline-block;
     max-height: 120px;

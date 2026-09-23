@@ -91,20 +91,25 @@ const cells = (row: QueryRow) =>
 
       <div class="flex min-w-0 flex-grow flex-col gap-1">
         <span v-for="row in group.rows" :key="row.id" class="group flex items-center gap-1">
+        <!-- `min-w-0 flex-1`: a flex item will not shrink below its content
+             unless told it may, so a long title pushed the whole row past the
+             edge of a narrowed column and was clipped there. -->
         <button
           type="button"
           data-dated-row
-          class="flex items-baseline gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+          class="flex min-w-0 flex-1 items-baseline gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
           :class="row.id === selectedId ? 'bg-gray-100 dark:bg-[#3a3a3c]' : ''"
           @click="emit('open', row)"
         >
-          <span class="min-w-0 flex-grow truncate text-[13px] text-gray-900 dark:text-gray-100">
+          <!-- Wrapped, not truncated: the end of a sentence is often the part
+               that says what happened, and an ellipsis takes exactly that. -->
+          <span data-dated-title class="min-w-0 flex-grow break-words text-[13px] text-gray-900 dark:text-gray-100">
             {{ row.title || untitledLabel || $t('nexus.lens_untitled') }}
           </span>
           <span
             v-for="cell in cells(row)"
             :key="cell"
-            class="flex-shrink-0 truncate text-[11px] text-gray-500 dark:text-gray-400"
+            class="max-w-[40%] flex-shrink-0 truncate text-[11px] text-gray-500 dark:text-gray-400"
           >
             {{ cell }}
           </span>

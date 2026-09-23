@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { nextTick } from 'vue';
 
-import { useRemembered, recallChoice, rememberChoice } from '../useRemembered';
+import { useRemembered, useRememberedNumber, recallChoice, recallNumber, rememberChoice } from '../useRemembered';
 
 /**
  * A display choice that survives a restart, and every way that can go wrong.
@@ -93,5 +93,49 @@ describe('when the device will not store anything', () => {
     vi.stubGlobal('localStorage', undefined);
     expect(recallChoice('graph', MARKS, 'dots')).toBe('dots');
     expect(() => rememberChoice('graph', 'icons')).not.toThrow();
+  });
+});
+
+describe('A size kept on this device', () => {
+  const RANGE = { min: 320, max: 900, fallback: 480 };
+
+  /// The one that bit while writing this: `Number(null)` and `Number('')` are
+  /// both `0`, which is finite — so testing the number alone would open every
+  /// pane at its minimum on a device that had never been dragged, and call
+  /// that a remembered choice.
+  it('is the fallback when nothing was ever stored', () => {
+    expect(recallNumber('nexus.col', RANGE)).toBe(480);
+    rememberChoice('nexus.col', '');
+    expect(recallNumber('nexus.col', RANGE)).toBe(480);
+    rememberChoice('nexus.col', '   ');
+    expect(recallNumber('nexus.col', RANGE)).toBe(480);
+  });
+
+  it('comes back as it was left', () => {
+    rememberChoice('nexus.col', '640');
+    expect(recallNumber('nexus.col', RANGE)).toBe(640);
+  });
+
+  /// Storage outlives the version that wrote it, so a width saved when the
+  /// minimum was smaller must not reopen narrower than today's minimum.
+  it('is clamped to what the app can draw today', () => {
+    rememberChoice('nexus.col', '80');
+    expect(recallNumber('nexus.col', RANGE)).toBe(320);
+    rememberChoice('nexus.col', '5000');
+    expect(recallNumber('nexus.col', RANGE)).toBe(900);
+  });
+
+  it('ignores anything that is not a number', () => {
+    for (const junk of ['wide', 'NaN', 'Infinity', '-Infinity', '{}']) {
+      rememberChoice('nexus.col', junk);
+      expect(recallNumber('nexus.col', RANGE)).toBe(480);
+    }
+  });
+
+  it('writes itself back when it changes', async () => {
+    const width = useRememberedNumber('nexus.col', RANGE);
+    width.value = 560;
+    await nextTick();
+    expect(recallNumber('nexus.col', RANGE)).toBe(560);
   });
 });

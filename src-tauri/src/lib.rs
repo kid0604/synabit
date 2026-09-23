@@ -859,7 +859,7 @@ pub fn run() {
             commands::timeline::timeline_media_status,
             commands::timeline::timeline_media_configure,
             commands::timeline::timeline_media_run,
-            commands::timeline::timeline_media_moments,
+            commands::timeline::timeline_media_clusters,
             // Tags
             commands::tags::get_all_tags,
             commands::tags::rename_tag,

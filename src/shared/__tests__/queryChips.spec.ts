@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chipsOf, SINGULAR, spends, tokenise, withFilter, withTag, without } from '../queryChips';
+import { chipsOf, onSource, SINGULAR, spends, tokenise, withFilter, withRoomFor, withTag, without } from '../queryChips';
 
 describe('The query bar, both ways round', () => {
     /// The property the whole design rests on: chips are the text, so there is
@@ -246,5 +246,70 @@ describe('The query bar, both ways round', () => {
         for (const many of ['with', 'place', 'about']) {
             expect(SINGULAR).not.toContain(many);
         }
+    });
+});
+
+describe('The same question, asked of the other table', () => {
+    /// The point of the two tabs: one thing typed, two questions run.
+    it('writes the source a tab asks for', () => {
+        expect(onSource('ăn', 'events')).toBe('events ăn');
+        expect(onSource('ăn', 'nodes')).toBe('nodes ăn');
+    });
+
+    /// The source is the first word or it is not the source, so swapping it
+    /// means taking the old one off rather than stacking a second in front.
+    it('replaces the source already written rather than stacking one on it', () => {
+        expect(onSource('events when:2019', 'nodes')).toBe('nodes when:2019');
+        expect(onSource('nodes #gia-đình', 'events')).toBe('events #gia-đình');
+        expect(onSource('events ăn', 'events')).toBe('events ăn');
+    });
+
+    /// A lone `events` is the English word, which is how the Rust parser reads
+    /// it too — so somebody searching for it keeps searching for it.
+    it('treats a lone source word as the word it is', () => {
+        expect(onSource('events', 'events')).toBe('events events');
+        expect(onSource('nodes', 'nodes')).toBe('nodes nodes');
+    });
+
+    it('has nothing to ask when nothing was typed', () => {
+        expect(onSource('', 'events')).toBe('');
+        expect(onSource('   ', 'nodes')).toBe('');
+    });
+
+    /// Quoted runs and pipelines are part of the question and survive the swap.
+    it('leaves the rest of the question exactly as written', () => {
+        expect(onSource('"hai mount" | stats count by month', 'events'))
+            .toBe('events "hai mount" | stats count by month');
+    });
+});
+
+describe('Asking for the whole answer', () => {
+    /// A chart of a page of events sorted newest-first draws the recent
+    /// months as the busy ones. The timeline asks for all it can get.
+    it('asks for more rows when the question did not say', () => {
+        expect(withRoomFor('events ăn', 1000)).toBe('events ăn limit:1000');
+    });
+
+    it('leaves a limit somebody wrote alone', () => {
+        expect(withRoomFor('events ăn limit:20', 1000)).toBe('events ăn limit:20');
+    });
+
+    /// After a pipe the answer is not rows, and `limit:` means something else.
+    it('leaves a pipeline alone', () => {
+        expect(withRoomFor('events | stats count by month', 1000)).toBe('events | stats count by month');
+    });
+
+    it('has nothing to add to an empty question', () => {
+        expect(withRoomFor('', 1000)).toBe('');
+    });
+});
+
+describe('The timeline’s name', () => {
+    /// `moments` is what the timeline is called; `events` is the old word,
+    /// still read as the same table, and swapped out like any source.
+    it('treats moments and events alike as the timeline', () => {
+        expect(onSource('events ăn', 'moments')).toBe('moments ăn');
+        expect(onSource('moments ăn', 'nodes')).toBe('nodes ăn');
+        expect(chipsOf('moments with:khánh')[0].key).toBe('source');
     });
 });

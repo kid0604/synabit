@@ -54,6 +54,22 @@ pub enum Source {
     /// in it. The word has to survive being read by somebody who did not write
     /// the query, and "notes" promised something the table does not hold to.
     Nodes,
+    /// What happened: the timeline's rows.
+    ///
+    /// Written `moments`, and `events` is still read as the same thing. The
+    /// word changed because *event* already meant a calendar entry — a thing
+    /// **scheduled**, possibly in the future, possibly weekly — while the
+    /// timeline holds only what **happened**. A calendar event that took place
+    /// turns into one of these, so `events is:event` asked for "the events that
+    /// came from events", one word at two levels in one sentence. `moment` is
+    /// also the key these already sit under in a note's frontmatter.
+    ///
+    /// `events` stays as an alias rather than being refused, unlike `notes`:
+    /// saved lenses and questions the assistant wrote already say it, and it
+    /// still names exactly one table, so nothing it asks changes meaning.
+    ///
+    /// The variant keeps its name: it is the table's name, `events`, in
+    /// `timeline.db`, which nobody reads but the code.
     Events,
 }
 
@@ -62,7 +78,7 @@ impl Source {
     pub fn word(self) -> &'static str {
         match self {
             Source::Nodes => "nodes",
-            Source::Events => "events",
+            Source::Events => "moments",
         }
     }
 
@@ -70,7 +86,7 @@ impl Source {
     pub fn of(word: &str) -> Option<Source> {
         match word {
             "nodes" => Some(Source::Nodes),
-            "events" => Some(Source::Events),
+            "moments" | "events" => Some(Source::Events),
             _ => None,
         }
     }
@@ -1513,4 +1529,22 @@ mod tests {
         assert_eq!(parse_query("-“báo cáo”").exclude_terms, vec!["báo cáo"]);
         assert_eq!(parse_query("“báo cáo”").fts_terms, vec!["\"báo cáo\""]);
     }
+
+    /// The timeline's rows are called `moments`, and `events` — the word they
+    /// were written with until it turned out to mean a calendar entry too —
+    /// still names the same table, so no saved question changes meaning.
+    #[test]
+    fn moments_names_the_timeline_and_events_still_does() {
+        assert_eq!(parse("moments with:khánh").source, Some(Source::Events));
+        assert_eq!(parse("events with:khánh").source, Some(Source::Events));
+        assert_eq!(Source::Events.word(), "moments");
+    }
+
+    /// Alone it is the English word, not a table — the same rule as `nodes`,
+    /// so somebody searching a note for "moments" still finds it.
+    #[test]
+    fn a_lone_moments_is_a_word() {
+        assert_eq!(parse("moments").source, None);
+    }
 }
+

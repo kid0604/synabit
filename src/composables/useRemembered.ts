@@ -62,3 +62,42 @@ export function useRemembered<T extends string>(
   watch(choice, value => rememberChoice(key, value));
   return choice;
 }
+
+/** What a remembered number is allowed to be. */
+export interface NumberRange {
+  min: number;
+  max: number;
+  fallback: number;
+}
+
+/**
+ * A remembered number, clamped to what the app can draw.
+ *
+ * The same rule as `recallChoice`, for the shape a size takes: storage
+ * outlives the version that wrote it, so a width saved when the minimum was
+ * 220 must not reopen a pane narrower than today's minimum, and a hand-edited
+ * `"-1"` or `"Infinity"` must not reach a stylesheet. Anything unreadable is
+ * treated as absent rather than repaired into something arbitrary.
+ */
+export function recallNumber(key: string, range: NumberRange): number {
+  try {
+    const stored = storage()?.getItem(key);
+    // Nothing stored is the fallback, not zero. `Number(null)` and
+    // `Number('')` are both `0`, which is finite — so testing the number
+    // alone would open every pane at its minimum on a device that had never
+    // been dragged, and call it a remembered choice.
+    if (stored === null || stored === undefined || stored.trim() === '') return range.fallback;
+    const value = Number(stored);
+    if (!Number.isFinite(value)) return range.fallback;
+    return Math.min(Math.max(value, range.min), range.max);
+  } catch {
+    return range.fallback;
+  }
+}
+
+/** A number ref that starts where it was left and writes itself back. */
+export function useRememberedNumber(key: string, range: NumberRange): Ref<number> {
+  const value = ref(recallNumber(key, range));
+  watch(value, next => rememberChoice(key, String(next)));
+  return value;
+}

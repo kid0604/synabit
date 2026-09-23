@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { nextTick } from 'vue';
 
 import { useSidebarResize } from '../useSidebarResize';
 
@@ -105,5 +106,84 @@ describe('resizing a sidebar', () => {
     expect(s.isDraggingLeft.value).toBe(true);
     s.onMouseUp();
     expect(s.isDraggingLeft.value).toBe(false);
+  });
+});
+
+/** The same fake store `useRemembered.spec.ts` uses, for the same reasons. */
+const fakeStorage = () => {
+  const map = new Map<string, string>();
+  return {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+    removeItem: (k: string) => void map.delete(k),
+    clear: () => map.clear(),
+    key: () => null,
+    length: 0,
+  } as unknown as Storage;
+};
+
+describe('a ceiling worked out from the window', () => {
+  /// A fixed maximum is right on a big display and broken on a laptop: Nexus
+  /// with `max: 900` on a 1024px window left the graph beside it 224px and
+  /// called that a layout. A caller that cares passes a function.
+  it('asks the function each time rather than freezing one answer', () => {
+    let room = 960;
+    const bar = useSidebarResize({ left: { initial: 480, min: 320, max: () => room - 360 } });
+
+    bar.startDragLeft(handleIn(0));
+    bar.onMouseMove(moveTo(5000));
+    expect(bar.leftWidth.value).toBe(600);
+
+    room = 1600;
+    bar.onMouseMove(moveTo(5000));
+    expect(bar.leftWidth.value).toBe(1240);
+  });
+
+  it('still takes a plain number, as every existing caller passes', () => {
+    const bar = useSidebarResize({ left: { initial: 300, min: 220, max: 600 } });
+    bar.startDragLeft(handleIn(0));
+    bar.onMouseMove(moveTo(5000));
+    expect(bar.leftWidth.value).toBe(600);
+  });
+
+  /// Shrinking the window must not leave a pane wider than the room it now
+  /// has — including a width remembered from a larger screen.
+  it('pulls a width back inside the bounds when asked', () => {
+    let room = 1600;
+    const bar = useSidebarResize({ left: { initial: 480, min: 320, max: () => room - 360 } });
+    bar.startDragLeft(handleIn(0));
+    bar.onMouseMove(moveTo(1200));
+    expect(bar.leftWidth.value).toBe(1200);
+
+    room = 800;
+    bar.reclamp();
+    expect(bar.leftWidth.value).toBe(440);
+  });
+});
+
+describe('a width that survives a restart', () => {
+  beforeEach(() => vi.stubGlobal('localStorage', fakeStorage()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('opens where it was left, not at the initial', async () => {
+    const first = useSidebarResize({ left: { initial: 480, min: 320, max: 900, remember: 'k' } });
+    first.startDragLeft(handleIn(0));
+    first.onMouseMove(moveTo(640));
+    await nextTick();
+
+    const second = useSidebarResize({ left: { initial: 480, min: 320, max: 900, remember: 'k' } });
+    expect(second.leftWidth.value).toBe(640);
+  });
+
+  /// Without a key it behaves exactly as it always has, which is what keeps
+  /// the four older callers unchanged.
+  it('forgets when no key was given', async () => {
+    const first = useSidebarResize({ left: { initial: 480, min: 320, max: 900 } });
+    first.startDragLeft(handleIn(0));
+    first.onMouseMove(moveTo(640));
+    await nextTick();
+
+    const second = useSidebarResize({ left: { initial: 480, min: 320, max: 900 } });
+    expect(second.leftWidth.value).toBe(480);
   });
 });

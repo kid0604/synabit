@@ -50,6 +50,42 @@ pub(crate) fn fts_match_for(term: &str, title_only: bool) -> String {
     with_d_stroke_branch(term)
 }
 
+/// How the `tags` column is written, and the only way it may be read.
+///
+/// # Why not a space
+///
+/// It was a space, at both ends: `join(" ")` going in and `split_whitespace()`
+/// coming out. A tag with a space in it — and the tag grammar has
+/// `read_wrapped` precisely so a vault can hold one — went in as two words and
+/// came back as two tags. A real vault showed it at once: `#mô hình` and
+/// `#tư duy` on one note were drawn as **four** tags, `mô`, `hình`, `tư`,
+/// `duy`, none of which the person had ever written.
+///
+/// A newline instead. FTS5's `unicode61` tokenizer breaks on it exactly as it
+/// breaks on a space, so searching a tag is unchanged, and `tags LIKE '%x%'`
+/// never cared. But a tag cannot contain one, so splitting on it gives back
+/// what was put in.
+pub(crate) const TAG_SEP: char = '\n';
+
+/// The tags of one item, ready for the column.
+pub(crate) fn pack_tags<S: AsRef<str>>(tags: &[S]) -> String {
+    tags.iter()
+        .map(|t| t.as_ref().trim())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(&TAG_SEP.to_string())
+}
+
+/// The tags back out, each one whole.
+pub(crate) fn unpack_tags(packed: &str) -> Vec<String> {
+    packed
+        .split(TAG_SEP)
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl DbBridge {
     /// Rebuild the entire FTS5 search index from all data tables.
     /// Called on app startup or when the user requests a reindex.
@@ -112,7 +148,7 @@ impl DbBridge {
                             .iter()
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect();
-                        tags_str = tags_vec.join(" ");
+                        tags_str = pack_tags(&tags_vec);
                     }
                     if let Some(s) = json_val.get("status").and_then(|v| v.as_str()) {
                         status = Some(s.to_string());
@@ -341,11 +377,12 @@ impl DbBridge {
         if let Some(why) = parsed.refused.first() {
             return Err(AppError::Refused(why.clone()));
         }
-        let elsewhere = [
-            (parsed.has_pipeline, "a `|` step"),
-            (!parsed.tag_exclusions.is_empty(), "-#tag"),
-            (!parsed.property_exclusions.is_empty(), "-field:value"),
-            (!parsed.property_ranges.is_empty(), "a comparison like rating:>3"),
+        // Two lists, because they get two different sentences. The timeline's
+        // words have an answer one tab over — Nexus asks every question of the
+        // moments too — so the refusal says where. The rest have nowhere to
+        // go since the query bar went, and a sentence pointing at the timeline
+        // for `-#work` would be sending somebody to a second refusal.
+        let for_the_timeline = [
             (parsed.when.is_some(), "when:"),
             (!parsed.with.is_empty(), "with:"),
             (!parsed.place.is_empty(), "place:"),
@@ -353,7 +390,16 @@ impl DbBridge {
             (parsed.shape.is_some(), "shape:"),
             (parsed.size.is_some(), "size:"),
         ];
-        if let Some((_, what)) = elsewhere.into_iter().find(|(carried, _)| *carried) {
+        if let Some((_, what)) = for_the_timeline.into_iter().find(|(carried, _)| *carried) {
+            return Err(AppError::Refused(crate::refusal::Refusal::on_the_timeline_tab(what)));
+        }
+        let beyond = [
+            (parsed.has_pipeline, "a `|` step"),
+            (!parsed.tag_exclusions.is_empty(), "-#tag"),
+            (!parsed.property_exclusions.is_empty(), "-field:value"),
+            (!parsed.property_ranges.is_empty(), "a comparison like rating:>3"),
+        ];
+        if let Some((_, what)) = beyond.into_iter().find(|(carried, _)| *carried) {
             return Err(AppError::Refused(crate::refusal::Refusal::beyond_the_search_box(
                 what,
             )));
@@ -510,11 +556,7 @@ impl DbBridge {
         let rows = stmt
             .query_map(rusqlite::params_from_iter(all_params.iter()), |row| {
                 let tags_str: String = row.get(4)?;
-                let tags: Vec<String> = tags_str
-                    .split_whitespace()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect();
+                let tags: Vec<String> = unpack_tags(&tags_str);
                 let rank: f64 = row.get(7)?;
                 Ok(crate::search::SearchResult {
                     id: row.get(0)?,
@@ -971,6 +1013,7 @@ mod tests {
 
 #[cfg(test)]
 mod what_a_person_sees {
+    use super::{pack_tags, unpack_tags};
     use crate::db::DbBridge;
     use crate::models::node::NodeMetadata;
     use crate::search::parse_query;
@@ -1020,5 +1063,48 @@ mod what_a_person_sees {
         let db = seeded();
         let found = db.search_fts(&parse_query("type:json nhà"), 1, 50).expect("runs");
         assert_eq!(found.total_count, 1, "{:?}", found.results);
+    }
+
+    /// A tag with a space in it is one tag.
+    ///
+    /// The column joined on a space and split on whitespace, so `#mô hình`
+    /// and `#tư duy` on one note came back as four tags nobody wrote. The
+    /// grammar lets a vault hold a wrapped multi-word tag, so the index has
+    /// to be able to hand one back.
+    #[test]
+    fn a_tag_with_a_space_in_it_survives_the_index() {
+        let written = vec!["mô hình".to_string(), "tư duy".to_string()];
+        assert_eq!(unpack_tags(&pack_tags(&written)), written);
+    }
+
+    /// And the ordinary case keeps working, including the empties that a
+    /// hand-edited frontmatter leaves behind.
+    #[test]
+    fn single_word_tags_and_blanks_come_back_clean() {
+        assert_eq!(unpack_tags(&pack_tags(&["daily".to_string(), "cam".to_string()])),
+                   vec!["daily".to_string(), "cam".to_string()]);
+        assert_eq!(pack_tags::<String>(&[]), "");
+        assert!(unpack_tags("").is_empty());
+        assert_eq!(unpack_tags("\n\ndaily\n\n"), vec!["daily".to_string()]);
+    }
+
+    /// Searching a multi-word tag still finds the note: FTS breaks on a
+    /// newline exactly as it broke on a space, so nothing about matching
+    /// changed — only what is handed back.
+    #[test]
+    fn a_multi_word_tag_is_still_searchable_word_by_word() {
+        let db = seeded();
+        db.upsert_search_entry(
+            "Notes/map.md", "note", "The map is not the territory",
+            &pack_tags(&["mô hình".to_string(), "tư duy".to_string()]),
+            "body", "{}", None, "2026-06-28T00:00:00Z", "Notes/map.md",
+        );
+        let found = db.search_fts(&parse_query("#hình"), 1, 50).expect("runs");
+        assert_eq!(found.total_count, 1, "{:?}", found.results);
+        assert_eq!(
+            found.results[0].tags,
+            vec!["mô hình".to_string(), "tư duy".to_string()],
+            "handed back whole, not in pieces",
+        );
     }
 }

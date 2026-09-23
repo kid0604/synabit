@@ -69,7 +69,11 @@ export interface Chip {
 export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort', 'limit', 'date'];
 
 /**
- * The two words that name a table, and only as the first of several (§4).
+ * The words that name a table, and only as the first of several (§4).
+ *
+ * `moments` is the timeline's name; `events` is the word it had until that
+ * turned out to mean a calendar entry too, and is still read the same way
+ * (`Source::of` in `query.rs`).
  *
  * Alone they are ordinary English, and the Rust parser reads them that way for
  * the same reason — a free-text box would otherwise turn somebody searching
@@ -78,7 +82,7 @@ export const SINGULAR = ['is', 'type', 'when', 'shape', 'size', 'status', 'sort'
  * `nodes` and not `notes`: the table holds people, books and tasks too, and a
  * word has to survive being read by somebody who did not write the query.
  */
-export const SOURCES = ['nodes', 'events'];
+export const SOURCES = ['nodes', 'moments', 'events'];
 
 /** Structure rather than something to search for. Shouted, as in Lucene. */
 const OR = 'OR';
@@ -413,4 +417,45 @@ function withAdded(tokens: string[], token: string): string {
 
 function quoteIfNeeded(value: string): string {
   return /\s/.test(value) ? `"${value}"` : value;
+}
+
+/**
+ * The same question, asked of the other table.
+ *
+ * Two tabs over one search box need one thing: *this question, but about
+ * events instead of nodes*. The source is the first word or it is not the
+ * source (§4 of `docs/query-grammar-2026-09-20.md`), so this takes off the one
+ * that is there and writes the one that is wanted.
+ *
+ * **The tab names the source, and it overrules what was typed.** Somebody who
+ * wrote `events when:2019` and then presses *Nodes* is asking to see the node
+ * side of that question — pressing a tab that then answered about events
+ * anyway would be a tab that does nothing.
+ *
+ * A lone `nodes` or `events` is **a word, not a source**, exactly as the Rust
+ * parser reads it — so somebody searching for the word "events" gets
+ * `nodes events` on one tab and `events events` on the other, and both are
+ * right.
+ */
+export function onSource(text: string, source: string): string {
+  const tokens = tokenise(text);
+  if (!tokens.length) return '';
+  if (tokens.length > 1 && SOURCES.includes(tokens[0].toLowerCase())) tokens.shift();
+  return [source, ...tokens].join(' ');
+}
+
+/**
+ * The question with room for more rows, unless it already said how many.
+ *
+ * A picture of an answer has to be drawn from all of it: a chart of the
+ * first page of events is a chart that says the busy months were the recent
+ * ones, because the page is sorted newest first. So the timeline asks for as
+ * many as the engine will give (`AT_MOST` in `timeline::query`). A `limit:`
+ * somebody wrote is theirs and stays; a question with a `|` is not rows any
+ * more, and `limit:` means something else after a pipe.
+ */
+export function withRoomFor(text: string, rows: number): string {
+  const tokens = tokenise(text);
+  if (!tokens.length || tokens.includes('|') || topLevel(tokens, 'limit') >= 0) return text;
+  return [...tokens, `limit:${rows}`].join(' ');
 }

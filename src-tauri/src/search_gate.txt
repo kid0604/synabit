@@ -21,7 +21,7 @@ events                             → nodes    0 []
 events limit:5                     → events   4 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]
 nodes when:2019                    → nodes    1 [2019-11-05]
 events when:2019                   → events   3 [Gặp Khánh ở quán quen · Ăn tối với Minh · Gửi báo cáo quý]
-nodes with:khánh                   → nodes  refused: with: asks about an event, and this question is about nodes. Start it with `events`, or drop it.
+nodes with:khánh                   → nodes  refused: with: asks about a moment on the timeline, and this question is about nodes. Start it with `moments`, or drop it.
 events #gia-đình                   → events refused: #tag asks about a node, and this question is about the timeline. Ask it without the timeline's words, or drop it.
 nodes #gia-đình                    → nodes    1 [2019-11-05]
 events is:note                     → events   3 [2021-03-14 · Gặp Khánh ở quán quen · Ăn tối với Minh]

@@ -623,12 +623,6 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
             id,
         );
     }
-    // A decision opens in Nexus, on the Chiêm nghiệm panel: a reminder to look
-    // back on one lands there. See `timeline/reflect.rs`.
-    else if (type === 'decision') {
-        activeTool.value = 'nexus';
-        callWhenReady(() => nexusAppRef.value, 'openDecision', id);
-    }
     else if (type === 'person') {
         activeTool.value = 'people';
         callWhenReady(() => peopleAppRef.value, 'openPersonById', id);

@@ -3,7 +3,6 @@ import { ref, onMounted, watch, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 import { Settings2, Eye, GitMerge, ListFilter, Focus } from 'lucide-vue-next';
 import { iconPartsFor } from './nodeIcons';
-import { lensFor, nodeVisible, linkVisible, isDeceased, type TimeFrame, type TimeLens } from '../timeFrame';
 
 interface GraphNode {
     id: string;
@@ -31,13 +30,6 @@ const props = defineProps<{
      * drawn as an empty graph, not as no filter.
      */
     matchIds?: string[] | null;
-    /**
-     * Looking back: the day being looked at, `YYYY-MM-DD`, and when each thing
-     * entered the picture. Both null for the present, which is what the graph
-     * has always shown. See `TimeStrip.vue` and `timeline/frame.rs`.
-     */
-    atDate?: string | null;
-    timeFrame?: TimeFrame | null;
 }>();
 
 const emit = defineEmits<{
@@ -93,19 +85,6 @@ let hoveredNode: SimNode | null = null;
 let dragSubject: SimNode | null = null;
 let currentNodes: SimNode[] = [];
 let currentLinks: SimLink[] = [];
-
-/**
- * The lens a time frame is read through. Rebuilt when the frame or the graph
- * changes, never per draw: a scrub redraws dozens of times a second and may
- * only look things up.
- */
-let lens: TimeLens | null = null;
-const rebuildLens = () => {
-    lens = props.timeFrame ? lensFor(props.timeFrame, props.graphData.links) : null;
-};
-/** The day being looked at, or null for the present. */
-const lookingAt = () => (lens && props.atDate ? props.atDate : null);
-const isShown = (id: string, at: string | null) => !at || nodeVisible(lens!, id, at);
 
 /**
  * How many nodes the last rebuild drew. Not the size of the match set: some
@@ -356,7 +335,21 @@ const initCanvas = () => {
             d3.select(canvasRef.value).call(zoomBehavior.transform as any, transform);
         }
 
-        simulation?.alpha(0.3).restart();
+        // Redraw, do **not** re-simulate.
+        //
+        // Every force here is anchored at `(0, 0)` in graph space — `center`,
+        // `x` and `y` all read zero, and none of them reads the container's
+        // size; the viewport is entirely the zoom `transform`'s business. So
+        // restarting at `alpha(0.3)` could never move a node to a better
+        // place. What it did do was re-run the whole physics on **every frame
+        // of a drag**, because dragging the split between the answers and the
+        // graph fires this observer as fast as the pointer moves. That is why
+        // resizing here felt heavy where the same gesture in Notes does not:
+        // Notes resizes a `<div>`, this was re-running a force layout.
+        //
+        // `sizeCanvas` above clears the backing store, so the redraw is not
+        // optional — without it the graph would blank until the next tick.
+        draw();
 
         if (!userInteracted) {
             clearTimeout(resizeFitTimeout);
@@ -378,7 +371,7 @@ const initCanvas = () => {
             const radiusSearch = 20 / transform.k;
             // A node not yet in the picture cannot be hovered or opened.
             const hit = simulation.find(invX, invY, radiusSearch);
-            const found = hit && isShown(hit.id, lookingAt()) ? hit : undefined;
+            const found = hit;
             if (found !== hoveredNode) {
                 hoveredNode = found || null;
                 draw();
@@ -398,7 +391,7 @@ const initCanvas = () => {
             const invX = transform.invertX(x);
             const invY = transform.invertY(y);
             const hit = simulation.find(invX, invY, 20 / transform.k);
-            dragSubject = hit && isShown(hit.id, lookingAt()) ? hit : null;
+            dragSubject = hit ?? null;
             return dragSubject;
         })
         .on("start", (e) => {
@@ -522,7 +515,6 @@ const draw = () => {
     ctx.scale(transform.k, transform.k);
 
     const isHovering = !!hoveredNode;
-    const at = lookingAt();
     const connectedNodes = new Set<string>();
     
     if (isHovering) {
@@ -536,8 +528,6 @@ const draw = () => {
     // Draw Links
     ctx.lineWidth = 1.5 * linkThickness.value;
     currentLinks.forEach(link => {
-        if (at && (!isShown(link.source.id, at) || !isShown(link.target.id, at)
-            || !linkVisible(lens!, link.source.id, link.target.id, at))) return;
         let alpha = 0.4;
         if (isHovering) {
             const connected = link.source.id === hoveredNode!.id || link.target.id === hoveredNode!.id;
@@ -555,8 +545,7 @@ const draw = () => {
 
     // Draw Nodes
     currentNodes.forEach(node => {
-        if (!isShown(node.id, at)) return;
-        const dead = !!at && isDeceased(lens!, node.id, at);
+        const dead = false;
         let alpha = 1.0;
         if (isHovering && !connectedNodes.has(node.id)) {
             alpha = 0.2;
@@ -615,7 +604,6 @@ const draw = () => {
     };
 
     currentNodes.forEach(node => {
-        if (!isShown(node.id, at)) return;
         const r = node.val * 1.5 * nodeSize.value;
         const iconFade = Math.min(1, (r * k - ICON_MIN_PX) / (ICON_FULL_PX - ICON_MIN_PX));
         if (iconFade <= 0) return;
@@ -658,7 +646,6 @@ const draw = () => {
     // its own, which is the only one being asked for down there.
     const fade = Math.min(1, Math.max(0, (k - textFade.value) / 0.3));
     currentNodes.forEach(node => {
-        if (!isShown(node.id, at)) return;
         const isHovered = node === hoveredNode;
         if (!isHovered) {
             if (fade <= 0) return;
@@ -688,15 +675,12 @@ watch(() => props.matchIds, () => rebuildGraph());
 
 // Looking back only redraws. Re-running the layout for every month would
 // reshuffle the picture under the reader's hand, and cost a layout per frame.
-watch(() => props.atDate, () => draw());
-watch(() => props.timeFrame, () => { rebuildLens(); draw(); });
 
 // A vault reload only matters if the graph actually changed.
 watch(() => props.graphData, (data) => {
     const signature = graphSignature(data);
     if (signature === lastSignature) return;
     lastSignature = signature;
-    rebuildLens();
     rebuildGraph();
 });
 
@@ -708,8 +692,7 @@ onMounted(() => {
     setTimeout(() => {
         if (!initCanvas()) return;
         lastSignature = graphSignature(props.graphData);
-        rebuildLens();
-        rebuildGraph();
+            rebuildGraph();
     }, 100);
 });
 

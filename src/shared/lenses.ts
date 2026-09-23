@@ -150,14 +150,14 @@ export const STARTERS: Lens[] = [
   {
     id: 'starter:this-year',
     title: 'Năm nay',
-    query: 'events when:this-year',
+    query: 'moments when:this-year',
     render: 'dated',
     icon: 'calendar',
   },
   {
     id: 'starter:rhythm',
     title: 'Nhịp sống',
-    query: 'events when:2016..2026 | stats count by month',
+    query: 'moments when:2016..2026 | stats count by month',
     render: 'bars',
     icon: 'activity',
   },

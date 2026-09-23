@@ -140,6 +140,13 @@ impl Refusal {
     pub fn beyond_the_search_box(what: &str) -> Self {
         Self::of("beyond_the_search_box", [what.into()])
     }
+    /// A word only the timeline answers, typed into the box that searches
+    /// nodes. Its own sentence because it has somewhere to go — the timeline
+    /// tab beside the list asks the same words of the moments — and the
+    /// others (`|`, `-#tag`, comparisons) do not.
+    pub fn on_the_timeline_tab(what: &str) -> Self {
+        Self::of("on_the_timeline_tab", [what.into()])
+    }
     pub fn event_field_on_nodes(field: &str) -> Self {
         Self::of("event_field_on_nodes", [field.into()])
     }
@@ -217,14 +224,18 @@ pub const SAYINGS: &[(&str, &str)] = &[
         "or_in_the_query_bar",
         "a question with OR in it has to be asked in the query bar",
     ),
-    ("ask_in_the_query_bar", "{0} has to be asked in the query bar"),
+    ("ask_in_the_query_bar", "{0} is more than this search box can ask."),
     (
         "beyond_the_search_box",
-        "{0} is more than this search box can ask. Ask it in the query bar.",
+        "{0} is more than this search box can ask.",
+    ),
+    (
+        "on_the_timeline_tab",
+        "{0} asks about the timeline. Its answer is on the Timeline tab.",
     ),
     (
         "event_field_on_nodes",
-        "{0} asks about an event, and this question is about nodes. Start it with `events`, or drop it.",
+        "{0} asks about a moment on the timeline, and this question is about nodes. Start it with `moments`, or drop it.",
     ),
     (
         "node_field_on_events",

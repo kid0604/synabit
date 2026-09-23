@@ -126,22 +126,31 @@ const write = async () => {
 
 <template>
     <div class="relative" data-compose>
+        <!-- No frame of its own: it sits inside the one the two doors share,
+             so the two read as halves of one thing rather than as two
+             unrelated buttons at opposite ends of the screen. -->
         <button
             type="button"
             data-compose-open
-            class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
+            class="flex h-full items-center gap-2 px-4 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-[#3a3a3c]"
             :title="$t('nexus.compose_title')"
             @click.stop="open = !open"
         >
-            <CalendarPlus class="h-4 w-4" />
+            <CalendarPlus class="h-4 w-4 text-indigo-500" />
             <span>{{ $t('nexus.compose_add') }}</span>
         </button>
 
         <div
             v-if="open"
             data-compose-panel
-            class="absolute bottom-full right-0 z-30 mb-2 w-80 space-y-2 rounded-xl border border-gray-200 bg-white p-3 shadow-xl dark:border-[#3a3a3c] dark:bg-[#242426]"
+            class="absolute bottom-full left-0 z-30 mb-2 w-80 space-y-2 rounded-xl border border-gray-200 bg-white p-3 shadow-xl dark:border-[#3a3a3c] dark:bg-[#242426]"
         >
+            <!-- Said once, at the top, because the whole complaint was that
+                 nothing here told you what you were making. -->
+            <p data-is-an-event class="rounded-lg bg-indigo-50 px-2.5 py-2 text-[11px] leading-relaxed text-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200">
+                {{ $t('nexus.compose_is_an_event') }}
+            </p>
+
             <!-- The model fills the form in; it never writes anything itself. -->
             <div v-if="model" data-ask>
                 <div class="flex gap-1.5">

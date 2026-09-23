@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
 import { mount, flushPromises } from '@vue/test-utils';
 import { invoke } from '@tauri-apps/api/core';
 import ExtractTray, { type ExtractStatus, type Proposal } from '../components/ExtractTray.vue';
@@ -46,15 +47,19 @@ const status = (overrides: Partial<ExtractStatus> = {}): ExtractStatus => ({
 
 const mountTray = async (initial: ExtractStatus) => {
   vi.mocked(invoke).mockImplementation(async (command: string) => (command === 'timeline_extract_status' ? initial : null));
+  // No button to press any more: the tray is the content of a screen of its
+  // own, and `NexusApp` decides when that screen is shown.
   const wrapper = mount(ExtractTray, { props: { vaultPath: '/vault' }, global: { plugins: [i18n] } });
-  await flushPromises();
-  await wrapper.find('button').trigger('click');
   await flushPromises();
   return wrapper;
 };
 
 describe('ExtractTray', () => {
-  beforeEach(() => vi.mocked(invoke).mockReset());
+  beforeEach(() => {
+  // The tray reads the app lock before it shows a note's words.
+  setActivePinia(createPinia());
+  vi.mocked(invoke).mockReset();
+});
 
   it('does not turn on a cloud provider until sending notes there is allowed', async () => {
     const wrapper = await mountTray(status({ local: false, provider: 'gemini' }));
@@ -78,7 +83,6 @@ describe('ExtractTray', () => {
       config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
       proposals: [proposal],
     }));
-    expect(wrapper.find('[data-proposal-count]').text()).toBe('1');
     const row = wrapper.find('[data-proposal]');
     expect(row.text()).toContain('Yesterday I took Mum to the eye clinic');
     expect(row.text()).toContain('2024-06-01 · Mum');
@@ -154,5 +158,96 @@ describe('ExtractTray', () => {
     await wrapper.find('[data-decline]').trigger('click');
     await flushPromises();
     expect(lastReview()).toMatchObject({ accept: false, title: null });
+  });
+});
+describe('Checking a proposal against the note it came from', () => {
+  const NOTE = 'Sáng nay đi chợ.\nYesterday I took Mum to the eye clinic and she was fine.\nRồi về nấu cơm.';
+
+  const withNote = async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'timeline_extract_status') {
+        return status({
+          config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+          proposals: [proposal],
+        });
+      }
+      if (command === 'get_nexus_item') return { content: NOTE };
+      return null;
+    });
+    const wrapper = mount(ExtractTray, { props: { vaultPath: '/vault' }, global: { plugins: [i18n] } });
+    await flushPromises();
+    return wrapper;
+  };
+
+  /// Some of these notes are months old, and the card used to say only
+  /// «From …, written …». Keeping one then meant trusting it.
+  it('shows the note behind the proposal without leaving the queue', async () => {
+    const wrapper = await withNote();
+    expect(wrapper.find('[data-source]').exists()).toBe(false);
+
+    await wrapper.find('[data-show-source]').trigger('click');
+    await flushPromises();
+
+    const source = wrapper.find('[data-source]');
+    expect(source.text()).toContain('Sáng nay đi chợ');
+    expect(source.text()).toContain('Rồi về nấu cơm');
+    // The queue is still there: nothing navigated away.
+    expect(wrapper.findAll('[data-proposal]')).toHaveLength(1);
+  });
+
+  /// The line the model read is marked, so the eye goes to it rather than
+  /// hunting through a month of a daily note.
+  it('marks the line it was read from', async () => {
+    const wrapper = await withNote();
+    await wrapper.find('[data-show-source]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-hit]').text()).toBe('Yesterday I took Mum to the eye clinic');
+  });
+
+  it('folds away when pressed again', async () => {
+    const wrapper = await withNote();
+    await wrapper.find('[data-show-source]').trigger('click');
+    await flushPromises();
+    await wrapper.find('[data-show-source]').trigger('click');
+    expect(wrapper.find('[data-source]').exists()).toBe(false);
+  });
+
+  /// Reading is enough to decide; changing the note is worth leaving for.
+  it('offers the note itself, at the line', async () => {
+    const wrapper = await withNote();
+    await wrapper.find('[data-show-source]').trigger('click');
+    await flushPromises();
+    await wrapper.find('[data-open-source]').trigger('click');
+    expect(wrapper.emitted('open')?.[0]).toEqual([
+      'Notes/2024-06-02.md',
+      'note',
+      'Yesterday I took Mum to the eye clinic',
+    ]);
+  });
+});
+
+describe('A quote that carries markup', () => {
+  /// Straight from a real vault: the model quoted a line whose person link
+  /// was still written out, so the card read
+  /// «Trao đổi với [Nguyễn Lê Vũ Phương Hoàng:](synabit://person/People/77a…md)»
+  /// — the name was there, buried in forty characters of uuid.
+  it('shows the words, not the link syntax', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) =>
+      command === 'timeline_extract_status'
+        ? status({
+            config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false },
+            proposals: [{
+              ...proposal,
+              quote: 'Trao đổi với [Nguyễn Lê Vũ Phương Hoàng:](synabit://person/People/77a70830-72a1-4548-a6ef-4e8fafff8d44.md)',
+            }],
+          })
+        : null);
+    const wrapper = mount(ExtractTray, { props: { vaultPath: '/vault' }, global: { plugins: [i18n] } });
+    await flushPromises();
+
+    const row = wrapper.find('[data-proposal]');
+    expect(row.text()).toContain('Trao đổi với Nguyễn Lê Vũ Phương Hoàng:');
+    expect(row.text()).not.toContain('synabit://');
+    expect(row.text()).not.toContain('77a70830');
   });
 });

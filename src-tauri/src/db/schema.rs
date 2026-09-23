@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 /// (e.g. adding/removing columns, changing tokenizer).
 /// The index will only be dropped and rebuilt when this version differs
 /// from the stored value in `kv_store`.
-const FTS_SCHEMA_VERSION: &str = "6";
+const FTS_SCHEMA_VERSION: &str = "7";
 
 /// Same idea for the feed article index, which has a schema of its own.
 const FEEDS_FTS_SCHEMA_VERSION: &str = "3";

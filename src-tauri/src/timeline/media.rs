@@ -60,7 +60,7 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 pub const MAX_AUDIO_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
 
-/// Pictures further apart than this are two moments (§4.8.5).
+/// Pictures further apart than this are two clusters (§4.8.5).
 pub const MOMENT_GAP_HOURS: i64 = 3;
 
 /// The most files one automatic pass reads.
@@ -697,8 +697,12 @@ pub struct MediaEntry {
 }
 
 /// Pictures and recordings close together in time, shown as one (§4.8.5).
+///
+/// A *cluster*, not a moment: "moment" is the timeline's word for a thing that
+/// happened, the kind a person writes down or keeps from a proposal. Using it
+/// here as well meant one word for two things in the same module tree.
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct MediaMoment {
+pub struct MediaCluster {
     pub from: String,
     pub to: String,
     pub count: usize,
@@ -727,11 +731,11 @@ fn instant(entry: &MediaEntry) -> Option<(NaiveDateTime, bool)> {
         })
 }
 
-/// Group entries into moments: a gap of more than three hours starts a new
+/// Group entries into clusters: a gap of more than three hours starts a new
 /// one. Something known only by its day is grouped with the rest of that
 /// day's undated things instead: three hours means nothing without a time,
-/// and placing it at noon would let it join, or bridge, moments it was not in.
-pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaMoment> {
+/// and placing it at noon would let it join, or bridge, clusters it was not in.
+pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaCluster> {
     let mut placed: Vec<(NaiveDateTime, bool, MediaEntry)> = entries
         .into_iter()
         .filter_map(|entry| instant(&entry).map(|(at, exact)| (at, exact, entry)))
@@ -773,7 +777,7 @@ pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaMoment> {
                 .or_else(|| members.iter().find(|m| m.kind == "image"))
                 .unwrap_or(&members[0])
                 .clone();
-            MediaMoment {
+            MediaCluster {
                 from,
                 to,
                 count: members.len(),
@@ -784,8 +788,8 @@ pub fn group(entries: Vec<MediaEntry>) -> Vec<MediaMoment> {
         .collect()
 }
 
-/// The moments among these timeline items, with what stands in for each file.
-pub fn moments(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[Event]) -> AppResult<Vec<MediaMoment>> {
+/// The clusters among these timeline items, with what stands in for each file.
+pub fn clusters(conn: &Connection, db: &DbBridge, seals: &Seals, items: &[Event]) -> AppResult<Vec<MediaCluster>> {
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     // A file node derives nothing but its own picture or recording, so asking
@@ -911,8 +915,8 @@ mod tests {
     }
 
     #[test]
-    fn pictures_hours_apart_are_two_moments_and_a_day_keeps_its_own() {
-        let moments = group(vec![
+    fn pictures_hours_apart_are_two_clusters_and_a_day_keeps_its_own() {
+        let clusters = group(vec![
             entry("c", "2024-09-12 11:30", "image"),
             entry("a", "2024-09-12 09:00", "audio"),
             entry("b", "2024-09-12 10:00", "image"),
@@ -920,7 +924,7 @@ mod tests {
             entry("e", "2024-09-12", "image"),
             entry("f", "2024-09-14", "image"),
         ]);
-        let shape: Vec<(Vec<&str>, &str)> = moments
+        let shape: Vec<(Vec<&str>, &str)> = clusters
             .iter()
             .map(|m| (m.members.iter().map(|e| e.node_id.as_str()).collect(), m.cover.node_id.as_str()))
             .collect();
