@@ -488,9 +488,23 @@ fn remove_orphaned_nodes(
         // directory the guard below would otherwise protect.
         let is_timeline = crate::timeline::is_timeline_path(&n.id);
 
+        // And the feeds' per-device read state, for the same reason and with
+        // the same history. The walk stopped indexing it once its sync conflict
+        // copies started crowding out real notes — and the rows already written
+        // stayed, because `is_in_unscanned_dir` then protected them from this
+        // very pass. Measured on the real vault a week later: 303 of 1,033
+        // indexed rows were conflict copies of one read-state file, every one
+        // of them for a file that no longer exists.
+        //
+        // Purged whatever their shape, like `Syn/` above, rather than by asking
+        // the disk: these files are rewritten constantly, so an existence check
+        // here would be racing a rename for rows that should not be in the
+        // index either way.
+        let is_feed_state = n.id.replace('\\', "/").starts_with("Feeds/state/");
+
         let is_orphan = is_disk_backed_id(&n.id) && !is_in_unscanned_dir(&n.id) && is_gone(&n.id);
 
-        if is_syn || is_trashed || is_timeline || is_orphan {
+        if is_syn || is_trashed || is_timeline || is_feed_state || is_orphan {
             delete_node_edges_for(db, &n.id);
             logged("drop node", &n.id, db.delete_node(&n.id));
             logged("drop blocks", &n.id, db.delete_node_blocks(&n.id));
@@ -3884,6 +3898,45 @@ mod orphan_cleanup_tests {
             .unwrap()
             .is_none());
         assert_eq!(search_entries(&db, "Projects/gone.md"), 0);
+    }
+
+    /// The feeds' read state leaves the index even while its file is there.
+    ///
+    /// Measured on the real vault: 303 of 1,033 indexed rows were sync conflict
+    /// copies of one read-state file, and every one of them had been deleted
+    /// from disk a week earlier. They stayed because the walk had stopped
+    /// visiting `Feeds/state/` — which is what stopped *new* ones appearing —
+    /// and `is_in_unscanned_dir` then protected the old ones from this pass.
+    /// A directory nothing should index is a directory this should empty.
+    #[test]
+    fn the_feeds_read_state_is_purged_however_the_disk_looks() {
+        let db = db();
+        let vault = empty_vault();
+        let live = "Feeds/state/dev (conflict 03dd710d).json";
+        std::fs::create_dir_all(vault.path().join("Feeds/state")).expect("dir");
+        std::fs::write(vault.path().join(live), "{}").expect("the file is there");
+
+        let node = seed(&db, live, "json");
+        // Walked past *and* on disk: the two things that keep an ordinary row.
+        remove_orphaned_nodes(&db, vault.path(), &[node], &on_disk(&[live]));
+
+        assert!(db.get_node(live).unwrap().is_none(), "the row survived");
+        assert_eq!(search_entries(&db, live), 0);
+    }
+
+    /// And a feed's own articles are not read state: they stay.
+    #[test]
+    fn a_feed_itself_is_left_alone() {
+        let db = db();
+        let vault = empty_vault();
+        let feed = "Feeds/dev.json";
+        std::fs::create_dir_all(vault.path().join("Feeds")).expect("dir");
+        std::fs::write(vault.path().join(feed), "{}").expect("the file");
+
+        let node = seed(&db, feed, "json");
+        remove_orphaned_nodes(&db, vault.path(), &[node], &on_disk(&[feed]));
+
+        assert!(db.get_node(feed).unwrap().is_some(), "a feed is not read state");
     }
 
     /// Same defect, second type. Worth its own case: people are the only nodes
