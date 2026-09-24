@@ -76,6 +76,35 @@ body {
   color: var(--color-text-dark);
 }
 
+/* ─────────────────────────────────────────────────
+   A button says it is a button under the pointer.
+
+   Tailwind 4's preflight sets `button { cursor: default }` — the browsers'
+   own default, and a deliberate change from 3, where it was `pointer`. The
+   upgrade went through this app silently: every button that did not happen
+   to carry `cursor-pointer` in its class list went back to an arrow, which
+   is roughly half of the 1 115 buttons here. Nobody writes that class on
+   purpose one button at a time, and the three in the timeline's door frame
+   are just where it was noticed.
+
+   So the rule is written once, the way Tailwind's own upgrade note suggests.
+   A disabled button keeps the arrow: it is not something to press.
+
+   Inside `@layer base` on purpose. Written outside a layer it would beat
+   every utility, and a `cursor-not-allowed` put on a button that is greyed
+   out by class rather than by the `disabled` attribute would stop working.
+   In `base` it beats preflight — `button:not(:disabled)` is the more
+   specific selector in the same layer — and still loses to a utility, which
+   is the order anybody writing one expects.
+   ───────────────────────────────────────────────── */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+}
+
 /* Fix for Tailwind Typography inline code backticks */
 .prose code::before,
 .prose code::after {
