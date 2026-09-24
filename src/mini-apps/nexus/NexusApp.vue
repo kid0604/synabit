@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles } from 'lucide-vue-next';
-import { marked } from 'marked';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles, SlidersHorizontal } from 'lucide-vue-next';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
 import DatedView from '../../shared/views/DatedView.vue';
@@ -19,6 +18,7 @@ import MomentSheet from '../../shared/components/MomentSheet.vue';
 import { logger } from '../../utils/logger';
 import { refusalText } from '../../shared/refusal';
 import { onSource, withRoomFor } from '../../shared/queryChips';
+import { useSettings } from '../../composables/useSettings';
 import { localDay } from '../../shared/localDay';
 import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useAppLockStore } from '../../stores/useAppLockStore';
@@ -37,18 +37,6 @@ const emit = defineEmits<{
 const props = defineProps<{
     vaultPath: string;
 }>();
-
-interface NexusItem {
-    id: string;
-    item_type: string;
-    title: string;
-    preview: string;
-    tags: string[];
-    date: string;
-    path: string;
-    content: string;
-    status?: string;
-}
 
 interface SearchResult {
     id: string;
@@ -85,7 +73,6 @@ interface GraphData {
     links: GraphLink[];
 }
 
-const allItems = ref<NexusItem[]>([]);
 const graphData = ref<GraphData | null>(null);
 /**
  * Ids the current query matched, for the graph to narrow itself to. Null when
@@ -211,17 +198,37 @@ const searchTab = ref<'nodes' | 'events'>('nodes');
 const proposals = ref<{ waiting: number; unread: number } | null>(null);
 const reviewing = ref(false);
 
+// How the vault is read into moments lives in the app's settings, not in the
+// review — see `shared/components/TimelineSettings.vue`.
+const { openSettings } = useSettings();
+const readingSettings = () => { reviewing.value = false; openSettings('timeline'); };
+
+/**
+ * How many moments are waiting, and how much of the vault has not been read.
+ *
+ * Two questions with two prices. What is waiting is rows the timeline already
+ * holds; what has not been read means walking every note and replaying its
+ * history, a second or so, with the vault's connection held the whole time.
+ * So the badge is asked for first and shown on its own, and the second
+ * question follows behind it — after this app's own data, never beside it.
+ * Fired on mount next to `loadAllData`, it made the graph and the list wait
+ * behind a count on a button.
+ */
 const loadProposals = async () => {
     try {
-        const status = await invoke<{ pending: number; proposals: unknown[] }>(
-            'timeline_extract_status',
-            { vaultPath: props.vaultPath },
-        );
-        proposals.value = { waiting: status.proposals.length, unread: status.pending };
+        const status = await invoke<{ proposals: unknown[] }>('timeline_extract_status', { vaultPath: props.vaultPath });
+        proposals.value = { waiting: status.proposals.length, unread: proposals.value?.unread ?? 0 };
     } catch (e) {
         // A count nobody can read is not worth an error in front of whatever
         // they were doing; the badge simply does not appear.
         logger.error('Could not count what is waiting to be reviewed', e);
+        return;
+    }
+    try {
+        const left = await invoke<{ pending: number }>('timeline_reading_left', { vaultPath: props.vaultPath });
+        if (proposals.value) proposals.value = { ...proposals.value, unread: left.pending };
+    } catch (e) {
+        logger.error('Could not work out what is left to read', e);
     }
 };
 
@@ -388,18 +395,20 @@ const hideSyntaxHints = () => {
     }, 200);
 };
 
-const selectedItem = ref<NexusItem | null>(null);
-
 let searchTimeout: ReturnType<typeof setTimeout>;
 
+/**
+ * The graph, which is what this screen draws.
+ *
+ * It used to ask for `get_nexus_items` beside it — every node in the vault
+ * with its whole text, 10.8 MB of JSON across the IPC boundary on this vault
+ * — and put the answer in a `ref` that nothing ever read. The list it was for
+ * became the search results years of edits ago, and the preview pane it fed
+ * became `edit-item`. Opening Nexus paid for both on every visit.
+ */
 const loadAllData = async () => {
     try {
-        const [items, data] = await Promise.all([
-            invoke<NexusItem[]>('get_nexus_items', { vaultPath: props.vaultPath }),
-            invoke<GraphData>('get_nexus_graph_data', { vaultPath: props.vaultPath })
-        ]);
-        allItems.value = items;
-        graphData.value = data;
+        graphData.value = await invoke<GraphData>('get_nexus_graph_data', { vaultPath: props.vaultPath });
     } catch (e) {
         logger.error("Failed to load nexus data", e);
     }
@@ -544,13 +553,15 @@ onMounted(() => {
     // now has — including the width remembered from a larger screen.
     window.addEventListener('resize', answers.reclamp);
     answers.reclamp();
-    loadAllData();
-    loadProposals();
+    loadAllData().then(loadProposals);
     bus.on('vault:file-modified', () => debouncedLoad(reload));
     bus.on('vault:file-created-deleted', () => debouncedLoad(reload));
     bus.on('vault:sync-completed', () => debouncedLoad(reload));
 
     // Cross-app subscribers: reload when nodes are mutated elsewhere
+    // Not `reload`: the timeline's own answers, its count and the strip are
+    // held apart from the node side and none of them is reloaded by it.
+    bus.on('timeline:changed', () => eventsChanged());
     bus.on('node:created', () => debouncedLoad(reload));
     bus.on('node:updated', () => debouncedLoad(reload));
     bus.on('node:deleted', () => debouncedLoad(reload));
@@ -589,7 +600,7 @@ const getTypeColor = (type: string) => {
     return 'text-gray-600 bg-gray-100 dark:bg-gray-500/20 dark:text-gray-400';
 };
 
-const openPreview = async (item: NexusItem | SearchResult) => {
+const openPreview = async (item: SearchResult) => {
     emit('edit-item', item.id, item.item_type, searchQuery.value.trim() || undefined);
 };
 
@@ -619,36 +630,6 @@ const openPreviewFromGraph = (node: GraphNode) => {
     emit('edit-item', node.id, node.item_type);
 };
 
-const closePreview = () => {
-    selectedItem.value = null;
-};
-
-const renderMarkdownPreview = (text: string, type: string) => {
-    if (!text) return '';
-    
-    let parsed = text;
-    // Strip frontmatter if present (only for notes/tasks)
-    if (type !== 'quickcap' && text.startsWith('---\n')) {
-        const splitIdx = text.indexOf('---', 3);
-        if (splitIdx > 0) {
-            parsed = text.substring(splitIdx + 3).trim();
-        }
-    }
-    
-    // Convert relative asset links so they load properly in preview
-    parsed = parsed.replace(/!\[.*?\]\((.*?)\)/g, (_match, path) => {
-        let absPath = path;
-        if (path.startsWith('assets/')) {
-            absPath = `${props.vaultPath}/${path}`;
-        }
-        const src = convertFileSrc(absPath);
-        return `![image](${src})`;
-    });
-    
-    const html = marked.parse(parsed, { async: false, breaks: true }) as string;
-    return DOMPurify.sanitize(html);
-};
-
 const cleanSnippet = (snippet: string) => {
     if (!snippet) return '';
     // Replace markdown images: ![alt](url) -> 🖼️ alt
@@ -668,7 +649,6 @@ const cleanSnippet = (snippet: string) => {
          column, the pane beside it and the omnibar above it all read it, so
          they cannot drift apart, and `sm:` keeps the breakpoint in CSS. -->
     <div
-        v-show="!selectedItem"
         ref="screen"
         class="flex-1 flex flex-col h-full relative transition-all"
         :style="{ '--answers': answers.leftWidth.value + 'px' }"
@@ -804,7 +784,6 @@ const cleanSnippet = (snippet: string) => {
                  a button that did nothing. A smaller radius instead, so a
                  child's square hover still sits right inside it. -->
             <div
-                v-if="!selectedItem"
                 data-timeline-doors
                 class="absolute bottom-6 left-6 z-20 flex items-stretch divide-x divide-gray-200 rounded-2xl border border-gray-200 bg-white/85 shadow-lg backdrop-blur-md dark:divide-[#3a3a3c] dark:border-[#3a3a3c] dark:bg-[#242426]/85"
             >
@@ -812,12 +791,10 @@ const cleanSnippet = (snippet: string) => {
                     :vault-path="vaultPath"
                     @changed="eventsChanged"
                 />
-                <!-- Always here, with or without a queue. Behind this door
-                     are the reading settings and the way to clear the
-                     timeline and start again — and an empty queue is exactly
-                     when somebody wants them. It used to appear only when
-                     there was something waiting, so the one moment you needed
-                     it was the moment it was gone. -->
+                <!-- Always here, with or without a queue: an empty queue is
+                     worth being able to see, and a door that appears only
+                     when it has something behind it is a door nobody learns
+                     where to find. -->
                 <button
                     data-review-proposals
                     type="button"
@@ -831,6 +808,18 @@ const cleanSnippet = (snippet: string) => {
                         v-if="proposals?.waiting"
                         class="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white"
                     >{{ proposals.waiting }}</span>
+                </button>
+                <!-- And how the reading is done, which is a settings thing and
+                     says so. It used to be a fold-out inside the review. -->
+                <button
+                    data-reading-settings
+                    type="button"
+                    class="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-500 transition-colors hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-[#3a3a3c]"
+                    :title="$t('nexus.extract_settings')"
+                    :aria-label="$t('nexus.extract_settings')"
+                    @click="readingSettings()"
+                >
+                    <SlidersHorizontal class="h-4 w-4" />
                 </button>
             </div>
         </div>
@@ -1167,8 +1156,9 @@ const cleanSnippet = (snippet: string) => {
     <!-- Reviewing what Syn read out of the notes.
          The whole window, not a popover: every row is a sentence, a day, a
          list of people and the line it was read from, and there can be
-         dozens of them. The settings sit under the queue rather than over
-         it — the queue is what somebody came for. -->
+         dozens of them. The queue and nothing else: how the reading is done
+         is in Settings → Timeline, where somebody looking for it would
+         look. -->
     <div
         v-if="reviewing"
         data-review-screen
@@ -1198,58 +1188,12 @@ const cleanSnippet = (snippet: string) => {
                     :vault-path="vaultPath"
                     @changed="eventsChanged"
                     @open="(id: string, type: string, quote: string) => { reviewing = false; emit('edit-item', id, type, quote); }"
+                    @settings="readingSettings()"
                 />
             </div>
         </div>
     </div>
 
-    <!-- Full-page Preview Panel (Unchanged logic, floating on top when active) -->
-    <div v-if="selectedItem" class="absolute inset-0 bg-[#fdfdfc] dark:bg-[#1a1a1c] flex flex-col z-30 animate-in fade-in zoom-in-95 duration-200">
-        <!-- Header -->
-        <div class="h-16 border-b border-gray-200 dark:border-[#2c2c2e] flex items-center justify-between px-6 flex-shrink-0 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md">
-            <div class="flex items-center gap-4">
-                <button @click="closePreview" class="p-2 -ml-2 rounded-xl hover:bg-gray-100 dark:hover:bg-[#3a3a3c] text-gray-500 transition-colors flex items-center gap-1 group">
-                    <ChevronRight class="w-5 h-5 rotate-180 transition-transform group-hover:-translate-x-0.5" /> <span class="text-sm font-semibold">Back</span>
-                </button>
-                <div class="h-4 w-px bg-gray-300 dark:bg-[#444]"></div>
-                <div class="flex items-center gap-2">
-                    <div class="p-1.5 rounded-lg" :class="getTypeColor(selectedItem.item_type)">
-                        <component :is="getTypeIcon(selectedItem.item_type)" class="w-4 h-4" />
-                    </div>
-                    <span class="text-xs font-bold tracking-widest text-gray-800 dark:text-gray-200 uppercase">{{ selectedItem.item_type }}</span>
-                </div>
-            </div>
-            
-            <button @click="emit('edit-item', selectedItem.id, selectedItem.item_type)" class="px-4 py-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:hover:bg-gray-200 dark:text-black rounded-lg text-sm font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm">
-                <component :is="getTypeIcon(selectedItem.item_type)" class="w-4 h-4" /> Edit Source
-            </button>
-        </div>
-
-        <!-- Content Area -->
-        <div class="flex-1 overflow-y-auto px-8 sm:px-16 md:px-32 py-12">
-            <div class="max-w-4xl mx-auto">
-                <h2 class="text-4xl font-extrabold text-[#1c1c1e] dark:text-white mb-6 leading-tight tracking-tight">{{ selectedItem.title }}</h2>
-                
-                <div class="flex flex-wrap gap-2 mb-10" v-if="selectedItem.tags.length">
-                    <span v-for="tag in selectedItem.tags" :key="tag" class="text-xs font-medium px-2.5 py-1 rounded bg-gray-100 dark:bg-[#2c2c2e] text-gray-700 dark:text-gray-300 flex items-center gap-1 border border-gray-200 dark:border-[#3a3a3c]">
-                        <span class="opacity-50">#</span>{{ tag.split('/').pop() }}
-                    </span>
-                </div>
-
-                <div class="prose prose-lg dark:prose-invert prose-zinc max-w-none leading-loose preview-markdown" v-html="renderMarkdownPreview(selectedItem.content, selectedItem.item_type)">
-                </div>
-                
-                <div class="mt-16 p-4 bg-gray-50 dark:bg-[#242426] rounded-xl border border-gray-200 dark:border-[#2c2c2e]">
-                    <div class="text-xs font-medium text-gray-500 flex justify-between items-center">
-                        <div class="flex-1 min-w-0">
-                            <span class="block opacity-70 mb-1">Source Path:</span>
-                            <code class="block truncate text-gray-800 dark:text-gray-300">{{ selectedItem.path }}</code>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
 
   </div>

@@ -53,6 +53,18 @@ export interface AppEventMap {
   'feed:refreshed': { sourceId?: string };
   'feed:article-read': { articleId: string };
 
+  /**
+   * What the timeline holds has changed — a moment kept, written, deleted, or
+   * the whole thing cleared and started again.
+   *
+   * The review and the timeline screen are the same component tree, so a
+   * moment kept there refreshes what is on screen by itself. The settings are
+   * not: clearing the timeline from Settings → Timeline left the Nexus screen
+   * showing every moment it had counted before, and a badge saying 90
+   * proposals were waiting, with nothing behind either.
+   */
+  'timeline:changed': void;
+
   // Navigation request (cross-app)
   'navigate:to-item': { app: string; itemId: string };
 }

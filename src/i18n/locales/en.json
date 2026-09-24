@@ -7,7 +7,8 @@
       "tasks": "Tasks",
       "security": "Security",
       "devices": "Devices",
-      "about": "About"
+      "about": "About",
+      "timeline": "Timeline"
     },
     "general": {
       "language": "Language",
@@ -1181,6 +1182,9 @@
     "extract_accept": "Keep",
     "extract_decline": "Discard",
     "extract_none": "No proposals waiting.",
+    "extract_off_here": "Reading notes into moments is off.",
+    "extract_open_settings": "Open timeline settings",
+    "extract_looking": "Looking through the vault…",
     "lens_keep": "Save",
     "lens_nothing": "Nothing matched.",
     "lens_untitled": "Untitled",

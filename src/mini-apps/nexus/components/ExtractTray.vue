@@ -20,141 +20,37 @@ import { Check, Pencil, X, Loader2 } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 import { errorText } from '../../../shared/errorText';
-import MediaSurrogates from './MediaSurrogates.vue';
+import { withKind, saveKinds } from '../../../shared/timelineReading';
+import type { ExtractStatus, MomentView, Proposal } from '../../../shared/timelineReading';
 
-interface PersonRef { id: string; title: string }
-
-export interface Proposal {
-    id: string;
-    node_id: string;
-    node_title: string;
-    node_type: string;
-    recorded: string;
-    happened_from: string;
-    happened_to: string;
-    precision: string;
-    title: string;
-    people: PersonRef[];
-    names: string[];
-    quote: string;
-    confidence: number;
-    model: string;
-    stale: boolean;
-    category: string | null;
-    amount: { value: number; unit: string } | null;
-    about: string[];
-    time: string | null;
-    place: string | null;
-    /** `explicit`, `relative`, `the_day` or `inferred`: how the day was worked out. */
-    date_basis: string | null;
-    /** The kept moment this would change, and how: `changed`, `retracted`, `gone` (§15). */
-    about_moment: string | null;
-    verdict: string | null;
-}
-
-export interface ExtractStatus {
-    config: { enabled: boolean; allow_cloud: boolean; folders: string[]; tags: string[]; conversations: boolean; categories: string[] };
-    syn_enabled: boolean;
-    provider: string;
-    local: boolean;
-    model: string | null;
-    desktop: boolean;
-    running: boolean;
-    pending: number;
-    stale: number;
-    old_version: number;
-    done: number;
-    estimate_ms: number;
-    estimate_all_ms: number;
-    estimate_measured: boolean;
-    unreadable: string[];
-    proposals: Proposal[];
-    changes: number;
-    people: PersonRef[];
-    /** The kinds a moment can be here: the vault's list, or the defaults. */
-    categories: string[];
-    moments: Record<string, MomentView>;
-}
-
-/** A moment as it is kept, for holding a change up against it (§15). */
-export interface MomentView {
-    path: string;
-    title: string;
-    happened: string;
-    people: string[];
-    place: string | null;
-    category: string | null;
-    time: string | null;
-    amount: { value: number; unit: string } | null;
-    /** Fields the person wrote themselves. A change never touches these. */
-    hand: string[];
-}
-
-interface ExtractRun { read: number; items: number; dropped: number; failed: string[]; remaining: number; skipped: string | null }
+// The shapes moved to `shared/timelineReading` when the settings did; named
+// here still so the screens that import them from the tray keep working.
+export type { ExtractStatus, MomentView, Proposal };
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{
     (e: 'changed'): void;
     /** Open the note this was read from, at the line it was read from. */
     (e: 'open', id: string, type: string, quote: string): void;
+    /** Show the reading settings, which are the app's settings and not this screen's. */
+    (e: 'settings'): void;
 }>();
 
 const appLock = useAppLockStore();
 
 const { t, te, locale } = useI18n();
 const status = ref<ExtractStatus | null>(null);
-const busy = ref(false);
 const failure = ref('');
-const lastRun = ref<ExtractRun | null>(null);
-const allowCloud = ref(false);
 
 const load = async () => {
     try {
         status.value = await invoke<ExtractStatus>('timeline_extract_status', { vaultPath: props.vaultPath });
-        allowCloud.value = status.value.config.allow_cloud;
     } catch (e) {
         logger.error('Could not read the extraction status', e);
     }
 };
 
 onMounted(load);
-
-/** Reading would send notes off this machine, and that has not been allowed. */
-const blocked = computed(() => !!status.value && !status.value.local && !status.value.config.allow_cloud);
-
-const minutes = (ms: number) => Math.max(1, Math.round(ms / 60_000));
-
-const configure = async (enabled: boolean) => {
-    if (!status.value) return;
-    failure.value = '';
-    try {
-        await invoke('timeline_extract_configure', {
-            vaultPath: props.vaultPath,
-            settings: { ...status.value.config, enabled, allow_cloud: allowCloud.value },
-        });
-        await load();
-    } catch (e) {
-        failure.value = errorText(e);
-    }
-};
-
-const run = async (scope: 'new' | 'stale' | 'old') => {
-    busy.value = true;
-    failure.value = '';
-    try {
-        lastRun.value = await invoke<ExtractRun>('timeline_extract_run', {
-            vaultPath: props.vaultPath,
-            scope,
-            auto: false,
-            limit: null,
-        });
-        await load();
-    } catch (e) {
-        failure.value = errorText(e);
-    } finally {
-        busy.value = false;
-    }
-};
 
 /**
  * The proposals, by the day they are about, newest first.
@@ -291,79 +187,23 @@ const kindName = (kind: string) => (te(`nexus.moment_category_${kind}`) ? t(`nex
 const addingKind = ref(false);
 const newKind = ref('');
 
-const saveKinds = async (list: string[]) => {
-    if (!status.value) return;
-    failure.value = '';
-    try {
-        await invoke('timeline_extract_configure', {
-            vaultPath: props.vaultPath,
-            settings: { ...status.value.config, categories: list },
-        });
-        status.value = { ...status.value, categories: list, config: { ...status.value.config, categories: list } };
-    } catch (e) {
-        failure.value = errorText(e);
-    }
-};
-
 const addKind = async () => {
+    if (!status.value) return;
     const kind = newKind.value.trim().toLowerCase();
+    const list = withKind(kinds.value, kind);
     addingKind.value = false;
     newKind.value = '';
-    if (!kind || kinds.value.includes(kind)) return;
-    // "other" stays last: it is where what fits nowhere goes.
-    const list = [...kinds.value.filter(k => k !== 'other'), kind, 'other'];
-    await saveKinds(list);
+    if (!kind) return;
+    if (list !== kinds.value) {
+        failure.value = '';
+        try {
+            await saveKinds(props.vaultPath, status.value.config, list);
+            status.value = { ...status.value, categories: list, config: { ...status.value.config, categories: list } };
+        } catch (e) {
+            failure.value = errorText(e);
+        }
+    }
     if (form.value) form.value.category = kind;
-};
-
-const dropKind = (kind: string) => saveKinds(kinds.value.filter(k => k !== kind));
-
-/**
- * Starting the timeline again, from nothing.
- *
- * A timeline read by a model that was not up to it is two hundred moments
- * nobody wants, and going through them one at a time to say no is not a
- * review, it is a punishment. So: everything to the trash, every reading and
- * decision forgotten, and a better model reads the vault again.
- *
- * Counted before it is offered, and confirmed against those same counts — a
- * moment arriving by sync between the question and the answer would make the
- * answer mean something else, and the Rust side refuses rather than guessing.
- */
-interface ResetPlan { moments: number; proposals: number; readings: number; decisions: number; month_files: number; surrogates: number }
-interface ResetDone { moments: number; month_files: number; review_files: number; surrogates_kept: number; failed: string[] }
-
-const resetPlan = ref<ResetPlan | null>(null);
-const resetting = ref(false);
-const resetDone = ref<ResetDone | null>(null);
-
-const askToReset = async () => {
-    failure.value = '';
-    resetDone.value = null;
-    try {
-        resetPlan.value = await invoke<ResetPlan>('timeline_reset_plan', { vaultPath: props.vaultPath });
-    } catch (e) {
-        failure.value = errorText(e);
-    }
-};
-
-const startAgain = async () => {
-    if (!resetPlan.value || resetting.value) return;
-    resetting.value = true;
-    failure.value = '';
-    try {
-        resetDone.value = await invoke<ResetDone>('timeline_reset', {
-            vaultPath: props.vaultPath,
-            expectMoments: resetPlan.value.moments,
-        });
-        resetPlan.value = null;
-        await load();
-        emit('changed');
-    } catch (e) {
-        failure.value = errorText(e);
-    } finally {
-        resetting.value = false;
-    }
 };
 
 const review = async (proposal: Proposal, accept: boolean) => {
@@ -838,178 +678,19 @@ const details = (p: Proposal) =>
                     </ul>
                 </section>
             </template>
-            <p v-else-if="status.config.enabled" class="text-[11px] text-gray-400">{{ t('nexus.extract_none') }}</p>
-
-
-        <!-- The settings, under the queue rather than over it.
-             Whoever opened this came to look at what is waiting; turning
-             reading on, allowing a cloud model and asking for another pass
-             are things you do once and then forget. They used to sit above
-             the list, so the first thing a queue of proposals showed was
-             sixty lines of configuration. -->
-        <details data-extract-settings class="rounded-xl border border-gray-200 dark:border-[#3a3a3c]" :open="!status.config.enabled">
-            <summary class="cursor-pointer px-4 py-3 text-xs font-semibold text-gray-700 dark:text-gray-300">
-                {{ $t('nexus.extract_settings') }}
-            </summary>
-            <div class="space-y-3 border-t border-gray-100 px-4 py-3 dark:border-[#3a3a3c]">
-            <template v-if="!status.config.enabled">
-                <p v-if="status.local" class="text-[11px] leading-relaxed text-gray-600 dark:text-gray-300">
-                    {{ $t('nexus.extract_local', { provider: status.provider }) }}
+            <!-- Nothing waiting, or nothing reading. Either way the next
+                 thing to do is in the settings, so say where they are rather
+                 than leaving somebody to find them. -->
+            <div v-else data-nothing-waiting class="space-y-2">
+                <p class="text-[13px] text-gray-400">
+                    {{ status.config.enabled ? t('nexus.extract_none') : t('nexus.extract_off_here') }}
                 </p>
-                <template v-else>
-                    <p data-cloud-warning class="rounded-lg bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-                        {{ $t('nexus.extract_cloud_warning', { provider: status.provider }) }}
-                    </p>
-                    <label class="flex items-center gap-2 text-[11px] text-gray-700 dark:text-gray-300">
-                        <input v-model="allowCloud" type="checkbox" data-allow-cloud />
-                        {{ $t('nexus.extract_allow_cloud') }}
-                    </label>
-                </template>
-                <p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_unmeasured') }}</p>
-                <div data-kinds class="space-y-1">
-                    <p class="text-[11px] font-semibold text-gray-700 dark:text-gray-300">{{ $t('nexus.extract_kinds') }}</p>
-                    <p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_kinds_explain') }}</p>
-                    <div class="flex flex-wrap items-center gap-1">
-                        <span
-                            v-for="kind in kinds"
-                            :key="kind"
-                            data-kind
-                            class="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-[#2c2c2e]"
-                        >
-                            {{ kindName(kind) }}
-                            <button
-                                v-if="kind !== 'other'"
-                                type="button"
-                                data-drop-kind
-                                :aria-label="$t('nexus.extract_drop_kind', { kind: kindName(kind) })"
-                                class="text-gray-400 hover:text-red-500"
-                                @click="dropKind(kind)"
-                            >×</button>
-                        </span>
-                        <input
-                            v-model="newKind"
-                            data-add-kind
-                            type="text"
-                            :placeholder="$t('nexus.extract_new_kind')"
-                            :aria-label="$t('nexus.extract_new_kind')"
-                            class="h-6 w-28 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
-                            @keydown.enter.prevent="addKind()"
-                        />
-                    </div>
-                </div>
                 <button
                     type="button"
-                    data-enable
-                    class="w-full rounded-lg bg-indigo-600 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40"
-                    :disabled="!status.local && !allowCloud"
-                    @click="configure(true)"
-                >{{ $t('nexus.extract_enable') }}</button>
-            </template>
-
-            <template v-else>
-                <!-- Reading is on, and Syn's model has since moved off this machine. -->
-                <template v-if="blocked">
-                    <p data-cloud-warning class="rounded-lg bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-                        {{ $t('nexus.extract_cloud_warning', { provider: status.provider }) }}
-                    </p>
-                    <label class="flex items-center gap-2 text-[11px] text-gray-700 dark:text-gray-300">
-                        <input v-model="allowCloud" type="checkbox" data-allow-cloud @change="configure(true)" />
-                        {{ $t('nexus.extract_allow_cloud') }}
-                    </label>
-                </template>
-                <div class="space-y-1.5 rounded-lg bg-gray-50 p-2.5 text-[11px] text-gray-600 dark:bg-[#1e1e20] dark:text-gray-300">
-                    <p>
-                        {{ $t('nexus.extract_pending', { count: status.pending, minutes: minutes(status.estimate_ms) }) }}
-                        <template v-if="status.changes"> · <span data-changes-waiting>{{ $t('nexus.extract_changes_waiting', { count: status.changes }) }}</span></template>
-                        <template v-if="!status.estimate_measured"> {{ $t('nexus.extract_rough') }}</template>
-                        <template v-if="status.local"> · {{ $t('nexus.extract_no_cloud') }}</template>
-                    </p>
-                    <p v-if="!status.desktop">{{ $t('nexus.extract_phone') }}</p>
-                    <div class="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            data-run-new
-                            class="flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white disabled:opacity-40"
-                            :disabled="busy || status.running || blocked || status.pending === 0"
-                            @click="run('new')"
-                        >
-                            <Loader2 v-if="busy || status.running" class="h-3 w-3 animate-spin" />
-                            {{ busy || status.running ? $t('nexus.extract_running') : $t('nexus.extract_run') }}
-                        </button>
-                        <button
-                            v-if="status.stale"
-                            type="button"
-                            class="rounded-md border border-gray-200 px-2.5 py-1 dark:border-[#3a3a3c]"
-                            :disabled="busy || status.running || blocked"
-                            @click="run('stale')"
-                        >{{ $t('nexus.extract_stale', { count: status.stale }) }}</button>
-                        <button
-                            v-if="status.old_version"
-                            type="button"
-                            class="rounded-md border border-gray-200 px-2.5 py-1 dark:border-[#3a3a3c]"
-                            :disabled="busy || status.running || blocked"
-                            @click="run('old')"
-                        >{{ $t('nexus.extract_old', { count: status.old_version }) }}</button>
-                    </div>
-                    <p v-if="lastRun && !lastRun.skipped">
-                        {{ $t('nexus.extract_last_run', { read: lastRun.read, items: lastRun.items, dropped: lastRun.dropped }) }}
-                        <template v-if="lastRun.failed.length"> · {{ $t('nexus.extract_failed', { count: lastRun.failed.length }) }}</template>
-                    </p>
-                    <p v-for="file in status.unreadable" :key="file" class="text-red-500">{{ file }}</p>
-                    <button type="button" class="text-gray-400 underline" @click="configure(false)">{{ $t('nexus.extract_disable') }}</button>
-                </div>
-            </template>
-
-                <!-- Captions and transcripts are what stands in for a
-                     picture or a recording when the extractor reads a note,
-                     so they belong with the reading settings rather than
-                     beside the queue. -->
-                <MediaSurrogates :vault-path="vaultPath" />
-
-                <!-- Starting again, at the bottom, behind a count and two
-                     presses: it is the one thing here that takes something
-                     away. -->
-                <div data-reset class="space-y-1.5 rounded-lg border border-red-200 p-2.5 dark:border-red-900/40">
-                    <p class="text-[11px] font-semibold text-red-700 dark:text-red-400">{{ $t('nexus.reset_title') }}</p>
-                    <p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.reset_explain') }}</p>
-                    <p v-if="resetDone" data-reset-done class="text-[11px] text-gray-600 dark:text-gray-300">
-                        {{ $t('nexus.reset_done', { moments: resetDone.moments, kept: resetDone.surrogates_kept }) }}
-                    </p>
-                    <template v-if="resetPlan">
-                        <p data-reset-plan class="text-[11px] leading-relaxed text-gray-700 dark:text-gray-200">
-                            {{ $t('nexus.reset_counts', {
-                                moments: resetPlan.moments,
-                                proposals: resetPlan.proposals,
-                                readings: resetPlan.readings,
-                                decisions: resetPlan.decisions,
-                            }) }}
-                        </p>
-                        <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ $t('nexus.reset_safe') }}</p>
-                        <div class="flex items-center gap-2">
-                            <button
-                                type="button"
-                                data-reset-confirm
-                                class="flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-40"
-                                :disabled="resetting"
-                                @click="startAgain()"
-                            >
-                                <Loader2 v-if="resetting" class="h-3 w-3 animate-spin" />
-                                {{ $t('nexus.reset_confirm') }}
-                            </button>
-                            <button type="button" class="text-[11px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" @click="resetPlan = null">
-                                {{ $t('nexus.reset_cancel') }}
-                            </button>
-                        </div>
-                    </template>
-                    <button
-                        v-else
-                        type="button"
-                        data-reset-ask
-                        class="rounded-md border border-red-300 px-2 py-0.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-900/20"
-                        @click="askToReset()"
-                    >{{ $t('nexus.reset_ask') }}</button>
-                </div>
+                    data-open-settings
+                    class="rounded-md border border-gray-200 px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:bg-gray-50 dark:border-[#3a3a3c] dark:text-gray-200 dark:hover:bg-[#2c2c2e]"
+                    @click="emit('settings')"
+                >{{ t('nexus.extract_open_settings') }}</button>
             </div>
-        </details>
     </div>
 </template>

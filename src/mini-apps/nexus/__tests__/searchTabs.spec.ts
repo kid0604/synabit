@@ -4,6 +4,8 @@ import { createPinia, setActivePinia } from 'pinia';
 import { invoke } from '@tauri-apps/api/core';
 import NexusApp from '../NexusApp.vue';
 import { i18n } from '../../../i18n';
+import { useSettings } from '../../../composables/useSettings';
+import { useEventBus } from '../../../composables/useEventBus';
 
 /**
  * One box, two tables.
@@ -306,11 +308,9 @@ describe('A timeline count is a floor, not a total', () => {
         expect(wrapper.find('[data-review-proposals]').text()).toContain('2');
     });
 
-    /// Behind that door are the reading settings and the way to clear the
-    /// timeline and start again. It used to appear only when something was
-    /// waiting — so the moment the queue emptied, which is exactly when
-    /// somebody wants to change how reading works or start over, the door
-    /// was gone.
+    /// It used to appear only when something was waiting, which made an empty
+    /// queue impossible to look at — and the reading settings, which lived
+    /// behind it, impossible to reach.
     it('is there with an empty queue too, without a count', async () => {
         const wrapper = mountNexus({
             status: () => ({
@@ -329,9 +329,41 @@ describe('A timeline count is a floor, not a total', () => {
         await door.trigger('click');
         await flushPromises();
         expect(wrapper.find('[data-review-screen]').exists()).toBe(true);
-        // And what is behind it: the settings, and starting again.
-        expect(wrapper.find('[data-extract-settings]').exists()).toBe(true);
-        expect(wrapper.find('[data-reset-ask]').exists()).toBe(true);
+        // And the queue, and nothing else: how the reading is done is a
+        // settings thing, and is in the settings.
+        expect(wrapper.find('[data-extract-settings]').exists()).toBe(false);
+        expect(wrapper.find('[data-reset-ask]').exists()).toBe(false);
+    });
+
+    /// The timeline was cleared from the settings — another component tree
+    /// entirely — and this screen went on showing what it had counted before:
+    /// a full strip, a full list, and a badge saying 90 proposals waited.
+    it('asks again when something clears the timeline from elsewhere', async () => {
+        const wrapper = mountNexus();
+        await flushPromises();
+        const asked = () => vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_status').length;
+        const before = asked();
+
+        useEventBus().emit('timeline:changed');
+        await flushPromises();
+        expect(asked()).toBeGreaterThan(before);
+        expect(wrapper.exists()).toBe(true);
+    });
+
+    /// A label says what is behind it. Somebody wanting to clear the whole
+    /// timeline had to press "Moment proposals" first and find it folded out
+    /// under a queue — so the way to change how reading works sits beside the
+    /// review rather than inside it, and opens the settings on its own tab.
+    it('sends the reading settings to the settings, on their own tab', async () => {
+        const wrapper = mountNexus();
+        await flushPromises();
+        const { showSettingsModal, settingsTab } = useSettings();
+        showSettingsModal.value = false;
+        settingsTab.value = 'general';
+
+        await wrapper.find('[data-reading-settings]').trigger('click');
+        expect(showSettingsModal.value).toBe(true);
+        expect(settingsTab.value).toBe('timeline');
     });
 
     /// And pressing it opens the review, which is a screen and not a popover.

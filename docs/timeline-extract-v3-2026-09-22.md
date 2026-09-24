@@ -977,3 +977,137 @@ Chấm     · ·•·•• ·   ·  ·     ••·•·
 Khi đọc một túi ngày nằm trong một quãng, model được biết quãng đó: đọc ngày năm 2011 thì
 biết người viết đang học đại học, nên *"thi cuối kỳ"* được hiểu đúng và gắn `about` vào quãng.
 
+
+---
+
+## 17. Cài đặt đọc ở đâu — **đã sửa 2026-09-23**
+
+Trước đó: cài đặt đọc, danh sách loại, phụ đề ảnh và **nút xoá sạch dòng thời gian** nằm
+trong một `<details>` gập ở đáy màn duyệt. Muốn xoá dòng thời gian thì phải bấm *"Đề xuất
+khoảnh khắc"* trước — một cái nhãn nói về hàng đợi, không nói gì về cài đặt hay xoá. Tên cửa
+không khớp thứ sau cửa, nên người dùng phải đoán. Và trước lần sửa hôm qua (`c73a751`), cửa
+ấy chỉ hiện khi có đề xuất đang chờ — tức là đúng lúc hàng đợi trống, lúc người ta muốn đổi
+cách đọc hoặc làm lại từ đầu, thì cửa biến mất.
+
+Chỗ đúng của một việc hiếm và phá huỷ là chỗ người ta đi tìm việc hiếm và phá huỷ: **Cài đặt
+→ Dòng thời gian**, ngay cạnh Thùng rác của vault.
+
+- `src/shared/components/TimelineSettings.vue` — bật/tắt đọc, cảnh báo gửi đi đâu, chạy một
+  lượt, danh sách loại, phụ đề ảnh, và ô đỏ *"Đập đi xây lại"*. Tab riêng trong
+  `SettingsModal`, nạp khi mở.
+- `src/shared/timelineReading.ts` — các khuôn dữ liệu dùng chung, cộng `withKind()` và
+  `saveKinds()`: bộ chọn loại trong màn duyệt vẫn thêm được một loại ngay tại chỗ thiếu nó,
+  và thêm theo đúng quy tắc của danh sách (cắt trắng, chữ thường, `other` cuối).
+- Màn duyệt giữ **mỗi hàng đợi**. Hàng đợi trống thì nói thẳng và chỉ đường sang cài đặt.
+- Thanh công cụ dòng thời gian có nút cài đặt riêng bên cạnh cửa duyệt, mở thẳng đúng tab.
+- `openSettings(tab?)` nhận tên tab, để chỗ khác trong app gửi người dùng tới đúng một việc.
+
+---
+
+## 18. Vì sao Nexus chậm — **đo và sửa 2026-09-23**
+
+`timeline_extract_status` là **một** lệnh, và nó giữ kết nối vault suốt thời gian chạy. Đo
+trên vault thật (1016 node, 292 node được đọc, 412 tài liệu có lịch sử):
+
+| Phần | release | debug (`tauri dev`) |
+| --- | --- | --- |
+| `extract::load` | 17 ms | 18 ms |
+| `Directory::read` | 8 ms | 10 ms |
+| `sources` **không** lịch sử | 154 ms | 1 730 ms |
+| `sources` **có** lịch sử | 713 ms | 5 200 ms |
+| `plan` | 11 ms | 60 ms |
+| `changes`, `moments::kept`, `days` | ~0 ms | ~5 ms |
+
+Hai phần ba là `History::of` — replay từng phiên bản của từng note bằng Loro. Không bỏ được:
+`standing()` đọc lịch sử để biết *"khối này là bản sửa của khối đã đọc"*, cho **mọi** loại
+note, không chỉ note ghi theo ngày. (Đã thử bỏ cho note một-ngày: sai ngay — `first_seen`
+rỗng làm mọi khối của note đó thành `ReadBefore`, 56 túi tụt còn 46.)
+
+Phần còn lại là `blocks::split` + băm, không phải SQLite: đổi câu SQL để chỉ lấy `content`
+của các node thật sự đọc (vault này có 9 MB `json` không bao giờ đọc) cho ra **154 ms so với
+155 ms** — không khác gì. Bỏ.
+
+Cái sai không nằm ở phép tính, nằm ở **bao nhiêu lần tính**:
+
+1. `NexusApp` gọi lệnh này ngay khi mount, **song song** với `loadAllData()` — nên đồ thị và
+   danh sách xếp hàng sau một con số trên cái nút. Giờ gọi sau: `loadAllData().then(loadProposals)`.
+2. Mỗi lần mở dòng thời gian hay mở cài đặt lại tính lại từ đầu, dù không có gì được ghi.
+   `TimelineStore` giữ lại kế hoạch đọc, khoá theo `Planned`: `sqlite3_total_changes` của
+   kết nối vault **và** của kết nối timeline (cùng con số `is_current` dùng — mọi lệnh ghi
+   trong app đi qua một trong hai, nên không sót), cộng nội dung `Timeline/extract.json`, số
+   file quyết định + mtime mới nhất, và ngày hôm nay. Khớp thì trả lại kế hoạch cũ, không
+   chạm vault.
+3. Màn cài đặt trống trơn trong lúc chờ. Giờ nó vẽ ngay khung và một dòng *"Đang xem lại
+   vault…"* — một panel không hiện gì trong một giây đọc như một panel hỏng.
+
+---
+
+## 19. Xoá xong mà màn hình vẫn còn — **sửa 2026-09-23**
+
+Bấm *"Đập đi xây lại"* trong Cài đặt thì trên đĩa xoá thật: `Moments/` rỗng, file nằm trong
+`.trash/Moments`, `Timeline/reviews/` rỗng, mọi file tháng còn `items: 0`, `extract_runs` và
+`events WHERE source='extract'` về 0. Nhưng quay lại Nexus vẫn thấy đủ cột, đủ danh sách, và
+huy hiệu *"90 đề xuất"*.
+
+Vì **màn duyệt và màn dòng thời gian là cùng một cây component, còn cài đặt thì không**. Giữ
+một đề xuất trong màn duyệt thì `ExtractTray` phát `changed` lên `NexusApp` ngay bên trên nó;
+xoá cả dòng thời gian trong Settings thì không có ai ở trên để nghe. `reload` của Nexus cũng
+không giúp: nó nạp lại phía node, còn `wholeTimeline` và số đề xuất nằm riêng.
+
+Thêm một tên trên event bus: `timeline:changed` — *"thứ dòng thời gian đang giữ đã khác"*.
+`TimelineSettings` phát nó sau khi xoá và sau mỗi lượt đọc; `NexusApp` nghe và gọi
+`eventsChanged()`. Đây là cái giá của việc tách cài đặt ra khỏi màn duyệt (§17), và nó rẻ.
+
+
+### 18.1 Tách một lệnh thành hai, rồi đếm rẻ hẳn — 2026-09-23
+
+Memo (nhớ lại kế hoạch cho tới khi có gì được ghi) không cứu được **lần đầu**, và lần đầu
+chính là lúc người ta mở màn cài đặt. Câu hỏi đúng là: *vault 10 000 node thì sao?*
+
+Đo thật — nhân vault lên 13 339 node (9 052 node được đọc), bản release:
+
+| Phần | 1 016 node | 13 339 node |
+| --- | --- | --- |
+| `Directory::read` | 8 ms | 81 ms |
+| `sources` (cắt block) | 154 ms | 4 747 ms |
+| lịch sử Loro | +480 ms / 412 tài liệu | ~1,2 ms mỗi tài liệu |
+| `plan` | 11 ms | 7 500 ms |
+| **`left_to_read`** | **7 ms** | **56 ms** |
+
+Hai chỗ tệ khác bản chất: `sources` tuyến tính theo lượng chữ; `plan` thì **siêu tuyến
+tính** — `bag()` gọi `directory.in_text()` cho từng túi, quét mọi người trong danh bạ qua
+toàn bộ chữ của túi, nên giá ≈ *số túi × số người*. (Chưa sửa; nó chỉ trả giá khi bấm Đọc.)
+
+Điều sai về tỉ lệ: màn cài đặt hiện **một dòng** — *"còn N ngày chưa đọc, ~M phút"* — mà
+phải dựng nguyên kế hoạch ở mức block. Nên tách hẳn ra hai câu hỏi:
+
+- `timeline_extract_status` — đọc bật chưa, gửi đi đâu, có loại nào, chờ duyệt mấy cái. Từ
+  bảng timeline + chỉ mục vault, vài chục ms.
+- `timeline_reading_left` (mới) — `reader::left_to_read`: hai câu truy vấn, **không mở note
+  nào**. Ngày nào có chữ (`extract::recorded` + `length(content)`), trừ ngày đã có lượt đọc
+  (`extract_runs.node_id` là `day:2026-07-21`).
+
+**Nó đánh đổi cái gì** (ghi trên `reader::Left`): một ngày là đã đọc hoặc chưa, ngày đọc dở
+bị tính là đã đọc; và một note tính vào ngày nó *nói về*, trong khi kế hoạch thật date từng
+block theo lịch sử nên một note có thể rải ra nhiều ngày. Đây là **con số đang chờ, không
+phải lời hứa về việc đọc sẽ làm gì**. Bấm Đọc thì kế hoạch đầy đủ mới được dựng — lúc đó
+vòng quay là xứng đáng.
+
+Kéo theo: nút Đọc không còn bị khoá theo con số (nó không chờ một phép đếm mới bật được), và
+dòng "N thay đổi đang chờ" bỏ khỏi cài đặt — thay đổi (§15) chỉ tìm ra được bằng kế hoạch
+đầy đủ, và sau một lượt đọc thì nó nằm trong hàng đợi duyệt rồi.
+
+Memo `store::Planned` **đã gỡ**: không còn ai gọi nó nữa.
+
+**Hai giả thuyết sai, ghi lại để khỏi đoán lại:**
+
+1. *Bỏ replay lịch sử cho note một-ngày.* Sai: `standing()` đọc lịch sử để biết "khối này là
+   bản sửa của khối đã đọc", cho mọi loại note. Bỏ đi thì `first_seen` rỗng → mọi khối thành
+   `ReadBefore`, 56 túi tụt còn 46.
+2. *`load_or_register_vault_identity` ghi lại dòng mapping mỗi lần gọi nên memo không trúng.*
+   Viết test để chứng minh thì **test pass cả với code cũ**: `insert_sync_vault_mapping` là
+   `INSERT … ON CONFLICT DO NOTHING`. Sửa theo giả thuyết đó đã revert.
+
+Cả hai đều bị số liệu bác, không phải bị đọc code bác. Đó là lý do phép đo
+`where_the_time_goes_asking_what_is_waiting` (`#[ignore]`, chạy tay với `SYN_EVAL_CACHE`)
+được giữ lại trong repo.

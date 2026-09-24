@@ -7,7 +7,8 @@
       "tasks": "Công việc",
       "security": "Bảo mật",
       "devices": "Thiết bị",
-      "about": "Thông tin"
+      "about": "Thông tin",
+      "timeline": "Dòng thời gian"
     },
     "general": {
       "language": "Ngôn ngữ",
@@ -1181,6 +1182,9 @@
     "extract_accept": "Giữ",
     "extract_decline": "Bỏ",
     "extract_none": "Không có đề xuất nào đang chờ.",
+    "extract_off_here": "Đang tắt việc đọc ghi chú thành khoảnh khắc.",
+    "extract_open_settings": "Mở cài đặt dòng thời gian",
+    "extract_looking": "Đang xem lại vault…",
     "lens_keep": "Lưu",
     "lens_nothing": "Không có gì khớp.",
     "lens_untitled": "Chưa đặt tên",

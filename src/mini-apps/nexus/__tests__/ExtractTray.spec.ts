@@ -41,16 +41,8 @@ const status = (overrides: Partial<ExtractStatus> = {}): ExtractStatus => ({
   model: 'gemma',
   desktop: true,
   running: false,
-  pending: 12,
-  stale: 0,
-  old_version: 0,
-  done: 0,
-  estimate_ms: 180_000,
-  estimate_all_ms: 180_000,
-  estimate_measured: false,
   unreadable: [],
   proposals: [],
-  changes: 0,
   people: [],
   categories: ['meal', 'spending', 'meeting', 'work', 'health', 'trip', 'family', 'feeling', 'thought', 'milestone', 'other'],
   moments: {},
@@ -72,18 +64,6 @@ describe('ExtractTray', () => {
   setActivePinia(createPinia());
   vi.mocked(invoke).mockReset();
 });
-
-  it('does not turn on a cloud provider until sending notes there is allowed', async () => {
-    const wrapper = await mountTray(status({ local: false, provider: 'gemini' }));
-    expect(wrapper.find('[data-cloud-warning]').text()).toContain('gemini');
-    expect(wrapper.find('[data-enable]').attributes('disabled')).toBeDefined();
-
-    await wrapper.find('[data-allow-cloud]').setValue(true);
-    await wrapper.find('[data-enable]').trigger('click');
-    expect(invoke).toHaveBeenCalledWith('timeline_extract_configure', expect.objectContaining({
-      settings: expect.objectContaining({ enabled: true, allow_cloud: true }),
-    }));
-  });
 
   it('never reads anything just by being opened', async () => {
     await mountTray(status({ config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] } }));
@@ -256,54 +236,16 @@ describe('ExtractTray', () => {
     expect(saved.settings.categories).toEqual(['ăn uống', 'sự cố', 'cắm trại', 'other']);
   });
 
-  /// And the list itself is a list, editable where the rest of the settings are.
-  it('shows the kinds in the settings and can drop one', async () => {
-    const wrapper = await mountTray(status({
-      config: { enabled: false, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
-      categories: ['meal', 'work', 'other'],
-    }));
-    const chips = wrapper.find('[data-kinds]').findAll('[data-kind]').map(c => c.text());
-    expect(chips[0]).toContain('Meal');
-    expect(chips[2]).toBe('Other');
-    expect(wrapper.find('[data-kinds]').findAll('[data-drop-kind]')).toHaveLength(2);
-
-    await wrapper.findAll('[data-drop-kind]')[1].trigger('click');
-    await flushPromises();
-    const saved = vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_extract_configure').pop()?.[1] as { settings: { categories: string[] } };
-    expect(saved.settings.categories).toEqual(['meal', 'other']);
-  });
-
-  /// Starting again takes something away, so it says what and asks twice.
-  it('counts what starting again would take before it takes any of it', async () => {
-    const showing = status({
-      config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] },
-    });
-    const wrapper = await mountTray(showing);
-    vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'timeline_extract_status') return showing;
-      if (command === 'timeline_reset_plan') return { moments: 37, proposals: 66, readings: 79, decisions: 12, month_files: 10, surrogates: 3 };
-      if (command === 'timeline_reset') return { moments: 37, month_files: 10, review_files: 1, surrogates_kept: 3, failed: [] };
-      return null;
-    });
-
-    // Nothing happens until it has said what it would do.
-    await wrapper.find('[data-reset-ask]').trigger('click');
-    await flushPromises();
-    const said = wrapper.find('[data-reset-plan]').text();
-    expect(said).toContain('37');
-    expect(said).toContain('66');
-    expect(vi.mocked(invoke).mock.calls.some(c => c[0] === 'timeline_reset')).toBe(false);
-
-    await wrapper.find('[data-reset-confirm]').trigger('click');
-    await flushPromises();
-    // Confirmed against the same count it showed: a moment arriving by sync
-    // in between would make the answer mean something else.
-    expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'timeline_reset').pop()?.[1]).toMatchObject({
-      vaultPath: '/vault',
-      expectMoments: 37,
-    });
-    expect(wrapper.find('[data-reset-done]').text()).toContain('37');
-    expect(wrapper.emitted('changed')).toBeTruthy();
+  /// An empty queue is not a dead end: whatever you do next about the
+  /// timeline — turn reading on, run it, start over — is in the settings, and
+  /// this says so rather than leaving you to guess.
+  it('points at the settings when there is nothing waiting', async () => {
+    for (const showing of [status(), status({ config: { enabled: true, allow_cloud: false, folders: [], tags: [], conversations: false, categories: [] } })]) {
+      const wrapper = await mountTray(showing);
+      expect(wrapper.find('[data-nothing-waiting]').exists()).toBe(true);
+      await wrapper.find('[data-open-settings]').trigger('click');
+      expect(wrapper.emitted('settings')).toBeTruthy();
+    }
   });
 
   /// A change to a moment already kept: what it says now against what the

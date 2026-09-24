@@ -1377,7 +1377,7 @@ onUnmounted(() => {
                   </div>
                 </div>
                 
-                <button v-if="useMobileLayout" @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']" aria-label="Open Settings">
+                <button v-if="useMobileLayout" @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']" aria-label="Open Settings">
                    <Settings class="w-5 h-5" />
                 </button>
              </div>
@@ -1407,7 +1407,7 @@ onUnmounted(() => {
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : syncConflictCount > 0 ? `${syncConflictCount} file(s) kept aside — click to see` : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
                 </button>
 
-                 <button @click="openSettings" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                 <button @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
                 </button>

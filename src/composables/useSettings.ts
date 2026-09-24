@@ -33,7 +33,7 @@ async function translateTrayMenu() {
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
-const settingsTab = ref<'general' | 'notes' | 'tasks' | 'about' | 'security' | 'devices' | 'license'>('general');
+const settingsTab = ref<'general' | 'notes' | 'tasks' | 'timeline' | 'about' | 'security' | 'devices' | 'license'>('general');
 const showE2eeOnboarding = ref(false);
 const showRecoveryModal = ref(false);
 
@@ -114,9 +114,16 @@ export function useSettings() {
     root.style.setProperty('--code-block-color-dark', codeBlockTextColorDark.value);
   }
 
-  function openSettings() {
+  /**
+   * The settings, on `tab` or on the first one.
+   *
+   * Naming a tab is for somewhere else in the app sending somebody here for
+   * one particular thing — the timeline's reading settings, say. Without a
+   * name it opens at the top, rather than wherever it was left weeks ago.
+   */
+  function openSettings(tab: typeof settingsTab.value = 'general') {
     showSettingsModal.value = true;
-    settingsTab.value = 'general';
+    settingsTab.value = tab;
   }
 
   function applyTheme() {

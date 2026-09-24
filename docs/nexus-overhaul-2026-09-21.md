@@ -330,3 +330,38 @@ event không lặp lại thành một dòng `kind = event` trên timeline — n�
   tab vẫn giữ tên đó.
 - **"Moment" trong bản ghi âm** ("to point at a moment, cite …#t=START,END") là
   tiếng Anh thường, một thời điểm trong audio — không phải thuật ngữ này.
+
+---
+
+## 17. Vì sao mở Nexus lần đầu lâu — đo 2026-09-23
+
+Ba thứ, đo trên vault thật (975 node, 10,8 MB chữ):
+
+**1. 10,8 MB gửi qua IPC cho một biến không ai đọc.** Khi mount, `loadAllData` gọi
+`get_nexus_items` *song song* với `get_nexus_graph_data`, rồi gán kết quả vào `allItems` —
+một `ref` **chỉ được ghi, không chỗ nào đọc**. Danh sách nó từng phục vụ đã thành kết quả
+tìm kiếm, và ô xem trước nó nuôi đã thành `edit-item`: `selectedItem` giờ chỉ được gán
+`null`, nên cả khối template `v-if="selectedItem"` là code chết không bao giờ chạy được.
+Riêng khâu serialize mất 189 ms ở bản debug, chưa kể truyền và parse. **Đã gỡ** cả lời gọi,
+cả biến, cả ô xem trước, và cả lệnh `get_nexus_items` — nó không còn ai gọi.
+
+**2. Đồ thị vẽ cả những node không ai viết.** `left_out_of_nexus` có danh sách loại trừ
+riêng, không dùng danh sách của `db::internal` — đúng cái lỗi *"nửa luật được viết lại lần
+nữa ở chỗ khác"* mà module đó ra đời để dẹp. Nên 320 trong 840 node của đồ thị là loại
+`json`: state của RSS và các bản sao xung đột của nó, hình học whiteboard. Giờ dùng chung
+`syn::tools::is_internal_type`: **840 → 511 node**, JSON của đồ thị 180 → 124 KB, và cái
+người ta nhìn thấy là thứ họ đã viết.
+
+**3. Bố cục lực chạy lại từ đầu, và chỉ lần đầu.** `getFilteredData` coi là *settled* khi
+hơn một nửa số node có vị trí cũ nhớ lại được; lần đầu thì không có gì để nhớ, nên
+`alpha(1)` và mô phỏng chạy **300 tick** — ở 60 fps là **~5 giây** đồ thị xoay trước khi
+đứng yên. Số tick không đổi theo số node (`alphaDecay` cố định), nhưng chi phí mỗi tick thì
+có: 632 ms CPU ở 840 node, 339 ms ở 511. Từ lần thứ hai trở đi vị trí được nhớ nên chỉ
+`alpha(0.3)`.
+
+Thứ (3) **chưa đụng vào**: nó là cảm giác của sản phẩm, không phải lỗi. Muốn ngắn lại thì
+tăng `alphaDecay` (0,045 ≈ 150 tick ≈ 2,5 s), hoặc chạy trước vài chục tick không vẽ rồi mới
+hiện — cả hai đều đánh đổi.
+
+Phép đo giữ trong repo: `commands::nexus::what_opening_nexus_costs` (`#[ignore]`, chạy tay
+với `SYN_EVAL_CACHE`).

@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, CalendarClock } from 'lucide-vue-next';
 import TrashPanel from './TrashPanel.vue';
 import { useSettings } from '../../composables/useSettings';
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
 
 const LockScreenVerify = defineAsyncComponent(() => import('./LockScreen.vue'));
 const DeviceManager = defineAsyncComponent(() => import('./DeviceManager.vue'));
+// How the vault is read into moments, and how to start the timeline again.
+// Loaded when its tab is opened: it is a rare visit, and it brings the media
+// surrogates with it.
+const TimelineSettings = defineAsyncComponent(() => import('./TimelineSettings.vue'));
 
 const SyncMobileSettings = defineAsyncComponent(() => import('./SyncMobileSettings.vue'));
 const ConfirmModal = defineAsyncComponent(() => import('./ConfirmModal.vue'));
@@ -128,7 +132,7 @@ const openLogFolder = async () => {
   }
 };
 
-type TabType = 'general' | 'notes' | 'tasks' | 'security' | 'devices' | 'about' | 'license';
+type TabType = 'general' | 'notes' | 'tasks' | 'timeline' | 'security' | 'devices' | 'about' | 'license';
 
 const props = defineProps<{
   initialTab?: TabType;
@@ -461,6 +465,11 @@ const setupE2ee = () => {
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'tasks' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
                 <CheckSquare class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.tasks') }}</span>
+              </button>
+              <button @click="settingsTab = 'timeline'" data-tab-timeline
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'timeline' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <CalendarClock class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.timeline') }}</span>
               </button>
               <button @click="settingsTab = 'security'" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'security' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
@@ -1095,6 +1104,14 @@ const setupE2ee = () => {
                     <p v-if="e2eeError" class="mt-4 text-[12px] text-red-500 font-medium p-2 bg-red-50 dark:bg-red-900/20 rounded">{{ e2eeError }}</p>
                   </div>
                 </section>
+              </div>
+
+              <!-- === TIMELINE TAB === -->
+              <!-- Reading the vault into moments, and starting again. It lived
+                   at the bottom of the moment review until somebody went
+                   looking for the reset and had to open a queue to find it. -->
+              <div v-else-if="settingsTab === 'timeline'" class="space-y-6">
+                <TimelineSettings :vault-path="vaultPath" />
               </div>
 
               <!-- === DEVICES TAB === -->
