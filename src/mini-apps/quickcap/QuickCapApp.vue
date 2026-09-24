@@ -704,9 +704,15 @@ const confirmWritten = async (relPath: string) => {
  */
 const promotingCaps = ref<NodeMetadata[]>([]);
 
-/** What the selected caps say, in the order they appear. */
-const promotedContent = () =>
-    promotingCaps.value
+/**
+ * What the given caps say, in the order they appear.
+ *
+ * Takes the caps rather than reading `promotingCaps`, because the palette is
+ * dismissed — which empties that ref — at the moment a destination is chosen,
+ * before any of the promotions has had a chance to read the text.
+ */
+const promotedContent = (caps: NodeMetadata[]) =>
+    caps
         .map((cap) => stripColorComment(cap.content).trim())
         .filter(Boolean)
         .join('\n\n');
@@ -805,7 +811,7 @@ const appendToNote = async (caps: NodeMetadata[], relPath: string, title: string
         const note = await invoke<any>('get_node', { id: relPath });
         if (!note) throw new Error(`${relPath} could not be read`);
 
-        const addition = promotedContent();
+        const addition = promotedContent(caps);
         if (!addition) return;
 
         const merged = `${(note.content ?? '').trimEnd()}\n\n${addition}`;
@@ -855,7 +861,7 @@ const retireCaps = async (caps: NodeMetadata[], writtenTo: string) => {
  * so it lands in the calendar and the user is taken there to adjust it.
  */
 const promoteToEvent = async (caps: NodeMetadata[]) => {
-    const body = promotedContent();
+    const body = promotedContent(caps);
     if (!body) return;
 
     const title = deriveTitle(body);
@@ -901,7 +907,7 @@ const appendToPerson = async (caps: NodeMetadata[], relPath: string, title: stri
         const person = await invoke<any>('get_node', { id: relPath });
         if (!person) throw new Error(`${relPath} could not be read`);
 
-        const addition = promotedContent();
+        const addition = promotedContent(caps);
         if (!addition) return;
 
         await ns.writeNode({
@@ -964,7 +970,7 @@ const convertingTaskParams = ref({
 
 const openConvertTaskModal = (caps: NodeMetadata[]) => {
     convertingTaskCaps.value = caps;
-    const cleanContent = promotedContent();
+    const cleanContent = promotedContent(caps);
     const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
     convertingTaskParams.value = {
         title: displayLines.length > 0 ? displayLines[0].substring(0, 50) + (displayLines[0].length > 50 ? '...' : '') : 'QuickCap Task',
@@ -995,7 +1001,7 @@ const convertingNoteParams = ref({
 
 const openConvertNoteModal = (caps: NodeMetadata[]) => {
     convertingNoteCaps.value = caps;
-    const cleanContent = promotedContent();
+    const cleanContent = promotedContent(caps);
     const displayLines = cleanContent.split('\n').filter(l => l.trim() !== '');
     const titleLine = displayLines.length > 0 ? displayLines[0] : 'QuickCap Note';
     const defaultTitle = titleLine.substring(0, 50) + (titleLine.length > 50 ? '...' : '');
