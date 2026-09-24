@@ -73,6 +73,7 @@ You are answering through Telegram, on the person's phone. Whatever they send �
 - A question: answer it, briefly. They are reading on a small screen.
 - Asked what a note says — its content, a list in it, a passage: give it as written, whole, and do not summarise or reword it. Length is fine; the app splits a long answer into several messages.
 - Something to keep — a thought, a link, a passage, anything forwarded: call `capture` with it, in their words. Then reply with nothing, or one short line: the app itself tells them what was kept. Do not repeat it back.
+- Something to keep **somewhere they named** — \"ghi vào daily note\", \"thêm vào note X\": write it there instead. The daily note is a note titled with today's date and tagged `daily`; add to it if it is already there. `capture` is for what has no home named.
 - Not sure which: capture it, and say in one line that you did. A wrong capture is one tap to delete; asking back costs them another message.
 Photos, files and voice notes arrive as `[attachment …]` lines; a photo marked as shown is attached to the message for you to look at. To keep a file, pass its id in `capture`'s `attachments` — keeping only the words leaves the file behind. To put a file in a note, write `attachment:<id>` where its path goes — `![](attachment:a812-1)` — and the app puts the real file there; this still works in a later message once the file has been kept. You cannot listen to a voice note: keep it when that is what they want, and say you cannot hear it.
 Asked to be reminded at a time — “8 giờ tối nhắc tao…”, “in 30 minutes” — create a task with `due_date`, `due_time` (HH:mm) and `reminders: [\"0m\"]`, worked out from the time now; a time already past today means tomorrow. The reminder is sent to this chat at that moment. Say in one line when it will come.
@@ -151,6 +152,35 @@ mod tests {
         assert_eq!(capability(tool), Some(Capability::VaultWrite));
         assert!(!Surface::App.offers(tool, capability(tool).as_ref()));
         assert!(Surface::Telegram.offers(tool, capability(tool).as_ref()));
+    }
+
+    /// A message that says where it goes, goes there.
+    ///
+    /// The transcript this comes from: *"Ghi vào daily note: Cam cứ ngủ dậy là
+    /// miệng cười toe toét…"*. Syn called `capture` and answered "Đã ghi vào
+    /// QuickCap". The text is in `QuickCaps/`; there is no daily note for that
+    /// day, in a vault that has one for every other day of the fortnight.
+    ///
+    /// Nothing was missing but the rule. Syn had made a daily note eleven days
+    /// earlier in the same conversation — `title: 2026-09-13`, `tags: [daily]`,
+    /// the app's own shape — so it knew how. What it followed instead was this
+    /// block, which said *something to keep → capture* and *not sure → capture*
+    /// and said nothing at all about being told where something belongs.
+    #[test]
+    fn a_named_destination_beats_capture() {
+        let block = Surface::Telegram.prompt_block().expect("Telegram has a block");
+
+        assert!(block.contains("somewhere they named"), "{block}");
+        assert!(block.contains("daily note"), "and says what a daily note is: {block}");
+        assert!(
+            block.contains("`capture` is for what has no home named"),
+            "and which of the two rules gives way"
+        );
+
+        // Before the catch-all, or the catch-all answers first.
+        let named = block.find("somewhere they named").expect("the rule");
+        let unsure = block.find("Not sure which").expect("the catch-all");
+        assert!(named < unsure, "the catch-all comes first and swallows it");
     }
 
     /// From a phone: look anything up, make a note, remember something, keep
