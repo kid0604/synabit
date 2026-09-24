@@ -779,7 +779,6 @@ pub fn run() {
             files::get_file_references,
             files::delete_file,
             // Nexus
-            nexus::get_nexus_items,
             nexus::get_nexus_item,
             nexus::get_nexus_graph_data,
             nexus::search_nexus,
@@ -851,6 +850,7 @@ pub fn run() {
             commands::timeline::ledger_history,
             commands::timeline::ledger_verify,
             commands::timeline::timeline_extract_status,
+            commands::timeline::timeline_reading_left,
             commands::timeline::timeline_extract_configure,
             commands::timeline::timeline_extract_run,
             commands::timeline::timeline_extract_review,

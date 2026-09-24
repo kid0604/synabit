@@ -629,6 +629,117 @@ pub fn days(db: &DbBridge) -> AppResult<HashMap<NaiveDate, Day>> {
     Ok(out)
 }
 
+/// What is left to read, counted without reading anything.
+///
+/// # Why this is not `plan`
+///
+/// A plan says which **blocks** of which notes go in which model call. Working
+/// one out reads every note the reader may look at, splits it, and replays its
+/// whole edit history — measured at 750 ms on a vault of 1 016 nodes and
+/// around fifteen seconds on one of 13 000. A screen that only wants to say
+/// *"three days left, about four minutes"* cannot cost that, and at ten
+/// thousand notes it cannot cost it at all.
+///
+/// So this counts **days**, from two cheap queries: which days the vault has
+/// writing on, and which days a reading has already covered
+/// (`extract_runs.node_id` is `day:2026-07-21`).
+///
+/// # What it gives up
+///
+/// A day is unread or it is not; a day the reader half-read is neither, and
+/// this calls it read, because a reading covered it. And a note is counted on
+/// the day it is *about*, where the plan would date each block from the note's
+/// history and can scatter one note across several days. Both make this a
+/// count of what is waiting, not a promise of what a reading will do. Press
+/// "Read" and the plan is worked out in full; that is the moment worth
+/// waiting for.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Left {
+    /// Days with writing on them and no reading at this version.
+    pub days: usize,
+    /// How much writing is on those days, for the estimate.
+    pub chars: usize,
+    /// Days covered only by an older reader.
+    pub old_version: usize,
+    /// Blocks this reader has read.
+    pub done: usize,
+}
+
+/// The day a reading covered, out of `day:2026-07-21` or `day:2026-07-21#2`.
+fn day_of_key(node_id: &str) -> Option<NaiveDate> {
+    let rest = node_id.strip_prefix("day:")?;
+    let date = rest.split('#').next()?;
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
+}
+
+pub fn left_to_read(db: &DbBridge, conn: &Connection, config: &Config, today: NaiveDate) -> AppResult<Left> {
+    // `length(content)` rather than the content: how much a note holds is all
+    // this needs, and SQLite answers that without handing over the words.
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT id, node_type, properties, created_at, length(content) FROM nodes")
+        .map_err(sql)?;
+    let rows: Vec<(String, String, String, String, i64)> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                r.get::<_, Option<i64>>(4)?.unwrap_or_default(),
+            ))
+        })
+        .map_err(sql)?
+        .flatten()
+        .collect();
+
+    let mut written: HashMap<NaiveDate, usize> = HashMap::new();
+    for (id, node_type, properties, created_at, chars) in rows {
+        if super::is_timeline_path(&id) {
+            continue;
+        }
+        let properties: Value = serde_json::from_str(&properties).unwrap_or(Value::Null);
+        if !extract::wanted(&node_type, &properties, &id, config) {
+            continue;
+        }
+        let Some((recorded, _)) = extract::recorded(&node_type, &properties, &created_at) else {
+            continue;
+        };
+        if recorded > today {
+            continue;
+        }
+        *written.entry(recorded).or_default() += chars.max(0) as usize;
+    }
+
+    extract::ensure_schema(conn)?;
+    let mut stmt = conn
+        .prepare("SELECT node_id, version FROM extract_runs WHERE node_id LIKE 'day:%'")
+        .map_err(sql)?;
+    let runs: Vec<(String, u32)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))
+        .map_err(sql)?
+        .flatten()
+        .collect();
+    let mut read: HashSet<NaiveDate> = HashSet::new();
+    let mut older: HashSet<NaiveDate> = HashSet::new();
+    for (node_id, version) in runs {
+        let Some(day) = day_of_key(&node_id) else { continue };
+        if version >= extract::EXTRACTOR_VERSION {
+            read.insert(day);
+        } else {
+            older.insert(day);
+        }
+    }
+
+    let left: Vec<(&NaiveDate, &usize)> = written.iter().filter(|(day, _)| !read.contains(day)).collect();
+    Ok(Left {
+        days: left.len(),
+        chars: left.iter().map(|(_, chars)| **chars).sum(),
+        old_version: older.iter().filter(|day| !read.contains(day) && written.contains_key(day)).count(),
+        done: Read::so_far(conn)?.blocks.len(),
+    })
+}
+
 /// What to read: new blocks by day, and blocks only the older reader read.
 #[derive(Debug, Default, Clone)]
 pub struct Plan {

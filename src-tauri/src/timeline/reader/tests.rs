@@ -722,6 +722,59 @@ fn one_line_is_read_the_way_a_day_is() {
     assert!(bag_of_line("   ", day("2026-09-16"), &directory).is_none());
 }
 
+/// Counting what is left to read must not read anything.
+///
+/// Every screen that shows the timeline asks this, so it is answered a day at
+/// a time from two queries rather than by working out the plan: opening the
+/// settings used to walk the whole vault, which is three quarters of a second
+/// on a real one and fifteen on a large one. What it gives up is written down
+/// on `Left`.
+#[test]
+fn what_is_left_to_read_is_counted_by_the_day_without_opening_a_note() {
+    let db = db_with(vec![
+        node("Notes/2026-07-01.md", "note", DAILY, json!({ "date": "2026-07-01" })),
+        node("Notes/2026-07-02.md", "note", "Sáng đi bơi với Cam.\n", json!({ "date": "2026-07-02" })),
+        // Tomorrow is not late: a day that has not happened is not unread.
+        node("Notes/2026-07-09.md", "note", "Hẹn khám mắt.\n", json!({ "date": "2026-07-09" })),
+    ]);
+    let store = TimelineStore::open_in_memory().unwrap();
+    let config = Config { enabled: true, ..Config::default() };
+    let before = db.conn().total_changes();
+
+    let left = left_to_read(&db, store.conn(), &config, day("2026-07-08")).expect("counted");
+    assert_eq!(left.days, 2, "two days written on and none read");
+    assert!(left.chars > DAILY.chars().count(), "the writing on those days: {left:?}");
+    assert_eq!(left.old_version, 0);
+    assert_eq!(db.conn().total_changes(), before, "counting wrote to the vault");
+
+    // A reading covers a day, and the day stops being left.
+    extract::ensure_schema(store.conn()).unwrap();
+    let mut mark = |key: &str, version: u32| {
+        store
+            .conn()
+            .execute(
+                "INSERT INTO extract_runs (month_file, device, node_id, hash, version, model, at, items, dropped, chars, ms, blocks)
+                 VALUES ('m', 'dev-a', ?1, 'h', ?2, 'm', '2026-07-08T00:00:00.000Z', '[]', 0, 0, 0, '[]')",
+                rusqlite::params![key, version],
+            )
+            .unwrap();
+    };
+    mark("day:2026-07-01", extract::EXTRACTOR_VERSION);
+    let left = left_to_read(&db, store.conn(), &config, day("2026-07-08")).expect("counted");
+    assert_eq!(left.days, 1, "{left:?}");
+
+    // Covered by an older reader is not covered by this one, and says so
+    // rather than hiding in the count of what is left.
+    mark("day:2026-07-02", extract::EXTRACTOR_VERSION - 1);
+    let left = left_to_read(&db, store.conn(), &config, day("2026-07-08")).expect("counted");
+    assert_eq!((left.days, left.old_version), (1, 1), "{left:?}");
+
+    // A long day read in two calls is one day either way.
+    mark("day:2026-07-02#2", extract::EXTRACTOR_VERSION);
+    let left = left_to_read(&db, store.conn(), &config, day("2026-07-08")).expect("counted");
+    assert_eq!((left.days, left.old_version), (0, 0), "{left:?}");
+}
+
 /// The golden set of §10, read by the real model. Spends real credit, and
 /// writes nothing: it prints what each day would propose and what each gate
 /// left out, for a person to judge.
@@ -776,6 +829,106 @@ mod live {
             let from: HashSet<&str> = bag.read.iter().map(|r| r.node.as_str()).collect();
             eprintln!("  {} · {} blocks · {} chars · {} people · {} notes", bag.key, bag.read.len(), bag.chars(), bag.people.len(), from.len());
         }
+    }
+
+    /// Where the time goes when the tray asks what is waiting.
+    ///
+    /// `timeline_extract_status` is one command, and the whole Nexus app waits
+    /// on it: it holds the vault's connection while it walks every note. This
+    /// times each piece of it against a real vault so the slow one is known
+    /// rather than guessed at.
+    #[test]
+    #[ignore = "reads a real vault; run by hand"]
+    fn where_the_time_goes_asking_what_is_waiting() {
+        let cache_path = std::env::var("SYN_EVAL_CACHE").expect("a copy of the vault cache");
+        let vault_path = std::env::var("SYN_EVAL_VAULT")
+            .unwrap_or_else(|_| format!("{}/Documents/vault", std::env::var("HOME").unwrap_or_default()));
+        let conn = rusqlite::Connection::open(&cache_path).expect("the cache");
+        let db = DbBridge::init_with_conn(conn).expect("its schema");
+        let config = extract::read_config(&vault_path);
+        let today = chrono::Local::now().date_naive();
+        let took = |what: &str, at: std::time::Instant| eprintln!("  {what:<28} {:>7} ms", at.elapsed().as_millis());
+
+        // The vault this runs against: whichever vault_id has documents.
+        let vault_id: Option<String> = db
+            .conn()
+            .prepare("SELECT vault_id, COUNT(*) c FROM sync_document_paths GROUP BY vault_id ORDER BY c DESC LIMIT 1")
+            .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
+            .ok();
+        eprintln!("\nvault_id {vault_id:?}");
+
+        let at = std::time::Instant::now();
+        let store = TimelineStore::open_in_memory().unwrap();
+        extract::load(store.conn(), &vault_path).expect("month files");
+        took("extract::load", at);
+        // The memo of the plan is keyed on these; a load that writes when
+        // nothing changed would make it miss every time.
+        let after_first = store.conn().total_changes();
+        extract::load(store.conn(), &vault_path).expect("month files again");
+        eprintln!("  timeline changes {} then {}", after_first, store.conn().total_changes());
+
+        let at = std::time::Instant::now();
+        let directory = Directory::read(&db).expect("directory");
+        took("Directory::read", at);
+
+        let at = std::time::Instant::now();
+        let _days = days(&db).expect("days");
+        took("days", at);
+
+        // Splitting every note the reader may look at. Not the database:
+        // asking for each note's words one at a time, instead of in the one
+        // query, made no difference at all — 154 ms against 155 — so this is
+        // `pulldown_cmark` and the hashing, and that is what it costs.
+        let at = std::time::Instant::now();
+        let plain = sources(&db, &vault_path, &config, today, None, &no_history).expect("sources");
+        took("sources (no history)", at);
+        eprintln!("  {} sources", plain.len());
+
+        let docs = std::cell::Cell::new(0usize);
+        let history = |rel: &str| -> History {
+            docs.set(docs.get() + 1);
+            let Some(vault_id) = vault_id.as_deref() else { return History::default() };
+            match db.get_node_id_by_path(vault_id, rel) {
+                Ok(Some(doc_id)) => db
+                    .get_crdt_doc(vault_id, &doc_id)
+                    .map(|doc| History::of(&doc))
+                    .unwrap_or_default(),
+                _ => History::default(),
+            }
+        };
+        // And replaying each note's edit history, which is two thirds of it.
+        // Every note pays it, including the ones whose blocks all take the
+        // day the note is about: `standing` reads a note's history to know an
+        // edit of a block already read, whatever kind of note it is.
+        let at = std::time::Instant::now();
+        let with = sources(&db, &vault_path, &config, today, None, &history).expect("sources");
+        took("sources (real history)", at);
+        eprintln!("  {} sources, {} docs asked for", with.len(), docs.get());
+
+        let at = std::time::Instant::now();
+        let read = Read::so_far(store.conn()).expect("read");
+        took("Read::so_far", at);
+
+        let at = std::time::Instant::now();
+        let kept = crate::timeline::moments::kept(&db).expect("kept");
+        took("moments::kept", at);
+        eprintln!("  {} kept", kept.len());
+
+        let at = std::time::Instant::now();
+        let the_days = days(&db).expect("days");
+        let plan = plan(&with, &read, &the_days, &directory);
+        took("plan", at);
+
+        let at = std::time::Instant::now();
+        let changed = changes(&with, &kept, &read, &directory);
+        took("changes", at);
+        eprintln!("  {} bags, {} changes", plan.pending.len(), changed.len());
+
+        // And the cheap count the screens actually show, which reads no note.
+        let at = std::time::Instant::now();
+        let left = left_to_read(&db, store.conn(), &config, today).expect("what is left");
+        took("left_to_read", at);
+        eprintln!("  {left:?}");
     }
 
     #[tokio::test]

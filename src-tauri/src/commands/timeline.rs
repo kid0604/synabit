@@ -499,8 +499,14 @@ fn note_now(state: &DbState) -> impl Fn(&str, &str) -> Option<(String, extract::
     }
 }
 
-/// Everything the tray shows: whether reading is on, what it would send where,
-/// how much is left and how long that would take, and what waits for a decision.
+/// How reading is set up, and what is waiting to be decided about.
+///
+/// Everything in here is answered from the timeline's own tables and the
+/// vault's index: tens of milliseconds. **How much is left to read** is not —
+/// that means walking every note and replaying its history — and it lives in
+/// `ReadingLeft`, asked for separately. They used to be one answer, so opening
+/// the settings, or the timeline screen, waited on the whole vault before it
+/// could draw a checkbox.
 #[derive(Debug, serde::Serialize)]
 pub struct ExtractStatus {
     pub config: extract::Config,
@@ -510,21 +516,8 @@ pub struct ExtractStatus {
     pub model: Option<String>,
     pub desktop: bool,
     pub running: bool,
-    pub pending: usize,
-    pub stale: usize,
-    pub old_version: usize,
-    pub done: usize,
-    /// For the notes never read.
-    pub estimate_ms: u64,
-    /// For everything a full re-read would cover: never read, edited, and read
-    /// by an older extractor.
-    pub estimate_all_ms: u64,
-    /// Measured on this device, rather than a starting guess.
-    pub estimate_measured: bool,
     pub unreadable: Vec<String>,
     pub proposals: Vec<extract::Proposal>,
-    /// Kept moments whose source changed under them, waiting to be asked about.
-    pub changes: usize,
     /// Everybody in the vault, for saying who a name belongs to.
     pub people: Vec<extract::PersonRef>,
     /// The kinds a moment can be here: the vault's list, or the defaults
@@ -534,6 +527,26 @@ pub struct ExtractStatus {
     /// The moments the changes above are about, as they are kept now, so the
     /// review can show what would change.
     pub moments: std::collections::HashMap<String, MomentView>,
+}
+
+/// How much of the vault has not been read, and what that would cost.
+///
+/// Counted a day at a time and without opening a note — see `reader::Left`,
+/// which says what that gives up. The block-by-block plan is worked out when
+/// somebody presses "Read", and nowhere else: at ten thousand notes it is
+/// fifteen seconds, and no screen may cost that to draw a number.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct ReadingLeft {
+    /// Days with writing on them that no reading at this version has covered.
+    pub pending: usize,
+    /// Days covered only by an older reader.
+    pub old_version: usize,
+    /// Blocks this reader has already read.
+    pub done: usize,
+    /// For the days never read.
+    pub estimate_ms: u64,
+    /// Measured on this device, rather than a starting guess.
+    pub estimate_measured: bool,
 }
 
 /// A kept moment as the review shows it, beside the change proposed to it.
@@ -553,29 +566,29 @@ pub struct MomentView {
 
 #[tauri::command(async)]
 pub fn timeline_extract_status(
-    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     timeline: tauri::State<'_, TimelineState>,
     vault_path: String,
 ) -> AppResult<ExtractStatus> {
     let settings = crate::commands::syn::settings_for(&vault_path);
     let config = extract::read_config(&vault_path);
-    let device = crate::commands::sync::ensure_device_id(&app_handle).map_err(AppError::General)?;
 
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     let loaded = extract::load(timeline.conn(), &vault_path)?;
-    let (plan, directory) = reading_plan(&app_handle, state.inner(), &timeline, &vault_path, &config, None)?;
+    // Names, not a plan: the directory is one query of the vault's index and
+    // the proposals are rows the timeline already holds. What is left to read
+    // is `timeline_reading_left`, and it is not asked for here.
+    let directory = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        reader::Directory::read(&db)?
+    };
     let proposals = extract::proposals(
         timeline.conn(),
         &note_now(state.inner()),
         &extract::reviewed(&vault_path),
         &|id| directory.title(id).map(String::from),
     )?;
-    let chars = |bags: &[reader::Bag]| bags.iter().map(reader::Bag::chars).sum::<usize>();
     let local = media::runs_here(&settings);
-    let (estimate_ms, measured) = extract::estimate_ms(timeline.conn(), &device, chars(&plan.pending), local)?;
-    let everything = chars(&plan.pending) + chars(&plan.old_version);
-    let (estimate_all_ms, _) = extract::estimate_ms(timeline.conn(), &device, everything, local)?;
 
     let moments = {
         let wanted: std::collections::HashSet<&str> =
@@ -621,24 +634,50 @@ pub fn timeline_extract_status(
         model: settings.default_model.clone(),
         desktop: cfg!(desktop),
         running: EXTRACTING.load(std::sync::atomic::Ordering::SeqCst),
-        pending: plan.pending.len(),
-        // An edit is read as its blocks now: what changed is new, what did
-        // not was read. Nothing is left "edited since".
-        stale: 0,
-        old_version: plan.old_version.len(),
-        done: plan.done,
-        estimate_ms,
-        estimate_all_ms,
-        estimate_measured: measured,
         unreadable: loaded.unreadable,
         proposals,
-        changes: plan.changes.len(),
         people: directory
             .people
             .iter()
             .map(|person| extract::PersonRef { id: person.id.clone(), title: person.name.clone() })
             .collect(),
         moments,
+    })
+}
+
+/// How much of the vault is left to read.
+///
+/// Its own command because it is its own question: what reading is set up to
+/// do comes from tables the timeline already holds, and this is about the
+/// vault. Two queries and no note opened — 7 ms on a vault of a thousand
+/// nodes, 56 ms on one of thirteen thousand — so a screen can ask for it
+/// without earning a spinner.
+#[tauri::command]
+pub fn timeline_reading_left(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+    timeline: tauri::State<'_, TimelineState>,
+    vault_path: String,
+) -> AppResult<ReadingLeft> {
+    let settings = crate::commands::syn::settings_for(&vault_path);
+    let config = extract::read_config(&vault_path);
+    let device = crate::commands::sync::ensure_device_id(&app_handle).map_err(AppError::General)?;
+
+    let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
+    extract::load(timeline.conn(), &vault_path)?;
+    let left = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        reader::left_to_read(&db, timeline.conn(), &config, chrono::Local::now().date_naive())?
+    };
+    let local = media::runs_here(&settings);
+    let (estimate_ms, estimate_measured) = extract::estimate_ms(timeline.conn(), &device, left.chars, local)?;
+
+    Ok(ReadingLeft {
+        pending: left.days,
+        old_version: left.old_version,
+        done: left.done,
+        estimate_ms,
+        estimate_measured,
     })
 }
 
@@ -2207,3 +2246,4 @@ mod writing_an_event {
         assert!(crate::path_utils::resolve_safe_path(&vault_path, &moved).unwrap().exists(), "{moved}");
     }
 }
+

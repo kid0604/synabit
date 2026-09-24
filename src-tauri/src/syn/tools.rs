@@ -2070,12 +2070,64 @@ fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
         })
         .collect();
 
-    let output = serde_json::json!({
+    let mut output = serde_json::json!({
         "results": results,
         "_returned": results.len(),
     });
 
+    // Nothing filed under those words — but a picture in this vault is usually
+    // not a filed thing at all.
+    //
+    // Asked for *hình hoa lưỡi hổ*, this was called three times — jpg, png,
+    // then with no extension — and answered nothing each time, and the answer
+    // was "I could not find it". The photo was there: in a daily note, under
+    // the sentence *"Lần đầu tiên mình thấy hoa lưỡi hổ"*. The file row for it
+    // is called `481a146c-e85f-41ba-adfa-9dc3d7ed2073.jpg` and carries no words
+    // at all, because the words about a picture live in the note that shows it,
+    // and nothing joins the two.
+    //
+    // So when the filed things say nothing, the notes are asked. What comes
+    // back is where to look, not a file — which is the honest answer to "where
+    // is that picture".
+    if results.is_empty() && !query.trim().is_empty() {
+        let carrying = notes_showing_pictures(db, query);
+        if !carrying.is_empty() {
+            output["in_notes"] = serde_json::json!(carrying);
+            output["_note"] = serde_json::json!(
+                "No file is named or written with those words. A picture inside a note is not \
+                 a file in this vault — these notes match the words and have pictures in them."
+            );
+        }
+    }
+
     Ok(output.to_string())
+}
+
+/// Notes that match these words and have pictures in them.
+///
+/// Five at most, and only what is needed to say where something is: which note,
+/// and how many pictures are in it.
+fn notes_showing_pictures(db: &DbBridge, query: &str) -> Vec<Value> {
+    let Ok(found) = db.search_fts(&crate::search::parse_query(query), 1, 8) else {
+        return Vec::new();
+    };
+
+    found
+        .results
+        .iter()
+        .filter_map(|hit| {
+            let node = db.get_node(&hit.id).ok().flatten()?;
+            let pictures = node.content.matches("<img").count();
+            (pictures > 0).then(|| {
+                serde_json::json!({
+                    "id": node.id,
+                    "title": node.title,
+                    "pictures": pictures,
+                })
+            })
+        })
+        .take(5)
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4864,6 +4916,90 @@ mod tests {
     /// every test passed, the node was written correctly, Things listed it, and
     /// the Calendar was empty. `create_node`'s own description told the model
     /// to write `start_date`, and nothing in the Calendar has ever read that.
+    /// Asked for a picture, told where the picture is.
+    ///
+    /// The transcript: *"cho tao xem hình hoa lưỡi hổ"*. `search_files` was
+    /// called three times — jpg, png, then unfiltered — came back empty each
+    /// time, and Syn answered that it could not find it. The photo was in a
+    /// daily note under the sentence *"Lần đầu tiên mình thấy hoa lưỡi hổ"*,
+    /// and the file row for it is a UUID with no words on it at all. Forty
+    /// thousand tokens for a wrong answer.
+    #[test]
+    fn a_picture_with_no_name_is_found_by_the_note_that_shows_it() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+
+        // The picture, as the vault files it: a name nobody wrote.
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "assets/481a146c-e85f-41ba-adfa-9dc3d7ed2073.jpg".into(),
+            node_type: "file".into(),
+            title: "481a146c-e85f-41ba-adfa-9dc3d7ed2073.jpg".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "extension": "jpg" }),
+            created_at: "2026-06-07T00:00:00Z".into(),
+            updated_at: "2026-06-07T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("the file");
+
+        // And the note that shows it, which is where the words are.
+        let body = "<img src=\"assets/481a146c-e85f-41ba-adfa-9dc3d7ed2073.jpg\" />\
+                    Bụi lưỡi hổ ngoài ban công nở hoa. Lần đầu tiên mình thấy hoa lưỡi hổ.";
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Notes/2026-06-07.md".into(),
+            node_type: "note".into(),
+            title: "2026-06-07".into(),
+            content: body.into(),
+            properties: serde_json::json!({}),
+            created_at: "2026-06-07T00:00:00Z".into(),
+            updated_at: "2026-06-07T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("the note");
+        db.upsert_search_entry(
+            "Notes/2026-06-07.md", "note", "2026-06-07", "", body, "{}", None,
+            "2026-06-07T00:00:00Z", "Notes/2026-06-07.md",
+        );
+
+        let said: serde_json::Value = serde_json::from_str(
+            &tool_search_files(&db, &serde_json::json!({ "query": "lưỡi hổ" })).expect("runs"),
+        )
+        .expect("JSON");
+
+        assert_eq!(said["_returned"], 0, "no file carries those words, and none is claimed");
+        let notes = said["in_notes"].as_array().expect("where to look");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0]["title"], "2026-06-07");
+        assert_eq!(notes[0]["pictures"], 1);
+    }
+
+    /// A file that does match is answered with the file, and nothing else.
+    #[test]
+    fn a_file_that_matches_is_still_just_a_file() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Files/hợp đồng thuê nhà.pdf".into(),
+            node_type: "file".into(),
+            title: "hợp đồng thuê nhà.pdf".into(),
+            content: String::new(),
+            properties: serde_json::json!({ "extension": "pdf" }),
+            created_at: "2026-06-07T00:00:00Z".into(),
+            updated_at: "2026-06-07T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("the file");
+
+        let said: serde_json::Value = serde_json::from_str(
+            &tool_search_files(&db, &serde_json::json!({ "query": "hợp đồng" })).expect("runs"),
+        )
+        .expect("JSON");
+
+        assert_eq!(said["_returned"], 1);
+        assert!(said.get("in_notes").is_none(), "nothing to point at: the file was found");
+    }
+
     /// The three board tools, against a real vault and a real index.
     ///
     /// Drawing, reading back what was drawn, and changing it — because the

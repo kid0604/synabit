@@ -32,59 +32,20 @@ pub struct GraphData {
 /// One rule for both, so the list and the graph cannot disagree about what is
 /// in the vault.
 fn left_out_of_nexus(item_type: &str, path: &str) -> bool {
-    matches!(item_type, "quickcap" | "message" | "notification")
-        || item_type == crate::timeline::moments::TYPE
+    // The kinds nobody wrote: feed state, whiteboard geometry, schemas, a
+    // PDF's highlights — the list `db::internal` keeps out of search, kept out
+    // of the graph by the same rule rather than by a second one written here.
+    // On the vault this was measured on that is 320 of 840 nodes, most of them
+    // sync conflict copies of one RSS state file, drawn as nodes in a picture
+    // of what the person has written.
+    crate::syn::tools::is_internal_type(item_type)
+        || matches!(item_type, "quickcap" | "message" | "notification")
         || path.starts_with("Messages/")
         || path.contains("/Messages/")
         || path.starts_with("Messages\\")
         || path.contains("\\Messages\\")
         || path.starts_with("Syn/")
         || path.starts_with("Syn\\")
-}
-
-#[tauri::command]
-pub fn get_nexus_items(
-    _app_handle: tauri::AppHandle,
-    state: tauri::State<'_, DbState>,
-    _vault_path: String,
-) -> AppResult<Vec<NexusItem>> {
-    let mut items = Vec::new();
-
-    // ─── Query indexed data from SQLite (fast) ─────────────
-    {
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Ok(rows) = db.get_all_nexus_items() {
-            for r in rows {
-                if left_out_of_nexus(&r.item_type, &r.path) {
-                    continue;
-                }
-                let title = if r.title.is_empty() {
-                    match r.item_type.as_str() {
-                        "note" => "Untitled Note".to_string(),
-                        "task" => "Untitled Task".to_string(),
-                        _ => r.title,
-                    }
-                } else {
-                    r.title
-                };
-
-                items.push(NexusItem {
-                    id: r.id,
-                    item_type: r.item_type,
-                    title: title.clone(),
-                    preview: r.preview,
-                    tags: r.tags,
-                    date: r.date,
-                    path: r.path,
-                    content: format!("{} {}", title, r.content),
-                    status: r.status,
-                });
-            }
-        }
-    }
-
-    items.sort_by(|a, b| b.date.cmp(&a.date));
-    Ok(items)
 }
 
 #[tauri::command]
@@ -1177,5 +1138,37 @@ mod consent_gate {
         )
         .expect("the stretch is hushed");
         assert!(read(&dir, &db).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod what_opening_nexus_costs {
+    /// What the two commands Nexus asks for on mount actually cost.
+    ///
+    /// ```bash
+    /// cp "$HOME/Library/Application Support/com.synabit.app/vault_cache.db" /tmp/cache.db
+    /// SYN_EVAL_CACHE=/tmp/cache.db cargo test --release --lib what_opening_nexus -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "reads a real vault; run by hand"]
+    fn measured_on_a_real_vault() {
+        let cache = std::env::var("SYN_EVAL_CACHE").expect("a copy of the vault cache");
+        let conn = rusqlite::Connection::open(&cache).expect("the cache");
+        let db = crate::db::DbBridge::init_with_conn(conn).expect("its schema");
+        let took = |what: &str, at: std::time::Instant| eprintln!("  {what:<28} {:>7} ms", at.elapsed().as_millis());
+
+        let at = std::time::Instant::now();
+        let rows = db.get_all_nexus_items().expect("rows");
+        took("get_all_nexus_items", at);
+        eprintln!("  {} rows, {} KB of content", rows.len(), rows.iter().map(|r| r.content.len()).sum::<usize>() / 1024);
+
+        let kept = rows.iter().filter(|r| !super::left_out_of_nexus(&r.item_type, &r.path)).count();
+        eprintln!("  {kept} of them are the person's");
+
+        let at = std::time::Instant::now();
+        let graph = super::graph_data(&db).expect("graph");
+        took("get_nexus_graph_data", at);
+        let json = serde_json::to_string(&graph).expect("json");
+        eprintln!("  {} KB of JSON", json.len() / 1024);
     }
 }
