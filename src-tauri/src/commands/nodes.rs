@@ -600,14 +600,6 @@ pub fn scan_specific_nodes(
 }
 
 #[tauri::command]
-pub fn get_all_nodes(
-    state: tauri::State<'_, DbState>,
-) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.get_all_nodes()
-}
-
-#[tauri::command]
 pub fn get_node(
     state: tauri::State<'_, DbState>,
     id: String,
@@ -623,17 +615,6 @@ pub fn get_nodes(
 ) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.get_nodes_by_type(&node_type)
-}
-
-/// How many nodes of a type there are, without reading any of them.
-///
-/// The QuickCap tab shows this as a badge, and a badge that had to load every
-/// cap to draw a number would be the most expensive thing on screen — it is
-/// painted on every launch, whether or not the user ever opens that tab.
-#[tauri::command]
-pub fn count_nodes(state: tauri::State<'_, DbState>, node_type: String) -> AppResult<i64> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.count_nodes_by_type(&node_type)
 }
 
 /// How many caps are still waiting, ignoring the ones put away on purpose.
@@ -3064,55 +3045,6 @@ pub fn spawn_node_window(_app_handle: tauri::AppHandle, _node_id: String) -> App
     Err(crate::error::AppError::General(
         "Multiple windows are not supported on mobile".to_string(),
     ))
-}
-
-/// List all PDF files in the vault's assets/ directory.
-#[tauri::command]
-pub fn list_pdf_files(vault_path: String) -> AppResult<Vec<serde_json::Value>> {
-    let assets_dir = Path::new(&vault_path).join("assets");
-    let mut pdfs = Vec::new();
-
-    if !assets_dir.exists() {
-        return Ok(pdfs);
-    }
-
-    for entry in WalkDir::new(&assets_dir)
-        .max_depth(2)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext.eq_ignore_ascii_case("pdf") {
-            let rel_path = path_utils::to_relative(path, &vault_path);
-            let filename = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let name = filename
-                .strip_suffix(".pdf")
-                .or_else(|| filename.strip_suffix(".PDF"))
-                .unwrap_or(&filename)
-                .to_string();
-
-            pdfs.push(serde_json::json!({
-                "name": name,
-                "path": rel_path
-            }));
-        }
-    }
-
-    pdfs.sort_by(|a, b| {
-        let na = a["name"].as_str().unwrap_or("");
-        let nb = b["name"].as_str().unwrap_or("");
-        na.cmp(nb)
-    });
-
-    Ok(pdfs)
 }
 
 /// Apply CRDT update for JSON files using snapshot replacement (last-write-wins).

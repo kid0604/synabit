@@ -25,18 +25,15 @@
 //! from now on so those files never become notes.
 
 pub mod asked;
-pub mod asking;
 pub mod blocks;
 pub mod derive;
 pub mod extract;
 pub mod fold;
-pub mod frame;
 pub mod ledger;
 pub mod magnitude;
 pub mod media;
 pub mod moments;
 pub mod onthisday;
-pub mod pin;
 pub mod presence;
 pub mod query;
 pub mod quiet;

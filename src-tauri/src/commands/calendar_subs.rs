@@ -190,14 +190,6 @@ pub async fn refresh_one(app: &tauri::AppHandle, id: &str) -> AppResult<RefreshR
     Ok(report)
 }
 
-#[tauri::command]
-pub async fn refresh_calendar_subscription(
-    app: tauri::AppHandle,
-    id: String,
-) -> AppResult<RefreshReport> {
-    refresh_one(&app, &id).await
-}
-
 /// Re-read every calendar that is switched on.
 #[tauri::command]
 pub async fn refresh_calendar_subscriptions(

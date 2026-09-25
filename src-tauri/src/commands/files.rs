@@ -831,19 +831,6 @@ pub fn find_text_page(
     db.first_page_matching(&node_id, &words)
 }
 
-/// What re-identifying this vault's files by content would change.
-///
-/// Reads only. Offered separately from the migration itself because a change
-/// that touches every tag a person has applied should be inspectable before it
-/// runs, not only afterwards.
-#[tauri::command]
-pub fn preview_file_identity_migration(
-    state: tauri::State<'_, DbState>,
-) -> AppResult<crate::file_index::migration::MigrationPlan> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    crate::file_index::migration::plan(&db)
-}
-
 /// Ask the running scan to stop at the end of its current batch.
 #[tauri::command]
 pub fn cancel_file_scan(control: tauri::State<'_, ScanControl>) {

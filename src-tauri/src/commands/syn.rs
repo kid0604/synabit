@@ -2110,11 +2110,6 @@ pub async fn syn_dismiss_proposal(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn syn_clear_proposals(vault_path: String) -> Result<(), AppError> {
-    crate::syn::proposal::clear(&vault_path)
-}
-
 // ═══════════════════════════════════════════════════════════════
 //  WHAT SYN IS ACTUALLY TOLD
 // ═══════════════════════════════════════════════════════════════
@@ -2383,12 +2378,6 @@ pub async fn syn_instructions_path(vault_path: String) -> Result<String, AppErro
         .to_string())
 }
 
-/// Cancel an ongoing model pull.
-#[tauri::command]
-pub fn syn_cancel_pull() {
-    OllamaProvider::cancel_pull();
-}
-
 // ═══════════════════════════════════════════════════════════════
 //  CONVERSATION CRUD
 // ═══════════════════════════════════════════════════════════════
@@ -2434,16 +2423,6 @@ pub async fn syn_rename_conversation(
     title: String,
 ) -> Result<(), AppError> {
     conversation::rename_conversation(&vault_path, &conversation_id, &title)
-}
-
-/// Toggle pin status of a conversation.
-#[tauri::command]
-pub async fn syn_pin_conversation(
-    vault_path: String,
-    conversation_id: String,
-    pinned: bool,
-) -> Result<(), AppError> {
-    conversation::pin_conversation(&vault_path, &conversation_id, pinned)
 }
 
 /// Export a conversation as markdown.

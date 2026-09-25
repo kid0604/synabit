@@ -77,31 +77,6 @@ pub struct MigrationReport {
     pub failed: usize,
 }
 
-/// Write repaired files without telling the sync layer anything happened.
-///
-/// Deliberately absent, each for a reason:
-///
-/// - `crdt_apply_safe` — the whole point; see the module docs.
-/// - `get_or_assign_node_id` — minting an identifier is not deterministic,
-///   so a cap that has no `node_id` keeps not having one. The next real
-///   edit assigns it, under sync, exactly as it would have anyway.
-/// - `upsert_document_path` — no path moves here.
-///
-/// Present, because a repair the user cannot see has not landed: the
-/// `nodes` row and the search entry are both refreshed. That second one
-/// matters more than it looks — the FTS `tags` column is populated from
-/// `properties`, so a migration that fills in tags without reindexing
-/// leaves them unsearchable.
-#[tauri::command]
-pub fn apply_silent_migration(
-    state: tauri::State<'_, DbState>,
-    vault_path: String,
-    writes: Vec<SilentWrite>,
-) -> AppResult<MigrationReport> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(apply_writes(&db, &vault_path, &writes))
-}
-
 /// The pass itself, over a plain connection.
 ///
 /// Split from the command so the tests exercise *this* — the code that
