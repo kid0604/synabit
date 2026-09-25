@@ -1106,8 +1106,8 @@ mod tests {
     /// The Rust crates that reach the Android build, as of the last size review.
     const REVIEWED_CRATES: &[&str] = &[
         "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20poly1305", "chrono", "chrono-tz",
-        "ctor", "dirs", "ed25519-dalek", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
-        "iroh", "jni", "keyring", "log", "loro", "lopdf", "lz4_flex", "md-5", "ndk-context", "notify", "opener",
+        "ctor", "ed25519-dalek", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
+        "iroh", "jni", "keyring", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
         "opml", "postcard", "pulldown-cmark", "rand", "regex", "reqwest", "rusqlite", "rustls", "scraper",
         "serde", "serde_json", "serde_yaml", "sha2", "similar", "synabit_protocol", "sysinfo", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",
@@ -1124,8 +1124,7 @@ mod tests {
         "@tauri-apps/plugin-process", "@tauri-apps/plugin-store", "@tauri-apps/plugin-updater",
         "@tiptap/extension-blockquote", "@tiptap/extension-code-block-lowlight", "@tiptap/extension-color",
         "@tiptap/extension-highlight", "@tiptap/extension-image", "@tiptap/extension-link",
-        "@tiptap/extension-placeholder", "@tiptap/extension-table", "@tiptap/extension-table-cell",
-        "@tiptap/extension-table-header", "@tiptap/extension-table-row", "@tiptap/extension-task-item",
+        "@tiptap/extension-placeholder", "@tiptap/extension-table", "@tiptap/extension-task-item",
         "@tiptap/extension-task-list", "@tiptap/extension-text-align", "@tiptap/extension-text-style",
         "@tiptap/extension-underline", "@tiptap/pm", "@tiptap/starter-kit", "@tiptap/suggestion", "@tiptap/vue-3",
         "@vue-flow/background", "@vue-flow/controls", "@vue-flow/core", "@vue-flow/node-resizer", "@vueuse/core",
