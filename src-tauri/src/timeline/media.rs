@@ -1203,7 +1203,7 @@ mod tests {
     }
 
     /// Gate: nothing reaches the Android build without a size review
-    /// (`docs/android-google-play-readiness-audit-2026-07-22.md`, §4.6 of the
+    /// (`docs/android-google-play-readiness-reaudit-2026-08-27.md`, §4.6 of the
     /// Tua lại design). A failure here is the review being asked for, not a
     /// test to update on the way past.
     #[test]
