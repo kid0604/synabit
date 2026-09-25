@@ -1920,13 +1920,10 @@ pub fn snapshot_c2b_runtime_raw(
 }
 
 #[cfg(test)]
-#[path = "../../../.agents/oracles/d1_c2b_typed_compat.rs"]
-mod d1_c2b_typed_compat;
+mod recovery_tests;
 
 #[cfg(test)]
-#[rustfmt::skip]
-#[path = "../../../.agents/oracles/d1_tombstone_identity.rs"]
-mod d1_tombstone_identity;
+mod tombstone_tests;
 
 #[cfg(test)]
 mod vault_path_safety_tests {

@@ -1,3 +1,11 @@
+//! How the coordinator behaves when a sync is interrupted or half-wrong.
+//!
+//! `scenarios.rs` shows devices converging when every step goes through. These
+//! hold the order of stage, apply, commit and ack when one does not: a crash
+//! mid-apply, a restart with entries staged, an ack that never landed, a push
+//! answered in part, and entries that do not decode. Each is a way to lose or
+//! double-apply an edit silently.
+
 use super::*;
 use crate::db::sync_inbox::InboxState;
 use crate::db::sync_vault::SyncVaultRecord;
@@ -11,8 +19,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-const VAULT: &str = "c2b-oracle-vault";
-const PROVIDER: &str = "c2b-oracle-provider";
+const VAULT: &str = "recovery-test-vault";
+const PROVIDER: &str = "recovery-test-provider";
 const NOW: i64 = 10_000;
 
 fn seed_vault(db: &mut DbBridge, vault_id: &str) {
@@ -130,7 +138,7 @@ impl HarnessAdapter {
 #[async_trait]
 impl SyncAdapter for HarnessAdapter {
     fn name(&self) -> &str {
-        "C2B immutable oracle adapter"
+        "recovery test adapter"
     }
 
     fn adapter_id(&self) -> String {
@@ -252,7 +260,7 @@ fn ack(operation_id: [u8; 16], suffix: &str) -> PushAck {
 }
 
 #[tokio::test]
-async fn frc2b_r1_01_adapter_failure_retries_the_whole_batch_once() {
+async fn an_adapter_failure_retries_the_whole_batch_once() {
     let db_state = seeded_db();
     let first = [1; 16];
     let second = [2; 16];
@@ -281,7 +289,7 @@ async fn frc2b_r1_01_adapter_failure_retries_the_whole_batch_once() {
 }
 
 #[tokio::test]
-async fn frc2b_r1_01_invalid_outcome_sets_retry_every_sent_member() {
+async fn an_invalid_push_outcome_retries_every_member_sent() {
     enum InvalidCase {
         Missing,
         Unknown,
@@ -338,7 +346,7 @@ async fn frc2b_r1_01_invalid_outcome_sets_retry_every_sent_member() {
 }
 
 #[tokio::test]
-async fn frc2b_r1_01_mixed_outcome_commits_accept_and_retries_reject() {
+async fn a_mixed_outcome_commits_the_accepted_and_retries_the_rejected() {
     let db_state = seeded_db();
     let accepted_id = [31; 16];
     let rejected_id = [32; 16];
@@ -372,7 +380,7 @@ async fn frc2b_r1_01_mixed_outcome_commits_accept_and_retries_reject() {
 }
 
 #[tokio::test]
-async fn frc2b_r1_01_incomplete_row_is_quarantined_while_exact_wire_row_dispatches() {
+async fn an_incomplete_outbox_row_is_quarantined_while_complete_ones_go_out() {
     let db_state = seeded_db();
     let incomplete_id = [41; 16];
     let valid_id = [42; 16];
@@ -425,7 +433,7 @@ async fn frc2b_r1_01_incomplete_row_is_quarantined_while_exact_wire_row_dispatch
 }
 
 #[tokio::test]
-async fn frc2b_r1_01_retry_persistence_error_keeps_network_and_database_context() {
+async fn a_failure_to_record_a_retry_keeps_both_the_network_and_database_error() {
     let db_state = seeded_db();
     let operation_id = [51; 16];
     insert_outbox(&db_state, &[valid_outbox(operation_id, OutboxState::Ready)]);
@@ -433,7 +441,7 @@ async fn frc2b_r1_01_retry_persistence_error_keeps_network_and_database_context(
         let db = db_state.lock().unwrap();
         db.conn()
             .execute_batch(
-                "CREATE TRIGGER c2b_oracle_fail_retry
+                "CREATE TRIGGER fail_retry_persistence
                  BEFORE UPDATE OF state ON sync_outbox
                  WHEN NEW.state = 'failed'
                  BEGIN
@@ -470,7 +478,7 @@ fn typed_delete(node_id: &str, rel_path: &str) -> SyncPayload {
 }
 
 #[test]
-fn frc2b_r1_02_kind_is_checked_only_after_exact_typed_decode() {
+fn the_entry_kind_is_checked_only_after_an_exact_decode() {
     let key = [7; 32];
     let garbage = crate::sync::core::crypto::encrypt(&key, b"not-a-sync-payload").unwrap();
     let garbage_hash = *blake3::hash(&garbage).as_bytes();
@@ -491,7 +499,7 @@ fn frc2b_r1_02_kind_is_checked_only_after_exact_typed_decode() {
 }
 
 #[test]
-fn frc2b_r1_02_kind_payload_mismatch_and_trailing_bytes_are_corrupt() {
+fn a_kind_that_disagrees_with_its_payload_or_trailing_bytes_is_corrupt() {
     let key = [8; 32];
     let (delete_bytes, delete_hash) =
         encrypted_typed_payload(&typed_delete("typed-delete-node", "typed-delete.md"), &key);
@@ -518,7 +526,7 @@ fn frc2b_r1_02_kind_payload_mismatch_and_trailing_bytes_are_corrupt() {
 }
 
 #[test]
-fn frc2b_r1_02_matching_asset_delete_and_upsert_have_distinct_results() {
+fn an_asset_delete_and_an_asset_upsert_have_distinct_results() {
     // Attachments used to be rejected here as PendingAsset, because nothing
     // could carry them. They are readable now; the bytes are fetched separately
     // before the page is applied.
@@ -683,7 +691,7 @@ fn pull_limits() -> PullLimits {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_stage_apply_commit_ack_order_is_observable() {
+async fn a_pull_stages_then_applies_then_commits_then_acks() {
     let db_state = seeded_db();
     let key = [11; 32];
     let page = AdapterPullPage {
@@ -735,7 +743,7 @@ async fn c2b_v3_pull_stage_apply_commit_ack_order_is_observable() {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_restart_resumes_staged_member_before_new_pull() {
+async fn after_a_restart_staged_entries_apply_before_a_new_pull() {
     let db_state = seeded_db();
     let key = [12; 32];
     let remote = remote_upsert([62; 16], "server-seq-62", 62, vec![2], &key);
@@ -786,7 +794,7 @@ async fn c2b_v3_pull_restart_resumes_staged_member_before_new_pull() {
 }
 
 #[test]
-fn c2b_v3_pull_crash_left_applying_reapplies_once_to_terminal_state() {
+fn an_entry_left_applying_by_a_crash_is_applied_exactly_once() {
     let db_state = seeded_db();
     let key = [13; 32];
     let operation_id = [63; 16];
@@ -851,7 +859,7 @@ fn c2b_v3_pull_crash_left_applying_reapplies_once_to_terminal_state() {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_corrupt_middle_is_quarantined_and_later_members_still_apply() {
+async fn a_corrupt_entry_mid_page_is_quarantined_and_the_rest_still_apply() {
     // This previously asserted that a corrupt entry must stop everything behind
     // it and hold the cursor. That is what wedged a vault permanently: the bad
     // entry was re-encountered on every sync and nothing after it ever ran. A
@@ -939,7 +947,7 @@ async fn c2b_v3_pull_corrupt_middle_is_quarantined_and_later_members_still_apply
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_ack_gap_is_retried_before_any_new_pull() {
+async fn a_missed_ack_is_retried_before_any_new_pull() {
     let db_state = seeded_db();
     let key = [15; 32];
     let adapter = HarnessAdapter::new(PushBehavior::AcceptAll { tx_bytes: 0 })
@@ -1010,7 +1018,7 @@ async fn c2b_v3_pull_ack_gap_is_retried_before_any_new_pull() {
 }
 
 #[test]
-fn c2b_v3_pull_own_operation_evidence_is_scoped_and_unverified_source_applies() {
+fn own_operations_are_recognised_only_by_scoped_evidence() {
     let db_state = seeded_db();
     let key = [18; 32];
     let known_id = [70; 16];
@@ -1101,7 +1109,7 @@ fn c2b_v3_pull_own_operation_evidence_is_scoped_and_unverified_source_applies() 
 }
 
 #[test]
-fn c2b_v3_pull_asset_is_set_aside_while_delete_applies() {
+fn an_asset_entry_is_set_aside_while_a_delete_applies() {
     // Originally this asserted that a *valid* delete also had to end in
     // Failed/retryable. That froze a defect as a requirement: the coordinator
     // simply had no apply arm for SyncPayload::Delete. Deletes now apply, so
@@ -1199,7 +1207,7 @@ fn c2b_v3_pull_asset_is_set_aside_while_delete_applies() {
 }
 
 #[test]
-fn c2b_v3_pull_two_updates_preserve_exact_payload_order() {
+fn two_updates_apply_in_the_order_they_arrived() {
     let db_state = seeded_db();
     let key = [16; 32];
     let first = remote_upsert([68; 16], "p68", 68, vec![8, 1], &key);
@@ -1249,7 +1257,7 @@ fn c2b_v3_pull_two_updates_preserve_exact_payload_order() {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_empty_advancing_page_and_terminal_noop_are_distinct() {
+async fn an_empty_page_that_advances_differs_from_one_with_nothing_left() {
     let db_state = seeded_db();
     let key = [17; 32];
     let adapter = HarnessAdapter::new(PushBehavior::AcceptAll { tx_bytes: 0 })
@@ -1322,7 +1330,7 @@ async fn c2b_v3_pull_empty_advancing_page_and_terminal_noop_are_distinct() {
 }
 
 #[tokio::test]
-async fn c2b_v3_pull_bootstrap_preflight_never_pushes_or_pulls() {
+async fn a_provider_needing_bootstrap_neither_pushes_nor_pulls() {
     let db_state = seeded_db();
     let mut adapter = HarnessAdapter::new(PushBehavior::AcceptAll { tx_bytes: 0 });
     adapter.plan_mode = AdapterSyncMode::BootstrapRequired;
@@ -1333,7 +1341,7 @@ async fn c2b_v3_pull_bootstrap_preflight_never_pushes_or_pulls() {
 }
 
 #[tokio::test]
-async fn c2b_v3_provider_mappers_preserve_native_positions() {
+async fn the_server_mapper_keeps_the_remote_position() {
     use crate::sync::protocol::{MailboxEntryV3, MailboxResponse, PullPageResult};
 
     let response = MailboxResponse::PullPageResult(PullPageResult {
@@ -1354,15 +1362,10 @@ async fn c2b_v3_provider_mappers_preserve_native_positions() {
     let server_page = crate::sync::adapter::server::map_pull_page_response(response, 999).unwrap();
     assert_eq!(server_page.entries[0].remote_position, "901");
     assert_eq!(server_page.entries[0].remote_seq, Some(901));
-
-    // The Google Drive half of this oracle went with the provider it tested.
-    // It asserted that an opaque native position — a Drive file id, carrying no
-    // sequence — survived the mapper alongside the server's numeric one. The
-    // server assertions above still cover the mapper that still exists.
 }
 
 #[test]
-fn frc2b_r1_04_snapshot_rejects_malformed_operation_id_blob() {
+fn a_snapshot_refuses_a_malformed_operation_id() {
     let db_state = seeded_db();
     {
         let db = db_state.lock().unwrap();
@@ -1389,7 +1392,7 @@ fn frc2b_r1_04_snapshot_rejects_malformed_operation_id_blob() {
 }
 
 #[test]
-fn frc2b_r1_04_snapshot_rejects_malformed_hash_blob() {
+fn a_snapshot_refuses_a_malformed_hash() {
     let db_state = seeded_db();
     {
         let db = db_state.lock().unwrap();

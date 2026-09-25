@@ -3708,19 +3708,7 @@ pub(crate) mod tests {
 }
 
 #[cfg(test)]
-#[rustfmt::skip]
-#[path = "../../../.agents/oracles/c2b_arch_closure_v2.rs"]
-mod c2b_arch_closure_v2;
-
-#[cfg(test)]
-#[rustfmt::skip]
-#[path = "../../../.agents/oracles/c2b_arch_closure_v3.rs"]
-mod c2b_arch_closure_v3;
-
-#[cfg(test)]
-#[rustfmt::skip]
-#[path = "../../../.agents/oracles/c2b_arch_closure_v4.rs"]
-mod c2b_arch_closure_v4;
+mod provider_identity_tests;
 
 #[cfg(test)]
 mod upgrade_from_released_version_tests {

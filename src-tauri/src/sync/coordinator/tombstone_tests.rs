@@ -1,3 +1,5 @@
+//! A delete travels as a tombstone. What it names must be exact both ways.
+
 use super::{validate_and_parse_remote_entry, InboxApplyFailureKind};
 use crate::sync::core::change::{
     encode_sync_payload_v5, prepare_durable_outbox_operations, LocalChange,
@@ -19,7 +21,7 @@ fn delete_change() -> LocalChange {
 }
 
 #[test]
-fn d1_tombstone_identity_preparation_is_exact_and_retry_stable() {
+fn a_tombstone_is_prepared_with_the_same_identity_on_every_retry() {
     let vault = tempfile::tempdir().unwrap();
     let db = crate::db::sync_outbox::tests::setup_test_db();
     db.upsert_document_path("v1", "node-delete", "notes/dead.md")
@@ -86,7 +88,7 @@ fn d1_tombstone_identity_preparation_is_exact_and_retry_stable() {
 }
 
 #[test]
-fn d1_tombstone_validation_is_typed_exact_and_rejects_unsafe_identity() {
+fn a_remote_tombstone_with_an_unsafe_identity_is_refused() {
     let key = [52u8; 32];
     let valid = SyncPayload::Delete(DeletePayload {
         node_id: "node-delete".into(),
