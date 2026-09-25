@@ -25,12 +25,9 @@ pub mod timeline;
 pub mod vault_archive;
 pub mod watcher;
 
-pub mod hwid;
-pub mod license;
-pub mod signing;
 
 use commands::{
-    calendar_subs, capture, chat, feeds, files, finance, license_cmds, migration, nexus, nodes, people as people_commands,
+    calendar_subs, capture, chat, feeds, files, finance, migration, nexus, nodes, people as people_commands,
     syn as syn_commands,
     rename_property,
     sync as sync_cmds, thumbnails, trash, vault_health, versions, whiteboards,
@@ -656,21 +653,6 @@ pub fn run() {
             // P2P Sync
             app.manage(sync_cmds::P2pSyncState::default());
 
-            // Not on Android: that build is free and has no licence to renew,
-            // so the heartbeat would be a network call home on every launch for
-            // no reason — and one a Data Safety declaration would have to
-            // account for.
-            #[cfg(all(feature = "official-build", not(target_os = "android")))]
-            {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    log::info!("Running background license heartbeat check...");
-                    // Try heartbeat. We ignore errors since it could be offline.
-                    // If revoked, the command itself will delete the local license file.
-                    let _ = commands::license_cmds::heartbeat_license(app_handle).await;
-                });
-            }
-
             Ok(())
         })
         // Every invoke in the app passes through here, which is the point.
@@ -984,14 +966,6 @@ pub fn run() {
             // Key Rotation
             sync_cmds::sync_current_epoch,
             sync_cmds::sync_revoke_device,
-            // License
-            license_cmds::get_license_state,
-            license_cmds::get_hwid,
-            license_cmds::activate_trial,
-            license_cmds::activate_license_key,
-            license_cmds::deactivate_license,
-            license_cmds::refresh_license,
-            license_cmds::heartbeat_license,
             // System
             open_app_log_folder,
                 ]);

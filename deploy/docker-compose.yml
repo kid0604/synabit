@@ -49,27 +49,6 @@ services:
       - synabit-network
     restart: unless-stopped
 
-  license-server:
-    build:
-      context: ../license-server
-      dockerfile: Dockerfile
-    container_name: synabit-license-server
-    volumes:
-      - license-data:/app/data
-    environment:
-      - DATABASE_URL=sqlite:/app/data/license.db
-      - LICENSE_PRIVATE_KEY=${LICENSE_PRIVATE_KEY}
-    env_file:
-      - ../license-server/.env
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`license.synabit.net`)"
-      - "traefik.http.routers.api.entrypoints=websecure"
-      - "traefik.http.routers.api.tls.certresolver=myresolver"
-    networks:
-      - synabit-network
-    restart: unless-stopped
-
   sync-server:
     build:
       context: ../sync-server
@@ -109,8 +88,6 @@ networks:
 
 volumes:
   sync-data:
-    driver: local
-  license-data:
     driver: local
   traefik-certs:
     driver: local

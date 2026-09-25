@@ -1106,10 +1106,10 @@ mod tests {
     /// The Rust crates that reach the Android build, as of the last size review.
     const REVIEWED_CRATES: &[&str] = &[
         "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20poly1305", "chrono", "chrono-tz",
-        "ctor", "ed25519-dalek", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
+        "ctor", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
         "iroh", "jni", "keyring", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
         "opml", "postcard", "pulldown-cmark", "rand", "regex", "reqwest", "rusqlite", "rustls", "scraper",
-        "serde", "serde_json", "serde_yaml", "sha2", "similar", "synabit_protocol", "sysinfo", "tauri",
+        "serde", "serde_json", "serde_yaml", "sha2", "similar", "synabit_protocol", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",
         "tauri-plugin-notification", "tauri-plugin-opener", "tauri-plugin-os", "tauri-plugin-process",
         "tauri-plugin-store", "tauri-plugin-updater", "thiserror", "time", "tokio", "url", "urlencoding",

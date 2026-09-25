@@ -152,13 +152,9 @@ import { useSynEnabled } from './shared/syn/useSynEnabled';
 import { useAppStore } from './stores/useAppStore';
 import { useNavigationStore, type NavEntry } from './stores/useNavigationStore';
 import { useAppLockStore } from './stores/useAppLockStore';
-import { useLicenseStore } from './stores/useLicenseStore';
 import { storeToRefs } from 'pinia';
 
-const LicenseModal = defineAsyncComponent(() => import('./shared/components/LicenseModal.vue'));
-const showLicenseModal = ref(false);
 
-const licenseStore = useLicenseStore();
 
 const bus = useEventBus();
 const ns = useNodeService();
@@ -436,7 +432,6 @@ let lastAutoSyncTriggerTime = 0;
 // flows where leaving half way puts the vault in a state the user cannot see,
 // and a stray back press is exactly how that happens.
 useBackGuard(showSettingsModal, () => { showSettingsModal.value = false; });
-useBackGuard(showLicenseModal, () => { showLicenseModal.value = false; });
 useBackGuard(showSetupPinModal, () => { showSetupPinModal.value = false; });
 const hiddenAppsGuard = useBackGuard(showHiddenAppsMenu, () => { showHiddenAppsMenu.value = false; });
 useBackGuard(showSyncConflicts, () => { showSyncConflicts.value = false; });
@@ -899,10 +894,6 @@ onMounted(async () => {
   await appStore.initialize();
   await initSettings();
   await initEventBus();
-  await licenseStore.checkState();
-  if (licenseStore.licenseStatus.type === 'NoLicense') {
-      showLicenseModal.value = true;
-  }
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
   // Capture-phase would fire before the components that handle their own
@@ -1481,7 +1472,6 @@ onUnmounted(() => {
       @update:is-open="showRecoveryModal = $event"
     />
 
-    <LicenseModal :isOpen="showLicenseModal" @close="showLicenseModal = false" />
 
     <!-- Tier 1: App Lock Screen -->
     <LockScreen

@@ -21,13 +21,11 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppUpdate } from '../../composables/useAppUpdate';
-import { appInPlatformScope, isMobileOS } from '../platformScope';
+import { appInPlatformScope } from '../platformScope';
 import { BUILT_IN_APPS } from '../appRegistry';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import { useVaultArchive, formatBytes } from '../../composables/useVaultArchive';
 
-const LicenseModal = defineAsyncComponent(() => import('./LicenseModal.vue'));
-const showLicenseModal = ref(false);
 
 const {
   showSettingsModal, settingsTab, showE2eeOnboarding,
@@ -132,7 +130,7 @@ const openLogFolder = async () => {
   }
 };
 
-type TabType = 'general' | 'notes' | 'tasks' | 'timeline' | 'security' | 'devices' | 'about' | 'license';
+type TabType = 'general' | 'notes' | 'tasks' | 'timeline' | 'security' | 'devices' | 'about';
 
 const props = defineProps<{
   initialTab?: TabType;
@@ -475,17 +473,6 @@ const setupE2ee = () => {
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'security' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
                 <Lock class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.security') }}</span>
-              </button>
-              <!--
-                Absent on mobile. The Android build is free — see
-                check_license_status in license.rs — and this tab is the only
-                route to a "buy a key" link, which Play's payments policy does
-                not allow for an app that unlocks digital features.
-              -->
-              <button v-if="!isMobileOS" @click="settingsTab = 'license'" 
-                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'license' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
-                <Shield class="w-4 h-4 opacity-70 shrink-0" />
-                <span class="hidden sm:inline md:inline">License</span>
               </button>
               <button @click="settingsTab = 'devices'" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'devices' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
@@ -1119,25 +1106,6 @@ const setupE2ee = () => {
                 <DeviceManager />
               </div>
               
-              <!-- === LICENSE TAB === -->
-              <!-- Guarded as well as the tab button: settingsTab can also be set
-                   by the initialTab prop, and the panel is what actually holds
-                   the purchase link. -->
-              <div v-if="settingsTab === 'license' && !isMobileOS" class="space-y-6">
-                 <section>
-                  <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-3">License & Subscription</h4>
-                  <div class="bg-[#f8f8f8] dark:bg-[#1e1e1e] p-6 rounded-xl border border-[#e6e6e6] dark:border-[#2c2c2c] text-center">
-                    <Shield class="w-12 h-12 text-primary mx-auto mb-4" />
-                    <h5 class="text-lg font-medium text-text dark:text-text-dark mb-2">Synabit License Manager</h5>
-                    <p class="text-sm text-text-muted dark:text-text-muted-dark mb-6">View your active subscription plan, manage your license key, or activate a new device.</p>
-                    
-                    <button @click="showLicenseModal = true" class="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-medium transition-colors shadow-sm">
-                      Manage License
-                    </button>
-                  </div>
-                </section>
-              </div>
-
               <!-- === ABOUT TAB === -->
               <div v-else-if="settingsTab === 'about'" class="space-y-6">
                 <section>
@@ -1237,7 +1205,6 @@ const setupE2ee = () => {
       />
     <ConfirmModal v-if="showConfirmDisconnectAll" :show="true" :title="'Disconnect Providers'" :message="'Are you sure you want to disconnect all cloud sync providers? Your data will only remain local.'" confirmText="Disconnect All" @confirm="() => { handleDisconnectAll(); showConfirmDisconnectAll = false; }" @cancel="showConfirmDisconnectAll = false" />
 
-    <LicenseModal :is-open="showLicenseModal" @close="showLicenseModal = false" />
   </Teleport>
   <TrashPanel :show="showTrash" :vaultPath="vaultPath" @close="showTrash = false" />
 

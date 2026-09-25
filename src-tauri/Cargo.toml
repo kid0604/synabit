@@ -82,16 +82,12 @@ hex = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
-# Licensing
-sysinfo = "0.33.0"
-ed25519-dalek = { version = "2.2.0" }
 lz4_flex = "0.13.1"
 chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"
 time = { version = "0.3.55", features = ["formatting"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
-machine-uid = "0.6.0"
 # A hotkey that works while another app is focused only exists on desktop;
 # phones have share sheets and widgets instead.
 tauri-plugin-global-shortcut = "2"
@@ -120,7 +116,6 @@ tauri = { version = "2", features = ["test"] }
 
 [features]
 default = []
-official-build = []
 
 [profile.dev]
 debug = 1

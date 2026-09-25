@@ -40,7 +40,6 @@ import EmojiSuggestionMenu from './EmojiSuggestionMenu.vue';
 import { emojiData } from './emojiData';
 import CodeBlockComponent from './CodeBlockComponent.vue';
 import { useSettings } from '../../composables/useSettings';
-import { useLicenseStore } from '../../stores/useLicenseStore';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { logger } from '../../utils/logger';
 
@@ -303,11 +302,8 @@ const slashCommandItems = (): SlashCommandItem[] => createSlashCommandItems({
 });
 
 // --- Editor ---
-const licenseStore = useLicenseStore();
-
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
-  editable: !licenseStore.isReadOnly,
   extensions: [
     StarterKit.configure({
       codeBlock: false,

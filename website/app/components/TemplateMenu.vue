@@ -5,10 +5,6 @@ const items = [
     to: '/'
   },
   {
-    label: 'Pricing',
-    to: '/pricing'
-  },
-  {
     label: 'Docs',
     to: '/docs'
   }

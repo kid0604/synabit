@@ -33,9 +33,6 @@ useSeoMeta({
             <UIcon name="i-heroicons-arrow-right" class="w-5 h-5 group-hover:translate-x-1 transition-transform" />
           </span>
         </UButton>
-        <UButton size="xl" color="neutral" variant="ghost" to="/pricing" class="ring-1 ring-slate-700/50 hover:bg-slate-800/50">
-          View Pricing
-        </UButton>
       </div>
     </UContainer>
 
