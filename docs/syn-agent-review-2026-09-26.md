@@ -522,6 +522,25 @@ Syn không nên đuổi theo agent đa năng kiểu OpenClaw. Lợi thế của 
 9. **Đợt a11y:** `aria-live` cho vùng trả lời và thẻ; `role="switch"`; `role="dialog"`; hiện action khi `focus-within`; inspector co giãn.
 10. Tách ba file 1,2–1,4k dòng; thêm mount test cho định tuyến consent, regenerate và AskBar.
 
+> **Trạng thái 2026-09-27: phần lớn đã làm và đã commit.** 2.523 test Rust và 2.023 test frontend qua. Đã xem trực quan qua `dev-stub.html`, chưa chạy trong app Tauri thật.
+>
+> **Đã làm:**
+> - C1: AskBar dùng chung `useSynChat`; `sendMessage` nhận object tuỳ chọn.
+> - C2: `RunProgress`: kế hoạch, nhãn tool dễ đọc (có test đối chiếu `tools.rs`), vòng/tool/token so với trần; sự kiện `syn-progress` từ engine.
+> - C3: nút "Lên kế hoạch trước" ở ô soạn và AskBar. Chế độ Plan đổi nghĩa: mọi thay đổi chỉ được mô tả, không chạy. Kế hoạch nằm dưới câu trả lời kèm nút "Làm theo kế hoạch".
+> - C4: màn hình "Việc của Syn" với badge số việc đang chờ; inspector mở thẳng được một run.
+> - C5: `syn_stats` và tab "Số liệu"; `Run` ghi lại memory, section bị cắt, thời gian truy xuất, số skill, và trần đã chạm.
+> - C6: nút Syn trên thanh bên và thanh điều hướng mobile; chế độ Hỏi trong QuickEntry; "Hỏi Syn" khi bôi đen chữ trong Tiptap, trình xem text và PDF.
+> - C8: `ModelTier` với câu privacy nói rõ; chip "Trên máy / Gửi ra ngoài" ở header.
+> - C9 (một phần): `aria-live`, `aria-pressed`, `role="dialog"`.
+>
+> **Chưa làm:**
+> - C7 slash command.
+> - C10: tách ba component lớn và thêm mount test.
+> - Inspector co giãn trên màn hình hẹp.
+> - AskBar render đầy đủ (math, Mermaid, wikilink).
+> - Tab "Số liệu" đang nằm trong inspector — trái với khuyến nghị ở §10. Component đứng riêng, nên chuyển ra ngoài sau được.
+
 **Gate C:**
 - Người không viết code nhìn màn hình tiến độ và nói đúng Syn đang làm gì và sẽ làm gì tiếp.
 - Ít nhất 30% lượt gọi Syn đến từ ngoài Messages (gate cũ của P4.5).
