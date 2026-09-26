@@ -15,6 +15,7 @@ pub mod focus;
 pub mod gate;
 pub mod footing;
 pub mod instructions;
+pub mod mcp;
 pub mod memory;
 pub mod narrative;
 pub mod notice;

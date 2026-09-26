@@ -40,9 +40,9 @@
 //!    audit log for a call that never happened. See `syn::ambiguity`.
 //! 5. **Consent.** Has the user agreed to this sort of power? Before the skill
 //!    budget, because a refusal should not be spent out of an allowance.
-//! 6. **What running means.** `browse` is driven by the engine because it is
-//!    async; a third skill body is refused; anything else goes to the
-//!    registry.
+//! 6. **What running means.** `browse` and an MCP server's tool are driven by
+//!    the engine because they are async; a third skill body is refused;
+//!    anything else goes to the registry.
 
 use serde_json::Value;
 
@@ -95,6 +95,9 @@ pub enum How {
     Plan,
     /// Hand the work to a sub-run. See `syn::delegate`.
     Delegate,
+    /// A tool on an MCP server: a network request or a program's answer,
+    /// which the engine awaits, like `Browse`. See `syn::mcp::call`.
+    Mcp,
     /// Answered with this refusal, but recorded as a call the run made — it is
     /// a budget, not a rule, and the transcript should show it was reached.
     OverSkillBudget(String),
@@ -125,6 +128,24 @@ impl Decided {
 /// for it.
 pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &View<'_>) -> Decided {
     // 1. Taint.
+    //
+    // MCP (Phase F): every tool on an outside server is refused once the run
+    // has read anything from outside, reads included — what a read sends goes
+    // to the server too. The allowlist below already refuses them, since no
+    // `mcp__` name is on it; this says why in words that fit, and puts the
+    // refusal on the record, because an attempt to reach a server after
+    // reading something is exactly what the audit log is for. See `syn::mcp`.
+    if view.tainted && crate::syn::mcp::is_mcp_tool(tool) {
+        return Decided {
+            gate: Gate::Refuse {
+                said: crate::syn::mcp::refused_after_reading(tool),
+                note: Some(format!(
+                    "Refused `{tool}`: this run has read something from outside, and an MCP server is outside."
+                )),
+            },
+            audit: capability.map(|_| Outcome::Refused),
+        };
+    }
     if view.tainted && !crate::syn::taint::allowed_after_reading(tool) {
         return Decided::quietly(Gate::Refuse {
             said: crate::syn::taint::refusal(tool),
@@ -236,6 +257,9 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::Plan
     } else if tool == crate::syn::delegate::TOOL {
         How::Delegate
+    } else if crate::syn::mcp::is_mcp_tool(tool) && capability.is_some() {
+        // MCP (Phase F): a request to another machine, awaited by the engine.
+        How::Mcp
     } else if tool == crate::syn::skill::LOAD_TOOL && view.skills_opened >= crate::syn::skill::BODIES_PER_RUN {
         // A budget over a run, and the run is what this sees. Refused rather
         // than errored: "not this time, use what you have" is a sentence the
