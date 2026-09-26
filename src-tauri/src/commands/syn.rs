@@ -574,6 +574,10 @@ struct Gathered {
     context: String,
     remembered: Option<String>,
     skill_index: Option<String>,
+    /// The steps of the one skill matched to this question, already rendered
+    /// by `skill::chosen_block`. Which skill it was is read back off the prompt
+    /// as sent, into `stats::Carried::skill_injected`.
+    chosen_skill: Option<String>,
     thread_block: Option<String>,
     /// The count, when the index already answers the question. Its presence
     /// is what makes this an instant turn. See `syn::tempo`.
@@ -659,12 +663,11 @@ fn gather(
 
     // The skill index, on the same terms. Only what the user enabled is
     // named, because a name in this list is an invitation.
-    let skill_index = crate::syn::skill::all(&db)
-        .map(|skills| crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS))
-        .unwrap_or_else(|e| {
-            log::warn!("[Syn] Could not read skills: {e}");
-            None
-        });
+    let skills = crate::syn::skill::all(&db).unwrap_or_else(|e| {
+        log::warn!("[Syn] Could not read skills: {e}");
+        Vec::new()
+    });
+    let skill_index = crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS);
 
     // Is this a question the index already answers? Decided here, on the
     // same lock as everything else, and the query is run *now* rather than
@@ -677,6 +680,16 @@ fn gather(
             let sample = crate::syn::tempo::sample(&found);
             Some(crate::syn::tempo::block(&instant, found.total, &sample))
         });
+
+    // The one skill whose own description clearly fits the question, its steps
+    // put in front of the model instead of waiting for it to call `load_skill`
+    // — which it did in none of seventeen runs. Not for a counted turn: that
+    // turn has no tools and its answer is already in the prompt. See
+    // `skill::chosen_for`.
+    let chosen_skill = match counted {
+        Some(_) => None,
+        None => crate::syn::skill::chosen_for(&skills, question).map(crate::syn::skill::chosen_block),
+    };
 
     // The open thread, if the question came from inside one. Read on this
     // lock with everything else, and best-effort for the same reason: a
@@ -708,7 +721,7 @@ fn gather(
         )
     };
 
-    Ok(Gathered { retrieval, context, remembered, skill_index, thread_block, counted, timeline_block, memories, retrieval_ms })
+    Ok(Gathered { retrieval, context, remembered, skill_index, chosen_skill, thread_block, counted, timeline_block, memories, retrieval_ms })
 }
 
 /// Steps 5 and 6: the system prompt, assembled from its parts, then the
@@ -758,7 +771,8 @@ fn messages_for(
     })
     .with_surface(surface)
     // Asked before this run registers, so it lists only the others.
-    .with_underway(&crate::syn::engine::underway(&request.conversation_id));
+    .with_underway(&crate::syn::engine::underway(&request.conversation_id))
+    .with_chosen_skill(gathered.chosen_skill.as_deref());
     // Measured off the plan as it goes out, after every `fit`, because the
     // prompt is rebuilt each turn and kept nowhere. See `Run::memory_lines_sent`.
     let carried = crate::syn::stats::Carried::of(&plan, gathered.memories, gathered.retrieval_ms);
@@ -2434,14 +2448,18 @@ pub async fn syn_accept_proposal(
     // A proposal may say it replaces something. The reflector names the entry
     // by its text, because text is what it was shown; the id is resolved here,
     // where the memories actually are.
+    //
+    // As written first, then folded: a reflector that quoted the sentence
+    // without a tone mark still means that sentence, and a whole sentence
+    // differing only by marks is not a different memory in any vault.
     let replaced = p.supersedes.as_deref().and_then(|body| {
         let wanted = body.trim().to_lowercase();
         let db = state.lock().ok()?;
-        crate::syn::memory::all(&db)
-            .ok()?
-            .into_iter()
+        let all = crate::syn::memory::all(&db).ok()?;
+        all.iter()
             .find(|m| m.body.trim().to_lowercase() == wanted)
-            .map(|m| m.id)
+            .or_else(|| all.iter().find(|m| crate::search_fold::same_folded(&m.body, body)))
+            .map(|m| m.id.clone())
     });
 
     let ctx = crate::syn::tools::ToolContext {
@@ -2459,9 +2477,11 @@ pub async fn syn_accept_proposal(
             "kind": p.kind,
             "subject": p.subject,
             "confidence": p.confidence,
-            // Explicit, against `remember`'s default. A memory Syn proposed and
-            // the user merely agreed to should not outrank one the user asked
-            // for by name when the budget eventually has to choose.
+            // Explicit, whatever the proposing run's question said. A memory
+            // Syn proposed and the user merely agreed to should not outrank
+            // one the user asked for by name when the budget has to choose.
+            // No `review_after`: `remember` gives it the kind's default, the
+            // same as a memory the model wrote directly.
             "pinned": false,
             "supersedes": replaced,
         }),

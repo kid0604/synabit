@@ -55,8 +55,9 @@ pub const MEMORY_FOLDER: &str = "SynMemory";
 /// Roughly 800 tokens. Pinned memories are the ones that are true regardless of
 /// what is being asked — a name, a timezone, how somebody wants to be spoken
 /// to — and they are charged for on every message of every conversation, which
-/// is what makes the ceiling necessary rather than tidy. Over it, the oldest
-/// confirmations are dropped first and the user is told, because a memory that
+/// is what makes the ceiling necessary rather than tidy. Over it, what is past
+/// its review date goes first, then the oldest confirmations, and the user is
+/// told, because a memory that
 /// is silently not being used is worse than one that was never written.
 pub const MEMORY_BUDGET_CHARS: usize = 3_200;
 
@@ -79,6 +80,80 @@ pub const SUGGESTED_KINDS: &[&str] = &[
     "relationship",
     "project",
 ];
+
+/// How long a memory of this kind is trusted before it asks to be checked.
+///
+/// `review_after` was a field that nothing wrote and nothing read, so the only
+/// ageing a memory had was `last_confirmed`, which moves only when somebody
+/// clicks — and "evict the least recently confirmed" was really "evict the
+/// oldest". These are the defaults `remember` writes now, one per kind, and the
+/// numbers are guesses about how fast each kind of thing stops being true:
+///
+/// - **project**, 30 days. A project's state is the fastest-moving thing in
+///   here: "Everest is waiting on the vendor" is wrong within weeks, and saying
+///   it confidently a quarter later is the failure this exists to prevent.
+/// - **fact**, 180 days. Where someone works, where they live, what car they
+///   drive — true for years usually, but when it changes nobody announces it
+///   to an assistant. Half a year is a cheap point to hedge.
+/// - **relationship**, 365 days. Who is whose manager, sister, client. Slower
+///   still, and the hedge is mostly for the ones that ended quietly.
+/// - **preference** and **instruction**, never. These are the person's
+///   standing wishes, not observations about the world; they do not decay with
+///   time, they change by being contradicted, and the block already tells the
+///   model that the person saying otherwise wins. Hedging "always answer in
+///   Vietnamese" after six months would teach the model to doubt exactly the
+///   memories that are meant to bind.
+///
+/// A kind nobody listed gets no date: a word the user invented is theirs to
+/// age, and guessing wrong in the hedging direction would put "may be out of
+/// date" beside something they consider permanent. The model may always pass
+/// its own date — "until the trip on 12 October" is a better answer than any
+/// table.
+pub fn review_interval_days(kind: &str) -> Option<i64> {
+    match kind.trim().to_lowercase().as_str() {
+        "project" => Some(30),
+        "fact" => Some(180),
+        "relationship" => Some(365),
+        _ => None,
+    }
+}
+
+/// The `review_after` a new memory of this kind is written with, if any.
+pub fn default_review_after(kind: &str, today: &str) -> Option<String> {
+    let days = review_interval_days(kind)?;
+    let today = chrono::NaiveDate::parse_from_str(today.get(..10)?, "%Y-%m-%d").ok()?;
+    Some((today + chrono::Duration::days(days)).format("%Y-%m-%d").to_string())
+}
+
+/// Did the person ask, in so many words, for something to be remembered?
+///
+/// What decides whether `remember` pins by default. A question with these
+/// words in it is the person making the judgement pinning encodes; one
+/// without them is the model deciding something was worth keeping, which is
+/// useful and is not the same claim.
+///
+/// Phrases, not the bare verb. `nhớ` is also *to miss* ("nhớ nhà") and *to
+/// recall* ("tao nhớ là…"), and folded it is `nho`, which is also `nhỏ`, small.
+/// So the marked phrases are matched as written, and only the few whose folded
+/// form cannot plausibly be anything else are matched folded as well, for the
+/// person typing without marks. A miss here costs a memory its pin — the
+/// model can still pass `pinned` itself — so the list errs short.
+pub fn asked_to_remember(question: &str) -> bool {
+    const MARKED: &[&str] = &[
+        "hãy nhớ", "nhớ giúp", "nhớ giùm", "nhớ dùm", "nhớ hộ", "nhớ nhé", "nhớ nha",
+        "nhớ kỹ", "ghi nhớ", "đừng quên", "từ giờ trở đi", "từ nay về sau",
+        "remember", "don't forget", "dont forget", "keep in mind", "from now on",
+    ];
+    // Not `dung quen`: folded, "đừng quên" is also "dùng quen", used to.
+    const FOLDED: &[&str] = &["ghi nho", "nho giup", "nho gium", "nho dum"];
+
+    let lower = question.to_lowercase();
+    if MARKED.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    let folded = crate::search_fold::fold(question);
+    FOLDED.iter().any(|p| folded.contains(p))
+}
 
 /// One thing Syn has been told or worked out, kept between conversations.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -228,6 +303,22 @@ impl Memory {
             .as_deref()
             .is_some_and(|when| when < today)
     }
+
+    /// What a stale memory carries at the end of its line, so the model can
+    /// weigh it rather than state it.
+    ///
+    /// The date is `last_confirmed`, not `review_after`: "last confirmed in
+    /// January" is what lets the model say *as of January, Minh was at FPT —
+    /// is that still right?*, while the review date is bookkeeping it has no
+    /// use for. Trimmed to the day because a hand-edited file may carry a full
+    /// timestamp there, and the minute is noise in a hedge.
+    fn stale_hedge(&self, today: &str) -> String {
+        if !self.is_stale(today) {
+            return String::new();
+        }
+        let when = self.last_confirmed.get(..10).unwrap_or(&self.last_confirmed);
+        format!(" — last confirmed {when}, may be out of date")
+    }
 }
 
 /// Every memory in the vault, most recently confirmed first.
@@ -281,11 +372,23 @@ pub fn all(db: &DbBridge) -> AppResult<Vec<Memory>> {
 /// rather than with what it asks for.
 ///
 /// Eviction order, when the budget bites: instructions never lose to a fact;
-/// within a group, pinned outrank unpinned, preferences outrank plain facts,
-/// and the least recently confirmed goes first. That last clause is the only
-/// decay this module has — a memory nobody has confirmed in a long time loses
-/// its place, and never its file.
+/// within a group, a memory past its `review_after` goes before any that is
+/// not, then pinned outrank unpinned, preferences outrank plain facts, and the
+/// least recently confirmed goes first. A memory loses its place that way,
+/// never its file.
+///
+/// Stale comes before pinned on purpose. Pinning says "this matters whatever
+/// is asked", and it was said about the thing as it was; a pinned project
+/// status three months past its review date is the likeliest line in the block
+/// to be wrong. It is still sent when there is room — with a hedge naming when
+/// it was last confirmed, so the model can ask rather than assert.
 pub fn memory_block(memories: &[Memory], budget_chars: usize) -> Option<String> {
+    memory_block_on(memories, budget_chars, &today())
+}
+
+/// `memory_block`, on a day the caller chooses — so a test can hold the date
+/// still while it checks what went stale.
+pub fn memory_block_on(memories: &[Memory], budget_chars: usize, today: &str) -> Option<String> {
     if memories.is_empty() {
         return None;
     }
@@ -308,14 +411,18 @@ pub fn memory_block(memories: &[Memory], budget_chars: usize) -> Option<String> 
         memories.iter().partition(|m| m.is_instruction());
 
     // Whoever is sorted first is budgeted first, and so is the last to be cut.
+    // `shrink_block` cuts from the bottom of each group, so it inherits this.
+    let fresh = |m: &Memory| !m.is_stale(today);
     instructions.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
+        fresh(b)
+            .cmp(&fresh(a))
+            .then(b.pinned.cmp(&a.pinned))
             .then(b.last_confirmed.cmp(&a.last_confirmed))
     });
     facts.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
+        fresh(b)
+            .cmp(&fresh(a))
+            .then(b.pinned.cmp(&a.pinned))
             .then(b.is_preference().cmp(&a.is_preference()))
             .then(b.last_confirmed.cmp(&a.last_confirmed))
     });
@@ -336,7 +443,7 @@ pub fn memory_block(memories: &[Memory], budget_chars: usize) -> Option<String> 
     // take is budget a fact cannot take from them.
     let mut instruction_lines = Vec::new();
     for memory in &instructions {
-        let line = memory.directive();
+        let line = format!("{}{}", memory.directive(), memory.stale_hedge(today));
         let cost = line.chars().count() + 1;
         if used + cost > budget_chars {
             dropped += 1;
@@ -348,7 +455,7 @@ pub fn memory_block(memories: &[Memory], budget_chars: usize) -> Option<String> 
 
     let mut fact_lines = Vec::new();
     for memory in &facts {
-        let line = memory.line();
+        let line = format!("{}{}", memory.line(), memory.stale_hedge(today));
         let cost = line.chars().count() + 1;
         if used + cost > budget_chars {
             dropped += 1;
@@ -506,17 +613,26 @@ pub fn lines_shown(block: &str) -> usize {
 /// compared without reading them. Used to *ask* rather than to overwrite: an
 /// assistant that silently changes its mind about somebody, and cannot say when
 /// or why, is the thing this whole module is arranged to avoid.
+///
+/// Compared folded — case, tone marks and `đ` — through `search_fold::fold`,
+/// the one folding every comparison of memory text goes through. It was
+/// `eq_ignore_ascii_case`, under which `Đức` and `đức` are two people, so a
+/// second claim about the same man written with a capital went unreported.
+/// Folding the marks as well makes `Duc` and `Đức` one subject too, which is
+/// right far more often than it is wrong, and when it is wrong the cost is one
+/// question to the user, never a memory changed.
 pub fn conflicting<'a>(
     memories: &'a [Memory],
     kind: &str,
     subject: Option<&str>,
 ) -> Vec<&'a Memory> {
+    use crate::search_fold::same_folded;
     memories
         .iter()
         .filter(|m| {
-            m.kind.eq_ignore_ascii_case(kind)
+            same_folded(&m.kind, kind)
                 && match (m.subject.as_deref(), subject) {
-                    (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                    (Some(a), Some(b)) => same_folded(a, b),
                     (None, None) => true,
                     _ => false,
                 }
@@ -534,6 +650,7 @@ pub fn frontmatter(
     source_nodes: &[String],
     pinned: bool,
     supersedes: Option<&str>,
+    review_after: Option<&str>,
     today: &str,
 ) -> serde_json::Value {
     let mut props = serde_json::Map::new();
@@ -556,6 +673,11 @@ pub fn frontmatter(
     props.insert("pinned".into(), serde_json::json!(pinned));
     if let Some(old) = supersedes {
         props.insert("supersedes".into(), serde_json::json!(old));
+    }
+    // Absent rather than null for a memory that never asks to be checked, so
+    // the file reads the way somebody writing it by hand would have left it.
+    if let Some(when) = review_after.filter(|w| !w.trim().is_empty()) {
+        props.insert("review_after".into(), serde_json::json!(when));
     }
     serde_json::Value::Object(props)
 }
@@ -616,16 +738,39 @@ mod through_the_tools {
 
     impl Harness {
         fn call(&self, tool: &str, args: serde_json::Value) -> serde_json::Value {
+            self.call_in("run-under-test", tool, args).expect("the tool runs")
+        }
+
+        /// As `call`, from inside a particular run, and without insisting the
+        /// tool succeed — a refusal is sometimes the thing being tested.
+        fn call_in(
+            &self,
+            run_id: &str,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> crate::error::AppResult<serde_json::Value> {
             let state = self.app.state::<crate::db::DbState>();
             let ctx = crate::syn::tools::ToolContext {
                 db: &state,
                 vault_path: &self.vault,
                 app: &self.app,
-                run_id: Some("run-under-test"),
+                run_id: Some(run_id),
                 model: None,
             };
-            let out = crate::syn::tools::execute_tool(&ctx, tool, &args).expect("the tool runs");
-            serde_json::from_str(&out).expect("the tool returns JSON")
+            let out = crate::syn::tools::execute_tool(&ctx, tool, &args)?;
+            Ok(serde_json::from_str(&out).expect("the tool returns JSON"))
+        }
+
+        /// A run asking `question`, saved where the engine saves one before
+        /// its first round — which is where `remember` reads the question.
+        fn run_asking(&self, question: &str) -> String {
+            let run = crate::syn::run::Run::new(
+                question,
+                None,
+                crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default()),
+            );
+            crate::syn::run::save_run(&self.vault, &run).expect("the run is saved");
+            run.id
         }
 
         fn memories(&self) -> Vec<Memory> {
@@ -796,6 +941,115 @@ mod through_the_tools {
         let by_word = h.call("recall", serde_json::json!({ "query": "cà phê" }));
         assert_eq!(by_word["total_matches"], 1);
         assert_eq!(by_word["memories"][0]["body"], "Thích cà phê đen");
+    }
+
+    /// `recall` finds what a person types without marks, and a subject however
+    /// it was capitalised. Both missed under ASCII folding.
+    #[test]
+    fn recall_folds_marks_and_case_the_way_search_does() {
+        let h = harness();
+        h.call(
+            "remember",
+            serde_json::json!({ "body": "Thích cà phê sữa đá", "kind": "preference", "subject": "Đức" }),
+        );
+        h.call("remember", serde_json::json!({ "body": "Sống ở Hải Phòng", "kind": "fact" }));
+
+        let by_word = h.call("recall", serde_json::json!({ "query": "ca phe" }));
+        assert_eq!(by_word["total_matches"], 1, "{by_word}");
+        assert_eq!(by_word["memories"][0]["body"], "Thích cà phê sữa đá");
+
+        for subject in ["đức", "Duc"] {
+            let out = h.call("recall", serde_json::json!({ "subject": subject }));
+            assert_eq!(out["total_matches"], 1, "`{subject}` finds Đức: {out}");
+        }
+        assert_eq!(
+            h.call("recall", serde_json::json!({ "kind": "PREFERENCE" }))["total_matches"],
+            1
+        );
+    }
+
+    /// Every memory `remember` writes carries the date it asks to be checked
+    /// on, from its kind — which is what gives the prompt's staleness anything
+    /// to read. Nothing wrote this field before.
+    #[test]
+    fn remembering_writes_when_to_check_again_by_kind() {
+        let h = harness();
+        let today = chrono::NaiveDate::parse_from_str(&today(), "%Y-%m-%d").expect("a date");
+        let days = |n: i64| (today + chrono::Duration::days(n)).format("%Y-%m-%d").to_string();
+
+        let project = h.call(
+            "remember",
+            serde_json::json!({ "body": "Dự án Everest chờ nhà cung cấp", "kind": "project" }),
+        );
+        assert_eq!(project["review_after"], days(30));
+
+        let preference = h.call(
+            "remember",
+            serde_json::json!({ "body": "Thích họp buổi sáng", "kind": "preference" }),
+        );
+        assert!(preference["review_after"].is_null(), "a wish does not expire: {preference}");
+
+        let own = h.call(
+            "remember",
+            serde_json::json!({ "body": "Đang ở Đà Lạt", "kind": "fact", "review_after": days(5) }),
+        );
+        assert_eq!(own["review_after"], days(5), "the model's own date wins");
+
+        let never = h.call(
+            "remember",
+            serde_json::json!({ "body": "Sinh năm 1990", "kind": "fact", "review_after": "never" }),
+        );
+        assert!(never["review_after"].is_null());
+
+        let stored: Vec<(String, Option<String>)> =
+            h.memories().into_iter().map(|m| (m.body, m.review_after)).collect();
+        assert!(stored.contains(&("Dự án Everest chờ nhà cung cấp".into(), Some(days(30)))), "{stored:?}");
+        assert!(stored.contains(&("Sinh năm 1990".into(), None)), "{stored:?}");
+    }
+
+    #[test]
+    fn a_review_date_that_is_malformed_or_past_is_refused() {
+        let h = harness();
+        for bad in ["next month", "2020-01-01", "27/09/2027"] {
+            let out = h.call_in(
+                "run-under-test",
+                "remember",
+                serde_json::json!({ "body": "x", "review_after": bad }),
+            );
+            let refused = match out {
+                Err(e) => e.to_string().contains("review_after"),
+                Ok(v) => v["error"].as_str().is_some_and(|e| e.contains("review_after")),
+            };
+            assert!(refused, "`{bad}` should be refused");
+        }
+        assert!(h.memories().is_empty(), "and nothing was written");
+    }
+
+    /// Pinned when the person asked in so many words, unpinned when the model
+    /// decided on its own. Pinned-by-default made every one of the model's own
+    /// guesses rank with the person's name, and the pin stopped ordering
+    /// anything.
+    #[test]
+    fn a_memory_is_pinned_by_default_only_when_the_person_asked_for_it() {
+        let h = harness();
+
+        let asked = h.run_asking("Nhớ giúp tao là vợ tao dị ứng hải sản nhé");
+        let out = h
+            .call_in(&asked, "remember", serde_json::json!({ "body": "Vợ dị ứng hải sản" }))
+            .expect("runs");
+        assert_eq!(out["pinned"], true, "{out}");
+
+        let noticed = h.run_asking("Tuần sau tao đi Đà Lạt, đặt giúp cái lịch");
+        let out = h
+            .call_in(&noticed, "remember", serde_json::json!({ "body": "Tuần sau đi Đà Lạt" }))
+            .expect("runs");
+        assert_eq!(out["pinned"], false, "the model's own judgement is not pinned: {out}");
+
+        // Either way the model can say which.
+        let out = h
+            .call_in(&noticed, "remember", serde_json::json!({ "body": "Tên là Minh", "pinned": true }))
+            .expect("runs");
+        assert_eq!(out["pinned"], true);
     }
 
     /// A pinned memory outranks a newer unpinned one, because pinning is the
@@ -1214,6 +1468,154 @@ mod tests {
         assert!(!forever.is_stale("2099-01-01"));
     }
 
+    fn aged(body: &str, kind: &str, pinned: bool, confirmed: &str, review: Option<&str>) -> Memory {
+        let mut props = serde_json::json!({
+            "kind": kind,
+            "pinned": pinned,
+            "last_confirmed": confirmed,
+            "confidence": 0.9,
+        });
+        if let Some(review) = review {
+            props["review_after"] = serde_json::json!(review);
+        }
+        Memory::from_node(&node("m", body, props))
+    }
+
+    /// A memory past its review date says so, beside the claim, in words the
+    /// model can pass on — "as of January" — rather than stating it as current.
+    #[test]
+    fn a_memory_past_its_review_date_is_sent_with_a_hedge() {
+        let block = memory_block_on(
+            &[
+                aged("Minh làm ở FPT.", "fact", false, "2026-01-03", Some("2026-07-02")),
+                aged("Lan sống ở Đà Nẵng.", "fact", false, "2026-09-01", Some("2027-02-28")),
+            ],
+            DEFAULT_TEST_BUDGET,
+            "2026-09-27",
+        )
+        .expect("a block");
+
+        let stale = block.lines().find(|l| l.contains("FPT")).expect("still sent");
+        assert!(
+            stale.ends_with("— last confirmed 2026-01-03, may be out of date"),
+            "the stale one names when it was last true: {stale}"
+        );
+        let fresh = block.lines().find(|l| l.contains("Đà Nẵng")).expect("sent");
+        assert!(!fresh.contains("may be out of date"), "a fresh one is not hedged: {fresh}");
+    }
+
+    /// The same memory, a day before its review date, renders exactly as it
+    /// always did — so every prompt with nothing stale in it is unchanged.
+    #[test]
+    fn nothing_changes_for_a_memory_that_has_not_reached_its_date() {
+        let m = aged("Minh làm ở FPT.", "fact", false, "2026-01-03", Some("2026-07-02"));
+        let before = memory_block_on(std::slice::from_ref(&m), DEFAULT_TEST_BUDGET, "2026-07-01")
+            .expect("a block");
+        assert!(before.contains(&format!("{}\n", m.line())), "{before}");
+    }
+
+    /// Within its group a stale memory is the first to go — before a fresh one,
+    /// even when the stale one is pinned and the fresh one is not.
+    #[test]
+    fn a_stale_memory_is_cut_before_a_fresh_one_even_if_pinned() {
+        let stale = aged("Dự án Everest đang chờ nhà cung cấp.", "project", true, "2026-06-01", Some("2026-07-01"));
+        let fresh = aged("Dự án Kilimanjaro đã xong giai đoạn 1.", "project", false, "2026-09-20", Some("2026-10-20"));
+        let both = [stale.clone(), fresh.clone()];
+        let today = "2026-09-27";
+
+        let roomy = memory_block_on(&both, 10_000, today).expect("both fit");
+        let stale_line = roomy.lines().find(|l| l.contains("Everest")).expect("present when there is room");
+        let budget = roomy.chars().count() - (stale_line.chars().count() + 1);
+
+        let tight = memory_block_on(&both, budget, today).expect("one fits");
+        assert!(tight.contains("Kilimanjaro"), "the fresh one stays:\n{tight}");
+        assert!(!tight.contains("Everest"), "the stale pinned one goes:\n{tight}");
+
+        // And `fit`'s shrinking, which cuts from the bottom, cuts it first too.
+        let shrunk = shrink_block(&roomy, 1).expect("one can go");
+        assert!(shrunk.contains("Kilimanjaro") && !shrunk.contains("Everest"), "{shrunk}");
+    }
+
+    /// Staleness reorders within a group and never across them: an instruction
+    /// past its date still outranks a fresh fact.
+    #[test]
+    fn a_stale_instruction_still_outlasts_a_fresh_fact() {
+        let instruction = aged(
+            "Không dùng emoji trong bất cứ nội dung nào gửi ra ngoài cho khách.",
+            "instruction",
+            false,
+            "2025-01-01",
+            Some("2025-06-01"),
+        );
+        let fact = aged("Thích cà phê đen không đường.", "fact", true, "2026-09-20", None);
+        let both = [fact.clone(), instruction.clone()];
+        let today = "2026-09-27";
+
+        let roomy = memory_block_on(&both, 10_000, today).expect("both fit");
+        let budget = roomy.chars().count() - (fact.line().chars().count() + 1);
+        let tight = memory_block_on(&both, budget, today).expect("one fits");
+
+        assert!(tight.contains("emoji"), "the instruction survives:\n{tight}");
+        assert!(!tight.contains("cà phê"), "the fact goes:\n{tight}");
+        assert!(tight.contains("may be out of date"), "hedged, not hidden:\n{tight}");
+    }
+
+    #[test]
+    fn each_kind_asks_to_be_checked_on_its_own_schedule() {
+        let today = "2026-09-27";
+        assert_eq!(default_review_after("project", today).as_deref(), Some("2026-10-27"));
+        assert_eq!(default_review_after("fact", today).as_deref(), Some("2027-03-26"));
+        assert_eq!(default_review_after("Relationship", today).as_deref(), Some("2027-09-27"));
+        // What the person wants does not expire; it is contradicted.
+        assert_eq!(default_review_after("preference", today), None);
+        assert_eq!(default_review_after("instruction", today), None);
+        // A kind nobody listed is the user's to age.
+        assert_eq!(default_review_after("thói quen", today), None);
+    }
+
+    /// `Đức`, `đức` and `Duc` are one subject. Under `eq_ignore_ascii_case`
+    /// the first two were two people, and a second claim went unreported.
+    #[test]
+    fn a_clash_is_found_whatever_case_or_marks_the_subject_was_written_with() {
+        let existing = vec![Memory::from_node(&node(
+            "a",
+            "Đức làm ở Viettel.",
+            serde_json::json!({ "kind": "Fact", "subject": "Đức" }),
+        ))];
+        for subject in ["đức", "ĐỨC", "Duc", " duc "] {
+            assert_eq!(
+                conflicting(&existing, "fact", Some(subject)).len(),
+                1,
+                "`{subject}` should be the same subject as `Đức`"
+            );
+        }
+        assert!(conflicting(&existing, "fact", Some("Dũng")).is_empty());
+    }
+
+    #[test]
+    fn asking_to_be_remembered_is_told_apart_from_mentioning_memory() {
+        for asked in [
+            "Nhớ giúp tao là thứ 6 nào cũng họp lúc 9h",
+            "hãy nhớ tao dị ứng tôm",
+            "ghi nho la vo tao ten Lan",
+            "nho gium tao so phong 402",
+            "Từ giờ trở đi trả lời ngắn thôi",
+            "Remember that I'm vegetarian",
+            "don't forget my flight is on Friday",
+        ] {
+            assert!(asked_to_remember(asked), "`{asked}` asks to be remembered");
+        }
+        for merely in [
+            "tao nhớ là hôm qua có họp mà",
+            "nhớ nhà quá",
+            "cái nào to hay nhỏ hơn",
+            "tao dùng quen iPhone rồi",
+            "Minh làm ở đâu nhỉ",
+        ] {
+            assert!(!asked_to_remember(merely), "`{merely}` does not");
+        }
+    }
+
     #[test]
     fn new_frontmatter_carries_its_own_provenance() {
         let props = frontmatter(
@@ -1223,6 +1625,7 @@ mod tests {
             Some("run-1"),
             &["Notes/a.md".to_string()],
             true,
+            None,
             None,
             "2026-09-03",
         );

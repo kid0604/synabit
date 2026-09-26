@@ -75,6 +75,15 @@ pub struct Carried {
     pub sections_dropped: Vec<String>,
     pub retrieval_ms: Option<u64>,
     pub skills_indexed: u32,
+    /// The skill whose steps the harness put in the prompt, by name — `None`
+    /// when none was chosen, or when `fit` cut the section it rode in.
+    ///
+    /// Measured here with the rest, and **not yet written onto the run**: `Run`
+    /// has no field for it. Without one, a run that followed an injected skill
+    /// looks in `syn::stats` exactly like a run that ignored every skill, since
+    /// no `load_skill` call appears in its transcript — and Gate D asks for
+    /// "loaded *or injected*". `write_onto` says where it should go.
+    pub skill_injected: Option<String>,
 }
 
 impl Carried {
@@ -100,6 +109,9 @@ impl Carried {
             sections_dropped: plan.dropped().iter().map(name_of).collect(),
             retrieval_ms,
             skills_indexed: skills as u32,
+            skill_injected: plan
+                .body(SectionKind::ChosenSkill)
+                .and_then(crate::syn::skill::chosen_name),
         }
     }
 
@@ -111,6 +123,10 @@ impl Carried {
         run.sections_dropped = self.sections_dropped;
         run.retrieval_ms = self.retrieval_ms;
         run.skills_indexed = Some(self.skills_indexed);
+        // `skill_injected` belongs on the run as `Run::skill_injected:
+        // Option<String>` (serde default, skipped when `None`), written here as
+        // `run.skill_injected = self.skill_injected;`, and counted beside
+        // `skills.loaded` in `stats`. Left for whoever owns `run.rs`.
     }
 }
 
@@ -645,6 +661,7 @@ mod tests {
             sections_dropped: vec!["vault_context".into()],
             retrieval_ms: Some(40),
             skills_indexed: 3,
+            skill_injected: None,
         }
         .write_onto(&mut some);
         let mut other = run_at("2026-09-25T13:00:00Z");
@@ -753,5 +770,31 @@ mod tests {
         let carried = Carried::of(&plan(None, Some(&block), "", DEFAULT_BUDGET_CHARS), 0, None);
         assert_eq!(carried.skills_indexed, 2);
         assert_eq!(crate::syn::skill::lines_indexed("- not an index"), 0);
+    }
+
+    /// A skill the harness chose is named, so a run that followed it can be
+    /// told from one that ignored every skill — and a chosen skill `fit` then
+    /// cut was never in front of the model, so it is not named.
+    #[test]
+    fn a_chosen_skill_is_named_only_if_it_was_sent() {
+        let skill = crate::syn::skill::Skill::from_node(&node(
+            "tong-ket-tuan",
+            "## Các bước\n1. `query_nodes` với `type:task status:done`.",
+            serde_json::json!({ "name": "tong-ket-tuan", "tier": "prose", "enabled": true }),
+        ));
+        let block = crate::syn::skill::chosen_block(&skill);
+
+        let sent = plan(None, None, "", DEFAULT_BUDGET_CHARS).with_chosen_skill(Some(&block));
+        let carried = Carried::of(&sent, 0, None);
+        assert_eq!(carried.skill_injected.as_deref(), Some("tong-ket-tuan"));
+
+        let fixed = plan(None, None, "", DEFAULT_BUDGET_CHARS).chars();
+        let cut = plan(None, None, "", fixed + 10).with_chosen_skill(Some(&block));
+        let carried = Carried::of(&cut, 0, None);
+        assert_eq!(carried.skill_injected, None);
+        assert!(carried.sections_dropped.contains(&"chosen_skill".to_string()), "{:?}", carried.sections_dropped);
+
+        let none = Carried::of(&plan(None, None, "", DEFAULT_BUDGET_CHARS), 0, None);
+        assert_eq!(none.skill_injected, None);
     }
 }

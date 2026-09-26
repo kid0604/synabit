@@ -414,6 +414,7 @@ export type PromptSectionKind =
   | 'tool_shape'
   | 'memory'
   | 'skills'
+  | 'chosen_skill'
   | 'vault_context';
 
 export interface PromptSectionCost {

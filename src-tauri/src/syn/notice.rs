@@ -243,8 +243,13 @@ pub fn contradicted_memories(memories: &[Memory]) -> Vec<Notice> {
         let Some(subject) = memory.subject.as_deref().filter(|s| !s.trim().is_empty()) else {
             continue;
         };
+        // Folded the way `memory::conflicting` folds, so the sweep and the
+        // write-time check agree on what "the same subject" is.
         groups
-            .entry((memory.kind.to_lowercase(), subject.to_lowercase()))
+            .entry((
+                crate::search_fold::fold(memory.kind.trim()),
+                crate::search_fold::fold(subject.trim()),
+            ))
             .or_default()
             .push(memory);
     }

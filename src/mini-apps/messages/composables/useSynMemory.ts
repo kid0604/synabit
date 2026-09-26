@@ -47,6 +47,33 @@ export const orderMemories = (memories: Memory[], now = today()): Memory[] =>
     return b.last_confirmed.localeCompare(a.last_confirmed);
   });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const dayOf = (date: string) => Date.parse(`${date.slice(0, 10)}T00:00:00Z`);
+
+/**
+ * What confirming a memory writes: today, and the next review date moved on by
+ * the same interval the memory was written with.
+ *
+ * Confirming used to move `last_confirmed` and nothing else. Now that the prompt
+ * hedges a memory past its `review_after` and gives it up first, that left a
+ * memory the person had just confirmed still marked out of date. The interval
+ * is read off the memory itself — its review date minus the day it was last
+ * confirmed — rather than from a table of kinds, so a date the model chose
+ * ("until the trip in October") keeps its own rhythm and there is no second
+ * copy of `memory::review_interval_days` to drift. A memory with no review
+ * date keeps none; one whose dates cannot give an interval loses it rather
+ * than stay stale after being confirmed.
+ */
+export const confirmedPatch = (memory: Memory, now = today()): Record<string, unknown> => {
+  const patch: Record<string, unknown> = { last_confirmed: now };
+  if (!memory.review_after) return patch;
+  const gap = Math.round((dayOf(memory.review_after) - dayOf(memory.last_confirmed)) / DAY_MS);
+  patch.review_after = Number.isFinite(gap) && gap > 0
+    ? new Date(dayOf(now) + gap * DAY_MS).toISOString().slice(0, 10)
+    : null;
+  return patch;
+};
+
 /**
  * The vault path is needed only for the proposal tray, which is a file in
  * `Syn/` rather than a row in the index — memories themselves are read from the
@@ -107,8 +134,7 @@ export function useSynMemory(vaultPath: () => string) {
   const setPinned = (memory: Memory, pinned: boolean) => patch(memory, { pinned });
 
   /** Confirming is what stops a memory going stale — it is a date, not a flag. */
-  const confirm = (memory: Memory) =>
-    patch(memory, { last_confirmed: new Date().toISOString().slice(0, 10) });
+  const confirm = (memory: Memory) => patch(memory, confirmedPatch(memory));
 
   /**
    * Forgetting is trashing, which is reversible — the vault's trash holds it

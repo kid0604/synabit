@@ -227,6 +227,17 @@ pub enum SectionKind {
     /// the screen says where the user is, this says what they are in the middle
     /// of. See `thread.rs`.
     Thread,
+    /// The steps of the one skill the harness matched to this question.
+    ///
+    /// This turn's half, because it is chosen by the question; the index it was
+    /// chosen from is stable and stays up there. After the work this belongs
+    /// to and before anything retrieved, so the order reads *where you are,
+    /// what you are in the middle of, how this is done, what the vault holds*.
+    ///
+    /// Droppable, and before the index: the index is the only place the model
+    /// learns any skill exists, while this body is one `load_skill` away for
+    /// as long as the index is sent. See `skill::chosen_for`.
+    ChosenSkill,
     /// Chunks retrieved for this question.
     VaultContext,
 }
@@ -248,6 +259,7 @@ impl SectionKind {
             SectionKind::ToolShape => "Tools and vault shape",
             SectionKind::Memory => "What Syn remembers",
             SectionKind::Skills => "What Syn knows how to do",
+            SectionKind::ChosenSkill => "A skill picked for this question",
             SectionKind::VaultContext => "Retrieved context",
         }
     }
@@ -271,6 +283,7 @@ impl SectionKind {
             SectionKind::VaultContext
                 | SectionKind::Memory
                 | SectionKind::Skills
+                | SectionKind::ChosenSkill
                 | SectionKind::Thread
         )
     }
@@ -747,6 +760,31 @@ impl PromptPlan {
         self
     }
 
+    /// The same plan, carrying the steps of the skill the harness matched to
+    /// this question — the block from `skill::chosen_block`, or nothing.
+    ///
+    /// A method rather than a field of `ChatPrompt`, for the reason
+    /// `with_surface` is one: the chat turn is the only caller that matches a
+    /// question to a skill, and every other caller renders exactly what it
+    /// did. Placed after the thread and before anything retrieved; see
+    /// `SectionKind::ChosenSkill`.
+    pub fn with_chosen_skill(mut self, block: Option<&str>) -> Self {
+        let Some(block) = block.filter(|b| !b.trim().is_empty()) else {
+            return self;
+        };
+        let before_retrieved = self
+            .sections
+            .iter()
+            .position(|s| s.kind == SectionKind::VaultContext)
+            .unwrap_or(self.sections.len());
+        self.sections.insert(
+            before_retrieved,
+            Section { kind: SectionKind::ChosenSkill, body: block.to_string() },
+        );
+        self.fit();
+        self
+    }
+
     /// Drop optional sections, largest first, until the whole thing fits.
     ///
     /// Largest first rather than lowest priority because there is only one
@@ -763,13 +801,17 @@ impl PromptPlan {
             // is something it was told and cannot recover by searching.
             let droppable = |kind: SectionKind| match kind {
                 SectionKind::VaultContext => Some(0),
+                // The chosen skill before the index it was chosen from. With
+                // the index still sent, this body is one `load_skill` away;
+                // without the index, no skill can be reached at all.
+                SectionKind::ChosenSkill => Some(1),
                 // Skills before memory. Losing the index means Syn does a task
                 // its own way instead of the way the user wrote down; losing
                 // memory means it gets the person wrong — and the memories that
                 // matter most are constraints, like an allergy. Doing a job
                 // clumsily is recoverable in a way that is not.
-                SectionKind::Skills => Some(1),
-                SectionKind::Memory => Some(2),
+                SectionKind::Skills => Some(2),
+                SectionKind::Memory => Some(3),
                 _ => None,
             };
             let biggest = self
@@ -1228,11 +1270,12 @@ mod tests {
             | SectionKind::ToolShape
             | SectionKind::Memory
             | SectionKind::Skills
+            | SectionKind::ChosenSkill
             | SectionKind::VaultContext => {}
         }
     }
 
-    const ALL: [SectionKind; 14] = [
+    const ALL: [SectionKind; 15] = [
         SectionKind::Custom,
         SectionKind::Identity,
         SectionKind::Rules,
@@ -1246,6 +1289,7 @@ mod tests {
         SectionKind::Counted,
         SectionKind::Timeline,
         SectionKind::Thread,
+        SectionKind::ChosenSkill,
         SectionKind::VaultContext,
     ];
 
@@ -1552,6 +1596,24 @@ mod tests {
         );
     }
 
+    /// A skill the harness chose goes before the index it was chosen from.
+    ///
+    /// With the index still sent, the chosen body is one `load_skill` away;
+    /// with the index gone, no skill can be reached at all.
+    #[test]
+    fn a_tight_budget_gives_up_the_chosen_skill_before_the_index() {
+        let index = "\n\n=== WHAT YOU KNOW HOW TO DO ===\n- tong-ket-tuan: tổng kết tuần\n=== END ===";
+        let chosen = format!("\n\n=== A SKILL FOR THIS QUESTION ===\n`tong-ket-tuan` {}", "b".repeat(1500));
+        let memory = "=== WHAT YOU REMEMBER ===\n- [fact] vợ dị ứng hải sản";
+
+        let fixed = plan_with_skills("", index, memory, DEFAULT_BUDGET_CHARS).chars();
+        let p = plan_with_skills("", index, memory, fixed + 100).with_chosen_skill(Some(&chosen));
+        let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();
+
+        assert_eq!(dropped, vec![SectionKind::ChosenSkill], "only the chosen skill went");
+        assert!(p.render().contains("tong-ket-tuan: tổng kết tuần"), "the index stays");
+    }
+
     /// Memory gives up its least important entries before it gives up itself.
     ///
     /// The trimmer removes whole sections, so before this a budget tight enough
@@ -1729,7 +1791,7 @@ mod tests {
     }
 
     /// No stable section may follow one that is not, however the plan was
-    /// assembled — including by the two methods that insert after the fact.
+    /// assembled — including by the three methods that insert after the fact.
     ///
     /// One late insertion in the wrong place and every stable section behind
     /// it misses the cache, silently: the answers are the same and only the
@@ -1749,7 +1811,8 @@ mod tests {
             budget_chars: DEFAULT_BUDGET_CHARS,
         })
         .with_surface(crate::syn::surface::Surface::Telegram)
-        .with_underway(&["something".to_string()]);
+        .with_underway(&["something".to_string()])
+        .with_chosen_skill(Some("\n\n=== A SKILL FOR THIS QUESTION ===\n`a` steps\n=== END ==="));
 
         let kinds: Vec<_> = plan.breakdown().into_iter().filter(|c| !c.dropped).map(|c| c.kind).collect();
         assert_eq!(kinds.len(), ALL.len(), "every kind is present: {kinds:?}");

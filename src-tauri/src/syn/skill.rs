@@ -70,6 +70,15 @@ pub const INDEX_BUDGET_CHARS: usize = 4_200;
 /// vault context that tells the model what it is working on. The cap is also
 /// what keeps a model that has decided skills are interesting from reading the
 /// whole library instead of doing the task.
+///
+/// A body the harness put in the prompt (`chosen_for`) does not count against
+/// this. Both reasons for the cap are already met another way: there is at
+/// most one such body, it is held to `CHOSEN_BODY_CHARS`, and `PromptPlan::fit`
+/// drops it before the index when room runs short — so it cannot crowd out the
+/// context, and it is not the model browsing. Counting it would also mean the
+/// harness spending half the model's allowance on a guess the model was told
+/// it may ignore, leaving one `load_skill` for the skill that actually fits.
+/// The worst case is three bodies in one run, one of them chosen by the harness.
 pub const BODIES_PER_RUN: usize = 2;
 
 /// The tool that opens a body. Named once, because the engine enforces the
@@ -394,6 +403,288 @@ pub fn index_block(skills: &[Skill], budget_chars: usize) -> Option<String> {
     Some(block)
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  THE HARNESS PICKS
+// ═══════════════════════════════════════════════════════════════
+//
+// The index plus `load_skill` is the shape `recall` failed in: a tool the
+// model has to think of calling. `recall` went uncalled in fifteen runs of
+// fifteen and the fix was to put memory in the prompt; `load_skill` went
+// uncalled in seventeen of seventeen (`syn::stats`) and this is the same fix.
+// Before the model is asked, the question is matched against what each
+// enabled skill says about itself, and a skill that clearly fits has its
+// steps put in the prompt — the model reads them because they are there, not
+// because it decided to go and get them.
+//
+// Matched by words, in Rust, with no model call. Asking a model which skill
+// fits would be a round trip on every message to answer a question that is
+// usually "none", and it would be the model deciding again.
+
+/// The most characters of a skill body the harness will put in a prompt unasked.
+///
+/// A procedure, not an essay: the starter skill is about 900 characters with
+/// its documentation. Past this a body is left to `load_skill` — cutting a
+/// procedure short to fit would hand the model the first half of the steps
+/// with the authority of the whole.
+pub const CHOSEN_BODY_CHARS: usize = 3_000;
+
+/// Points a skill needs to be chosen. See `match_score`.
+///
+/// Four, because three is exactly "one Vietnamese compound": `tổng kết` is two
+/// syllables and the pair they make, and it fits "tổng kết tuần" and "tổng kết
+/// cuộc họp" alike. Four needs a third syllable (`tổng kết tuần`), or two long
+/// English words (`weekly review`), or a compound and one more word.
+pub const MATCH_THRESHOLD: usize = 4;
+
+/// How far ahead of the next skill the chosen one must be.
+///
+/// Two skills that both nearly fit is the harness not knowing, and a wrong
+/// procedure in the prompt is worse than none — the index still lists both,
+/// and the model can read the question and choose.
+pub const MATCH_MARGIN: usize = 2;
+
+/// A question this long is mostly material — a pasted meeting, an article —
+/// rather than a request, and its words say what the material is about, not
+/// what to do with it. Only a quoted trigger phrase can choose a skill for it.
+///
+/// This gives something up knowingly: "làm biên bản: <the whole meeting>" does
+/// not pick a minutes skill unless that skill has a quoted trigger. Scoring
+/// only the opening words was the alternative, and the opening of pasted
+/// material is as often a heading as a request.
+const MOST_WORDS_TO_MATCH: usize = 40;
+
+/// Words that say nothing about which skill fits, already folded.
+///
+/// Function words in both languages, the words a question is phrased with
+/// ("giúp tao", "can you"), and the boilerplate a `when_to_use` is written in
+/// ("khi người dùng nói", "when the user asks"). Folded, so some of these are
+/// also other words — `hay` is *or* and *good*, `ho` is *they* and *on behalf
+/// of* — and each was checked for a meaning a skill might be about. `chi` (to
+/// spend, in "chi tiêu"), `ca` (in "cà phê"), `lan` (a name) and `thu` (income)
+/// are deliberately not here.
+const STOPWORDS: &[&str] = &[
+    // Vietnamese
+    "khi", "nguoi", "dung", "noi", "hoi", "la", "cua", "va", "cho", "toi", "tao", "minh",
+    "ban", "nay", "do", "kia", "the", "nao", "gi", "co", "khong", "ko", "duoc", "voi", "mot",
+    "nhung", "cac", "de", "thi", "ma", "se", "da", "dang", "roi", "giup", "gium", "dum",
+    "hay", "lam", "oi", "nhe", "nha", "nhi", "ha", "trong", "ra", "vao", "len", "di", "ve",
+    "tu", "bao", "nhieu", "sao", "vay", "ay", "cai", "con", "em", "anh", "no", "ho", "chung",
+    "moi", "hon", "nua", "cung", "deu", "rat", "qua", "lai", "luc", "hom", "can", "xem",
+    "biet", "muon", "phai", "neu", "tat", "sau", "truoc", "ky", "nang", "dua", "viec",
+    "nhu",
+    // English
+    "an", "and", "or", "but", "of", "to", "for", "in", "on", "at", "by", "with", "from",
+    "into", "about", "as", "is", "are", "was", "were", "be", "been", "am", "it", "its",
+    "this", "that", "these", "those", "there", "here", "me", "my", "mine", "you", "your",
+    "we", "our", "us", "he", "she", "they", "them", "their", "his", "her", "do", "does",
+    "did", "done", "can", "could", "would", "should", "will", "may", "might", "must",
+    "please", "want", "wants", "need", "needs", "like", "just", "also", "some", "any",
+    "all", "each", "every", "what", "when", "where", "which", "who", "why", "how", "if",
+    "then", "than", "so", "not", "no", "yes", "up", "out", "use", "used", "using", "user",
+    "users", "ask", "asks", "asked", "asking", "say", "says", "said", "tell", "show",
+    "give", "get", "make", "help", "run", "skill", "skills", "something", "thing",
+    "things", "one",
+];
+
+/// What a piece of text contributes to matching: its content words, and each
+/// pair of content words that stand next to each other once the filler
+/// between them is gone.
+///
+/// Pairs are what make Vietnamese matchable. A syllable alone is ambiguous —
+/// `kết` is in "tổng kết", "kết quả" and "kết nối" — and a pair is usually a
+/// word: `tổng kết` is *summary*. Formed after the stopwords are removed, so
+/// "tháng này tiêu" still pairs `tháng` with `tiêu`.
+#[derive(Debug, Default)]
+struct Terms {
+    words: Vec<String>,
+    pairs: std::collections::HashSet<(String, String)>,
+    /// Every token, filler included, in order — for quoted trigger phrases,
+    /// which are matched as written.
+    sequence: Vec<String>,
+}
+
+fn is_content(word: &str) -> bool {
+    word.chars().count() >= 2
+        && !word.chars().all(|c| c.is_ascii_digit())
+        && !STOPWORDS.contains(&word)
+}
+
+fn terms(text: &str) -> Terms {
+    let folded = crate::search_fold::fold(text);
+    let sequence: Vec<String> = folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let content: Vec<String> = sequence.iter().filter(|w| is_content(w)).cloned().collect();
+    let pairs = content.windows(2).map(|p| (p[0].clone(), p[1].clone())).collect();
+    let mut words = content;
+    words.sort();
+    words.dedup();
+    Terms { words, pairs, sequence }
+}
+
+/// Phrases a skill's author put in quotes, as a trigger.
+///
+/// The starter template says to write `when_to_use` as *Khi người dùng nói
+/// "tổng kết tuần"*, so the quote is already how people write these. A question
+/// holding that phrase is the author's own rule firing, and it is the only
+/// signal here that is not a guess.
+fn quoted_phrases(text: &str) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    let normalised: String = text
+        .chars()
+        .map(|c| if matches!(c, '“' | '”' | '«' | '»') { '"' } else { c })
+        .collect();
+    for (i, inside) in normalised.split('"').enumerate() {
+        if i % 2 == 1 {
+            let phrase = terms(inside);
+            if phrase.sequence.iter().any(|w| is_content(w)) {
+                out.push(phrase.sequence);
+            }
+        }
+    }
+    out
+}
+
+/// Two content words that are the same word, give or take an ending.
+///
+/// Exact, or sharing their first six letters when both have at least six —
+/// `summary`/`summarize`, `meeting`/`meetings`, `review`/`reviews`. Six is
+/// where English endings start and Vietnamese syllables stop: a folded
+/// syllable of six letters is the whole syllable (`truong`, `nguyen`), so for
+/// Vietnamese this is equality in all but name.
+fn same_word(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    a.len() >= 6 && b.len() >= 6 && a[..6] == b[..6]
+}
+
+/// Everything a skill says about itself: name, description, when to use it.
+///
+/// Each field on its own, then merged, so a pair never forms across the seam
+/// between the end of the description and the start of `when_to_use`.
+fn skill_terms(skill: &Skill) -> Terms {
+    let mut merged = Terms::default();
+    for text in [skill.name.as_str(), &skill.description, &skill.when_to_use] {
+        let t = terms(text);
+        merged.words.extend(t.words);
+        merged.pairs.extend(t.pairs);
+    }
+    merged.words.sort();
+    merged.words.dedup();
+    merged
+}
+
+/// How well a question fits a skill, in points.
+///
+/// One point for each content word of the question the skill also uses, two
+/// if the word has five letters or more, and one more for each adjacent pair
+/// they share. The length rule is the difference between the two languages
+/// this app is written in: an English word of that length usually means one
+/// thing, while a Vietnamese syllable is short and means little until it has
+/// a partner — which is what the pair point pays for.
+///
+/// A quoted trigger phrase found whole in the question is worth the threshold
+/// on its own. See `quoted_phrases`.
+pub fn match_score(skill: &Skill, question: &str) -> usize {
+    let asked = terms(question);
+    let offered = skill_terms(skill);
+
+    let triggered = [&skill.when_to_use, &skill.description]
+        .iter()
+        .flat_map(|t| quoted_phrases(t))
+        .any(|phrase| {
+            !phrase.is_empty()
+                && asked.sequence.windows(phrase.len()).any(|w| w == phrase.as_slice())
+        });
+    let bonus = if triggered { MATCH_THRESHOLD } else { 0 };
+    // Counted with repeats: a pasted meeting says "decision" twenty times, and
+    // it is its length, not its vocabulary, that makes it material.
+    if asked.sequence.iter().filter(|w| is_content(w)).count() > MOST_WORDS_TO_MATCH {
+        return bonus;
+    }
+
+    let words: usize = asked
+        .words
+        .iter()
+        .filter(|q| offered.words.iter().any(|s| same_word(q, s)))
+        .map(|q| if q.chars().count() >= 5 { 2 } else { 1 })
+        .sum();
+    let pairs = asked.pairs.intersection(&offered.pairs).count();
+    bonus + words + pairs
+}
+
+/// The one skill that clearly fits this question, if there is one.
+///
+/// Only an enabled skill, for the reason the index lists only enabled ones:
+/// the user turning a skill off is the one control they have over what Syn
+/// reaches for, and a harness that injected a disabled skill would be
+/// overriding it. A `code` skill is not runnable yet and is never chosen, and a
+/// body over `CHOSEN_BODY_CHARS` or empty is left to `load_skill`.
+///
+/// Chosen when it clears `MATCH_THRESHOLD` and leads the next skill by
+/// `MATCH_MARGIN`. Precision over recall throughout: a skill that should have
+/// been chosen and was not is still in the index, where the model can load it
+/// as before; a skill chosen wrongly is a procedure in the prompt for a
+/// question it does not answer.
+pub fn chosen_for<'a>(skills: &'a [Skill], question: &str) -> Option<&'a Skill> {
+    let mut scored: Vec<(usize, &Skill)> = skills
+        .iter()
+        .filter(|s| s.enabled && s.tier != Tier::Code)
+        .filter(|s| {
+            let len = s.body.trim().chars().count();
+            len > 0 && len <= CHOSEN_BODY_CHARS
+        })
+        .map(|s| (match_score(s, question), s))
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let (best, skill) = *scored.first()?;
+    let runner_up = scored.get(1).map_or(0, |(score, _)| *score);
+    (best >= MATCH_THRESHOLD && best >= runner_up + MATCH_MARGIN).then_some(skill)
+}
+
+/// The heading a chosen skill's section opens with.
+const CHOSEN_HEADER: &str = "\n\n=== A SKILL FOR THIS QUESTION ===\n";
+
+/// The section a chosen skill rides in.
+///
+/// Says how it got there. The model did not ask for this and nobody read the
+/// question to choose it; a line saying so is what lets the model set it aside
+/// when the words matched and the meaning did not, rather than bending the
+/// answer to fit a procedure because it was handed one.
+pub fn chosen_block(skill: &Skill) -> String {
+    let how = if skill.tier == Tier::Recipe {
+        format!(
+            "It is a recipe: to use it, call `{}` with its name rather than doing the steps \
+             yourself. The steps are below so you know what it will do.",
+            crate::syn::recipe::RUN_TOOL
+        )
+    } else {
+        format!("Its steps are below, so there is no need to call `{LOAD_TOOL}` for it.")
+    };
+    format!(
+        "{CHOSEN_HEADER}`{}` was picked for this question because its description matches \
+         the words of it. If it does not fit what was actually asked, ignore it. {how}\n\n{}\n\
+         === END ===",
+        skill.name,
+        skill.body.trim()
+    )
+}
+
+/// Which skill a chosen-skill section carries, read back off the section.
+///
+/// Off the section as sent, for the reason `lines_indexed` reads the index as
+/// sent: `PromptPlan::fit` may have dropped it, and a skill that was chosen
+/// and then cut was not in front of the model.
+pub fn chosen_name(block: &str) -> Option<String> {
+    let rest = block.strip_prefix(CHOSEN_HEADER)?.strip_prefix('`')?;
+    rest.split_once('`').map(|(name, _)| name.to_string())
+}
+
 /// How often a skill has actually been opened, and when it last was.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
@@ -645,7 +936,9 @@ pub fn starter_body() -> String {
      - `name` — tên Syn dùng để gọi kỹ năng này.\n\
      - `description` — một dòng nói nó làm gì.\n\
      - `when_to_use` — một dòng nói khi nào nên dùng. Syn chỉ thấy hai dòng này\n\
-     \u{20}\u{20}cho tới khi nó mở kỹ năng ra, nên hãy viết chúng cho rõ.\n\
+     \u{20}\u{20}cho tới khi nó mở kỹ năng ra, nên hãy viết chúng cho rõ. Một cụm từ\n\
+     \u{20}\u{20}trong ngoặc kép, như \"tổng kết tuần\", là hiệu lệnh: câu hỏi có đúng cụm\n\
+     \u{20}\u{20}đó thì Syn tự đọc kỹ năng này trước khi trả lời.\n\
      - `tier` — `prose` nghĩa là Syn tự làm theo hướng dẫn.\n\
      - `enabled` — `false` thì Syn không được biết kỹ năng này tồn tại.\n"
         .to_string()
@@ -1286,5 +1579,265 @@ mod what_syn_would_have_offered {
         }
         eprintln!("\n{offered} of {} runs would have prompted a skill.", runs.len());
         eprintln!("(runs with fewer than {} successful calls cannot, and are not listed)\n", MIN_CHAIN * 2);
+    }
+}
+
+/// Whether the harness picks the right skill, and — the half that matters
+/// more — whether it leaves the wrong ones alone.
+///
+/// The skills are the kind a person actually writes, in both languages, and
+/// the questions are the kind they actually ask. The near misses are the
+/// point: each shares words with a skill and asks for something else, and a
+/// matcher that took them would be putting a procedure in the prompt for a
+/// question it does not answer.
+#[cfg(test)]
+mod the_harness_picks {
+    use super::*;
+
+    fn skill(name: &str, description: &str, when: &str, enabled: bool) -> Skill {
+        Skill::from_node(&NodeMetadata {
+            id: format!("{SKILL_FOLDER}/{name}.md"),
+            node_type: SKILL_TYPE.to_string(),
+            title: name.to_string(),
+            content: format!("## Các bước\n1. Làm việc của `{name}`.\n"),
+            properties: serde_json::json!({
+                "name": name,
+                "description": description,
+                "when_to_use": when,
+                "tier": "prose",
+                "enabled": enabled,
+            }),
+            created_at: "2026-09-01T00:00:00Z".into(),
+            updated_at: "2026-09-01T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+    }
+
+    /// A library like one a person would have after a few weeks.
+    fn library() -> Vec<Skill> {
+        vec![
+            skill(
+                "tong-ket-tuan",
+                "Tổng kết tuần từ task đã xong và lịch.",
+                "Khi người dùng nói \"tổng kết tuần\" hoặc hỏi tuần này đã làm được gì.",
+                true,
+            ),
+            skill(
+                "bien-ban-hop",
+                "Biến ghi chép cuộc họp thành biên bản có quyết định và việc cần làm.",
+                "Sau một cuộc họp, khi người dùng dán ghi chép họp.",
+                true,
+            ),
+            skill(
+                "chi-tieu-thang",
+                "Tổng hợp chi tiêu tháng theo danh mục.",
+                "Khi hỏi \"tháng này tiêu bao nhiêu\".",
+                true,
+            ),
+            skill(
+                "weekly-review",
+                "Summarise the week from finished tasks and the calendar.",
+                "When the user asks for a weekly review.",
+                true,
+            ),
+            skill(
+                "meeting-notes",
+                "Turn raw meeting notes into a summary with decisions and action items.",
+                "After a meeting, when the user pastes notes.",
+                true,
+            ),
+        ]
+    }
+
+    fn picked(skills: &[Skill], question: &str) -> Option<String> {
+        chosen_for(skills, question).map(|s| s.name.clone())
+    }
+
+    fn scores(skills: &[Skill], question: &str) -> Vec<(String, usize)> {
+        skills.iter().map(|s| (s.name.clone(), match_score(s, question))).collect()
+    }
+
+    #[test]
+    fn a_question_that_plainly_asks_for_a_skill_gets_it() {
+        let skills = library();
+        for (question, want) in [
+            // The author's own quoted trigger, with and without marks.
+            ("Tổng kết tuần này giúp tao", "tong-ket-tuan"),
+            ("tong ket tuan nay di", "tong-ket-tuan"),
+            ("Tháng này tiêu bao nhiêu rồi?", "chi-tieu-thang"),
+            // No quote to lean on: the words and the pairs they make.
+            ("Đây là ghi chép cuộc họp sáng nay, làm biên bản giúp tao", "bien-ban-hop"),
+            ("Can you do my weekly review?", "weekly-review"),
+            ("Summarize these meeting notes I pasted", "meeting-notes"),
+        ] {
+            assert_eq!(
+                picked(&skills, question).as_deref(),
+                Some(want),
+                "`{question}` scored {:?}",
+                scores(&skills, question)
+            );
+        }
+    }
+
+    /// Each of these shares words with a skill and asks for something else.
+    #[test]
+    fn a_question_that_only_shares_words_with_a_skill_gets_none() {
+        let skills = library();
+        for question in [
+            // "Tổng kết" is one compound, and it fits a week and a meeting alike.
+            "Tổng kết cuộc họp hôm qua",
+            // The week, but its future, not its review.
+            "Tuần sau có lịch gì không?",
+            // `review`, of something else entirely.
+            "Review this pull request for me",
+            // The calendar and the week, and still not a review.
+            "What's on my calendar this week?",
+            // Notes, not a meeting's.
+            "Take notes on this article",
+            "When is my next meeting?",
+            // Nothing to do with any of them.
+            "Minh sinh năm bao nhiêu?",
+            "",
+        ] {
+            assert_eq!(
+                picked(&skills, question),
+                None,
+                "`{question}` scored {:?}",
+                scores(&skills, question)
+            );
+        }
+    }
+
+    /// The user turning a skill off is the one control they have over what
+    /// Syn reaches for. The harness does not get to override it, even on the
+    /// skill's own trigger phrase.
+    #[test]
+    fn a_disabled_skill_is_never_picked() {
+        let mut skills = library();
+        for s in skills.iter_mut() {
+            if s.name == "tong-ket-tuan" {
+                s.enabled = false;
+            }
+        }
+        assert_eq!(picked(&skills, "tổng kết tuần"), None);
+        assert_eq!(picked(&skills, "Tổng kết tuần này giúp tao"), None);
+    }
+
+    /// Two skills that both nearly fit is the harness not knowing, and it says
+    /// nothing rather than guess. The index still lists both.
+    #[test]
+    fn two_skills_that_fit_alike_means_neither_is_picked() {
+        let mut skills = library();
+        skills.push(skill(
+            "tong-ket-tuan-cho-sep",
+            "Tổng kết tuần gửi sếp.",
+            "Khi người dùng nói \"tổng kết tuần\".",
+            true,
+        ));
+        assert_eq!(picked(&skills, "tổng kết tuần"), None, "{:?}", scores(&skills, "tổng kết tuần"));
+    }
+
+    /// A long message is mostly material, and its words say what the material
+    /// is about rather than what to do with it.
+    #[test]
+    fn a_long_pasted_message_is_matched_only_by_a_quoted_trigger() {
+        let skills = library();
+        let pasted = format!(
+            "Summary of the meeting notes: {}",
+            "the team reviewed calendar decisions and action items for the weekly roadmap sync, \
+             owners were named for every open question and dates agreed "
+                .repeat(3)
+        );
+        assert_eq!(
+            picked(&skills, &pasted),
+            None,
+            "a wall of matching words is not a request: {:?}",
+            scores(&skills, &pasted)
+        );
+
+        let asked = format!(
+            "tổng kết tuần giúp tao, đây là ghi chú: {}",
+            "khách hàng phản hồi về giao diện mới và đội thiết kế sửa lại màu sắc "
+                .repeat(4)
+        );
+        assert_eq!(picked(&skills, &asked).as_deref(), Some("tong-ket-tuan"));
+    }
+
+    /// A body too long to put in every matching prompt is left to `load_skill`,
+    /// and one with nothing in it is not worth a section.
+    #[test]
+    fn a_body_too_long_or_empty_is_left_to_load_skill() {
+        let mut long = skill("tong-ket-tuan", "Tổng kết tuần.", "Khi nói \"tổng kết tuần\".", true);
+        assert_eq!(picked(std::slice::from_ref(&long), "tổng kết tuần").as_deref(), Some("tong-ket-tuan"));
+
+        long.body = "x".repeat(CHOSEN_BODY_CHARS + 1);
+        assert_eq!(picked(std::slice::from_ref(&long), "tổng kết tuần"), None);
+
+        long.body = "  \n".into();
+        assert_eq!(picked(std::slice::from_ref(&long), "tổng kết tuần"), None);
+    }
+
+    /// The section says what it is, how it got there and that it may be set
+    /// aside — and the name can be read back off it for the numbers.
+    #[test]
+    fn the_chosen_block_explains_itself_and_names_its_skill() {
+        let skills = library();
+        let block = chosen_block(&skills[0]);
+        assert!(block.contains("A SKILL FOR THIS QUESTION"));
+        assert!(block.contains("ignore it"), "it may be set aside:\n{block}");
+        assert!(block.contains(LOAD_TOOL), "and does not need loading:\n{block}");
+        assert!(block.contains("Làm việc của `tong-ket-tuan`"), "the steps are there:\n{block}");
+        assert_eq!(chosen_name(&block).as_deref(), Some("tong-ket-tuan"));
+        assert_eq!(chosen_name("=== WHAT YOU KNOW HOW TO DO ==="), None);
+
+        let mut recipe = skills[0].clone();
+        recipe.tier = Tier::Recipe;
+        assert!(chosen_block(&recipe).contains(crate::syn::recipe::RUN_TOOL));
+    }
+
+    /// The whole path: the library, the question, and the prompt the model
+    /// gets — the picked skill's steps in this turn's half, after the date
+    /// and before anything retrieved, and nothing in the cacheable half moved.
+    #[test]
+    fn the_picked_skill_reaches_the_prompt_in_this_turns_half() {
+        use crate::syn::prompt::{ChatPrompt, PromptPlan, DEFAULT_BUDGET_CHARS, TURN_HEADING};
+
+        let skills = library();
+        let index = index_block(&skills, INDEX_BUDGET_CHARS);
+        let chosen = chosen_for(&skills, "tổng kết tuần này").map(chosen_block);
+        assert!(chosen.is_some());
+
+        let base = || {
+            PromptPlan::for_chat(ChatPrompt {
+                context: "- [[Ghi chú]] một đoạn",
+                custom: None,
+                skills: index.as_deref(),
+                memory: None,
+                focus: None,
+                thread: None,
+                counted: None,
+                timeline: None,
+                budget_chars: DEFAULT_BUDGET_CHARS,
+            })
+        };
+        let without = base();
+        let with = base().with_chosen_skill(chosen.as_deref());
+        let rendered = with.render();
+
+        let seam = rendered.find(TURN_HEADING).expect("the seam");
+        let skill_at = rendered.find("A SKILL FOR THIS QUESTION").expect("the skill is sent");
+        let context_at = rendered.find("VAULT CONTEXT").expect("context is sent");
+        assert!(seam < skill_at && skill_at < context_at, "{rendered}");
+        assert_eq!(
+            with.stable_prefix(),
+            without.stable_prefix(),
+            "a skill chosen per question must not move the cached half"
+        );
+
+        // Nothing matched, nothing added.
+        let unmatched = chosen_for(&skills, "Minh sinh năm nào?").map(chosen_block);
+        let none = base().with_chosen_skill(unmatched.as_deref());
+        assert_eq!(none.render(), without.render());
     }
 }
