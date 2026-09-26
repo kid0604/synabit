@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../utils/logger';
 
@@ -56,6 +56,14 @@ export function useSynEnabled(vaultPath: () => string) {
   onMounted(() => {
     void refresh();
     window.addEventListener(SETTINGS_SAVED, onSaved);
+  });
+
+  // Read again when the vault changes. `App.vue` mounts this before a vault
+  // is open, so the first read found no path and returned — and until
+  // somebody saved Syn's settings, a vault with Syn switched off still showed
+  // every way in to it.
+  watch(vaultPath, (path, before) => {
+    if (path && path !== before) void refresh();
   });
 
   onUnmounted(() => {

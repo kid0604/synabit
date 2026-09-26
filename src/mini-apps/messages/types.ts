@@ -287,6 +287,10 @@ export interface Run {
   skills_indexed?: number;
   created_at: string;
   updated_at: string;
+  /** The steps the run wrote down with `update_plan`. */
+  plan?: PlanStep[];
+  /** Which ceiling stopped it, when one did. See `Run::ceiling`. */
+  ceiling?: 'iterations' | 'tool_calls' | 'tokens' | 'wall_ms' | null;
 }
 
 // ─── How often what Syn has fires ────────────────────────────

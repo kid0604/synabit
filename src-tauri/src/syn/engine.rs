@@ -901,6 +901,7 @@ impl SynEngine {
             LoopEnd::Ceiling(which) => {
                 let message = ceiling_message(which, run);
                 log::warn!("[Syn] {message}");
+                run.ceiling = Some(which.to_string());
                 run.note(run.spent.iterations, &message);
                 run.finish(RunState::BudgetExhausted);
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
@@ -4258,6 +4259,7 @@ mod driving {
 
         assert_eq!(run.state, RunState::BudgetExhausted);
         assert_eq!(run.spent.iterations, 2, "it stopped at the ceiling");
+        assert_eq!(run.ceiling.as_deref(), Some("iterations"), "and says which, as a fact rather than a sentence");
 
         let note = run
             .steps

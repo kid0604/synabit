@@ -618,6 +618,16 @@ pub struct Run {
     /// See `PlanStep`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plan: Vec<PlanStep>,
+    /// Which ceiling stopped the run, when one did: `iterations`, `tool_calls`,
+    /// `tokens` or `wall_ms`, as `Budget::exceeded_by` names them.
+    ///
+    /// Written where the engine decides it, rather than read back out of the
+    /// sentence it notes — which is how `stats` had to find it before, and
+    /// which a rewording would have broken without anything failing. `None` on
+    /// every run that was not stopped by a ceiling, and on runs written before
+    /// this field existed; `stats::ceiling_of` still reads those the old way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<String>,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -735,6 +745,7 @@ impl Run {
             plan_only: false,
             read_untrusted: false,
             plan: Vec::new(),
+            ceiling: None,
             pending_consent: None,
             pending_call: None,
             pending_choice: None,

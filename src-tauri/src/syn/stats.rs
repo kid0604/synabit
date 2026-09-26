@@ -411,6 +411,11 @@ pub fn ceiling_of(run: &Run) -> Option<&'static str> {
     if run.state != RunState::BudgetExhausted {
         return None;
     }
+    // Recorded by the engine, for every run since it could be. The sentence
+    // below is only for runs written before.
+    if let Some(which) = run.ceiling.as_deref() {
+        return ["iterations", "tool_calls", "tokens", "wall_ms"].into_iter().find(|n| *n == which).or(Some("unknown"));
+    }
     let from_note = run
         .steps
         .iter()
