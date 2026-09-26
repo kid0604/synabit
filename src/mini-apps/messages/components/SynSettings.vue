@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ModelTier from './ModelTier.vue';
 import { onMounted, onUnmounted, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { X, RotateCcw, Save, Loader2 } from 'lucide-vue-next';
@@ -322,6 +323,9 @@ watch(() => props.vaultPath, () => {
                     {{ model.name }}
                   </option>
                 </select>
+                <!-- Where this model runs and what it can do — including,
+                     plainly, what leaves the computer if it runs elsewhere. -->
+                <ModelTier v-if="!modelsAreStale" :vault-path="vaultPath" :model="settings.default_model" />
               </div>
             </div>
           </section>

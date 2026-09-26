@@ -22,6 +22,7 @@ import ThreadPanel from './components/ThreadPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import InstructionsPanel from './components/InstructionsPanel.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
+import ModelTier from './components/ModelTier.vue';
 import { useSynActivity } from './composables/useSynActivity';
 
 import { useSynChat } from './composables/useSynChat';
@@ -1052,6 +1053,9 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             <!-- Right: Actions -->
             <div class="flex items-center gap-1.5" v-if="selection?.kind === 'conversation'">
                 
+                <!-- Here, not only in settings: the model can be changed per
+                     conversation, and where the words go changes with it. -->
+                <ModelTier compact :vault-path="vaultPath" :model="selectedModel" />
                 <ModelSelector
                   v-if="status.connected && models.length > 0"
                   v-model="selectedModel"
