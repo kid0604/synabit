@@ -314,6 +314,33 @@ pub fn find<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {
     skills.iter().find(|s| s.name.trim().to_lowercase() == wanted)
 }
 
+/// The index's opening: its heading and the two rules that go with it.
+///
+/// A constant rather than a literal inside `index_block` so `lines_indexed`
+/// can step over it. Its two `- ` bullets are rules, not skills, and a counter
+/// that did not know where the rules end would report two skills in every
+/// index — the undercount-by-shape `memory::lines_shown` was written to end,
+/// the other way round.
+const INDEX_HEADER: &str = "\n\n=== WHAT YOU KNOW HOW TO DO ===\n\
+         Procedures written down for you, by this person or by you and approved \
+         by them. This is the whole list — there is nothing else.\n\
+         - The line is a summary. Call `load_skill` with the name to read the \
+         steps before following them.\n\
+         - Do not guess at the steps from the description. If it is worth doing \
+         by a skill, it is worth reading first.\n";
+
+/// How many skills a rendered index names.
+///
+/// Counted off the block as sent rather than off the store, for the reason
+/// `memory::lines_shown` is: an index `PromptPlan::fit` cut offered nothing,
+/// whatever is enabled. Zero for anything `index_block` did not write.
+pub fn lines_indexed(block: &str) -> usize {
+    block
+        .strip_prefix(INDEX_HEADER)
+        .map(|rest| rest.lines().filter(|l| l.starts_with("- ")).count())
+        .unwrap_or(0)
+}
+
 /// The table that rides in every prompt, or `None` when nothing is enabled.
 ///
 /// `None` rather than an empty string, for the reason `memory_block` returns
@@ -328,13 +355,7 @@ pub fn index_block(skills: &[Skill], budget_chars: usize) -> Option<String> {
         return None;
     }
 
-    let header = "\n\n=== WHAT YOU KNOW HOW TO DO ===\n\
-         Procedures written down for you, by this person or by you and approved \
-         by them. This is the whole list — there is nothing else.\n\
-         - The line is a summary. Call `load_skill` with the name to read the \
-         steps before following them.\n\
-         - Do not guess at the steps from the description. If it is worth doing \
-         by a skill, it is worth reading first.\n";
+    let header = INDEX_HEADER;
     let footer = "=== END ===";
 
     let mut used = header.chars().count() + footer.chars().count();

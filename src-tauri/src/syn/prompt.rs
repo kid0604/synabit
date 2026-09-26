@@ -845,6 +845,27 @@ impl PromptPlan {
         self.budget_chars
     }
 
+    /// The sections `fit` cut whole, in the order it cut them.
+    ///
+    /// Already shown by `breakdown` for a preview, and kept nowhere for a turn
+    /// that was actually sent — so a prompt that lost its memory or its skill
+    /// index to a long count left no trace that it had. Exposed so the run can
+    /// write it down; see `Run::sections_dropped`. Reading it changes nothing
+    /// about what `render` returns.
+    pub fn dropped(&self) -> &[SectionKind] {
+        &self.dropped
+    }
+
+    /// One section's body as it will be sent, or `None` when the plan does not
+    /// carry it — never had it, or `fit` cut it.
+    ///
+    /// As sent, which for memory is not necessarily as rendered: `fit` shrinks
+    /// that block in place before it drops it, and the count that matters is
+    /// the one the model was shown.
+    pub fn body(&self, kind: SectionKind) -> Option<&str> {
+        self.sections.iter().find(|s| s.kind == kind).map(|s| s.body.as_str())
+    }
+
     /// An estimate of the whole prompt in tokens. See the module comment.
     pub fn est_tokens(&self) -> usize {
         self.chars() / CHARS_PER_TOKEN

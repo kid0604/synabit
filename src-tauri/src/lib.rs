@@ -925,6 +925,7 @@ pub fn run() {
             syn_commands::syn_list_threads,
             syn_commands::syn_thread_usage,
             syn_commands::syn_footing_tally,
+            syn_commands::syn_stats,
             syn_commands::syn_get_instructions,
             syn_commands::syn_save_instructions,
             syn_commands::syn_instructions_path,
