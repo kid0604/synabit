@@ -71,7 +71,7 @@ pub fn apply_row_changes(existing: &[Value], upserts: &[Value], removals: &[Stri
 ///
 /// Absent means schema 1 — whole units — because the marker did not exist when
 /// those files were written.
-fn schema_of(metadata: &Map<String, Value>) -> u64 {
+pub(crate) fn schema_of(metadata: &Map<String, Value>) -> u64 {
     metadata
         .get("financeSchema")
         .and_then(Value::as_u64)
@@ -79,7 +79,7 @@ fn schema_of(metadata: &Map<String, Value>) -> u64 {
 }
 
 /// The `metadata` object of a Finance file on disk, or an empty one.
-fn metadata_on_disk(abs_path: &std::path::Path) -> Map<String, Value> {
+pub(crate) fn metadata_on_disk(abs_path: &std::path::Path) -> Map<String, Value> {
     std::fs::read_to_string(abs_path)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())

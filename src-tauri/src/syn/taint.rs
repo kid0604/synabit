@@ -74,10 +74,19 @@ impl Taint {
 /// sets the taint for it. `search_feed_articles` is here with `read_feed_article`
 /// because a summary is as much the feed's words as the article is.
 ///
+/// `read_spreadsheet` is here for the reason `read_file_text` is: a workbook
+/// comes from a bank, a colleague, a download, and a cell can hold a sentence
+/// addressed to the model as easily as a number.
+///
 /// What is not here, and is a known gap rather than an oversight: a web page the
 /// user clipped into their own vault. Once it is a note it reads like one, and
 /// there is no field that reliably says otherwise.
-pub const UNTRUSTED_READS: &[&str] = &["read_feed_article", "search_feed_articles", "read_file_text"];
+pub const UNTRUSTED_READS: &[&str] = &[
+    "read_feed_article",
+    "search_feed_articles",
+    "read_file_text",
+    "read_spreadsheet",
+];
 
 /// Everything a run may still do after reading one of those.
 ///
@@ -100,6 +109,7 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "read_feed_article",
     "search_files",
     "read_file_text",
+    "read_spreadsheet",
     "get_finance_summary",
     "search_finance",
     "get_transactions",
@@ -114,6 +124,11 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "capture",
     "draw_board",
     "update_feed_article",
+    // Only ever a new file: an existing name is refused, and a string that
+    // looks like a formula is written as text — see `spreadsheet::write_xlsx`.
+    // `update_transaction` and `delete_transaction` are not here, for the
+    // reason `create_transaction` is not.
+    "write_spreadsheet",
     // Reaching out, but only along links already seen — see `Destinations`.
     "browse",
     // The run's own list of steps. Changes nothing outside the run.

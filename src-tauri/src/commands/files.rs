@@ -183,31 +183,7 @@ pub fn import_files(
             continue;
         }
 
-        let meta = std::fs::metadata(&dest).ok();
-        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = meta
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let created = meta
-            .as_ref()
-            .and_then(|m| m.created().ok())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let created_dt: chrono::DateTime<chrono::Local> = created.into();
-        let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
-
-        copied.push(Discovered {
-            abs_path: dest.to_string_lossy().to_string(),
-            filename: dest_name,
-            extension,
-            size,
-            mtime_ms: modified
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0),
-            created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-        });
+        copied.push(discovered_at(&dest, dest_name, extension));
     }
 
     if copied.is_empty() {
@@ -223,6 +199,66 @@ pub fn import_files(
     }
 
     Ok(copied.len() as u32)
+}
+
+/// A file as the walk would have found it, read off the disk where it now is.
+fn discovered_at(dest: &Path, filename: String, extension: String) -> Discovered {
+    let meta = std::fs::metadata(dest).ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let created = meta
+        .as_ref()
+        .and_then(|m| m.created().ok())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let created_dt: chrono::DateTime<chrono::Local> = created.into();
+    let modified_dt: chrono::DateTime<chrono::Local> = modified.into();
+
+    Discovered {
+        abs_path: dest.to_string_lossy().to_string(),
+        filename,
+        extension,
+        size,
+        mtime_ms: modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+        created_at: created_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+        modified_at: modified_dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+    }
+}
+
+/// Index one file something in the app has just written into the vault.
+///
+/// The same road `import_files` takes, for a file that did not need copying
+/// because it was made here — a spreadsheet Syn wrote, say. Without it the
+/// file is on disk and absent from the Files app until the next scan, which
+/// is a file the person was told about and cannot find.
+///
+/// Returns the node id the file was filed under, so the caller can name it.
+pub(crate) fn index_written_file(state: &DbState, abs_path: &Path) -> AppResult<Option<String>> {
+    let filename = abs_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = abs_path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let found = discovered_at(abs_path, filename, extension);
+
+    let resolver = {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        crate::commands::nodes::build_resolver(&db)
+    };
+    commit_batch(state, std::slice::from_ref(&found), &resolver)?;
+
+    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(db.file_location_at(&found.abs_path)?.map(|location| location.node_id))
 }
 
 /// Index one folder, without Tauri's command plumbing.
@@ -1856,7 +1892,7 @@ pub fn read_local_file_content(
 ///
 /// Read once and returned by value because the caller has to drop the database
 /// lock before doing anything slow with the answer.
-fn allowed_roots(db: &crate::db::DbBridge, vault_path: &str) -> Vec<String> {
+pub(crate) fn allowed_roots(db: &crate::db::DbBridge, vault_path: &str) -> Vec<String> {
     let mut roots = vec![vault_path.to_string()];
     if let Ok(sources) = db.get_all_file_sources() {
         for source in sources {

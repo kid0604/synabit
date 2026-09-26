@@ -12,7 +12,8 @@ export const LABELLED_TOOLS = [
   'trash_node', 'restore_node', 'list_trash', 'list_versions', 'restore_version',
   'search_feed_articles', 'read_feed_article', 'update_feed_article', 'search_files',
   'read_file_text', 'get_finance_summary', 'search_finance', 'get_transactions',
-  'create_transaction', 'remember', 'recall', 'load_skill', 'run_recipe', 'look_back', 'browse',
+  'create_transaction', 'update_transaction', 'delete_transaction', 'read_spreadsheet',
+  'write_spreadsheet', 'remember', 'recall', 'load_skill', 'run_recipe', 'look_back', 'browse',
   'timeline', 'read_board', 'draw_board', 'edit_board', 'capture', 'update_plan', 'rename_field',
   'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools',
 ] as const;
