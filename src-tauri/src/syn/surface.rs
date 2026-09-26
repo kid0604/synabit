@@ -108,6 +108,12 @@ impl Surface {
     /// nothing claims — passes in the app, where it has always gone on to fail
     /// as an unknown tool. Anywhere else nothing unclassified goes at all.
     pub fn offers(self, tool: &str, capability: Option<&Capability>) -> bool {
+        // MCP (Phase F): a server's tool asks permission, and only the app has
+        // somebody there to answer. By name as well as by capability, so a
+        // tool a server misdescribed is still kept in the app. See `syn::mcp`.
+        if crate::syn::mcp::is_mcp_tool(tool) {
+            return self == Surface::App;
+        }
         match self {
             Surface::App => !NOT_IN_THE_APP.contains(&tool),
             Surface::Telegram => match capability {

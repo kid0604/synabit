@@ -5,6 +5,7 @@ pub mod chat;
 pub mod diagnostics;
 pub mod e2ee;
 pub mod finance;
+pub mod mcp;
 pub mod files;
 pub mod nexus;
 

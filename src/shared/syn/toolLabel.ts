@@ -19,9 +19,27 @@ export const LABELLED_TOOLS = [
 ] as const;
 
 export function toolLabel(t: (key: string, values?: Record<string, unknown>) => string, tool: string): string {
-  return (LABELLED_TOOLS as readonly string[]).includes(tool)
-    ? t(`syn.doing_${tool}`)
-    : t('syn.doing_other', { tool });
+  if ((LABELLED_TOOLS as readonly string[]).includes(tool)) return t(`syn.doing_${tool}`);
+  const onServer = mcpTool(tool);
+  if (onServer) return t('syn.doing_mcp', onServer);
+  return t('syn.doing_other', { tool });
+}
+
+/**
+ * `mcp__jira__search_issues` → `{ server: 'jira', tool: 'search_issues' }`.
+ *
+ * A tool on an MCP server is named `mcp__<server>__<tool>` by `syn::mcp`, and
+ * the server part never holds `__`, so the first one after the prefix is where
+ * the tool begins. These come and go with the servers a person connects, so
+ * they cannot be in the list above; saying which server is what a person
+ * watching needs, because it is the part that has left the computer.
+ */
+export function mcpTool(name: string): { server: string; tool: string } | null {
+  if (!name.startsWith('mcp__')) return null;
+  const rest = name.slice('mcp__'.length);
+  const cut = rest.indexOf('__');
+  if (cut <= 0 || cut + 2 >= rest.length) return null;
+  return { server: rest.slice(0, cut), tool: rest.slice(cut + 2) };
 }
 
 /** Tokens, short enough for one line: 950, 12k, 1.2M. */
