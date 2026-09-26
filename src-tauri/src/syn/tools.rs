@@ -1229,7 +1229,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "type": "object",
                     "required": ["amount", "category"],
                     "properties": {
-                        "amount": { "type": "number", "description": "A positive number." },
+                        "amount": { "type": "number", "description": "Positive, in the units get_transactions shows." },
                         "type": { "type": "string", "enum": ["income", "expense", "transfer"], "description": "Defaults to expense" },
                         "category": { "type": "string", "description": "One the user already uses." },
                         "account": { "type": "string", "description": "Defaults to the first account." },
@@ -4311,9 +4311,12 @@ fn tool_create_transaction<R: tauri::Runtime>(
         }
     };
 
-    // Determine account_id
+    // Determine account_id. The declaration has always called it `account`
+    // and this used to read only `account_id`, so every account the model
+    // named was ignored for the first one. Both are read.
     let account_id = args
         .get("account_id")
+        .or_else(|| args.get("account"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
@@ -4358,50 +4361,56 @@ fn tool_create_transaction<R: tauri::Runtime>(
         "note": note
     });
 
-    // Determine month key from date
-    let month_key = if date_str.len() >= 7 {
-        &date_str[..7]
+    // The month, as the Finance app keeps it.
+    //
+    // This used to rebuild the file from its transactions alone, through
+    // `write_json_node`: every other key of the month's metadata was dropped —
+    // `financeSchema` among them, the stamp that says the amounts are minor
+    // units. The next time Finance opened that month it read it as whole units
+    // and multiplied every amount in it by a hundred. And it went around the
+    // CRDT. It now goes through `write_month`, the row-level write the
+    // Finance app's own saves use, which keeps what it does not change.
+    let month_key = date_str.get(..7).unwrap_or(&date_str).to_string();
+    let month_node_id = format!("Finance/{month_key}.json");
+    let (month_abs, meta) = month_on_disk(ctx, &month_node_id)?;
+    let schema = if month_abs.exists() {
+        crate::commands::finance::schema_of(&meta)
     } else {
-        &date_str
+        // A month that does not exist yet is made the way Finance makes one
+        // now: in minor units, and saying so.
+        2
     };
-    let month_node_id = format!("Finance/{}.json", month_key);
-
-    // Read or create the month node
-    let existing_month = lock(ctx)?.get_node(&month_node_id)?;
-    let mut transactions: Vec<Value> = match &existing_month {
-        Some(node) => node
-            .properties
-            .get("transactions")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default(),
-        None => Vec::new(),
+    // In a month of minor units an amount is whole. A fraction means it was
+    // given in the currency's own units, and writing it would make this row a
+    // hundredth of what was meant — the same refusal `update_transaction` makes.
+    if schema >= 2 && amount.fract() != 0.0 {
+        return Ok(serde_json::json!({
+            "error": "This month stores amounts as whole numbers of the currency's smallest unit, as get_transactions shows them. Send the amount in those units.",
+        })
+        .to_string());
+    }
+    let transaction = {
+        let mut row = transaction;
+        if amount.fract() == 0.0 {
+            row["amount"] = Value::from(amount as i64);
+        }
+        row
     };
-
-    // Add the new transaction
-    transactions.push(transaction);
-
-    // Build the month properties
-    let month_props = serde_json::json!({
-        "transactions": transactions
-    });
-
-    // Construct the month title
-    let month_parts: Vec<&str> = month_key.split('-').collect();
-    let month_title = if month_parts.len() == 2 {
-        format!("Month {}/{}", month_parts[1], month_parts[0])
-    } else {
-        format!("Month {}", month_key)
-    };
-
-    // Write JSON file to disk (matches write_node_file JSON format)
-    write_json_node(
-        ctx,
-        &month_node_id,
-        "finance_month",
-        &month_title,
-        &month_props,
-    )?;
+    let rows = crate::commands::finance::apply_row_changes(
+        &rows_of(&meta, "transactions"),
+        std::slice::from_ref(&transaction),
+        &[],
+    );
+    let mut changes = serde_json::Map::new();
+    changes.insert("transactions".into(), Value::Array(rows));
+    if !month_abs.exists() {
+        changes.insert("financeSchema".into(), Value::from(schema));
+    }
+    let title = lock(ctx)?
+        .get_node(&month_node_id)?
+        .map(|n| n.title)
+        .unwrap_or_else(|| month_title(&month_key));
+    write_month(ctx, &month_node_id, &title, changes)?;
 
     // Get currency for display
     let currency = config_meta
@@ -4429,92 +4438,6 @@ fn tool_create_transaction<R: tauri::Runtime>(
     Ok(output.to_string())
 }
 
-fn write_json_node<R: tauri::Runtime>(
-    ctx: &ToolContext<R>,
-    rel_path: &str,
-    node_type: &str,
-    title: &str,
-    properties: &Value,
-) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // Build properties with timestamps
-    let mut props = properties.clone();
-    if let Some(map) = props.as_object_mut() {
-        if !map.contains_key("created_at") {
-            // Check if node already exists to preserve created_at
-            if let Ok(Some(existing)) = lock(ctx)?.get_node(rel_path) {
-                let existing_created = existing
-                    .properties
-                    .get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&now);
-                map.insert(
-                    "created_at".to_string(),
-                    Value::String(existing_created.to_string()),
-                );
-            } else {
-                map.insert("created_at".to_string(), Value::String(now.clone()));
-            }
-        }
-        map.insert("updated_at".to_string(), Value::String(now.clone()));
-    }
-
-    // Build JSON file content (matches nodes.rs write_node_file for .json)
-    let json_obj = serde_json::json!({
-        "title": title,
-        "type": node_type,
-        "metadata": props,
-        "content": ""
-    });
-    let file_content = serde_json::to_string_pretty(&json_obj).unwrap_or_default();
-
-    // Write to disk
-    let full_path = std::path::Path::new(ctx.vault_path).join(rel_path);
-    if let Some(parent) = full_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&full_path, &file_content)?;
-
-    // Upsert into DB
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let created_at = props
-        .get("created_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&now)
-        .to_string();
-
-    let node = crate::models::node::NodeMetadata {
-        id: rel_path.to_string(),
-        node_type: node_type.to_string(),
-        title: title.to_string(),
-        content: String::new(),
-        properties: props.clone(),
-        created_at,
-        updated_at: now.clone(),
-        timestamp,
-        blocks: None,
-    };
-    lock(ctx)?.upsert_node(&node)?;
-
-    // Update search index
-    let props_str = serde_json::to_string(&props).unwrap_or_default();
-    lock(ctx)?.upsert_search_entry(
-        rel_path, node_type, title, "", "", &props_str, None, &now, rel_path,
-    );
-
-    // Emit event for UI sync
-    let _ = ctx.app.emit(
-        "node:changed",
-        serde_json::json!({
-            "id": rel_path,
-            "node_type": node_type,
-            "title": title,
-        }),
-    );
-
-    Ok(())
-}
 
 fn rand_u16() -> u16 {
     use std::time::SystemTime;
@@ -4563,9 +4486,8 @@ fn format_number_with_separator(n: i64) -> String {
 // Finance app's own `upsert_finance_rows` takes: the file's other keys are
 // read from disk immediately before the write and kept, so the unit marker
 // (`financeSchema`) and whatever a sync brought in since are not lost, and the
-// month's CRDT merges row by row with other devices. `create_transaction` does
-// not, yet — it writes the month whole through `write_json_node` — which is a
-// separate thing to fix.
+// month's CRDT merges row by row with other devices. `create_transaction` goes
+// the same way now; it used to write the month whole, and lost the marker.
 
 /// Where a transaction removed by Syn is kept, inside its own month.
 ///
@@ -7013,6 +6935,53 @@ mod tests {
             .as_array()
             .map(|rows| rows.iter().filter_map(|r| r["id"].as_str().map(String::from)).collect())
             .unwrap_or_default()
+    }
+
+    /// Recording a transaction keeps the month what it was: its unit marker,
+    /// its other rows and their fields. It used to rewrite the month from its
+    /// transactions alone, dropping `financeSchema`, and Finance then read
+    /// every amount in the month as a hundredth of what it was.
+    #[test]
+    fn recording_a_transaction_keeps_the_month_s_units_and_everything_else() {
+        let (_holder, vault_path, app) = phase_f_vault();
+        let handle = app.handle().clone();
+        seed_month(&handle, &vault_path);
+        let state = handle.state::<crate::db::DbState>();
+        crate::commands::nodes::write_node_inner(
+            &handle,
+            &state,
+            vault_path.clone(),
+            "Finance/Config.json".to_string(),
+            "Finance".to_string(),
+            "finance_config".to_string(),
+            serde_json::json!({ "financeSchema": 2, "currency": "VND", "accounts": [{ "id": "acc-1", "name": "Ví" }] }),
+            Some(String::new()),
+        )
+        .expect("config");
+
+        let made = call_as(&handle, &vault_path, None, "create_transaction", serde_json::json!({
+            "amount": 32000, "category": "Cà phê", "date": "2026-09-10", "account": "acc-1"
+        }));
+        assert_eq!(made["success"], true, "{made}");
+
+        let meta = month_on_disk_for_test(&vault_path, "2026-09");
+        assert_eq!(meta["financeSchema"], 2, "the unit marker survives");
+        assert_eq!(meta["transactions"].as_array().map(Vec::len), Some(3));
+        assert_eq!(meta["transactions"][0]["receipt"], "assets/receipt.jpg", "other rows are untouched");
+        assert_eq!(meta["transactions"][2]["amount"], 32000);
+
+        // A fraction is the currency's own units, not the month's: refused.
+        let fraction = call_as(&handle, &vault_path, None, "create_transaction", serde_json::json!({
+            "amount": 12.5, "category": "Cà phê", "date": "2026-09-11"
+        }));
+        assert!(fraction["error"].as_str().is_some_and(|e| e.contains("smallest unit")), "{fraction}");
+
+        // A new month is made the way Finance makes one: stamped.
+        let fresh = call_as(&handle, &vault_path, None, "create_transaction", serde_json::json!({
+            "amount": 50000, "category": "Ăn trưa", "date": "2026-10-02"
+        }));
+        assert_eq!(fresh["success"], true, "{fresh}");
+        assert_eq!(month_on_disk_for_test(&vault_path, "2026-10")["financeSchema"], 2);
     }
 
     /// Change a row, undo the change with what the reply handed back, and see
