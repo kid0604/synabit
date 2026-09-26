@@ -5,6 +5,7 @@ pub mod ambiguity;
 pub mod answer;
 pub mod audit;
 pub mod browser;
+pub mod calibration;
 pub mod pane;
 pub mod consent;
 pub mod correction;

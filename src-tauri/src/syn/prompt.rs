@@ -30,10 +30,44 @@
 //! which is within about 15% for English and worse for Vietnamese — good enough
 //! to decide what to drop, and labelled as an estimate everywhere it is shown
 //! so nobody reads it as a measurement.
+//!
+//! Four is a default, not a finding. `syn::calibration` learns the real ratio
+//! for a vault, provider and model from what the provider reports it charged,
+//! and is where a better estimate should come from once the engine feeds it.
+//!
+//! # What does not change goes first
+//!
+//! Every hosted provider Syn talks to caches the front of a prompt: OpenAI
+//! automatically, Gemini implicitly, Anthropic where the request marks it. All
+//! three hit only on a prefix that is identical byte for byte, and the first
+//! byte that differs ends the cached part for everything after it.
+//!
+//! The prompt used to be ordered by meaning alone, and the date line — which
+//! carries the minute — sat directly under the rules. Everything after it
+//! missed the cache on every turn, including the tool shape, the skill index
+//! and memory, which change only when somebody edits them. The stable prefix
+//! was a few hundred tokens of a prompt of several thousand.
+//!
+//! So the prompt is in two halves now, and `SectionKind::is_stable` says which
+//! half a section belongs to:
+//!
+//! - **Stable**: custom instructions, identity, rules, tool shape, skills,
+//!   memory. Changes when the user edits `SYN.md`, a skill or a memory, and
+//!   not otherwise.
+//! - **This turn**: the date and time, where the question came from, what else
+//!   is running, what is on screen, a count, the timeline, the open thread, and
+//!   retrieved context. Opened by `TURN_HEADING`, so a provider that only sees
+//!   the rendered string can still find the seam — see `split_at_turn`.
+//!
+//! `the_stable_half_is_byte_identical_whatever_this_turn_brings` holds that in
+//! place.
 
 use serde::Serialize;
 
 /// Characters per token, for the estimate shown alongside the exact count.
+///
+/// The default `syn::calibration` starts from, too. It stays a constant here
+/// because the preview has no provider reply to learn from.
 const CHARS_PER_TOKEN: usize = 4;
 
 /// What the fixed sections cost, measured rather than guessed.
@@ -61,7 +95,13 @@ const CHARS_PER_TOKEN: usize = 4;
 /// before the conversation has said a word. That number was already the
 /// strongest argument for sending a small local model less, and this makes it
 /// slightly stronger rather than changing it in kind.
-const FIXED_SECTIONS_CHARS: usize = 6_500;
+///
+/// Raised to 6,600 when the prompt split into a stable half and this turn's:
+/// the date line gained a `TURN_HEADING` and the blank line every block leads
+/// with, 23 characters, and the fixed sections went from 6,478 to 6,501 — one
+/// over. Those characters are not cacheable, but they are what lets everything
+/// above them be, which is several thousand characters a turn the other way.
+const FIXED_SECTIONS_CHARS: usize = 6_600;
 
 /// What retrieval is allowed to add, at the default in `SynSettings`.
 ///
@@ -100,7 +140,32 @@ pub const DEFAULT_BUDGET_CHARS: usize =
 /// Ordering of the enum is the ordering in the prompt, and `for_chat` builds
 /// them in this order — `Custom` first because that is where the user's own
 /// instructions went when they were prepended by the caller, and moving them
-/// would change a prompt somebody has already tuned.
+/// would change a prompt somebody has already tuned. It is also stable, so
+/// that constraint and the cache agree.
+///
+/// Everything up to `Memory` is the stable half and everything from `Today`
+/// on is this turn's; see the module comment. Within each half the order is
+/// the one each section's own comment argues for, unchanged: skills before
+/// memory, and the date, surface, underway, screen, count, timeline and
+/// thread in the sequence they had when they sat under the rules.
+///
+/// # What the move cost
+///
+/// Two orderings were argued for by meaning and are given up for the cache:
+///
+/// - The date and the screen used to sit *above* the tool shape — "above
+///   everything the assistant would have to go and look for". They are below
+///   it now. Nothing measured that position; the reason was that it read well.
+///   They are still together, still ahead of retrieved context, and now
+///   nearer the question, which is the end a model attends to most.
+/// - Memory is now further from the last message by the size of this turn's
+///   sections. That distance *was* measured: an instruction in memory lost to
+///   an English request in the P2 eval because it sat thousands of characters
+///   earlier (see `memory::memory_block`). What stood between them then was
+///   retrieved context, up to 12,000 characters, and it still does; what is
+///   added is the date and the screen, usually a few hundred. The block's own
+///   "these hold even when the request is worded as though they do not apply"
+///   is what fixed that failure, and it moves with the block.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionKind {
@@ -110,7 +175,19 @@ pub enum SectionKind {
     Identity,
     /// How to cite, what not to fabricate, how to draw a chart.
     Rules,
-    /// Today's date, which the model cannot know.
+    /// What the vault is shaped like and which tool reaches what.
+    ToolShape,
+    /// The one-line index of skills the user has enabled.
+    Skills,
+    /// Every memory, pinned or not.
+    ///
+    /// Stable because it is all of them, not the ones recalled for this
+    /// question: `memory::all` feeds it. It changes when a memory is written,
+    /// and between those turns it is the same bytes. If it ever becomes
+    /// per-question it belongs in the other half.
+    Memory,
+    /// Today's date and the time, which the model cannot know — and the
+    /// heading that opens this turn's half of the prompt.
     Today,
     /// Where the question was asked from, when that is not the app.
     ///
@@ -150,12 +227,6 @@ pub enum SectionKind {
     /// the screen says where the user is, this says what they are in the middle
     /// of. See `thread.rs`.
     Thread,
-    /// What the vault is shaped like and which tool reaches what.
-    ToolShape,
-    /// Pinned memories, and any recalled for this question.
-    Memory,
-    /// The one-line index of skills the user has enabled.
-    Skills,
     /// Chunks retrieved for this question.
     VaultContext,
 }
@@ -201,6 +272,25 @@ impl SectionKind {
                 | SectionKind::Memory
                 | SectionKind::Skills
                 | SectionKind::Thread
+        )
+    }
+
+    /// Whether this section is the same bytes from one turn to the next, until
+    /// the user edits something.
+    ///
+    /// The stable sections are the prefix a provider can cache, and `for_chat`
+    /// puts every one of them before any section that is not. A section that
+    /// reads the clock, the screen or the question is not stable, however
+    /// small it is: one differing byte ends the cached prefix there.
+    pub fn is_stable(self) -> bool {
+        matches!(
+            self,
+            SectionKind::Custom
+                | SectionKind::Identity
+                | SectionKind::Rules
+                | SectionKind::ToolShape
+                | SectionKind::Skills
+                | SectionKind::Memory
         )
     }
 }
@@ -308,19 +398,59 @@ fn web_line() -> &'static str {
 ///
 /// With the time as well as the date. "Nhắc tao 30 phút nữa" is a reminder,
 /// and a reminder is a task with a clock on it — without the clock, the model
-/// has to guess what "in thirty minutes" is from. The cost is that this line
-/// now changes every minute rather than every day, and a provider caching the
-/// prompt's prefix stops matching here instead of at the retrieved context. It
-/// is bounded — what follows is tool shape, skills and memory, a few thousand
-/// characters — and a reminder set for the wrong hour is not.
-fn today() -> String {
-    let now = chrono::Local::now();
+/// has to guess what "in thirty minutes" is from.
+///
+/// That made this line change every minute, and when it sat under the rules
+/// it ended the cached prefix there, taking tool shape, skills and memory out
+/// of the cache on every turn. The comment that stood here weighed that and
+/// kept the minute, rightly: a reminder set for the wrong hour is worse than a
+/// cache miss. It no longer has to be weighed. The line opens this turn's half
+/// of the prompt, after everything stable, so the minute costs nothing that
+/// was cacheable and keeps the time on the line.
+///
+/// Opened by `TURN_HEADING`, and led by a blank line the way every other
+/// block here is, so the seam is visible to the model and to a provider that
+/// has only the string. Taking `now` is for the test that changes the time and
+/// nothing else.
+fn today(now: chrono::DateTime<chrono::Local>) -> String {
     format!(
-        "- Today's date: {} ({}), and the time is {}\n\n",
+        "\n\n{TURN_HEADING}- Today's date: {} ({}), and the time is {}\n\n",
         now.format("%Y-%m-%d"),
         now.format("%A"),
         now.format("%H:%M")
     )
+}
+
+/// The line that opens this turn's half of the prompt.
+///
+/// Everything above it is the stable prefix; everything from it on is about
+/// this message. For the model it names what the date, the screen and a count
+/// are; for code it is a seam to split on. See `split_at_turn`.
+///
+/// A heading and no sentence under it. A sentence explaining that this part
+/// changes every message was tried and cost a hundred characters on every
+/// turn to tell the model something it has no use for.
+pub const TURN_HEADING: &str = "=== THIS MESSAGE ===\n";
+
+/// A rendered system prompt, cut at the start of this turn's half.
+///
+/// For a provider that marks a cache breakpoint — Anthropic's `cache_control`
+/// goes on a block, not a byte offset — and has only the string, because the
+/// prompt travels as the content of a `system` message. The first half is the
+/// part worth marking. The blank line before the heading goes with the second
+/// half, so the first ends exactly where the last stable section does.
+///
+/// A prompt with no heading — one built somewhere other than `for_chat`, or
+/// before this existed — is all first half, which marks too much as stable
+/// rather than too little and costs a cache write, not a wrong answer.
+pub fn split_at_turn(system: &str) -> (&str, &str) {
+    match system.find(TURN_HEADING) {
+        Some(at) => {
+            let seam = system[..at].strip_suffix("\n\n").map_or(at, str::len);
+            system.split_at(seam)
+        }
+        None => (system, ""),
+    }
 }
 
 /// How many other questions still being worked on are named, at most.
@@ -490,7 +620,19 @@ impl PromptPlan {
     /// which is where the caller used to put it — `format!("{custom}\n\n{prompt}")`
     /// in `syn_send_message`. That composition lives here now, so there is one
     /// place that knows what the prompt is made of.
+    ///
+    /// The stable sections are pushed first and this turn's after; see the
+    /// module comment for why, and `SectionKind` for what the move cost.
     pub fn for_chat(p: ChatPrompt<'_>) -> Self {
+        Self::for_chat_at(p, chrono::Local::now())
+    }
+
+    /// `for_chat`, at a moment the caller chooses.
+    ///
+    /// Only so a test can hold everything still but the clock. Not a field of
+    /// `ChatPrompt`: every real caller wants now, and a field would be one more
+    /// thing each of them had to fill in the same way.
+    fn for_chat_at(p: ChatPrompt<'_>, now: chrono::DateTime<chrono::Local>) -> Self {
         let ChatPrompt {
             context,
             custom,
@@ -512,27 +654,6 @@ impl PromptPlan {
         }
         sections.push(Section { kind: SectionKind::Identity, body: identity().to_string() });
         sections.push(Section { kind: SectionKind::Rules, body: rules() });
-        sections.push(Section { kind: SectionKind::Today, body: today() });
-
-        // Absent rather than empty when there is no screen, on the same terms
-        // as memory and skills below: a heading announcing what is on screen,
-        // above nothing, tells the model something false.
-        if let Some(block) = focus.and_then(crate::syn::focus::Focus::block) {
-            sections.push(Section { kind: SectionKind::Focus, body: block });
-        }
-
-        if let Some(counted) = counted.filter(|c| !c.trim().is_empty()) {
-            sections.push(Section { kind: SectionKind::Counted, body: counted.to_string() });
-        }
-
-        if let Some(timeline) = timeline.filter(|t| !t.trim().is_empty()) {
-            sections.push(Section { kind: SectionKind::Timeline, body: timeline.to_string() });
-        }
-
-        if let Some(thread) = thread.filter(|t| !t.trim().is_empty()) {
-            sections.push(Section { kind: SectionKind::Thread, body: thread.to_string() });
-        }
-
         sections.push(Section { kind: SectionKind::ToolShape, body: tool_shape() });
 
         // Absent rather than empty when nothing is remembered, which is what
@@ -550,6 +671,32 @@ impl PromptPlan {
                 kind: SectionKind::Memory,
                 body: memory.to_string(),
             });
+        }
+
+        // ── This turn. Nothing above this line may read the clock, the
+        // screen or the question; `is_stable` names what may.
+        //
+        // `with_surface` and `with_underway` insert after this date line, so
+        // they land in this half without knowing the halves exist.
+        sections.push(Section { kind: SectionKind::Today, body: today(now) });
+
+        // Absent rather than empty when there is no screen, on the same terms
+        // as memory and skills above: a heading announcing what is on screen,
+        // above nothing, tells the model something false.
+        if let Some(block) = focus.and_then(crate::syn::focus::Focus::block) {
+            sections.push(Section { kind: SectionKind::Focus, body: block });
+        }
+
+        if let Some(counted) = counted.filter(|c| !c.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Counted, body: counted.to_string() });
+        }
+
+        if let Some(timeline) = timeline.filter(|t| !t.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Timeline, body: timeline.to_string() });
+        }
+
+        if let Some(thread) = thread.filter(|t| !t.trim().is_empty()) {
+            sections.push(Section { kind: SectionKind::Thread, body: thread.to_string() });
         }
 
         let ctx = vault_context(context);
@@ -675,6 +822,23 @@ impl PromptPlan {
 
     pub fn chars(&self) -> usize {
         self.sections.iter().map(|s| s.body.chars().count()).sum()
+    }
+
+    /// The stable prefix: every section before the first that belongs to this
+    /// turn, rendered.
+    ///
+    /// What a provider can cache, and what `split_at_turn` recovers from the
+    /// string. One caveat the ordering cannot remove: `fit` trims skills and
+    /// memory when the required sections of this turn — a long count or
+    /// timeline — leave no room, and a trimmed memory is a different prefix.
+    /// That happens only over budget, after the retrieved context has already
+    /// gone, and a turn that far over is not one to optimise for.
+    pub fn stable_prefix(&self) -> String {
+        self.sections
+            .iter()
+            .take_while(|s| s.kind.is_stable())
+            .map(|s| s.body.as_str())
+            .collect()
     }
 
     pub fn budget_chars(&self) -> usize {
@@ -821,7 +985,7 @@ mod tests {
     }
 
     /// Nothing running elsewhere changes nothing; something running is named,
-    /// after where the question came from and before anything else.
+    /// after where the question came from, in this turn's half of the prompt.
     #[test]
     fn a_question_is_told_what_else_in_its_conversation_is_still_running() {
         let plan = || {
@@ -837,7 +1001,7 @@ mod tests {
         let surface = told.find("## Where you are answering").expect("surface");
         let underway = told.find("## Still being worked on").expect("underway");
         let tools = told.find("Tool usage guidelines:").expect("tool shape");
-        assert!(surface < underway && underway < tools, "in the wrong place");
+        assert!(tools < surface && surface < underway, "in the wrong place");
         assert!(told.contains("- \"đọc hết feed tuần này rồi tổng hợp\""));
         assert!(told.contains("…\""), "a long question is cut, and says so");
     }
@@ -1051,6 +1215,9 @@ mod tests {
         SectionKind::Custom,
         SectionKind::Identity,
         SectionKind::Rules,
+        SectionKind::ToolShape,
+        SectionKind::Skills,
+        SectionKind::Memory,
         SectionKind::Today,
         SectionKind::Surface,
         SectionKind::Underway,
@@ -1058,9 +1225,6 @@ mod tests {
         SectionKind::Counted,
         SectionKind::Timeline,
         SectionKind::Thread,
-        SectionKind::ToolShape,
-        SectionKind::Memory,
-        SectionKind::Skills,
         SectionKind::VaultContext,
     ];
 
@@ -1130,9 +1294,12 @@ mod tests {
         }
     }
 
-    /// What is on screen sits with the date, above everything the assistant
-    /// would have to go and look for. Both are facts about right now that no
-    /// tool can answer.
+    /// What is on screen sits with the date, ahead of anything retrieved. Both
+    /// are facts about right now that no tool can answer.
+    ///
+    /// They used to sit above the tool shape as well. They are below it now,
+    /// because the tool shape is cacheable and they are not — see
+    /// `SectionKind` for what that cost.
     #[test]
     fn what_is_on_screen_sits_with_the_date() {
         let focus = crate::syn::focus::Focus {
@@ -1157,14 +1324,16 @@ mod tests {
         let today = rendered.find("Today's date").expect("the date is there");
         let screen = rendered.find("ON SCREEN").expect("the screen is there");
         let tools = rendered.find("Tool usage guidelines:").expect("tools are there");
+        let context = rendered.find("VAULT CONTEXT").expect("context is there");
+        assert!(tools < today, "the date follows everything stable");
         assert!(today < screen, "the screen comes after the date");
-        assert!(screen < tools, "and before anything it would have to look up");
+        assert!(screen < context, "and before anything retrieved");
         assert!(rendered.contains("per-seat cho team nhỏ"), "{rendered}");
     }
 
     /// The work sits just after the screen: same situation, one level up.
     #[test]
-    fn the_work_sits_after_the_screen_and_before_the_tools() {
+    fn the_work_sits_after_the_screen_and_before_anything_retrieved() {
         let focus = crate::syn::focus::Focus {
             app: "note".into(),
             node: Some("Notes/pricing.md".into()),
@@ -1175,7 +1344,7 @@ mod tests {
             article: None,
         };
         let rendered = PromptPlan::for_chat(ChatPrompt {
-            context: "",
+            context: "some context",
             custom: None,
             skills: None,
             memory: None,
@@ -1187,9 +1356,9 @@ mod tests {
 
         let screen = rendered.find("ON SCREEN").expect("the screen is there");
         let work = rendered.find("THE WORK THIS BELONGS TO").expect("the work is there");
-        let tools = rendered.find("Tool usage guidelines:").expect("tools are there");
+        let context = rendered.find("VAULT CONTEXT").expect("context is there");
         assert!(screen < work, "the work comes after the screen");
-        assert!(work < tools, "and before the tools");
+        assert!(work < context, "and before anything retrieved");
     }
 
     /// A question asked outside any thread renders no work section — the same
@@ -1424,6 +1593,170 @@ mod tests {
         assert!(dropped.contains(&SectionKind::Memory));
         assert!(p.render().contains("Key rules:"));
         assert!(p.render().contains("Tool usage guidelines:"));
+    }
+
+    fn at(day: u32, hour: u32, minute: u32) -> chrono::DateTime<chrono::Local> {
+        use chrono::TimeZone;
+        chrono::Local
+            .with_ymd_and_hms(2026, 9, day, hour, minute, 0)
+            .single()
+            .expect("an unambiguous local time")
+    }
+
+    fn on_screen(app: &str, selection: &str) -> crate::syn::focus::Focus {
+        crate::syn::focus::Focus {
+            app: app.into(),
+            node: Some(format!("Notes/{app}.md")),
+            node_title: None,
+            selection: Some(selection.into()),
+            thread: None,
+            browsing: None,
+            article: None,
+        }
+    }
+
+    /// The point of the ordering: two turns that differ in everything a turn
+    /// can differ in send the same stable prefix, byte for byte.
+    ///
+    /// Custom instructions, skills and memory are held fixed, because those
+    /// are edits and an edit is allowed to miss the cache. Everything else —
+    /// the minute and the day, the screen, a count, the timeline, the thread,
+    /// retrieved context, where it was asked and what else is running — is
+    /// varied, and none of it may reach the prefix.
+    ///
+    /// And the prefix has to be most of the prompt when nothing was retrieved,
+    /// or it is a cache of something too small to matter. Retrieved context is
+    /// left out of that half of the claim on purpose: at the default it can be
+    /// 12,000 characters, it is different for every question, and no ordering
+    /// makes it cacheable.
+    #[test]
+    fn the_stable_half_is_byte_identical_whatever_this_turn_brings() {
+        let custom = Some("Gọi tao là anh. Trả lời ngắn.");
+        let skills = Some("\n\n=== WHAT YOU KNOW HOW TO DO ===\n- weekly-review: sums the week\n=== END ===");
+        let memory = Some("\n\n=== WHAT YOU REMEMBER ===\n- [fact] vợ dị ứng hải sản\n=== END ===");
+
+        let morning_focus = on_screen("note", "per-seat cho team nhỏ");
+        let morning = PromptPlan::for_chat_at(
+            ChatPrompt {
+                context: "",
+                custom,
+                skills,
+                memory,
+                focus: Some(&morning_focus),
+                thread: Some("\n=== THE WORK THIS BELONGS TO ===\nPricing\n"),
+                counted: Some("\n=== ALREADY COUNTED ===\n12 tasks\n"),
+                timeline: None,
+                budget_chars: DEFAULT_BUDGET_CHARS,
+            },
+            at(26, 8, 1),
+        );
+
+        let evening_focus = on_screen("task", "gọi lại cho Minh");
+        let evening = PromptPlan::for_chat_at(
+            ChatPrompt {
+                context: "",
+                custom,
+                skills,
+                memory,
+                focus: Some(&evening_focus),
+                thread: Some("\n=== THE WORK THIS BELONGS TO ===\nHiring\n"),
+                counted: Some("\n=== ALREADY COUNTED ===\n3 events\n"),
+                timeline: Some("\n=== FROM THE TIMELINE ===\n- 09:00 standup\n"),
+                budget_chars: DEFAULT_BUDGET_CHARS,
+            },
+            at(27, 21, 59),
+        )
+        .with_surface(crate::syn::surface::Surface::Telegram)
+        .with_underway(&["đọc hết feed tuần này".to_string()]);
+
+        let retrieved = PromptPlan::for_chat_at(
+            ChatPrompt {
+                context: "[[Ghi chú họp team]] mentions the pricing change",
+                custom,
+                skills,
+                memory,
+                focus: None,
+                thread: None,
+                counted: None,
+                timeline: None,
+                budget_chars: DEFAULT_BUDGET_CHARS,
+            },
+            at(28, 12, 30),
+        );
+
+        assert_ne!(morning.render(), evening.render(), "the turns really do differ");
+
+        let prefix = morning.stable_prefix();
+        assert!(prefix.contains("Tool usage guidelines:"), "tool shape is in it");
+        assert!(prefix.contains("dị ứng hải sản"), "and so is memory");
+        for other in [&evening, &retrieved] {
+            assert_eq!(other.stable_prefix(), prefix, "the stable prefix moved");
+        }
+
+        // What the provider sees is the rendered string, so the prefix has to
+        // be the literal start of it, and the seam has to be findable there.
+        for plan in [&morning, &evening, &retrieved] {
+            let rendered = plan.render();
+            assert!(rendered.starts_with(&prefix));
+            assert_eq!(split_at_turn(&rendered).0, prefix, "the seam is where the prefix ends");
+        }
+
+        for plan in [&morning, &evening] {
+            let share = prefix.chars().count() as f64 / plan.chars() as f64;
+            assert!(share > 0.5, "the stable prefix is only {:.0}% of the prompt", share * 100.0);
+        }
+    }
+
+    /// No stable section may follow one that is not, however the plan was
+    /// assembled — including by the two methods that insert after the fact.
+    ///
+    /// One late insertion in the wrong place and every stable section behind
+    /// it misses the cache, silently: the answers are the same and only the
+    /// bill changes.
+    #[test]
+    fn nothing_stable_comes_after_anything_that_is_not() {
+        let focus = on_screen("note", "x");
+        let plan = PromptPlan::for_chat(ChatPrompt {
+            context: "ctx",
+            custom: Some("be brief"),
+            skills: Some("\n\n=== WHAT YOU KNOW HOW TO DO ===\n- a\n=== END ==="),
+            memory: Some("\n\n=== WHAT YOU REMEMBER ===\n- b\n=== END ==="),
+            focus: Some(&focus),
+            thread: Some("t"),
+            counted: Some("c"),
+            timeline: Some("tl"),
+            budget_chars: DEFAULT_BUDGET_CHARS,
+        })
+        .with_surface(crate::syn::surface::Surface::Telegram)
+        .with_underway(&["something".to_string()]);
+
+        let kinds: Vec<_> = plan.breakdown().into_iter().filter(|c| !c.dropped).map(|c| c.kind).collect();
+        assert_eq!(kinds.len(), ALL.len(), "every kind is present: {kinds:?}");
+        let first_volatile = kinds.iter().position(|k| !k.is_stable()).expect("a volatile section");
+        assert!(
+            kinds[first_volatile..].iter().all(|k| !k.is_stable()),
+            "a stable section after this turn's: {kinds:?}"
+        );
+        assert_eq!(kinds[first_volatile], SectionKind::Today, "the date opens this turn");
+    }
+
+    /// The snapshot, measured: how much of the prompt a vault with nothing
+    /// remembered and nothing retrieved can cache.
+    ///
+    /// Asserted loosely and printed exactly, because the number is the reason
+    /// for the reorder and belongs somewhere a person can rerun it.
+    #[test]
+    fn most_of_the_bare_prompt_is_the_stable_prefix() {
+        let plan = PromptPlan::for_chat(ChatPrompt { context: "", custom: None, skills: None, memory: None, focus: None, thread: None, counted: None, timeline: None, budget_chars: DEFAULT_BUDGET_CHARS });
+        let stable = plan.stable_prefix().chars().count();
+        let share = stable as f64 / plan.chars() as f64;
+        eprintln!("stable prefix: {stable} of {} characters ({:.1}%)", plan.chars(), share * 100.0);
+        assert!(share > 0.9, "only {:.1}% of the bare prompt is stable", share * 100.0);
+    }
+
+    #[test]
+    fn a_prompt_with_no_seam_is_all_prefix() {
+        assert_eq!(split_at_turn("You are Syn."), ("You are Syn.", ""));
     }
 
     /// Vietnamese is where a byte-counting mistake would show up first.
