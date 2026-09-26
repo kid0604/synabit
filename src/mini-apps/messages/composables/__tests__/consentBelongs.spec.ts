@@ -83,6 +83,9 @@ describe('carrying on after the answer', () => {
     expect(askBar).toContain('<ConsentCard');
     expect(askBar).toContain('<ChoiceCard');
     expect(askBar).toContain('consentPendingIn(conversationId.value)');
-    expect(askBar).toContain('resume_run: resumeRun');
+    // Carried on through the same composable Messages uses, which sends it as
+    // `resume_run`.
+    expect(askBar).toContain('resumeRun,');
+    expect(askBar).toContain('useSynChat()');
   });
 });

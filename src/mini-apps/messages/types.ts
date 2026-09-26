@@ -55,6 +55,41 @@ export interface SynMessage {
   tool_calls_log?: SynToolCallEvent[];
   images?: string[];  // base64 encoded
   notification?: any; // The raw chat notification
+  /**
+   * The steps the run wrote down with `update_plan`, as they stood at the end.
+   * `waiting` when the turn was plan-first: nothing that changes anything has
+   * run, and the plan is there to be approved. Mirrors `models::syn::Planned`.
+   */
+  plan?: Planned | null;
+}
+
+/** One step of a run's own plan. Mirrors `syn::run::PlanStep`. */
+export interface PlanStep {
+  text: string;
+  status: 'todo' | 'doing' | 'done';
+}
+
+export interface Planned {
+  steps: PlanStep[];
+  waiting: boolean;
+}
+
+/**
+ * How far a run has got, against what it may spend. Mirrors the `syn-progress`
+ * event in `syn::engine`. A ceiling is `null` when the run has none.
+ */
+export interface RunProgress {
+  conversation_id?: string | null;
+  run_id: string;
+  round: number;
+  rounds_max: number | null;
+  tool_calls: number;
+  tool_calls_max: number | null;
+  tokens: number;
+  tokens_max: number | null;
+  /** The tool just used, when this was sent after one. */
+  tool: string | null;
+  plan_only: boolean;
 }
 
 /**

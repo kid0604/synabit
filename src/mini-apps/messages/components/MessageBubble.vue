@@ -20,7 +20,8 @@ import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
 import { mathExtension, MATH_ATTRS, renderMathIn } from '../markdownMath';
 import 'katex/dist/katex.min.css';
-import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard } from 'lucide-vue-next';
+import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard, ListChecks } from 'lucide-vue-next';
+import PlanList from '../../../shared/syn/PlanList.vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
@@ -138,11 +139,15 @@ const props = defineProps<{
   message: SynMessage;
   isStreaming?: boolean;
   vaultPath?: string;
+  /** This answer is the plan the conversation is waiting on. See `Planned`. */
+  canApprovePlan?: boolean;
 }>();
 
 const emit = defineEmits<{
   'open-source': [source: SourceRef];
   'regenerate': [];
+  /** Carry out the plan this answer wrote. */
+  'approve-plan': [];
   /** The drawn diagram, to be arranged by hand. See `keepAsBoard`. */
   'arrange': [svg: string, title: string];
   /** A board the answer names, opened beside the conversation. */
@@ -962,6 +967,31 @@ const copyContent = async () => {
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- The plan the run wrote down, kept under the answer it produced.
+             A plan-first turn's is waiting: nothing that changes anything has
+             run, and approving it is one press rather than retyping it. -->
+        <div
+          v-if="message.role === 'assistant' && message.plan?.steps.length"
+          class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50 space-y-2"
+        >
+          <h3 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+            <ListChecks class="w-3.5 h-3.5" aria-hidden="true" />
+            {{ $t('syn.plan_title') }}
+          </h3>
+          <PlanList :steps="message.plan.steps" />
+          <template v-if="message.plan.waiting">
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('syn.plan_waiting') }}</p>
+            <button
+              v-if="canApprovePlan"
+              type="button"
+              class="px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
+              @click="emit('approve-plan')"
+            >
+              {{ $t('syn.plan_go') }}
+            </button>
+          </template>
         </div>
 
         <!-- What this answer stood on, and what it can point at. One rule

@@ -285,12 +285,13 @@ describe('saying how heavy a turn is', () => {
 
   it('is listened for, not inferred', () => {
     expect(chat, 'the composable subscribes').toContain("'syn-tempo'");
-    expect(bar, 'and so does the bar').toContain("'syn-tempo'");
+    // The bar used to keep its own copy of every listener, which is how it
+    // missed permission cards and plans. It shares the composable now.
+    expect(bar, 'and the bar hears it through the same one').toContain('useSynChat()');
   });
 
   it('is forgotten at the start of each turn', () => {
     expect(chat).toContain('tempo.value = null');
-    expect(bar).toContain('tempo.value = null');
   });
 
   /** An instant turn says so instead of showing work that is not happening. */

@@ -2,12 +2,13 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useThrottleFn } from '@vueuse/core';
 import { useI18n } from 'vue-i18n';
-import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle } from 'lucide-vue-next';
+import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle, ListChecks } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer, AmbiguousChoice, Tempo } from '../types';
+import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer, AmbiguousChoice, Tempo, PlanStep, RunProgress as Progress } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
+import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
 import ChoiceCard from './ChoiceCard.vue';
 import NotificationCard from './NotificationCard.vue';
@@ -22,6 +23,10 @@ const props = defineProps<{
   toolCalls?: SynToolCallEvent[];
   /** How heavy this turn is, once the backend has said. See `syn::tempo`. */
   tempo?: Tempo | null;
+  /** The run's own plan, while it works. See `update_plan`. */
+  plan?: PlanStep[];
+  /** How far the run has got, against its ceilings. See `syn-progress`. */
+  progress?: Progress | null;
   vaultPath?: string;
   connectionLost?: boolean;
   chatError?: string | null;
@@ -33,7 +38,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  send: [message: string, images?: string[]];
+  send: [message: string, images?: string[], planOnly?: boolean];
+  /** Carry out the plan the last answer is waiting on. */
+  'approve-plan': [];
   stop: [];
   'open-source': [source: SourceRef];
   'regenerate': [messageId: string];
@@ -47,6 +54,21 @@ const emit = defineEmits<{
 }>();
 
 const inputText = ref('');
+
+/**
+ * Plan first, for the next question only.
+ *
+ * One question rather than a mode the composer stays in: a person who asked
+ * for a plan and approved it does not want the approval itself planned, and a
+ * switch that stays on is one that gets forgotten on.
+ */
+const planFirst = ref(false);
+
+/** The last answer, if it is a plan still waiting to be approved. */
+const waitingPlanId = computed(() => {
+  const last = props.messages[props.messages.length - 1];
+  return last?.role === 'assistant' && last.plan?.waiting ? last.id : null;
+});
 const messagesContainer = ref<HTMLElement | null>(null);
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
@@ -265,7 +287,8 @@ const handleSend = () => {
   if (!text && pendingImages.value.length === 0) return;
   if (props.isStreaming) return;
 
-  emit('send', text, pendingImages.value.length ? [...pendingImages.value] : undefined);
+  emit('send', text, pendingImages.value.length ? [...pendingImages.value] : undefined, planFirst.value || undefined);
+  planFirst.value = false;
   inputText.value = '';
   pendingImages.value = [];
   if (textareaRef.value) {
@@ -355,12 +378,18 @@ const handleStop = () => {
             v-else
             :message="msg"
             :vault-path="vaultPath"
+            :can-approve-plan="msg.id === waitingPlanId && !isStreaming"
+            @approve-plan="emit('approve-plan')"
             @open-source="$emit('open-source', $event)"
             @regenerate="$emit('regenerate', msg.id)"
             @arrange="(svg, title) => $emit('arrange', svg, title)"
             @open-board="(board) => $emit('open-board', board)"
           />
         </template>
+
+        <!-- What the run is doing, while it does it: its plan, the step in
+             words, and how much of its allowance is gone. See RunProgress. -->
+        <RunProgress v-if="isStreaming" :plan="plan ?? []" :progress="progress ?? null" />
 
         <!-- Streaming message -->
         <MessageBubble
@@ -484,6 +513,22 @@ const handleStop = () => {
                 :title="$t('syn.attach_image')"
               >
                 <ImagePlus class="w-5 h-5" />
+              </button>
+
+              <!-- Plan first. A toggle, so its state is announced as pressed
+                   or not rather than living only in a colour. -->
+              <button
+                type="button"
+                @click="planFirst = !planFirst"
+                :aria-pressed="planFirst"
+                class="flex items-center gap-1 px-2 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-violet-500"
+                :class="planFirst
+                  ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300'
+                  : 'text-gray-400 dark:text-gray-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
+                :title="$t('syn.plan_toggle_hint')"
+              >
+                <ListChecks class="w-4 h-4" aria-hidden="true" />
+                <span>{{ $t('syn.plan_toggle') }}</span>
               </button>
 
               <!-- Send / Stop -->

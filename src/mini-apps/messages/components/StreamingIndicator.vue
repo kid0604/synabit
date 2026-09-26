@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { Wrench, Zap } from 'lucide-vue-next';
+import { useI18n } from 'vue-i18n';
 import type { SynToolCallEvent, Tempo } from '../types';
+import { toolLabel } from '../../../shared/syn/toolLabel';
+
+const { t } = useI18n();
 
 defineProps<{
   toolCalls?: SynToolCallEvent[];
@@ -21,8 +25,8 @@ defineProps<{
     <!-- Tool calls in progress -->
     <div v-if="toolCalls?.length" class="flex items-center gap-2">
       <Wrench class="w-4 h-4 text-violet-500 animate-tool-spin" />
-      <span class="text-sm text-violet-500 font-medium font-mono">
-        {{ toolCalls[toolCalls.length - 1].tool_name }}
+      <span class="text-sm text-violet-500 font-medium">
+        {{ toolLabel(t, toolCalls[toolCalls.length - 1].tool_name) }}
       </span>
     </div>
     <!-- Answered from the index: one round, no tools. Saying so is the point —
@@ -53,7 +57,7 @@ defineProps<{
     <span class="text-sm text-gray-500 dark:text-gray-400 italic">
       {{
         toolCalls?.length
-          ? `${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}...`
+          ? $t('syn.tool_calls_count', { n: toolCalls.length }, toolCalls.length)
           : tempo === 'instant'
             ? ''
             : tempo === 'working'

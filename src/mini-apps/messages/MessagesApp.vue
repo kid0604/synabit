@@ -97,15 +97,10 @@ const onConsent = async (choice: ConsentAnswer) => {
   const last = activeMessages.value[activeMessages.value.length - 1];
   if (onScreen() && last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
 
-  const response = await sendMessage(
-    props.vaultPath,
-    id,
-    '',
-    selectedModel.value || undefined,
-    undefined,
-    undefined,
-    stopped,
-  );
+  const response = await sendMessage(props.vaultPath, id, '', {
+    model: selectedModel.value || undefined,
+    resumeRun: stopped,
+  });
   if (response && onScreen()) {
     activeMessages.value.push(response);
     clearStreaming();
@@ -221,6 +216,8 @@ const {
   isStreaming,
   toolCalls,
   tempo,
+  plan,
+  progress,
   error: chatError,
   sendMessage,
   stopGeneration,
@@ -418,7 +415,7 @@ const reallyDeleteConversation = async (id: string) => {
 };
 
 // Send message
-const handleSendMessage = async (text: string, images?: string[], replacing?: string) => {
+const handleSendMessage = async (text: string, images?: string[], replacing?: string, planOnly?: boolean) => {
   // Typing into an empty screen starts a conversation rather than refusing.
   let id = activeConversationId.value;
   if (!id) id = await createConversation();
@@ -439,16 +436,12 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   };
   activeMessages.value.push(userMessage);
 
-  const response = await sendMessage(
-    props.vaultPath,
-    id,
-    cleanText,
-    selectedModel.value || undefined,
-    undefined,
+  const response = await sendMessage(props.vaultPath, id, cleanText, {
+    model: selectedModel.value || undefined,
     images,
-    undefined,
-    replacing
-  );
+    replacing,
+    planOnly,
+  });
 
   if (response) {
     activeMessages.value.push(response);
@@ -1138,12 +1131,15 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :is-streaming="isStreaming"
                   :tool-calls="toolCalls"
                   :tempo="tempo"
+                  :plan="plan"
+                  :progress="progress"
                   :vault-path="vaultPath"
                   :connection-lost="!status.connected"
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
                   :choice-ask="choiceHere?.choice ?? null"
-                  @send="handleSendMessage"
+                  @send="(text, images, planOnly) => handleSendMessage(text, images, undefined, planOnly)"
+                  @approve-plan="handleSendMessage(t('syn.plan_go_message'))"
                   @stop="stopGeneration"
                   @open-source="handleOpenSource"
                   @arrange="handleArrange"

@@ -28,7 +28,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { useI18n } from 'vue-i18n';
-import { X, CornerDownLeft, Loader2, ArrowUpRight, GitBranch, Plus, Check, Zap } from 'lucide-vue-next';
+import { X, CornerDownLeft, Loader2, ArrowUpRight, GitBranch, Plus, Check, Zap, ListChecks } from 'lucide-vue-next';
 
 import { logger } from '../../utils/logger';
 import { describeFocus, type SynFocus } from './focus';
@@ -38,7 +38,10 @@ import { useSynConsent } from '../../mini-apps/messages/composables/useSynConsen
 import { useSynChoice } from '../../mini-apps/messages/composables/useSynChoice';
 import ConsentCard from '../../mini-apps/messages/components/ConsentCard.vue';
 import ChoiceCard from '../../mini-apps/messages/components/ChoiceCard.vue';
-import type { ConsentAnswer } from '../../mini-apps/messages/types';
+import type { ConsentAnswer, SynMessage } from '../../mini-apps/messages/types';
+import { useSynChat } from '../../mini-apps/messages/composables/useSynChat';
+import RunProgress from './RunProgress.vue';
+import PlanList from './PlanList.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -71,24 +74,33 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const question = ref('');
-const answer = ref('');
-const busy = ref(false);
-const working = ref<string | null>(null);
 /**
- * How heavy this turn is, once the backend has said.
- *
- * The bar is where a wrong impression costs most: it is summoned mid-sentence,
- * so a spinner that implies work for a count answered from the index is the
- * difference between reaching for it again and not.
+ * The turn itself — streaming, tempo, tools, the run's plan and progress —
+ * from the same composable Messages uses. The bar kept its own copy of all of
+ * it once, and that copy is why it never learned about permission cards or
+ * plans: every new thing a turn could say had to be taught twice.
  */
-const tempo = ref<'instant' | 'working' | null>(null);
+const {
+  streamingContent,
+  tempo,
+  plan,
+  progress,
+  error: chatError,
+  sendMessage,
+  stopGeneration,
+  clearStreaming,
+} = useSynChat();
+/** The answer as the backend returned it, which is always the right one. */
+const finalAnswer = ref('');
+/** The whole answer, plan included, once the turn is over. */
+const answered = ref<SynMessage | null>(null);
+const answer = computed(() => finalAnswer.value || streamingContent.value);
+const busy = ref(false);
 const failed = ref<string | null>(null);
 const conversationId = ref<string | null>(null);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
-
-let stopStream: (() => void) | null = null;
-let stopTools: (() => void) | null = null;
-let stopTempo: (() => void) | null = null;
+/** Plan first, for the next question only. See `ChatPanel.planFirst`. */
+const planFirst = ref(false);
 
 const picked = computed(() => describeFocus(props.focus));
 
@@ -158,21 +170,12 @@ const rendered = computed(() => {
  */
 const reset = () => {
   question.value = '';
-  answer.value = '';
-  working.value = null;
+  finalAnswer.value = '';
+  answered.value = null;
   failed.value = null;
   conversationId.value = null;
-  tempo.value = null;
-  detach();
-};
-
-const detach = () => {
-  stopStream?.();
-  stopTools?.();
-  stopTempo?.();
-  stopStream = null;
-  stopTools = null;
-  stopTempo = null;
+  planFirst.value = false;
+  clearStreaming();
 };
 
 const close = () => {
@@ -208,10 +211,10 @@ const conversation = async (): Promise<string> => {
   return conv.id;
 };
 
-const ask = async () => {
+const ask = async (said?: string) => {
   // The same rule as the Messages composer: indentation and blank lines inside
   // the question are kept. See `composerText.ts`.
-  const text = tidyComposerText(question.value);
+  const text = tidyComposerText(said ?? question.value);
   if (!text || busy.value) return;
 
   // Busy from the keypress, not from when the conversation exists: a second
@@ -238,68 +241,35 @@ const ask = async () => {
  */
 const send = async (id: string, text: string, resumeRun?: string) => {
   busy.value = true;
-  answer.value = '';
+  finalAnswer.value = '';
+  answered.value = null;
   failed.value = null;
-  working.value = null;
-  tempo.value = null;
+  const planOnly = planFirst.value;
+  planFirst.value = false;
 
   try {
-    // Listened for here rather than in a shared composable because this bar
-    // shows one exchange and nothing else: no message list to append to, no
-    // ids to match up beyond its own.
-    const { listen } = await import('@tauri-apps/api/event');
-    detach();
-    stopStream = await listen<{ conversation_id: string; token: string; done: boolean }>(
-      'syn-stream-token',
-      (event) => {
-        if (event.payload.conversation_id !== id) return;
-        if (event.payload.done) {
-          busy.value = false;
-          working.value = null;
-        } else {
-          working.value = null;
-          answer.value += event.payload.token;
-        }
-      },
-    );
-    stopTempo = await listen<{ conversation_id: string; tempo: 'instant' | 'working' }>(
-      'syn-tempo',
-      (event) => {
-        if (event.payload.conversation_id !== id) return;
-        tempo.value = event.payload.tempo;
-      },
-    );
-    stopTools = await listen<{ conversation_id: string; tool_name: string }>(
-      'syn-tool-call',
-      (event) => {
-        if (event.payload.conversation_id !== id) return;
-        // One line, replaced each time. A running list of tool names is a
-        // transcript, and the transcript already exists in the run panel.
-        working.value = event.payload.tool_name;
-      },
-    );
-
     if (!resumeRun) question.value = '';
-    const reply = await invoke<{ content: string }>('syn_send_message', {
-      vaultPath: props.vaultPath,
-      request: {
-        conversation_id: id,
-        message: text,
-        focus: props.focus,
-        resume_run: resumeRun,
-      },
+    const reply = await sendMessage(props.vaultPath, id, text, {
+      focus: props.focus,
+      resumeRun,
+      planOnly: planOnly || undefined,
     });
-
     // Ollama cannot stream a turn that used tools, so the streamed text may
     // never have arrived. The returned message is the one that is always right.
-    if (reply?.content) answer.value = reply.content;
-  } catch (e: unknown) {
-    logger.error('[Syn] The ask bar could not get an answer', e);
-    failed.value = (e as { message?: string })?.message ?? String(e);
+    if (reply) {
+      finalAnswer.value = reply.content;
+      answered.value = reply;
+    } else if (chatError.value) {
+      failed.value = chatError.value;
+    }
   } finally {
     busy.value = false;
-    working.value = null;
   }
+};
+
+/** Carry out the plan the last answer is waiting on. */
+const approvePlan = () => {
+  if (conversationId.value) void send(conversationId.value, t('syn.plan_go_message'));
 };
 
 /**
@@ -332,14 +302,8 @@ const onChoice = async (nodeId: string) => {
 };
 
 const stop = async () => {
-  try {
-    await invoke('syn_stop_generation', { conversationId: conversationId.value ?? undefined });
-  } catch (e) {
-    logger.error('[Syn] Could not stop', e);
-  } finally {
-    busy.value = false;
-    working.value = null;
-  }
+  await stopGeneration();
+  busy.value = false;
 };
 
 // ─── The thread this question belongs to ─────────────────────
@@ -455,7 +419,11 @@ const onKeydown = (event: KeyboardEvent) => {
       v-if="open"
       class="fixed inset-x-0 bottom-0 z-[70] flex justify-center px-4 pb-5 pointer-events-none"
     >
+      <!-- A dialog that does not trap: the work behind it stays usable, which
+           is the point of a bar rather than a window, so no aria-modal. -->
       <div
+        role="dialog"
+        :aria-label="t('syn.ask_placeholder')"
         class="pointer-events-auto w-full max-w-2xl rounded-2xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-[#1c1c1e]/95 backdrop-blur-xl shadow-2xl overflow-hidden"
       >
         <!-- What Syn came back with. Above the input, so the question stays
@@ -470,24 +438,35 @@ const onKeydown = (event: KeyboardEvent) => {
             <ConsentCard v-if="consentHere" :ask="consentHere.ask" @answer="onConsent" />
           </div>
 
+          <!-- What the run is doing: its plan, the step in words, how much
+               of its allowance is gone. The same panel Messages shows. -->
+          <RunProgress v-if="busy" class="mb-3" :plan="plan" :progress="progress" />
+
           <div
-            v-else-if="rendered"
+            v-if="rendered && !(choiceHere || consentHere)"
             class="prose prose-sm dark:prose-invert max-w-none text-[14px] leading-relaxed"
             v-html="rendered"
           ></div>
 
-          <p
-            v-else-if="working"
-            class="flex items-center gap-2 text-[13px] text-gray-500 dark:text-gray-400"
-          >
-            <Loader2 class="w-3.5 h-3.5 animate-spin" />
-            {{ t('syn.ask_working', { tool: working }) }}
-          </p>
+          <!-- A plan-first answer, waiting to be approved. -->
+          <div v-if="!busy && answered?.plan?.steps.length" class="mt-3 space-y-2">
+            <PlanList :steps="answered.plan.steps" />
+            <template v-if="answered.plan.waiting">
+              <p class="text-[12px] text-gray-500 dark:text-gray-400">{{ t('syn.plan_waiting') }}</p>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-violet-600 hover:bg-violet-700 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
+                @click="approvePlan"
+              >
+                {{ t('syn.plan_go') }}
+              </button>
+            </template>
+          </div>
 
           <!-- Answered from the index: one round, no tools. A spinner here
                would imply work that is not happening. -->
           <p
-            v-else-if="busy && tempo === 'instant'"
+            v-if="busy && !rendered && tempo === 'instant'"
             class="flex items-center gap-2 text-[13px] text-emerald-600 dark:text-emerald-400"
           >
             <Zap class="w-3.5 h-3.5" />
@@ -495,7 +474,7 @@ const onKeydown = (event: KeyboardEvent) => {
           </p>
 
           <p
-            v-else-if="busy"
+            v-else-if="busy && !rendered && !progress"
             class="flex items-center gap-2 text-[13px] text-gray-500 dark:text-gray-400"
           >
             <Loader2 class="w-3.5 h-3.5 animate-spin" />
@@ -620,6 +599,18 @@ const onKeydown = (event: KeyboardEvent) => {
             </template>
             <template v-else>{{ t('syn.ask_sees_nothing') }}</template>
           </span>
+
+          <button
+            type="button"
+            class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-violet-500"
+            :class="planFirst ? 'text-violet-600 dark:text-violet-400' : ''"
+            :aria-pressed="planFirst"
+            :title="t('syn.plan_toggle_hint')"
+            @click="planFirst = !planFirst"
+          >
+            <ListChecks class="w-3 h-3" aria-hidden="true" />
+            {{ t('syn.plan_toggle') }}
+          </button>
 
           <span class="shrink-0 inline-flex items-center gap-1">
             <template v-if="busy">{{ t('syn.ask_esc_stops') }}</template>
