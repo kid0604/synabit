@@ -437,16 +437,18 @@ mod tests {
     #[test]
     fn an_instant_turn_has_no_tools_and_one_round() {
         let source = include_str!("../commands/syn.rs");
-        let block = source
-            .split("let instant = counted.is_some();")
+        assert!(
+            source.contains("if gathered.counted.is_some() { Registry::none() }"),
+            "an instant turn is offered no tools"
+        );
+        let start_run = source
+            .split("fn start_run(")
             .nth(1)
-            .expect("the instant decision is still made")
-            .split("let mut run = Run::new")
+            .expect("the run is still built in start_run")
+            .split("\n}\n")
             .next()
-            .expect("and a run is still built after it");
-
-        assert!(block.contains("Registry::none()"), "no tools:\n{block}");
-        assert!(block.contains("iterations = Some(1)"), "one round:\n{block}");
+            .expect("a body");
+        assert!(start_run.contains("if instant {") && start_run.contains("iterations = Some(1)"), "one round:\n{start_run}");
     }
 
     /// A count that reaches the model must not also be droppable, or a tight

@@ -523,13 +523,17 @@ mod tests {
     /// there has to be one more write after it. Nothing fails to compile if
     /// that write goes away, and nothing fails at run time either — the screen
     /// simply goes quiet and stays quiet.
+    ///
+    /// That only an answered turn is marked, and only an answered turn gets
+    /// sources, are tested by what `commands::syn::settle` does rather than by
+    /// reading it — see `send_steps` there.
     #[test]
     fn the_send_path_writes_the_run_again_once_the_footing_is_known() {
         let source = include_str!("../commands/syn.rs");
         let after = source
-            .split("run.footing = Some(footing);")
+            .split("settle(&mut run, &mut assistant_message")
             .nth(1)
-            .expect("the footing is still decided there");
+            .expect("the footing is still settled there");
 
         assert!(
             after
@@ -538,51 +542,6 @@ mod tests {
                 .unwrap_or(after)
                 .contains("save_run_best_effort"),
             "the run has to be written again after its footing is decided"
-        );
-    }
-
-    /// A run that never answered has no answer to be standing on anything.
-    ///
-    /// Writing the footing down revealed this immediately: of six runs in one
-    /// conversation, four were consent stops with no reply at all, and each
-    /// arrived in the tally as a measured answer. `tally` is asked "how often
-    /// was Syn guessing" — a run that said nothing is not an instance of
-    /// anything, and counting it makes the only number on that screen wrong.
-    #[test]
-    fn the_send_path_only_marks_a_turn_that_actually_answered() {
-        let source = include_str!("../commands/syn.rs");
-        let at = source
-            .find("run.footing = Some(footing);")
-            .expect("the footing is still decided there");
-        let before = &source[..at];
-
-        let guard = before
-            .rfind("if !assistant_message.content.trim().is_empty() {")
-            .expect("the footing has to be decided only for a turn that said something");
-
-        assert!(
-            !before[guard..].contains("\n    }"),
-            "the guard must still be open where the footing is set"
-        );
-    }
-
-    /// And no sources under a turn that did not answer, by the same test.
-    ///
-    /// A consent stop was getting the ten notes retrieval had found pinned
-    /// under its empty bubble. When the resumed run then failed, that bubble
-    /// was all the conversation kept — no answer, and ten sources for it,
-    /// none of them about the question.
-    #[test]
-    fn the_send_path_only_cites_under_a_turn_that_actually_answered() {
-        let source = include_str!("../commands/syn.rs");
-        let at = source
-            .find("assistant_message.sources = Some(retrieval.sources);")
-            .expect("retrieved sources are still attached there");
-        let condition = &source[source[..at].rfind("if ").expect("under a condition")..at];
-
-        assert!(
-            condition.contains("!assistant_message.content.trim().is_empty()"),
-            "sources go only under a turn that said something: {condition}"
         );
     }
 }

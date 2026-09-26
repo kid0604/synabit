@@ -359,7 +359,7 @@ pub async fn send_message_inner(
         return Err(AppError::General(SWITCHED_OFF.to_string()));
     }
 
-    // 2. Load existing conversation
+    // 2. The conversation, and which model answers in it.
     //
     // Under the conversation's lock, and only for the read: the run below may
     // take minutes, and another message on this conversation — a phone sending
@@ -369,16 +369,80 @@ pub async fn send_message_inner(
     let held = conversation::hold(&request.conversation_id).await;
     let mut conv = conversation::get_conversation(vault_path, &request.conversation_id)?;
     drop(held);
+    let model = choose_model(&request, &conv, &settings);
 
-    // Which model to use: what this send asked for, then what the conversation
-    // has been using, then the vault default.
-    //
-    // The conversation's pin is only honoured while it still means something.
-    // A model name is only valid for the provider it came from — `gemma4:e4b`
-    // is a real model on Ollama and a 404 on OpenAI — so a conversation
-    // started under a different provider has its pin ignored rather than sent
-    // to an endpoint that has never heard of it. A conversation written before
-    // providers existed records none, and those were all Ollama.
+    // 3. The question, as it goes into the conversation.
+    let turn = open_turn(&mut conv, &request)?;
+    let question = turn.question.clone();
+
+    // 4. Everything the prompt is built from.
+    let gathered = gather(app, state.inner(), vault_path, &settings, &request, &question, &conv.messages)?;
+
+    // 5–6. The prompt, and the history it goes out with.
+    let messages_for_llm = messages_for(app, vault_path, &settings, &request, surface, &gathered, &conv.messages);
+
+    // 7–8. What this run may reach, and the run itself.
+    let (mut run, resume_call) = start_run(app, vault_path, &settings, &request, surface, &question, gathered.counted.is_some());
+    // Nothing, when the count is already in the prompt. A turn with tools would
+    // spend a round deciding not to use them, which is the cost this tempo
+    // exists to remove — see `syn::tempo`.
+    let registry = if gathered.counted.is_some() { Registry::none() } else { Registry::for_chat() };
+    // Use settings temperature as default, allow per-request override
+    let temperature = request.temperature.or(Some(settings.temperature));
+
+    let engine = SynEngine::new(provider_for(app, &settings).await);
+    let assistant_message_id = uuid::Uuid::new_v4().to_string();
+
+    let mut assistant_message = engine
+        .drive(
+            &mut run,
+            DriveRequest {
+                app,
+                message_id: &assistant_message_id,
+                history: &messages_for_llm,
+                model: &model,
+                temperature,
+                registry: &registry,
+                db: state.inner(),
+                vault_path,
+                num_ctx: settings.num_ctx,
+                max_history: settings.max_history_messages,
+                browser: &browser_state,
+                resume_call,
+            },
+        )
+        .await?;
+
+    // 9. What the answer stands on.
+    settle(&mut run, &mut assistant_message, gathered.retrieval, &request.conversation_id);
+    if !assistant_message.content.trim().is_empty() {
+        // Written down, or it was never decided. `drive` saved the run for the
+        // last time before `settle` existed, so the footing was computed, put
+        // on a struct that nothing saved again, and dropped — every run on disk
+        // read `null`, and `footing::tally` counted the vault's whole history
+        // as unmeasured.
+        crate::syn::run::save_run_best_effort(vault_path, &run);
+    }
+
+    // 10. Into the conversation file.
+    let conv = write_turn(vault_path, &request, surface, conv, turn, &assistant_message, &model, &settings).await?;
+
+    // 11. Look back at the exchange, in the background.
+    reflect_after(app, state.inner(), vault_path, &settings, &model, &question, &assistant_message, &conv, &run, &request.conversation_id).await;
+
+    Ok(assistant_message)
+}
+
+/// Which model answers: what this send asked for, then what the conversation
+/// has been using, then the vault default.
+///
+/// The conversation's pin is only honoured while it still means something.
+/// A model name is only valid for the provider it came from — `gemma4:e4b`
+/// is a real model on Ollama and a 404 on OpenAI — so a conversation
+/// started under a different provider has its pin ignored rather than sent
+/// to an endpoint that has never heard of it. A conversation written before
+/// providers existed records none, and those were all Ollama.
+fn choose_model(request: &SynChatRequest, conv: &SynConversationFull, settings: &SynSettings) -> String {
     let pinned_provider = conv.meta.provider.unwrap_or(SynProvider::Ollama);
     let conversation_model = if pinned_provider == settings.provider {
         conv.meta.model.clone()
@@ -394,31 +458,39 @@ pub async fn send_message_inner(
         None
     };
 
-    let model = request
+    request
         .model
         .clone()
         .or(conversation_model)
         .or_else(|| settings.default_model.clone())
-        .unwrap_or_else(|| "llama3.2".to_string());
+        .unwrap_or_else(|| "llama3.2".to_string())
+}
 
-    // 3. Create and append the user message — unless this is the same question
-    //    being carried on after Syn stopped to ask permission.
-    //
-    //    Carrying on is not a new turn. Nobody typed anything: they pressed a
-    //    button on a card, and the question still on the table is the one they
-    //    already asked. Appending "" as a user message would put an empty
-    //    bubble in the conversation and hand the model a turn with nothing in
-    //    it. See `syn_answer_consent`.
-    let carrying_on = request.resume_run.as_deref();
-    // The empty turn a stopped run left, which this answer will replace.
-    let mut placeholder: Option<String> = None;
-    // The question as it goes into the file, when it is a new one.
-    let mut asked: Option<SynMessage> = None;
-    let question = if carrying_on.is_some() {
+/// The question this send asks, and what it changes in the conversation.
+struct Turn {
+    /// The words the run is about.
+    question: String,
+    /// The user message to write, when it is a new one.
+    asked: Option<SynMessage>,
+    /// The empty turn a stopped run left, which this answer will replace.
+    placeholder: Option<String>,
+}
+
+/// Open the turn: append the question — unless this is the same question
+/// being carried on after Syn stopped to ask permission.
+///
+/// Carrying on is not a new turn. Nobody typed anything: they pressed a
+/// button on a card, and the question still on the table is the one they
+/// already asked. Appending "" as a user message would put an empty bubble
+/// in the conversation and hand the model a turn with nothing in it. See
+/// `syn_answer_consent`.
+fn open_turn(conv: &mut SynConversationFull, request: &SynChatRequest) -> Result<Turn, AppError> {
+    if request.resume_run.is_some() {
         // The stopped run left an assistant turn with no words in it — that is
         // what `LoopEnd::NeedsConsent` assembles. Dropped rather than kept:
         // sending it back to the model is a turn that says nothing, and some
         // providers refuse an empty assistant message outright.
+        let mut placeholder = None;
         if conv
             .messages
             .last()
@@ -432,38 +504,60 @@ pub async fn send_message_inner(
                 "There is nothing to carry on with in this conversation".to_string(),
             ));
         };
-        asked.content.clone()
-    } else {
-        // Asked again: the old pair goes, so it is neither shown twice nor sent
-        // back as the thing to improve on. An id that is not an answer in this
-        // conversation is ignored rather than refused — the question still
-        // deserves one. See `SynChatRequest::replacing`.
-        if let Some(answer) = request.replacing.as_deref() {
-            if let Some(at) = conv.messages.iter().position(|m| m.id == answer && m.role == "assistant") {
-                let from = conv.messages[..at].iter().rposition(|m| m.role == "user").unwrap_or(at);
-                conv.messages.truncate(from);
-            }
+        return Ok(Turn { question: asked.content.clone(), asked: None, placeholder });
+    }
+
+    // Asked again: the old pair goes, so it is neither shown twice nor sent
+    // back as the thing to improve on. An id that is not an answer in this
+    // conversation is ignored rather than refused — the question still
+    // deserves one. See `SynChatRequest::replacing`.
+    if let Some(answer) = request.replacing.as_deref() {
+        if let Some(at) = conv.messages.iter().position(|m| m.id == answer && m.role == "assistant") {
+            let from = conv.messages[..at].iter().rposition(|m| m.role == "user").unwrap_or(at);
+            conv.messages.truncate(from);
         }
+    }
 
-        let user_message = SynMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            role: "user".to_string(),
-            content: request.message.clone(),
-            model: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            tokens: None,
-            duration_ms: None,
-            sources: None,
-            footing: None,
-            tool_calls_log: None,
-            images: request.images.clone(),
-        };
-        conv.messages.push(user_message.clone());
-        asked = Some(user_message);
-        request.message.clone()
+    let user_message = SynMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        role: "user".to_string(),
+        content: request.message.clone(),
+        model: None,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        tokens: None,
+        duration_ms: None,
+        sources: None,
+        footing: None,
+        tool_calls_log: None,
+        images: request.images.clone(),
     };
+    conv.messages.push(user_message.clone());
+    Ok(Turn { question: request.message.clone(), asked: Some(user_message), placeholder: None })
+}
 
-    // 4. Build RAG config from settings and run retrieval
+/// Everything the prompt is built from, read in one go.
+struct Gathered {
+    retrieval: crate::models::syn::RetrievalResult,
+    context: String,
+    remembered: Option<String>,
+    skill_index: Option<String>,
+    thread_block: Option<String>,
+    /// The count, when the index already answers the question. Its presence
+    /// is what makes this an instant turn. See `syn::tempo`.
+    counted: Option<String>,
+    timeline_block: Option<String>,
+}
+
+/// Step 4: retrieval, memory, skills, the thread, the count and the timeline.
+fn gather(
+    app: &tauri::AppHandle,
+    state: &crate::db::DbState,
+    vault_path: &str,
+    settings: &SynSettings,
+    request: &SynChatRequest,
+    question: &str,
+    history: &[SynMessage],
+) -> Result<Gathered, AppError> {
     let config = if settings.rag_enabled {
         RagConfig {
             enabled: true,
@@ -484,116 +578,111 @@ pub async fn send_message_inner(
     // of a tool: `recall` went uncalled in fifteen runs of fifteen. Read before
     // the vault cache is locked below, because the timeline's lock is always
     // taken first. See `timeline::asked`.
-    let asked_about = crate::timeline::asked::span_in(&question, chrono::Local::now().date_naive());
+    let asked_about = crate::timeline::asked::span_in(question, chrono::Local::now().date_naive());
     let events: Option<Vec<crate::timeline::store::Event>> = asked_about.as_ref().and_then(|asked| {
         use tauri::Manager;
         let timeline = app.state::<crate::timeline::TimelineState>();
         let mut store = timeline.lock().unwrap_or_else(|e| e.into_inner());
-        crate::timeline::store::catch_up_in(&*state, &mut store, Some(vault_path))
+        crate::timeline::store::catch_up_in(state, &mut store, Some(vault_path))
             .and_then(|_| store.query(asked.span, chrono::Local::now().date_naive()))
             .map_err(|e| log::warn!("[Syn] Could not read the timeline: {e}"))
             .ok()
     });
 
     // Retrieval, memory and the skill index in one lock: they are all reads,
-    // and the lock has to be gone before anything async below.
-    let (retrieval, context_str, remembered, skill_index, thread_block, counted, timeline_block) = {
-        let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+    // and the lock has to be gone before anything async.
+    let db = state
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
 
-        // What the timeline holds for the time asked about.
-        let timeline_block = asked_about.as_ref().zip(events.as_ref()).map(|(asked, items)| {
-            let shown: Vec<_> = items.to_vec();
-            let named = crate::timeline::store::names_in(&db, &shown);
-            crate::timeline::asked::block(asked, &shown, &named)
+    // What the timeline holds for the time asked about.
+    let timeline_block = asked_about.as_ref().zip(events.as_ref()).map(|(asked, items)| {
+        let shown: Vec<_> = items.to_vec();
+        let named = crate::timeline::store::names_in(&db, &shown);
+        crate::timeline::asked::block(asked, &shown, &named)
+    });
+
+    // What Syn remembers is not conditional on `rag_enabled`. That setting
+    // is about searching the vault for this question; a pinned memory is
+    // what Syn knows about the person, and turning off retrieval should not
+    // give them an assistant that has forgotten their name.
+    let remembered = crate::syn::memory::all(&db)
+        .map(|memories| crate::syn::memory::memory_block(&memories, crate::syn::memory::MEMORY_BUDGET_CHARS))
+        .unwrap_or_else(|e| {
+            // Best effort: an unreadable memory store is a reason to answer
+            // without it, not a reason to refuse the message.
+            log::warn!("[Syn] Could not read memories: {e}");
+            None
         });
 
-        // What Syn remembers is not conditional on `rag_enabled`. That setting
-        // is about searching the vault for this question; a pinned memory is
-        // what Syn knows about the person, and turning off retrieval should not
-        // give them an assistant that has forgotten their name.
-        let remembered = crate::syn::memory::all(&db)
-            .map(|memories| {
-                crate::syn::memory::memory_block(
-                    &memories,
-                    crate::syn::memory::MEMORY_BUDGET_CHARS,
-                )
-            })
-            .unwrap_or_else(|e| {
-                // Best effort: an unreadable memory store is a reason to answer
-                // without it, not a reason to refuse the message.
-                log::warn!("[Syn] Could not read memories: {e}");
-                None
-            });
+    // The skill index, on the same terms. Only what the user enabled is
+    // named, because a name in this list is an invitation.
+    let skill_index = crate::syn::skill::all(&db)
+        .map(|skills| crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS))
+        .unwrap_or_else(|e| {
+            log::warn!("[Syn] Could not read skills: {e}");
+            None
+        });
 
-        // The skill index, on the same terms. Only what the user enabled is
-        // named, because a name in this list is an invitation.
-        let skill_index = crate::syn::skill::all(&db)
-            .map(|skills| {
-                crate::syn::skill::index_block(
-                    &skills,
-                    crate::syn::skill::INDEX_BUDGET_CHARS,
-                )
-            })
-            .unwrap_or_else(|e| {
-                log::warn!("[Syn] Could not read skills: {e}");
-                None
-            });
+    // Is this a question the index already answers? Decided here, on the
+    // same lock as everything else, and the query is run *now* rather than
+    // asked for by the model — which is the whole of the instant tempo.
+    let counted = crate::syn::tempo::countable_types(&db)
+        .ok()
+        .and_then(|types| crate::syn::tempo::of(question, &types))
+        .and_then(|instant| {
+            let found = db.run_node_query(&crate::syn::tempo::query_for(&instant)).ok()?;
+            let sample = crate::syn::tempo::sample(&found);
+            Some(crate::syn::tempo::block(&instant, found.total, &sample))
+        });
 
-        // Is this a question the index already answers? Decided here, on the
-        // same lock as everything else, and the query is run *now* rather than
-        // asked for by the model — which is the whole of the instant tempo.
-        let counted = crate::syn::tempo::countable_types(&db)
-            .ok()
-            .and_then(|types| crate::syn::tempo::of(&question, &types))
-            .and_then(|instant| {
-                let found = db.run_node_query(&crate::syn::tempo::query_for(&instant)).ok()?;
-                let sample = crate::syn::tempo::sample(&found);
-                Some(crate::syn::tempo::block(&instant, found.total, &sample))
-            });
+    // The open thread, if the question came from inside one. Read on this
+    // lock with everything else, and best-effort for the same reason: a
+    // thread that has been trashed since the window remembered it is a
+    // reason to answer without it, not a reason to refuse the message.
+    let thread_block = request
+        .focus
+        .as_ref()
+        .and_then(|f| f.thread.as_deref())
+        .and_then(|id| crate::syn::thread::get(&db, id))
+        .map(|t| t.block());
 
-        // The open thread, if the question came from inside one. Read on this
-        // lock with everything else, and best-effort for the same reason: a
-        // thread that has been trashed since the window remembered it is a
-        // reason to answer without it, not a reason to refuse the message.
-        let thread_block = request
-            .focus
-            .as_ref()
-            .and_then(|f| f.thread.as_deref())
-            .and_then(|id| crate::syn::thread::get(&db, id))
-            .map(|t| t.block());
-
-        if settings.rag_enabled {
-            let config = config.clone();
-            let retrieval_result =
-                rag::retrieve_context(&db, &question, &conv.messages, &config)?;
-            let context_str = rag::format_context(&retrieval_result);
-            (retrieval_result, context_str, remembered, skill_index, thread_block, counted, timeline_block)
-        } else {
-            (
-                crate::models::syn::RetrievalResult {
-                    context_chunks: Vec::new(),
-                    total_tokens_estimate: 0,
-                    sources: Vec::new(),
-                },
-                String::new(),
-                remembered,
-                skill_index,
-                thread_block,
-                counted,
-                timeline_block,
-            )
-        }
+    let (retrieval, context) = if settings.rag_enabled {
+        let retrieval = rag::retrieve_context(&db, question, history, &config)?;
+        let context = rag::format_context(&retrieval);
+        (retrieval, context)
+    } else {
+        (
+            crate::models::syn::RetrievalResult {
+                context_chunks: Vec::new(),
+                total_tokens_estimate: 0,
+                sources: Vec::new(),
+            },
+            String::new(),
+        )
     };
 
-    // 5. Assemble the system prompt from its parts.
-    //
-    // The custom instructions used to be prepended here by hand, after the
-    // prompt had already been built. They are a section of the plan now, so
-    // there is one place that knows what the prompt is made of — and one place
-    // that can report on it, which is what `syn_preview_prompt` reads.
-    let standing = standing_instructions(vault_path, &settings);
+    Ok(Gathered { retrieval, context, remembered, skill_index, thread_block, counted, timeline_block })
+}
+
+/// Steps 5 and 6: the system prompt, assembled from its parts, then the
+/// conversation after it. The system prompt is not saved to the conversation
+/// file — it is rebuilt each time.
+///
+/// The custom instructions used to be prepended by hand, after the prompt had
+/// already been built. They are a section of the plan now, so there is one
+/// place that knows what the prompt is made of — and one place that can report
+/// on it, which is what `syn_preview_prompt` reads.
+fn messages_for(
+    app: &tauri::AppHandle,
+    vault_path: &str,
+    settings: &SynSettings,
+    request: &SynChatRequest,
+    surface: crate::syn::surface::Surface,
+    gathered: &Gathered,
+    history: &[SynMessage],
+) -> Vec<SynMessage> {
+    let standing = standing_instructions(vault_path, settings);
     // What is on screen includes the browsing pane, and the front end cannot
     // see it — it is a webview of the operating system's, beside the app rather
     // than inside it. Filled in here, where the app handle is.
@@ -602,25 +691,23 @@ pub async fn send_message_inner(
     // screen the person is not looking at, and telling the model what it shows
     // would answer a question about a page they cannot see.
     let focus = match surface {
-        crate::syn::surface::Surface::App => crate::syn::focus::with_the_pane(
-            request.focus.clone(),
-            crate::syn::pane::showing(app),
-        ),
+        crate::syn::surface::Surface::App => {
+            crate::syn::focus::with_the_pane(request.focus.clone(), crate::syn::pane::showing(app))
+        }
         _ => request.focus.clone(),
-    }
-    ;
-    let final_system_prompt = PromptPlan::for_chat(ChatPrompt {
-        context: &context_str,
+    };
+    let system_prompt = PromptPlan::for_chat(ChatPrompt {
+        context: &gathered.context,
         custom: standing.as_deref(),
-        skills: skill_index.as_deref(),
-        memory: remembered.as_deref(),
+        skills: gathered.skill_index.as_deref(),
+        memory: gathered.remembered.as_deref(),
         focus: focus.as_ref(),
-        thread: thread_block.as_deref(),
+        thread: gathered.thread_block.as_deref(),
         // Sent, at last. It was computed and dropped here since f39f99e while
-        // `instant` below still took the tools away, so a count question got
-        // one round with neither the number nor a way to find it.
-        counted: counted.as_deref(),
-        timeline: timeline_block.as_deref(),
+        // `instant` still took the tools away, so a count question got one
+        // round with neither the number nor a way to find it.
+        counted: gathered.counted.as_deref(),
+        timeline: gathered.timeline_block.as_deref(),
         budget_chars: DEFAULT_BUDGET_CHARS,
     })
     .with_surface(surface)
@@ -628,12 +715,10 @@ pub async fn send_message_inner(
     .with_underway(&crate::syn::engine::underway(&request.conversation_id))
     .render();
 
-    // 6. Build messages for LLM: system prompt + conversation history
-    // The system prompt is NOT saved to the conversation file — it's rebuilt each time
-    let mut messages_for_llm = vec![SynMessage {
+    let mut messages = vec![SynMessage {
         id: "system".to_string(),
         role: "system".to_string(),
-        content: final_system_prompt,
+        content: system_prompt,
         model: None,
         timestamp: chrono::Utc::now().to_rfc3339(),
         tokens: None,
@@ -643,27 +728,27 @@ pub async fn send_message_inner(
         tool_calls_log: None,
         images: None,
     }];
-    messages_for_llm.extend(conv.messages.iter().cloned());
+    messages.extend(history.iter().cloned());
+    messages
+}
 
-    // 7. Everything this run is allowed to reach.
-    //
-    // Nothing, when the count is already in the prompt. A turn with tools would
-    // spend a round deciding not to use them, which is the cost this tempo
-    // exists to remove — see `syn::tempo`.
-    let instant = counted.is_some();
-    let registry = if instant { Registry::none() } else { Registry::for_chat() };
-
-    // Use settings temperature as default, allow per-request override
-    let temperature = request.temperature.or(Some(settings.temperature));
-
-    // 8. Drive one run to an answer.
-    //
-    // The run is the record: the goal in the user's own words, the ceilings
-    // this request may not exceed, and a transcript written as it happens. It
-    // survives the app being closed, which the local variables it replaced did
-    // not — so a request that fails now leaves something to read rather than
-    // nothing at all.
-    let mut budget = Budget::from_settings(&settings);
+/// Step 8's record, before anything is driven: the run, and the call it is
+/// carrying on with if it is carrying on.
+///
+/// The run is the record: the goal in the user's own words, the ceilings this
+/// request may not exceed, and a transcript written as it happens. It survives
+/// the app being closed, which the local variables it replaced did not — so a
+/// request that fails now leaves something to read rather than nothing at all.
+fn start_run(
+    app: &tauri::AppHandle,
+    vault_path: &str,
+    settings: &SynSettings,
+    request: &SynChatRequest,
+    surface: crate::syn::surface::Surface,
+    question: &str,
+    instant: bool,
+) -> (Run, Option<crate::models::syn::ToolCall>) {
+    let mut budget = Budget::from_settings(settings);
     if instant {
         // One round. There is nothing to come back for.
         budget.iterations = Some(1);
@@ -672,14 +757,13 @@ pub async fn send_message_inner(
     // What the stopped run was about to do, which is the thing the user just
     // gave permission for. Read off that run rather than worked out again — see
     // `run::Run::pending_call` for the transcript that made this necessary.
-    let stopped = carrying_on.and_then(|id| crate::syn::run::get_run(vault_path, id).ok());
+    let stopped = request
+        .resume_run
+        .as_deref()
+        .and_then(|id| crate::syn::run::get_run(vault_path, id).ok());
     let resume_call = stopped.as_ref().and_then(|s| s.pending_call.clone());
 
-    let mut run = Run::new(
-        question.clone(),
-        Some(request.conversation_id.clone()),
-        budget,
-    );
+    let mut run = Run::new(question.to_string(), Some(request.conversation_id.clone()), budget);
     run.tempo = if instant {
         crate::syn::tempo::Tempo::Instant
     } else {
@@ -707,116 +791,88 @@ pub async fn send_message_inner(
     run.thread = request.focus.as_ref().and_then(|f| f.thread.clone());
     crate::syn::run::prune_runs(vault_path);
 
-    let engine = SynEngine::new(provider_for(app, &settings).await);
-    let assistant_message_id = uuid::Uuid::new_v4().to_string();
+    (run, resume_call)
+}
 
-    let mut assistant_message = engine
-        .drive(
-            &mut run,
-            DriveRequest {
-                app,
-                message_id: &assistant_message_id,
-                history: &messages_for_llm,
-                model: &model,
-                temperature,
-                registry: &registry,
-                db: state.inner(),
-                vault_path,
-                num_ctx: settings.num_ctx,
-                max_history: settings.max_history_messages,
-                browser: &browser_state,
-                resume_call,
-            },
-        )
-        .await?;
+/// Step 9: what the answer turned out to be standing on.
+///
+/// Retrieved sources go under the answer only when no tool was used — when
+/// tools were used, their results are more precise than retrieval, so showing
+/// both is noise — and only under an answer. A run that stopped to ask
+/// permission has nothing to stand on yet, and it was getting ten retrieved
+/// notes pinned under an empty bubble; when the resumed run then failed, that
+/// bubble was all the conversation kept.
+///
+/// The footing is decided from the transcript and the tempo, both already
+/// written down — nothing asks the model what it thinks it knew (see
+/// `syn::footing`). Onto both the run, so "how often was Syn guessing" stays
+/// answerable after the conversation is deleted, and the message, so the mark
+/// is there when the conversation is reopened tomorrow. Only for a turn that
+/// produced an answer: a footing is a statement about what an answer stood on,
+/// and marking consent stops was the first thing writing it down revealed —
+/// four of six runs in one conversation, each tallied as an answer never given.
+/// The emptiness of the reply is the test rather than the run's state, because
+/// a run can end in several ways with nothing said and each means the same.
+fn settle(
+    run: &mut Run,
+    answer: &mut SynMessage,
+    retrieval: crate::models::syn::RetrievalResult,
+    conversation_id: &str,
+) {
+    let used_tools = answer.tool_calls_log.as_ref().is_some_and(|l| !l.is_empty());
+    let answered = !answer.content.trim().is_empty();
 
-    // 9. Attach RAG sources — but only if the LLM didn't use tool calling.
-    //    When tools were used, their results are more precise than RAG context,
-    //    so showing RAG sources alongside tool results is just noise.
-    let used_tools = assistant_message
-        .tool_calls_log
-        .as_ref()
-        .is_some_and(|l| !l.is_empty());
-
-    // Read before the move below. `assistant_message.sources` is only filled in
-    // when no tool was used, so asking the message afterwards would report zero
+    // Read before the move below. `answer.sources` is only filled in when no
+    // tool was used, so asking the message afterwards would report zero
     // retrieved for precisely the runs that had the most to stand on.
     let retrieved = retrieval.sources.len();
     let retrieved_ids: Vec<String> = retrieval.sources.iter().map(|source| source.id.clone()).collect();
 
-    // And only under an answer. A run that stopped to ask permission has
-    // nothing to stand on anything yet — the same test the footing below uses —
-    // and it was getting ten retrieved notes pinned under an empty bubble. When
-    // the resumed run then failed, that bubble was all the conversation kept:
-    // no answer, and ten sources for it.
-    if !retrieval.sources.is_empty()
-        && !used_tools
-        && !assistant_message.content.trim().is_empty()
-    {
-        assistant_message.sources = Some(retrieval.sources);
+    if !retrieval.sources.is_empty() && !used_tools && answered {
+        answer.sources = Some(retrieval.sources);
     }
 
-    // What the answer turned out to be standing on. Decided from the transcript
-    // and the tempo, both of which are already written down — nothing here asks
-    // the model what it thinks it knew. See `syn::footing`.
-    //
-    // Onto both: the run keeps it so "how often was Syn guessing" stays
-    // answerable after the conversation is deleted, and the message keeps it so
-    // the mark is still there when the conversation is reopened tomorrow.
-    // Only for a turn that produced an answer.
-    //
-    // A run that stopped to ask permission has no answer, and a footing is a
-    // statement about *what an answer was standing on*. Marking those was the
-    // first thing writing the footing down revealed: four of six runs in one
-    // conversation were consent stops, and each landed in the tally as a
-    // measured answer that had never been given.
-    //
-    // The emptiness of the reply is the test rather than the run's state,
-    // because it is the same question the tally is asking. A run can end in
-    // several ways with nothing said, and every one of them means the same
-    // thing here.
-    if !assistant_message.content.trim().is_empty() {
+    if answered {
         // The work is finished, so a "just this once" said during it stops
         // standing. The next question is new work and is asked about again —
         // which is the whole difference between that answer and `Always`.
-        crate::syn::consent::work_is_done(&request.conversation_id);
+        crate::syn::consent::work_is_done(conversation_id);
 
-        let footing = crate::syn::footing::of(&run, &crate::syn::footing::Evidence { retrieved });
+        let footing = crate::syn::footing::of(run, &crate::syn::footing::Evidence { retrieved });
         run.footing = Some(footing);
         run.retrieved = Some(retrieved_ids);
-        assistant_message.footing = Some(footing);
-
-        // Written down, or it was never decided. `drive` saved the run for the
-        // last time before this line existed, so the footing was computed here,
-        // put on a struct that nothing saved again, and dropped — every run on
-        // disk read `null`, and `footing::tally` counted the vault's whole
-        // history as unmeasured. `ENOUGH_TO_MEAN_ANYTHING` was therefore never
-        // reached and the screen showed nothing, for ever, while looking like
-        // it was working.
-        crate::syn::run::save_run_best_effort(vault_path, &run);
+        answer.footing = Some(footing);
     }
+}
 
-    // 10. Add the assistant response to the conversation
-    //
-    // Into the file as it is now, not as it was read at step 2: another turn
-    // may have been written while this one ran. Read back and written under
-    // the lock, so two answers finishing together cannot erase each other.
+/// Step 10: the answer, into the conversation file.
+///
+/// Into the file as it is now, not as it was read at step 2: another turn may
+/// have been written while this one ran. Read back and written under the lock,
+/// so two answers finishing together cannot erase each other.
+#[allow(clippy::too_many_arguments)]
+async fn write_turn(
+    vault_path: &str,
+    request: &SynChatRequest,
+    surface: crate::syn::surface::Surface,
+    read_earlier: SynConversationFull,
+    turn: Turn,
+    answer: &SynMessage,
+    model: &str,
+    settings: &SynSettings,
+) -> Result<SynConversationFull, AppError> {
     let held = conversation::hold(&request.conversation_id).await;
     let mut conv = match conversation::get_conversation(vault_path, &request.conversation_id) {
         Ok(mut latest) => {
-            conversation::place_turn(
-                &mut latest.messages,
-                asked,
-                assistant_message.clone(),
-                placeholder.as_deref(),
-            );
+            conversation::place_turn(&mut latest.messages, turn.asked, answer.clone(), turn.placeholder.as_deref());
             latest
         }
         // Gone meanwhile — deleted from the app. Written back as this run saw
         // it, which is what every send did before turns could overlap.
         Err(e) => {
             log::warn!("[Syn] Writing the conversation back as it was read: {e}");
-            conv.messages.push(assistant_message.clone());
+            let mut conv = read_earlier;
+            conv.messages.push(answer.clone());
             conv
         }
     };
@@ -825,44 +881,55 @@ pub async fn send_message_inner(
     // the provider with it, since the name alone does not identify a model.
     // Rewritten rather than only filled in: a conversation that has just
     // switched provider must not keep pointing at the old one's model.
-    conv.meta.model = Some(model.clone());
+    conv.meta.model = Some(model.to_string());
     conv.meta.provider = Some(settings.provider);
-
-    // Update message count
     conv.meta.message_count = conv.messages.len();
 
-    // Auto-generate title if this is the first user message
-    // (message_count == 2 means: 1 user + 1 assistant, i.e., first exchange)
+    // Auto-generate a title on the first exchange. Only in the app: a
+    // conversation from another surface is one stream of everything sent from
+    // there, already named for it when it was made; its first message ("chào")
+    // would name nothing that follows.
     let is_first_exchange = conv.messages.iter().filter(|m| m.role == "user").count() == 1;
-    // Only in the app. A conversation from another surface is one stream of
-    // everything sent from there, already named for it when it was made; its
-    // first message ("chào") would name nothing that follows.
     if is_first_exchange && surface == crate::syn::surface::Surface::App {
-        conv.meta.title = conversation::auto_title(&question);
+        conv.meta.title = conversation::auto_title(&turn.question);
     }
 
-    // Save the conversation
     conversation::save_conversation(vault_path, &conv)?;
-    // Written, so the next send may write. Released here rather than at the
-    // end of the function: what follows is background work that never touches
-    // the conversation, and one piece of it can wait on the keychain.
+    // Written, so the next send may write. Released here rather than at the end
+    // of the caller: what follows is background work that never touches the
+    // conversation, and one piece of it can wait on the keychain.
     drop(held);
+    Ok(conv)
+}
 
-    // 11. Look back at the exchange and propose what might be worth keeping.
-    //
-    // Spawned rather than awaited. The user has their answer — it streamed
-    // while the run was driving — and making them wait another second or two
-    // for a background suggestion would be charging them for a feature that is
-    // supposed to cost them nothing but tokens.
-    //
-    // Only for a run that finished. A cancelled or failed exchange is not
-    // evidence of anything, and reflecting on one would propose memories drawn
-    // from work the user stopped.
+/// Step 11: look back at the exchange and propose what might be worth keeping.
+///
+/// Everything here is spawned rather than awaited. The user has their answer —
+/// it streamed while the run was driving — and making them wait another second
+/// or two for a background suggestion would be charging them for a feature
+/// that is supposed to cost them nothing but tokens.
+///
+/// Only for a run that finished. A cancelled or failed exchange is not evidence
+/// of anything, and reflecting on one would propose memories drawn from work
+/// the user stopped.
+#[allow(clippy::too_many_arguments)]
+async fn reflect_after(
+    app: &tauri::AppHandle,
+    state: &crate::db::DbState,
+    vault_path: &str,
+    settings: &SynSettings,
+    model: &str,
+    question: &str,
+    assistant_message: &SynMessage,
+    conv: &SynConversationFull,
+    run: &Run,
+    conversation_id: &str,
+) {
     if settings.memory_reflection && run.state == crate::syn::run::RunState::Done {
-        let provider = provider_for(app, &settings).await;
+        let provider = provider_for(app, settings).await;
         let vault = vault_path.to_string();
-        let model_name = model.clone();
-        let asked = question.clone();
+        let model_name = model.to_string();
+        let asked = question.to_string();
         let answered = assistant_message.content.clone();
         // Decided here, where the conversation is in hand: a correction needs
         // something to correct, and only this side knows whether the assistant
@@ -872,7 +939,7 @@ pub async fn send_message_inner(
             conv.messages.iter().any(|m| m.role == "assistant"),
         );
         let run_id = run.id.clone();
-        let conversation_id = request.conversation_id.clone();
+        let conversation_id = conversation_id.to_string();
         let num_ctx = settings.num_ctx;
         // Read before spawning: the state guard is not `Send`, and the memories
         // are what the reflector is told not to propose again.
@@ -929,7 +996,7 @@ pub async fn send_message_inner(
         // teach that skill. Whether it did is a fact on the transcript — a
         // failed call, or a ceiling — so nothing is asked of the model unless
         // there is.
-        if let Some(name) = crate::syn::skill::skill_that_struggled(&run) {
+        if let Some(name) = crate::syn::skill::skill_that_struggled(run) {
             let struggling = state
                 .lock()
                 .ok()
@@ -943,12 +1010,12 @@ pub async fn send_message_inner(
                 .filter(|s| s.pending_revision.is_none());
 
             if let Some(skill) = struggling {
-                let provider = provider_for(app, &settings).await;
+                let provider = provider_for(app, settings).await;
                 let vault = vault_path.to_string();
-                let model_name = model.clone();
+                let model_name = model.to_string();
                 let num_ctx = settings.num_ctx;
                 let goal = run.goal.clone();
-                let went_wrong = crate::syn::skill::what_went_wrong(&run);
+                let went_wrong = crate::syn::skill::what_went_wrong(run);
                 let app_handle = app.clone();
 
                 tauri::async_runtime::spawn(async move {
@@ -987,11 +1054,11 @@ pub async fn send_message_inner(
         // will want two switches, but adding a settings field is a migration
         // across both languages and this is the wrong change to bundle it with.
         // Stated rather than hidden: turning off reflection turns off both.
-        if let Some(chain) = crate::syn::skill::repeated_chain(&run) {
+        if let Some(chain) = crate::syn::skill::repeated_chain(run) {
             if !crate::syn::skill::already_proposed(vault_path, &chain) {
-                let provider = provider_for(app, &settings).await;
+                let provider = provider_for(app, settings).await;
                 let vault = vault_path.to_string();
-                let model_name = model.clone();
+                let model_name = model.to_string();
                 let goal = run.goal.clone();
                 let run_id_for_skill = run.id.clone();
                 let num_ctx = settings.num_ctx;
@@ -1048,8 +1115,6 @@ pub async fn send_message_inner(
         );
     }
 
-    // Return the assistant message
-    Ok(assistant_message)
 }
 
 /// Write a suggested skill into the vault, turned off.
@@ -2466,3 +2531,129 @@ pub async fn syn_export_conversation(
     conversation::export_conversation_markdown(&vault_path, &conversation_id)
 }
 
+
+#[cfg(test)]
+mod send_steps {
+    //! The steps of `send_message_inner` that decide something without the
+    //! app, the network or the disk — which is most of what can go wrong in it.
+    use super::*;
+
+    fn said(id: &str, role: &str, content: &str) -> SynMessage {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "role": role, "content": content, "timestamp": "2026-09-26T00:00:00Z",
+        }))
+        .expect("a message")
+    }
+
+    fn conversation(provider: Option<&str>, model: Option<&str>, messages: Vec<SynMessage>) -> SynConversationFull {
+        SynConversationFull {
+            meta: serde_json::from_value(serde_json::json!({
+                "id": "c1", "title": "", "model": model, "provider": provider,
+                "message_count": messages.len(), "created_at": "", "updated_at": "", "pinned": false,
+            }))
+            .expect("meta"),
+            messages,
+        }
+    }
+
+    fn request(message: &str) -> SynChatRequest {
+        serde_json::from_value(serde_json::json!({ "conversation_id": "c1", "message": message }))
+            .expect("a request")
+    }
+
+    #[test]
+    fn a_model_pinned_under_another_provider_is_not_sent_to_this_one() {
+        let settings = SynSettings { provider: SynProvider::Gemini, default_model: Some("gemini-3-flash".into()), ..Default::default() };
+        let pinned_elsewhere = conversation(Some("ollama"), Some("gemma4:e4b"), vec![]);
+        assert_eq!(choose_model(&request("x"), &pinned_elsewhere, &settings), "gemini-3-flash");
+
+        let pinned_here = conversation(Some("gemini"), Some("gemini-3-pro"), vec![]);
+        assert_eq!(choose_model(&request("x"), &pinned_here, &settings), "gemini-3-pro");
+
+        let mut asked = request("x");
+        asked.model = Some("gemini-2.5-flash".into());
+        assert_eq!(choose_model(&asked, &pinned_here, &settings), "gemini-2.5-flash", "what this send asked for wins");
+    }
+
+    #[test]
+    fn a_new_question_goes_into_the_conversation() {
+        let mut conv = conversation(None, None, vec![]);
+        let turn = open_turn(&mut conv, &request("Minh ở đâu?")).expect("a turn");
+        assert_eq!(turn.question, "Minh ở đâu?");
+        assert_eq!(conv.messages.len(), 1);
+        assert!(turn.asked.is_some() && turn.placeholder.is_none());
+    }
+
+    /// Carrying on after permission asks the same question again; it is not a
+    /// new, empty one, and the empty bubble the stop left is taken out.
+    #[test]
+    fn carrying_on_reuses_the_question_and_drops_the_empty_answer() {
+        let mut conv = conversation(None, None, vec![said("u1", "user", "đọc genk.vn"), said("a1", "assistant", "")]);
+        let mut carrying_on = request("");
+        carrying_on.resume_run = Some("run-1".into());
+        let turn = open_turn(&mut conv, &carrying_on).expect("a turn");
+        assert_eq!(turn.question, "đọc genk.vn");
+        assert_eq!(turn.placeholder.as_deref(), Some("a1"));
+        assert!(turn.asked.is_none());
+        assert_eq!(conv.messages.len(), 1);
+    }
+
+    #[test]
+    fn carrying_on_with_nothing_asked_is_refused() {
+        let mut conv = conversation(None, None, vec![]);
+        let mut carrying_on = request("");
+        carrying_on.resume_run = Some("run-1".into());
+        assert!(open_turn(&mut conv, &carrying_on).is_err());
+    }
+
+    /// Regenerate: the old exchange, and anything after it, goes before the
+    /// question goes in again.
+    #[test]
+    fn asking_again_replaces_the_exchange_it_names() {
+        let mut conv = conversation(
+            None,
+            None,
+            vec![said("u1", "user", "a"), said("a1", "assistant", "b"), said("u2", "user", "c"), said("a2", "assistant", "d")],
+        );
+        let mut again = request("c");
+        again.replacing = Some("a2".into());
+        open_turn(&mut conv, &again).expect("a turn");
+        let contents: Vec<&str> = conv.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["a", "b", "c"]);
+
+        let mut unknown = request("e");
+        unknown.replacing = Some("nowhere".into());
+        open_turn(&mut conv, &unknown).expect("a turn");
+        assert_eq!(conv.messages.len(), 4, "an id that is not an answer here is ignored");
+    }
+
+    fn retrieved() -> crate::models::syn::RetrievalResult {
+        serde_json::from_value(serde_json::json!({
+            "context_chunks": [],
+            "total_tokens_estimate": 0,
+            "sources": [{ "id": "Notes/a.md", "title": "A", "node_type": "note" }],
+        }))
+        .expect("retrieval")
+    }
+
+    /// A stop for permission is not an answer: no sources pinned under an
+    /// empty bubble, and no footing tallied for words never said.
+    #[test]
+    fn nothing_is_settled_on_an_answer_that_was_not_given() {
+        let mut run = Run::new("q", Some("c-settle-1".into()), Budget::from_settings(&SynSettings::default()));
+        let mut empty = said("a1", "assistant", "");
+        settle(&mut run, &mut empty, retrieved(), "c-settle-1");
+        assert!(empty.sources.is_none() && empty.footing.is_none() && run.footing.is_none());
+    }
+
+    #[test]
+    fn an_answer_without_tools_stands_on_what_was_retrieved() {
+        let mut run = Run::new("q", Some("c-settle-2".into()), Budget::from_settings(&SynSettings::default()));
+        let mut answer = said("a1", "assistant", "Đây là câu trả lời.");
+        settle(&mut run, &mut answer, retrieved(), "c-settle-2");
+        assert_eq!(answer.sources.as_ref().map(Vec::len), Some(1));
+        assert!(answer.footing.is_some());
+        assert_eq!(run.footing, answer.footing);
+        assert_eq!(run.retrieved.as_deref(), Some(&["Notes/a.md".to_string()][..]));
+    }
+}
