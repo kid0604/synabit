@@ -2318,7 +2318,18 @@
     "plan_step_done": "Done: {step}",
     "plan_status_todo": "to do",
     "plan_status_doing": "in progress",
-    "plan_status_done": "done"
+    "plan_status_done": "done",
+    "activity": "Syn's work",
+    "activity_explainer": "What Syn is doing, what is waiting for you, and what finished in the last day. Everything older is in the inspector.",
+    "activity_working": "Working",
+    "activity_waiting": "Waiting for you",
+    "activity_finished": "Finished today",
+    "activity_none": "Nothing yet today.",
+    "activity_open": "Open conversation",
+    "activity_details": "Details",
+    "activity_stop": "Stop",
+    "activity_waiting_badge": "{n} waiting for you",
+    "activity_from_telegram": "from Telegram"
   },
   "update": {
     "available": "Synabit {version} is available!",

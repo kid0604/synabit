@@ -24,7 +24,7 @@
  * than interleaved.
  */
 import { ref, computed } from 'vue';
-import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, ScrollText } from 'lucide-vue-next';
+import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, ScrollText, Activity } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import NavButtons from '../../../shared/components/NavButtons.vue';
 import type { Thread, FootingTally } from '../../../shared/syn/useThreads';
@@ -36,6 +36,8 @@ export type Selection =
   | { kind: 'conversation'; id: string }
   | { kind: 'thread'; id: string }
   | { kind: 'notifications' }
+  /** What Syn is doing, what is waiting for the user, what finished today. */
+  | { kind: 'activity' }
   /**
    * `{vault}/SYN.md` — how the two of them work together.
    *
@@ -53,6 +55,10 @@ const props = defineProps<{
   selection: Selection;
   /** How many notifications have not been read. */
   unread: number;
+  /** How many runs have stopped to ask the user something. */
+  waiting?: number;
+  /** Whether any run is working right now. */
+  working?: boolean;
   /** Whether Syn's provider is reachable, for the dot beside the name. */
   online: boolean;
   /**
@@ -406,11 +412,33 @@ const when = (iso?: string) => {
         </button>
       </div>
 
+      <!-- ─── Syn's work ─────────────────────────────────────
+           First of the three, because it is the one that can need something
+           from the person: a run waiting for permission or for "which one".
+           The badge counts only those; work in progress is a dot, not a
+           number, because it asks nothing. -->
+      <button
+        class="mt-3 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
+        :class="isOn('activity') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :aria-label="waiting ? `${t('syn.activity')} — ${t('syn.activity_waiting_badge', { n: waiting })}` : undefined"
+        @click="emit('select', { kind: 'activity' })"
+      >
+        <Activity class="w-4 h-4 flex-shrink-0" :class="working ? 'text-violet-500 animate-pulse' : 'text-gray-400'" aria-hidden="true" />
+        <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.activity') }}</span>
+        <span
+          v-if="waiting"
+          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center px-1.5"
+          aria-hidden="true"
+        >
+          {{ waiting > 99 ? '99+' : waiting }}
+        </span>
+      </button>
+
       <!-- ─── Notifications ──────────────────────────────────
            Their own place rather than merged into a transcript: a task falling
            overdue is not something anybody said. -->
       <button
-        class="mt-3 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
+        class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
         :class="isOn('notifications') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         @click="emit('select', { kind: 'notifications' })"
       >

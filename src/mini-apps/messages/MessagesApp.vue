@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen, Activity } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -21,6 +21,8 @@ import { keepAsBoard, type KeptBoard } from './keepAsBoard';
 import ThreadPanel from './components/ThreadPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import InstructionsPanel from './components/InstructionsPanel.vue';
+import ActivityPanel from './components/ActivityPanel.vue';
+import { useSynActivity } from './composables/useSynActivity';
 
 import { useSynChat } from './composables/useSynChat';
 import { useSynConsent } from './composables/useSynConsent';
@@ -262,6 +264,17 @@ const showSettings = ref(false);
  * is what you read when a change did not do what you expected.
  */
 const showInspector = ref(false);
+/** A run to open the inspector on, when something named one. */
+const inspectorRun = ref<string | null>(null);
+const { waitingCount: runsWaiting, working: runsWorking } = useSynActivity(() => props.vaultPath);
+
+/** From the activity screen: that run's transcript, in the inspector. */
+const inspectRun = (id: string) => {
+  inspectorTab.value = null;
+  inspectorHighlight.value = null;
+  inspectorRun.value = id;
+  showInspector.value = true;
+};
 const loading = ref(true);
 
 const isMobile = ref(window.innerWidth < 768);
@@ -947,6 +960,8 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             :conversations="conversations"
             :selection="selection"
             :unread="unreadNotifications"
+            :waiting="runsWaiting"
+            :working="runsWorking"
             :stats="threadStats"
             :footing="footingTally"
             :online="status.connected"
@@ -1020,6 +1035,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 <template v-else-if="selection?.kind === 'instructions'">
                     <ScrollText class="w-5 h-5 text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.settings_instructions') }}</span>
+                </template>
+                <template v-else-if="selection?.kind === 'activity'">
+                    <Activity class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.activity') }}</span>
                 </template>
                 <template v-else-if="selection?.kind === 'notifications'">
                     <Bell class="w-5 h-5 text-gray-400 flex-shrink-0" />
@@ -1166,6 +1185,12 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
               v-else-if="selection?.kind === 'instructions'"
               :vault-path="vaultPath"
             />
+            <ActivityPanel
+              v-else-if="selection?.kind === 'activity'"
+              :vault-path="vaultPath"
+              @open-conversation="(id) => handleSelect({ kind: 'conversation', id })"
+              @inspect-run="inspectRun"
+            />
             <!-- Notifications, gathered. Reading a month of them no longer means
                  scrolling a month of conversation. -->
             <div v-else-if="selection?.kind === 'notifications'" class="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1210,7 +1235,8 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
       :vault-path="props.vaultPath"
       :initial-tab="inspectorTab"
       :highlight="inspectorHighlight"
-      @close="showInspector = false; inspectorTab = null; inspectorHighlight = null"
+      :initial-run="inspectorRun"
+      @close="showInspector = false; inspectorTab = null; inspectorHighlight = null; inspectorRun = null"
       @use="trySkill"
     />
 

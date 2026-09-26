@@ -45,6 +45,8 @@ const props = defineProps<{
    * find the two. See `syn::notice`.
    */
   highlight?: string | null;
+  /** A run to open straight away — sent here from the activity screen. */
+  initialRun?: string | null;
 }>();
 const emit = defineEmits<{ close: []; use: [name: string] }>();
 
@@ -474,7 +476,9 @@ onMounted(() => {
   if (props.initialTab) {
     void goTo(props.initialTab, props.highlight ?? null);
   } else {
-    loadRuns();
+    void Promise.resolve(loadRuns()).then(() => {
+      if (props.initialRun) void openRun(props.initialRun);
+    });
   }
   window.addEventListener('keydown', onKeydown);
 });

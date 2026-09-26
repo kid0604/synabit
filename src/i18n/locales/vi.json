@@ -2255,7 +2255,7 @@
     "keep_untitled": "Sơ đồ từ Syn",
     "prompt_turn_total": "Một lượt tốn ~{tokens} token trước khi ai nói gì",
     "prompt_over_window": "Đó là phần lớn cửa sổ {window} token — mặc định của Ollama. Trên model local nhỏ, nó tranh chỗ trực tiếp với cuộc hội thoại.",
-    "run_state_awaiting_choice": "Đang chờ mày",
+    "run_state_awaiting_choice": "Đang chờ bạn chọn",
     "choice_title": "Syn dừng lại để hỏi cái nào",
     "choice_body": "Tìm ra {n} cái. Mày muốn tao {verb} cái nào?",
     "choice_remove": "xoá",
@@ -2318,7 +2318,18 @@
     "plan_step_done": "Xong: {step}",
     "plan_status_todo": "chưa làm",
     "plan_status_doing": "đang làm",
-    "plan_status_done": "xong"
+    "plan_status_done": "xong",
+    "activity": "Việc của Syn",
+    "activity_explainer": "Syn đang làm gì, việc gì đang chờ bạn, và việc gì vừa xong trong ngày. Việc cũ hơn nằm trong trình kiểm tra.",
+    "activity_working": "Đang làm",
+    "activity_waiting": "Đang chờ bạn",
+    "activity_finished": "Xong trong ngày",
+    "activity_none": "Hôm nay chưa có việc gì.",
+    "activity_open": "Mở hội thoại",
+    "activity_details": "Chi tiết",
+    "activity_stop": "Dừng",
+    "activity_waiting_badge": "{n} việc đang chờ bạn",
+    "activity_from_telegram": "từ Telegram"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
