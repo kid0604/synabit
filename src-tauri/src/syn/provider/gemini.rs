@@ -262,8 +262,14 @@ fn parts_of(m: &ChatMessage, names: &mut NameBook) -> Vec<Value> {
                 let mut part = Map::new();
                 part.insert("functionCall".into(), Value::Object(function_call));
                 // Back on the very part it came in on. This is the field whose
-                // absence is a 400 on the next request.
-                if let Some(signature) = &call.thought_signature {
+                // absence is a 400 on the next request. Only Gemini's own: the
+                // same field carries an Anthropic turn in a conversation that
+                // was on Claude, and Google would refuse that as a forgery.
+                if let Some(signature) = call
+                    .thought_signature
+                    .as_ref()
+                    .filter(|s| !s.starts_with(crate::syn::provider::anthropic::TURN_CARRIER))
+                {
                     part.insert("thoughtSignature".into(), Value::String(signature.clone()));
                 }
                 parts.push(Value::Object(part));
@@ -867,6 +873,24 @@ mod tests {
         let part = &body["contents"][1]["parts"][0];
         assert_eq!(part["functionCall"]["name"], "query_nodes");
         assert_eq!(part["thoughtSignature"], "SIG-abc", "{body:#}");
+    }
+
+    /// The same field carries an Anthropic turn in a conversation that was on
+    /// Claude. Google did not sign it and would refuse it; it stays behind.
+    #[test]
+    fn an_anthropic_turn_is_not_sent_to_google_as_a_signature() {
+        let carried = format!("{}[]", crate::syn::provider::anthropic::TURN_CARRIER);
+        let mut asked = msg("assistant", "");
+        asked.tool_calls = Some(vec![call(Some("c1"), "query_nodes", Some(&carried))]);
+        let history = [msg("user", "q"), asked, answer_to("c1")];
+        let body = request_body(&request(&history, "gemini-3.8-flash"));
+        assert!(body["contents"][1]["parts"][0].get("thoughtSignature").is_none(), "{body:#}");
+    }
+
+    fn answer_to(id: &str) -> ChatMessage {
+        let mut m = msg("tool", "{}");
+        m.tool_call_id = Some(id.into());
+        m
     }
 
     /// And it comes out of a reply onto the call, so there is something to

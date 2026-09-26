@@ -34,6 +34,14 @@ const {
 
 const usingOllama = computed(() => settings.value.provider === 'ollama');
 const usingGemini = computed(() => settings.value.provider === 'gemini');
+const usingAnthropic = computed(() => settings.value.provider === 'anthropic');
+
+/**
+ * Whether the provider lives at one address there is no reason to change.
+ * Gemini and Anthropic do; the OpenAI shape is a shape, spoken by servers
+ * anywhere, so it needs to be told where.
+ */
+const fixedAddress = computed(() => usingGemini.value || usingAnthropic.value);
 
 /**
  * Whether the model list below belongs to a provider other than the one
@@ -45,13 +53,16 @@ const modelsAreStale = computed(() => settings.value.provider !== savedProvider.
 /** What an empty key field shows. Keys look different, and a hint shaped
  *  like the wrong one is a hint that the wrong key goes here. */
 const keyLooksLike = computed(() =>
-  usingGemini.value ? t('syn.api_key_placeholder_gemini') : t('syn.api_key_placeholder'),
+  usingGemini.value ? t('syn.api_key_placeholder_gemini')
+    : usingAnthropic.value ? t('syn.api_key_placeholder_anthropic')
+    : t('syn.api_key_placeholder'),
 );
 
 /** What to say under the selector about where the words go. */
 const providerSays = computed(() => {
   if (usingOllama.value) return t('syn.provider_ollama_desc');
   if (usingGemini.value) return t('syn.provider_gemini_desc');
+  if (usingAnthropic.value) return t('syn.provider_anthropic_desc');
   return t('syn.provider_openai_desc');
 });
 
@@ -193,6 +204,7 @@ watch(() => props.vaultPath, () => {
                   <option value="ollama">{{ t('syn.provider_ollama') }}</option>
                   <option value="open_ai_compat">{{ t('syn.provider_openai') }}</option>
                   <option value="gemini">{{ t('syn.provider_gemini') }}</option>
+                  <option value="anthropic">{{ t('syn.provider_anthropic') }}</option>
                 </select>
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{ providerSays }}
@@ -216,10 +228,10 @@ watch(() => props.vaultPath, () => {
               </div>
 
               <!-- A hosted provider: an address for the OpenAI shape, and a key
-                   for both. Gemini has one address and nothing to point
-                   elsewhere, so it shows the key alone. -->
+                   for both. Gemini and Anthropic each have one address and
+                   nothing to point elsewhere, so they show the key alone. -->
               <template v-else>
-                <div v-if="!usingGemini">
+                <div v-if="!fixedAddress">
                   <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
                     {{ t('syn.openai_base_url') }}
                   </label>
@@ -267,7 +279,11 @@ watch(() => props.vaultPath, () => {
                     </button>
                   </div>
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ usingGemini ? t('syn.api_key_desc_gemini') : t('syn.api_key_desc') }}
+                    {{
+                      usingGemini ? t('syn.api_key_desc_gemini')
+                      : usingAnthropic ? t('syn.api_key_desc_anthropic')
+                      : t('syn.api_key_desc')
+                    }}
                   </p>
                 </div>
 
@@ -359,8 +375,9 @@ watch(() => props.vaultPath, () => {
 
               <!-- Context Window
                    Ollama only. `num_ctx` is sent to Ollama and to nothing else —
-                   the OpenAI provider leaves it out on purpose, and Gemini has no
-                   such knob — so for a hosted model this picker changed nothing,
+                   the OpenAI provider leaves it out on purpose, and Gemini and
+                   Anthropic have no such knob — so for a hosted model this
+                   picker changed nothing,
                    and its warning about RAM described a machine the model does
                    not run on. -->
               <div v-if="usingOllama">

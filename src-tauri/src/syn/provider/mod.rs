@@ -21,7 +21,10 @@
 //!   `functionResponse` parts in a `user` turn, the system prompt is a separate
 //!   `systemInstruction`, and every function call carries a signature that has
 //!   to come back verbatim. See `gemini`.
-//!
+//! - Anthropic has no `tool` role either, and no system message in the list:
+//!   results are `tool_result` blocks in a `user` turn, the system prompt is a
+//!   top-level `system`, and a thinking block has to come back, signed, before
+//!   the calls it led to. See `anthropic`.
 //!
 //! Streaming is a callback rather than a `Stream`, so the trait stays
 //! object-safe and the caller keeps deciding what a token means — today that
@@ -30,6 +33,7 @@
 //! What is shared rather than per provider: asking again after a transient
 //! failure. See `retry`.
 
+pub mod anthropic;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
@@ -272,6 +276,7 @@ pub fn for_settings(
             settings.openai_reasoning_effort.clone(),
         )),
         SynProvider::Gemini => Box::new(gemini::GeminiProvider::new(api_key)),
+        SynProvider::Anthropic => Box::new(anthropic::AnthropicProvider::new(api_key)),
     }
 }
 

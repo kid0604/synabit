@@ -9,14 +9,14 @@ import { logger } from '../../../utils/logger';
  * `{vault}/Syn/settings.json`; a Rust test pins them, because a typo here
  * would be a settings file that silently loads as Ollama.
  */
-export type SynProviderId = 'ollama' | 'open_ai_compat' | 'gemini';
+export type SynProviderId = 'ollama' | 'open_ai_compat' | 'gemini' | 'anthropic';
 
 /**
  * The providers that take an API key, each filed under its own slot.
  *
  * Ollama is not here: it runs on this machine and has nothing to authenticate.
  */
-export const KEYED_PROVIDERS: readonly SynProviderId[] = ['open_ai_compat', 'gemini'];
+export const KEYED_PROVIDERS: readonly SynProviderId[] = ['open_ai_compat', 'gemini', 'anthropic'];
 
 /** Whether a provider is one a key is stored for. */
 export const takesKey = (provider: SynProviderId): boolean => KEYED_PROVIDERS.includes(provider);

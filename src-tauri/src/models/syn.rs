@@ -273,6 +273,16 @@ fn default_enabled() -> bool {
 /// which this app's tool calls — like those of most OpenAI clients — are
 /// rebuilt field by field and would drop. Syn is nothing *but* a tool loop, so
 /// the failure would be on nearly every question. See `provider::gemini`.
+///
+/// # And Anthropic, for the same kind of reason
+///
+/// Anthropic serves an OpenAI-compatible endpoint too, and it is the thinnest
+/// of them: no prompt caching, no thinking blocks, and tool calls rebuilt into
+/// a shape that drops what the next request needs. Claude's own Messages API
+/// is where `cache_control` lives — the difference between paying for sixteen
+/// thousand characters of tool declarations on every turn and paying a tenth
+/// of that — and where a thinking block can be carried, signed, from one round
+/// of the tool loop into the next. See `provider::anthropic`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SynProvider {
@@ -280,6 +290,7 @@ pub enum SynProvider {
     Ollama,
     OpenAiCompat,
     Gemini,
+    Anthropic,
 }
 
 impl SynProvider {
@@ -289,6 +300,7 @@ impl SynProvider {
             SynProvider::Ollama => "ollama",
             SynProvider::OpenAiCompat => "openai_compat",
             SynProvider::Gemini => "gemini",
+            SynProvider::Anthropic => "anthropic",
         }
     }
 

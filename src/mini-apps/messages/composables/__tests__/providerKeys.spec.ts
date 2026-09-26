@@ -41,6 +41,7 @@ describe('the API key for the selected provider', () => {
     expect(takesKey('ollama')).toBe(false);
     expect(takesKey('open_ai_compat')).toBe(true);
     expect(takesKey('gemini')).toBe(true);
+    expect(takesKey('anthropic')).toBe(true);
   });
 
   it('asks about the key of the provider that is selected', async () => {
@@ -137,7 +138,43 @@ describe('Gemini in the settings screen', () => {
   /** Gemini has one address. A base-URL field would be a thing to get wrong
    *  with nothing it could usefully be set to. */
   it('asks for a key and not for an address', () => {
-    expect(settingsPanel).toContain('<div v-if="!usingGemini">');
+    expect(settingsPanel).toContain('<div v-if="!fixedAddress">');
+    expect(settingsPanel).toContain('usingGemini.value || usingAnthropic.value');
+  });
+});
+
+/**
+ * Anthropic, set up the same way as Gemini: one address, a key of its own, and
+ * a sentence that says where the messages go.
+ */
+describe('Anthropic in the settings screen', () => {
+  it('is offered, in both languages', () => {
+    expect(settingsPanel).toContain('<option value="anthropic">');
+    for (const locale of [en, vi_]) {
+      expect(locale.syn).toHaveProperty('provider_anthropic');
+      expect(locale.syn).toHaveProperty('provider_anthropic_desc');
+      expect(locale.syn).toHaveProperty('api_key_desc_anthropic');
+    }
+  });
+
+  /** The privacy sentence names who receives the messages, like Gemini's. */
+  it('says the messages go to Anthropic', () => {
+    expect(en.syn.provider_anthropic_desc).toContain('go to Anthropic');
+    expect(vi_.syn.provider_anthropic_desc).toContain('Anthropic');
+  });
+
+  it('keeps a key typed for Anthropic under Anthropic', async () => {
+    const s = useSynSettings('/vault');
+    await s.loadSettings();
+    s.settings.value.provider = 'anthropic';
+    await flush();
+    s.apiKeyDraft.value = 'sk-ant-typed';
+    s.settings.value.provider = 'open_ai_compat';
+    await flush();
+    expect(s.apiKeyDraft.value, 'OpenAI’s field is its own').toBe('');
+    await s.saveSettings();
+    const filed = calls.filter(c => c.cmd === 'syn_set_api_key').map(c => c.args);
+    expect(filed).toEqual([{ provider: 'anthropic', key: 'sk-ant-typed' }]);
   });
 });
 
@@ -152,6 +189,12 @@ describe('what an empty key field looks like', () => {
     expect(en.syn.api_key_placeholder_gemini.startsWith('AIza')).toBe(true);
     expect(vi_.syn.api_key_placeholder_gemini.startsWith('AIza')).toBe(true);
     expect(settingsPanel).toContain("usingGemini.value ? t('syn.api_key_placeholder_gemini')");
+  });
+
+  it('looks like an Anthropic key under Anthropic', () => {
+    expect(en.syn.api_key_placeholder_anthropic.startsWith('sk-ant-')).toBe(true);
+    expect(vi_.syn.api_key_placeholder_anthropic.startsWith('sk-ant-')).toBe(true);
+    expect(settingsPanel).toContain("usingAnthropic.value ? t('syn.api_key_placeholder_anthropic')");
   });
 });
 
