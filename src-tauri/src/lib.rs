@@ -894,6 +894,7 @@ pub fn run() {
             // Syn (Local AI Chat)
             syn_commands::syn_check_status,
             syn_commands::syn_list_models,
+            syn_commands::syn_model_capability,
             syn_commands::syn_pull_model,
             syn_commands::syn_delete_model,
             syn_commands::syn_send_message,

@@ -216,6 +216,18 @@ pub async fn syn_list_models(
     provider_for(&app, &settings).await.list_models().await
 }
 
+/// What a model can do and whether it runs here — the configured one, or
+/// `model` if the screen is asking about another. Sends nothing anywhere; see
+/// `syn::provider::capability`.
+#[tauri::command]
+pub async fn syn_model_capability(
+    vault_path: String,
+    model: Option<String>,
+) -> Result<crate::syn::provider::capability::Capability, AppError> {
+    let settings = settings_for(&vault_path);
+    Ok(crate::syn::provider::capability::for_settings(&settings, model.as_deref()))
+}
+
 /// Pull (download) a model from Ollama's registry.
 /// Emits `syn-pull-progress` events during download.
 ///

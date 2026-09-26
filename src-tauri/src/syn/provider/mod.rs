@@ -31,9 +31,10 @@
 //! is a Tauri event, and the provider does not need to know it.
 //!
 //! What is shared rather than per provider: asking again after a transient
-//! failure. See `retry`.
+//! failure (`retry`), and what a given model can do (`capability`).
 
 pub mod anthropic;
+pub mod capability;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
@@ -85,7 +86,8 @@ pub struct ChatRequest<'a> {
     pub num_ctx: u32,
     pub tools: Option<&'a [ToolDefinition]>,
     /// A JSON schema the reply must follow, where the provider can be held to
-    /// one: Ollama's `format`, OpenAI's `response_format`, Gemini's JSON mode.
+    /// one: Ollama's `format`, OpenAI's `response_format`, Gemini's JSON mode,
+    /// Anthropic's `output_config.format`.
     /// A server that does not know the field may refuse the request, so a
     /// caller that sets it asks again without on an error.
     pub json_schema: Option<&'a serde_json::Value>,
