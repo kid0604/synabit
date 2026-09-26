@@ -542,6 +542,10 @@ struct Gathered {
     context: String,
     remembered: Option<String>,
     skill_index: Option<String>,
+    /// The steps of the one skill matched to this question, already rendered
+    /// by `skill::chosen_block`. Which skill it was is read back off the prompt
+    /// as sent, into `stats::Carried::skill_injected`.
+    chosen_skill: Option<String>,
     thread_block: Option<String>,
     /// The count, when the index already answers the question. Its presence
     /// is what makes this an instant turn. See `syn::tempo`.
@@ -627,12 +631,11 @@ fn gather(
 
     // The skill index, on the same terms. Only what the user enabled is
     // named, because a name in this list is an invitation.
-    let skill_index = crate::syn::skill::all(&db)
-        .map(|skills| crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS))
-        .unwrap_or_else(|e| {
-            log::warn!("[Syn] Could not read skills: {e}");
-            None
-        });
+    let skills = crate::syn::skill::all(&db).unwrap_or_else(|e| {
+        log::warn!("[Syn] Could not read skills: {e}");
+        Vec::new()
+    });
+    let skill_index = crate::syn::skill::index_block(&skills, crate::syn::skill::INDEX_BUDGET_CHARS);
 
     // Is this a question the index already answers? Decided here, on the
     // same lock as everything else, and the query is run *now* rather than
@@ -645,6 +648,16 @@ fn gather(
             let sample = crate::syn::tempo::sample(&found);
             Some(crate::syn::tempo::block(&instant, found.total, &sample))
         });
+
+    // The one skill whose own description clearly fits the question, its steps
+    // put in front of the model instead of waiting for it to call `load_skill`
+    // — which it did in none of seventeen runs. Not for a counted turn: that
+    // turn has no tools and its answer is already in the prompt. See
+    // `skill::chosen_for`.
+    let chosen_skill = match counted {
+        Some(_) => None,
+        None => crate::syn::skill::chosen_for(&skills, question).map(crate::syn::skill::chosen_block),
+    };
 
     // The open thread, if the question came from inside one. Read on this
     // lock with everything else, and best-effort for the same reason: a
@@ -676,7 +689,7 @@ fn gather(
         )
     };
 
-    Ok(Gathered { retrieval, context, remembered, skill_index, thread_block, counted, timeline_block, memories, retrieval_ms })
+    Ok(Gathered { retrieval, context, remembered, skill_index, chosen_skill, thread_block, counted, timeline_block, memories, retrieval_ms })
 }
 
 /// Steps 5 and 6: the system prompt, assembled from its parts, then the
@@ -726,7 +739,8 @@ fn messages_for(
     })
     .with_surface(surface)
     // Asked before this run registers, so it lists only the others.
-    .with_underway(&crate::syn::engine::underway(&request.conversation_id));
+    .with_underway(&crate::syn::engine::underway(&request.conversation_id))
+    .with_chosen_skill(gathered.chosen_skill.as_deref());
     // Measured off the plan as it goes out, after every `fit`, because the
     // prompt is rebuilt each turn and kept nowhere. See `Run::memory_lines_sent`.
     let carried = crate::syn::stats::Carried::of(&plan, gathered.memories, gathered.retrieval_ms);

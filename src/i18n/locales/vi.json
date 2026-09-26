@@ -2294,6 +2294,7 @@
     "stats_prompt_dropped_why": "Cắt để nằm trong cửa sổ của model. Ghi chú truy xuất bị cắt trước, ghi nhớ bị cắt sau cùng.",
     "stats_section_vault_context": "Ghi chú truy xuất",
     "stats_section_skills": "Danh sách kỹ năng",
+    "stats_section_chosen_skill": "Kỹ năng chọn sẵn cho câu hỏi",
     "stats_section_memory": "Ghi nhớ",
     "stats_section_thread": "Việc đang làm",
     "stats_skills_offered": "Lượt có kỹ năng để chọn",

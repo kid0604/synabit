@@ -2294,6 +2294,7 @@
     "stats_prompt_dropped_why": "Cut to stay inside the model’s window. Retrieved notes go first, memory last.",
     "stats_section_vault_context": "Retrieved notes",
     "stats_section_skills": "Skill list",
+    "stats_section_chosen_skill": "Skill picked for the question",
     "stats_section_memory": "Memory",
     "stats_section_thread": "The work it belonged to",
     "stats_skills_offered": "Runs where skills were on offer",
