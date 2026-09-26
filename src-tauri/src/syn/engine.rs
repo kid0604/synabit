@@ -219,6 +219,31 @@ fn build_pruned_history(history: &[SynMessage], max_msgs: usize) -> Vec<ChatMess
     messages
 }
 
+/// How far the run has got, against what it may spend, for whoever is watching.
+///
+/// Sent at the start of each round and after each tool. Before this, the only
+/// thing a person saw while a run worked was the name of the last tool — and
+/// "round three of eight, twelve tool calls, 40,000 tokens" is the difference
+/// between waiting and deciding to stop. Numbers only; the words are the
+/// screen's, in the person's language.
+fn progress<R: tauri::Runtime>(app: &tauri::AppHandle<R>, run: &Run, tool: Option<&str>) {
+    let event = serde_json::json!({
+        "conversation_id": run.conversation_id,
+        "run_id": run.id,
+        "round": run.spent.iterations,
+        "rounds_max": run.budget.iterations,
+        "tool_calls": run.spent.tool_calls,
+        "tool_calls_max": run.budget.tool_calls,
+        "tokens": run.spent.tokens,
+        "tokens_max": run.budget.tokens,
+        "tool": tool,
+        "plan_only": run.plan_only,
+    });
+    if let Err(e) = app.emit("syn-progress", &event) {
+        log::error!("Failed to emit syn-progress: {e}");
+    }
+}
+
 /// What the audit line should say beyond the capability, for a call where
 /// that is not enough. See `audit::Entry::detail`.
 fn audit_detail(tool: &str, args: &serde_json::Value) -> Option<String> {
@@ -491,6 +516,7 @@ impl SynEngine {
 
             let iteration = run.spent.iterations;
             run.spent.iterations = run.spent.iterations.saturating_add(1);
+            progress(req.app, run, None);
 
             // Inside the window before it is asked, not after the provider has
             // cut the front off. A carried-over call asks nothing of it.
@@ -814,6 +840,7 @@ impl SynEngine {
                     call_started.elapsed().as_millis() as u64,
                 );
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
+                progress(req.app, run, Some(&tc.function.name));
 
                 let event = SynToolCallEvent {
                     conversation_id: conversation_id.clone().unwrap_or_default(),
@@ -4043,7 +4070,7 @@ mod driving {
             .find(|s| s.tool.as_deref() == Some("send_test"))
             .expect("it planned to send");
         assert!(
-            sending.preview.contains("dry run") && sending.preview.contains("Nothing was done"),
+            sending.preview.contains("Plan mode") && sending.preview.contains("nothing that changes anything runs"),
             "sending was described, not done: {}",
             sending.preview
         );

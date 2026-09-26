@@ -175,6 +175,10 @@ pub struct SynChatRequest {
     /// sent the answer it had been asked to replace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacing: Option<String>,
+    /// Plan first: look, write the steps down, change nothing until the user
+    /// approves. See `Run::plan_only`.
+    #[serde(default)]
+    pub plan_only: bool,
 }
 
 /// Pull model progress event — emitted while downloading a model.

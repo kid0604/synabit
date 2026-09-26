@@ -729,8 +729,23 @@ fn messages_for(
         images: None,
     }];
     messages.extend(history.iter().cloned());
+
+    // Plan first, said where the model is looking: beside the question, not in
+    // the system prompt, so the cached half stays the same whichever way the
+    // turn is asked. Only in what is sent — the file keeps the question as the
+    // person wrote it.
+    if request.plan_only {
+        if let Some(question) = messages.iter_mut().rev().find(|m| m.role == "user") {
+            question.content.push_str(PLAN_FIRST);
+        }
+    }
     messages
 }
+
+/// What a plan-first question carries to the model.
+const PLAN_FIRST: &str = "\n\n[Plan first. Look at whatever you need, then write the steps \
+     with `update_plan` and say what each would change. Nothing that changes anything will run \
+     in this turn: the user reads the plan and approves it, and then you carry it out.]";
 
 /// Step 8's record, before anything is driven: the run, and the call it is
 /// carrying on with if it is carrying on.
@@ -771,6 +786,7 @@ fn start_run(
     };
     // Before `drive`, which is where it narrows the tools. See `syn::surface`.
     run.surface = surface;
+    run.plan_only = request.plan_only;
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
     run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);

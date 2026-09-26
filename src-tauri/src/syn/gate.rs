@@ -31,14 +31,18 @@
 //! 2. **Surface.** A tool the place the question came from is not offered is
 //!    not a permission anybody there can grant, and asking would park the run
 //!    on a card on a screen nobody is looking at. See `syn::surface`.
-//! 3. **Which one.** Before consent, because it is not a permission question:
+//! 3. **Plan first.** A run asked for a plan describes every change instead of
+//!    making it, before anybody is asked which one or whether: describing
+//!    something needs no permission, and a card asking for one would be a
+//!    question about a thing that is not going to happen.
+//! 4. **Which one.** Before consent, because it is not a permission question:
 //!    running the ledger for it would file "may I change the vault" in the
 //!    audit log for a call that never happened. See `syn::ambiguity`.
-//! 4. **Consent.** Has the user agreed to this sort of power? Before the skill
+//! 5. **Consent.** Has the user agreed to this sort of power? Before the skill
 //!    budget, because a refusal should not be spent out of an allowance.
-//! 5. **What running means.** A dry run describes instead of acting; `browse`
-//!    is driven by the engine because it is async; a third skill body is
-//!    refused; anything else goes to the registry.
+//! 6. **What running means.** `browse` is driven by the engine because it is
+//!    async; a third skill body is refused; anything else goes to the
+//!    registry.
 
 use serde_json::Value;
 
@@ -141,12 +145,30 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         };
     }
 
-    // 3. Which one.
+    // 3. Plan first. Reads still run — a plan built without looking is a
+    // guess — and so does writing the plan down. Everything else is described.
+    let only_looks = matches!(capability, None | Some(Capability::VaultRead) | Some(Capability::Browse));
+    if view.plan_only && !only_looks {
+        let about = capability.map(|c| c.describe()).unwrap_or_else(|| tool.to_string());
+        return Decided::quietly(Gate::Go(How::Describe(
+            serde_json::json!({
+                "planned": format!(
+                    "Plan mode: nothing that changes anything runs until the user approves. \
+                     `{tool}` would {about}, with these arguments. Put it in the plan and carry \
+                     on as though it had worked."
+                ),
+                "arguments": args,
+            })
+            .to_string(),
+        )));
+    }
+
+    // 4. Which one.
     if let Some(choice) = crate::syn::ambiguity::should_ask(tool, args, view.seen, view.now) {
         return Decided::quietly(Gate::Choose(Box::new(choice)));
     }
 
-    // 4. Consent.
+    // 5. Consent.
     let mut audit = None;
     if let Some(capability) = capability {
         let mut decision = crate::syn::consent::decide(capability, view.ledger, view.now);
@@ -183,32 +205,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         }
     }
 
-    // 5. What running means.
-    //
-    // A dry run describes only the steps whose undoing is somebody else's
-    // problem. Reads and reversible writes go ahead, because a plan built
-    // without looking is a guess.
-    let only_describing = view.plan_only
-        && capability.is_some_and(|c| {
-            matches!(
-                crate::syn::registry::reversal_of(c),
-                crate::syn::registry::Reversal::Manual { .. } | crate::syn::registry::Reversal::Irreversible
-            )
-        });
-
-    let how = if only_describing {
-        let about = capability.map(|c| c.describe()).unwrap_or_else(|| tool.to_string());
-        How::Describe(
-            serde_json::json!({
-                "planned": format!(
-                    "This is a dry run. `{tool}` would {about}, with these arguments. Nothing \
-                     was done. Carry on planning as though it had worked."
-                ),
-                "arguments": args,
-            })
-            .to_string(),
-        )
-    } else if tool == crate::syn::tools::BROWSE_TOOL {
+    // 6. What running means.
+    let how = if tool == crate::syn::tools::BROWSE_TOOL {
         How::Browse
     } else if tool == crate::syn::tools::PLAN_TOOL {
         How::Plan
@@ -358,22 +356,27 @@ mod tests {
         assert!(matches!(d.gate, Gate::Go(How::OverSkillBudget(_))), "{d:?}");
     }
 
-    /// A dry run still reads and still makes reversible changes; only what
-    /// cannot be taken back is described instead.
+    /// Plan mode looks, and describes every change instead of making it —
+    /// before asking whether, because describing needs no permission.
     #[test]
-    fn a_dry_run_describes_only_what_cannot_be_undone() {
+    fn plan_mode_reads_and_describes_every_change() {
         let empty = Ledger::default();
-        let until = |_: &Capability| true;
-        let mut v = view(&empty, &until);
+        let mut v = view(&empty, &never_until_done);
         v.plan_only = true;
 
-        let write = decide("create_node", &args(), Some(&Capability::VaultWrite), &v);
-        assert!(matches!(write.gate, Gate::Go(How::Execute)), "{write:?}");
+        let read = decide("get_node", &args(), Some(&Capability::VaultRead), &v);
+        assert!(matches!(read.gate, Gate::Go(How::Execute)), "{read:?}");
+        let plan = decide(crate::syn::tools::PLAN_TOOL, &serde_json::json!({}), Some(&Capability::VaultRead), &v);
+        assert!(matches!(plan.gate, Gate::Go(How::Plan)), "{plan:?}");
 
-        let run_code = decide("run_code", &args(), Some(&Capability::Execute), &v);
-        match run_code.gate {
-            Gate::Go(How::Describe(said)) => assert!(said.contains("dry run"), "{said}"),
-            other => panic!("expected a description, got {other:?}"),
+        for (tool, capability) in [("create_node", Capability::VaultWrite), ("delete_kind", Capability::VaultStructural), ("run_code", Capability::Execute)] {
+            let d = decide(tool, &args(), Some(&capability), &v);
+            match d.gate {
+                Gate::Go(How::Describe(said)) => assert!(said.contains("Plan mode"), "{said}"),
+                other => panic!("{tool}: expected a description, got {other:?}"),
+            }
+            assert_eq!(d.audit, None, "nothing was asked, so nothing to log");
         }
     }
+
 }

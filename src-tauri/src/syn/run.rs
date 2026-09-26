@@ -592,17 +592,17 @@ pub struct Run {
     unclaimed: Option<(crate::syn::provider::Usage, u64)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Whether this run is reading out a plan rather than carrying it out.
+    /// Whether this run is writing a plan rather than carrying it out.
     ///
-    /// A dry run. Tools that only read, and tools this app can undo by itself,
-    /// still run — a plan built without looking is a guess, and a write that
-    /// `restore_version` reverses is one later steps can depend on. What stops
-    /// is anything whose undoing happens somewhere else, or not at all.
-    ///
-    /// The roadmap words this as "every tool with `Reversal != Automatic`", and
-    /// this differs on purpose: reads have `Reversal::Nothing`, so the literal
-    /// rule would make a dry run unable to look at anything, which is a plan
-    /// nobody can trust.
+    /// Reads still run — a plan built without looking is a guess — and so does
+    /// `update_plan`. Every change is described instead of made, including the
+    /// ones this app could undo by itself. That used to be different: a dry run
+    /// stopped only what could not be taken back, and let reversible writes
+    /// through. It was never reachable from a screen, and once it was — a Plan
+    /// button — the promise a person reads into the word is *nothing changes
+    /// until I say so*, and a note created, edited or trashed before they had
+    /// seen the plan broke it however easily it could be restored. See
+    /// `gate::decide`.
     #[serde(default)]
     pub plan_only: bool,
     /// Whether this run read something written outside the vault — a page, a
