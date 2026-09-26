@@ -33,6 +33,12 @@ import { X, CornerDownLeft, Loader2, ArrowUpRight, GitBranch, Plus, Check, Zap }
 import { logger } from '../../utils/logger';
 import { describeFocus, type SynFocus } from './focus';
 import { useThreads, openThreads, type Thread } from './useThreads';
+import { tidyComposerText } from './composerText';
+import { useSynConsent } from '../../mini-apps/messages/composables/useSynConsent';
+import { useSynChoice } from '../../mini-apps/messages/composables/useSynChoice';
+import ConsentCard from '../../mini-apps/messages/components/ConsentCard.vue';
+import ChoiceCard from '../../mini-apps/messages/components/ChoiceCard.vue';
+import type { ConsentAnswer } from '../../mini-apps/messages/types';
 
 const props = defineProps<{
   open: boolean;
@@ -85,7 +91,33 @@ let stopTools: (() => void) | null = null;
 let stopTempo: (() => void) | null = null;
 
 const picked = computed(() => describeFocus(props.focus));
-const hasAnswer = computed(() => answer.value.length > 0 || busy.value || !!failed.value);
+
+// ─── When Syn stops to ask ───────────────────────────────────
+//
+// The same two questions Messages shows, from the same app-wide store, drawn
+// here when they belong to this bar's conversation. Without them a question
+// from the bar that needed permission ended in an empty reply: the run stopped,
+// the card was drawn in a screen nobody was looking at, and what the person saw
+// was the spinner going away and nothing in its place.
+
+const {
+  pending: consentPending,
+  pendingIn: consentPendingIn,
+  answer: answerConsent,
+} = useSynConsent(() => props.vaultPath);
+const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+
+const consentHere = computed(() => consentPendingIn(conversationId.value));
+const choiceHere = computed(() => choicePendingIn(conversationId.value));
+
+const hasAnswer = computed(
+  () =>
+    answer.value.length > 0 ||
+    busy.value ||
+    !!failed.value ||
+    !!consentHere.value ||
+    !!choiceHere.value,
+);
 
 /**
  * Whether there is anywhere else to continue this.
@@ -96,7 +128,14 @@ const hasAnswer = computed(() => answer.value.length > 0 || busy.value || !!fail
  * offering exactly that.
  */
 const canContinueElsewhere = computed(
-  () => !!conversationId.value && !busy.value && !!answer.value && props.focus?.app !== 'messages',
+  () =>
+    !!conversationId.value &&
+    !busy.value &&
+    // A card waiting for an answer counts: the conversation is where it can
+    // also be answered, and somebody who would rather read the question in
+    // the larger screen should be able to take it there.
+    (!!answer.value || !!consentHere.value || !!choiceHere.value) &&
+    props.focus?.app !== 'messages',
 );
 
 const rendered = computed(() => {
@@ -170,9 +209,34 @@ const conversation = async (): Promise<string> => {
 };
 
 const ask = async () => {
-  const text = question.value.trim();
+  // The same rule as the Messages composer: indentation and blank lines inside
+  // the question are kept. See `composerText.ts`.
+  const text = tidyComposerText(question.value);
   if (!text || busy.value) return;
 
+  // Busy from the keypress, not from when the conversation exists: a second
+  // Enter while the first is still creating one would otherwise create another.
+  busy.value = true;
+  let id: string;
+  try {
+    id = await conversation();
+  } catch (e: unknown) {
+    logger.error('[Syn] The ask bar could not start a conversation', e);
+    failed.value = (e as { message?: string })?.message ?? String(e);
+    busy.value = false;
+    return;
+  }
+  await send(id, text);
+};
+
+/**
+ * Send one turn into this bar's conversation and show what comes back.
+ *
+ * `resumeRun` is the carry-on after a consent card, exactly as Messages does
+ * it: no new words, the stopped run's id, and the backend takes both the
+ * question and the call it was about to make from that run. See `onConsent`.
+ */
+const send = async (id: string, text: string, resumeRun?: string) => {
   busy.value = true;
   answer.value = '';
   failed.value = null;
@@ -180,8 +244,6 @@ const ask = async () => {
   tempo.value = null;
 
   try {
-    const id = await conversation();
-
     // Listened for here rather than in a shared composable because this bar
     // shows one exchange and nothing else: no message list to append to, no
     // ids to match up beyond its own.
@@ -217,13 +279,14 @@ const ask = async () => {
       },
     );
 
-    question.value = '';
+    if (!resumeRun) question.value = '';
     const reply = await invoke<{ content: string }>('syn_send_message', {
       vaultPath: props.vaultPath,
       request: {
         conversation_id: id,
         message: text,
         focus: props.focus,
+        resume_run: resumeRun,
       },
     });
 
@@ -237,6 +300,35 @@ const ask = async () => {
     busy.value = false;
     working.value = null;
   }
+};
+
+/**
+ * Answer the permission question, then carry on — the same as `onConsent` in
+ * `MessagesApp.vue`, for the same reasons: pressing a button on the card *is*
+ * saying go on, and a refusal still gets a sentence back rather than silence.
+ */
+const onConsent = async (choice: ConsentAnswer) => {
+  // Read before answering, which clears the card and the run id with it.
+  const stopped = consentPending.value?.run_id;
+  const id = consentPending.value?.conversation_id;
+  const wasAsked = await answerConsent(choice);
+  if (!wasAsked || !stopped || !id) return;
+  await send(id, '', stopped);
+};
+
+/**
+ * Say which one, and put the answer in the box — not send it. As in Messages,
+ * the pick is a fact the next message carries, and sending is the person's
+ * move.
+ */
+const onChoice = async (nodeId: string) => {
+  const named = await answerChoice(nodeId);
+  if (!named) return;
+  question.value = t('syn.prefill_choice', { title: named });
+  await nextTick();
+  const end = question.value.length;
+  inputRef.value?.focus();
+  inputRef.value?.setSelectionRange(end, end);
 };
 
 const stop = async () => {
@@ -370,6 +462,13 @@ const onKeydown = (event: KeyboardEvent) => {
              where the eye already is. -->
         <div v-if="hasAnswer" class="max-h-[45vh] overflow-y-auto px-5 pt-4">
           <p v-if="failed" class="text-[13px] text-red-500">{{ failed }}</p>
+
+          <!-- Syn stopped to ask. Above whatever the answer says, because until
+               it is answered there is no more answer coming. -->
+          <div v-if="!busy && (choiceHere || consentHere)" class="space-y-2 mb-3">
+            <ChoiceCard v-if="choiceHere" :choice="choiceHere.choice" @answer="onChoice" />
+            <ConsentCard v-if="consentHere" :ask="consentHere.ask" @answer="onConsent" />
+          </div>
 
           <div
             v-else-if="rendered"

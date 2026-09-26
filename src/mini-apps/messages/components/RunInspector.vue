@@ -1146,6 +1146,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <span class="ml-auto text-gray-400 font-mono">{{ entry.at.slice(0, 16).replace('T', ' ') }}</span>
             </div>
             <p class="mt-1 text-xs text-text dark:text-text-dark">{{ entry.about }}</p>
+            <p v-if="entry.detail" class="mt-0.5 text-[11px] font-mono text-gray-500 break-all">{{ entry.detail }}</p>
             <p v-if="entry.reversal" class="mt-0.5 text-[11px] text-gray-500 italic">
               {{ t('syn.audit_undo') }}: {{ entry.reversal }}
             </p>

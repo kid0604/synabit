@@ -11,6 +11,7 @@ import StreamingIndicator from './StreamingIndicator.vue';
 import ConsentCard from './ConsentCard.vue';
 import ChoiceCard from './ChoiceCard.vue';
 import NotificationCard from './NotificationCard.vue';
+import { tidyComposerText } from '../../../shared/syn/composerText';
 
 const MAX_IMAGES = 4;
 
@@ -256,16 +257,11 @@ const canSend = computed(() => {
 });
 
 const handleSend = () => {
-  // Aggressive IME artifact cleanup:
-  // 1. Normalize all line endings and remove zero-width chars
-  // 2. Split into lines, trim and normalize spaces
-  // 3. Remove empty lines
-  // 4. Deduplicate consecutive identical lines (Vietnamese IME bug)
-  const raw = inputText.value.replace(/\r\n?/g, '\n').replace(/[\u200B-\u200D\uFEFF]/g, '');
-  const lines = raw.split('\n').map(l => l.trim().replace(/\s+/g, ' ')).filter(l => l.length > 0);
-  const deduped = lines.filter((line, i, arr) => i === 0 || line.normalize('NFC').toLowerCase() !== arr[i - 1].normalize('NFC').toLowerCase());
-  const text = deduped.join('\n');
-  
+  // Only what nobody can see or meant to send \u2014 not indentation, not blank
+  // lines, not a line that repeats. See `composerText.ts` for what the old
+  // line-by-line cleanup did to pasted code.
+  const text = tidyComposerText(inputText.value);
+
   if (!text && pendingImages.value.length === 0) return;
   if (props.isStreaming) return;
 

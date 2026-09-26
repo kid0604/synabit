@@ -11,38 +11,44 @@
  * cards that look alike and mean opposite things about whether anything is
  * wrong would teach somebody to answer both the same way.
  */
-import { onMounted, onUnmounted, ref } from 'vue';
+import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { AmbiguousChoice } from '../types';
 
-interface ChoiceEvent {
+export interface ChoiceEvent {
   run_id: string;
   conversation_id?: string | null;
   choice: AmbiguousChoice;
 }
 
+/**
+ * The question on the table, held once for the whole app — for the reasons
+ * `useSynConsent` gives: the ask bar has to see it as well as Messages, and
+ * two copies could disagree about whether it was answered.
+ */
+const pending = ref<ChoiceEvent | null>(null);
+let listening = false;
+
+const listenOnce = () => {
+  if (listening) return;
+  listening = true;
+  listen<ChoiceEvent>('syn-choice-needed', event => {
+    pending.value = event.payload;
+  }).catch(e => {
+    listening = false;
+    logger.error('[Syn] Could not listen for which-one questions', e);
+  });
+};
+
 export function useSynChoice(vaultPath: () => string) {
-  const pending = ref<ChoiceEvent | null>(null);
+  listenOnce();
   const error = ref<string | null>(null);
 
-  let stop: UnlistenFn | null = null;
-
-  onMounted(async () => {
-    try {
-      stop = await listen<ChoiceEvent>('syn-choice-needed', event => {
-        pending.value = event.payload;
-      });
-    } catch (e) {
-      logger.error('[Syn] Could not listen for which-one questions', e);
-    }
-  });
-
-  onUnmounted(() => {
-    stop?.();
-    stop = null;
-  });
+  /** The question, if it belongs to this conversation. See `useSynConsent`. */
+  const pendingIn = (conversationId: string | null | undefined): ChoiceEvent | null =>
+    conversationId && pending.value?.conversation_id === conversationId ? pending.value : null;
 
   /**
    * Say which one, and put the card away.
@@ -73,5 +79,5 @@ export function useSynChoice(vaultPath: () => string) {
     return named;
   };
 
-  return { pending, error, answer };
+  return { pending, pendingIn, error, answer };
 }

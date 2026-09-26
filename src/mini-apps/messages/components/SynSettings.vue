@@ -131,7 +131,8 @@ watch(() => props.vaultPath, () => {
           <button
             @click="emit('close')"
             class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
-           aria-label="More Options">
+            :aria-label="t('syn.settings_close')"
+            :title="t('syn.settings_close')">
             <X class="w-5 h-5" />
           </button>
         </div>
@@ -412,7 +413,9 @@ watch(() => props.vaultPath, () => {
                   @click="settings.rag_enabled = !settings.rag_enabled"
                   class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
                   :class="settings.rag_enabled ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
-                 aria-label="Settings.rag_enabled = !settings.rag_enabled">
+                  role="switch"
+                  :aria-checked="settings.rag_enabled"
+                  :aria-label="t('syn.enable_vault_context')">
                   <span
                     class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
                     :class="settings.rag_enabled ? 'translate-x-5' : 'translate-x-0'"
@@ -427,7 +430,9 @@ watch(() => props.vaultPath, () => {
                   @click="settings.include_finance = !settings.include_finance"
                   class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
                   :class="settings.include_finance ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
-                 aria-label="Settings.include_finance = !settings.include_finance">
+                  role="switch"
+                  :aria-checked="settings.include_finance"
+                  :aria-label="t('syn.include_finance')">
                   <span
                     class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
                     :class="settings.include_finance ? 'translate-x-5' : 'translate-x-0'"
@@ -442,7 +447,9 @@ watch(() => props.vaultPath, () => {
                   @click="settings.include_feeds = !settings.include_feeds"
                   class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
                   :class="settings.include_feeds ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
-                 aria-label="Settings.include_feeds = !settings.include_feeds">
+                  role="switch"
+                  :aria-checked="settings.include_feeds"
+                  :aria-label="t('syn.include_feeds')">
                   <span
                     class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
                     :class="settings.include_feeds ? 'translate-x-5' : 'translate-x-0'"

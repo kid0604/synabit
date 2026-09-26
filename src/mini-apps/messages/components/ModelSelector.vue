@@ -323,7 +323,8 @@ const cancelConfirm = () => {
               :class="customModelName.trim() && !pullingModel
                 ? 'bg-violet-500 hover:bg-violet-600 text-white'
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
-             aria-label="Handle Pull Custom">
+              :aria-label="$t('syn.pull_custom_model')"
+              :title="$t('syn.pull_custom_model')">
               <Download class="w-3.5 h-3.5" />
             </button>
           </div>

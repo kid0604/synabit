@@ -12,38 +12,69 @@
  * and two cards competing for one decision is how somebody answers the wrong
  * one.
  */
-import { onMounted, onUnmounted, ref } from 'vue';
+import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { ConsentAnswer, ConsentAsk } from '../types';
 
-interface ConsentEvent {
+export interface ConsentEvent {
   run_id: string;
   conversation_id?: string | null;
   ask: ConsentAsk;
 }
 
+/**
+ * The question on the table, held once for the whole app.
+ *
+ * Module-scoped rather than per component, and that is the fix for two bugs.
+ * The listener used to live in whichever screen called this, which was only
+ * Messages — so a question asked from the ask bar stopped for permission, the
+ * run ended with an empty reply, and the card that could have answered it was
+ * on a screen nobody was looking at, or on no screen at all. And each caller
+ * holding its own copy would let two surfaces disagree about whether the
+ * question had been answered.
+ *
+ * One store, one listener, many places that can show the card. Which of them
+ * does is decided by `conversation_id` — see `pendingIn`.
+ */
+const pending = ref<ConsentEvent | null>(null);
+let listening = false;
+
+/**
+ * Start listening, the first time anybody asks.
+ *
+ * Never stopped: the store outlives any one screen by design, and a question
+ * that arrives while Messages is closed still has to be there when it opens.
+ */
+const listenOnce = () => {
+  if (listening) return;
+  listening = true;
+  listen<ConsentEvent>('syn-consent-needed', event => {
+    pending.value = event.payload;
+  }).catch(e => {
+    // Allowed to try again on the next call rather than staying deaf for the
+    // rest of the session.
+    listening = false;
+    logger.error('[Syn] Could not listen for consent questions', e);
+  });
+};
+
 export function useSynConsent(vaultPath: () => string) {
-  const pending = ref<ConsentEvent | null>(null);
+  listenOnce();
   const error = ref<string | null>(null);
 
-  let stop: UnlistenFn | null = null;
-
-  onMounted(async () => {
-    try {
-      stop = await listen<ConsentEvent>('syn-consent-needed', event => {
-        pending.value = event.payload;
-      });
-    } catch (e) {
-      logger.error('[Syn] Could not listen for consent questions', e);
-    }
-  });
-
-  onUnmounted(() => {
-    stop?.();
-    stop = null;
-  });
+  /**
+   * The question, if it belongs to this conversation.
+   *
+   * A card belongs to the conversation whose run stopped. Shown in whichever
+   * one happened to be open, it was answered there and the work carried on
+   * there too — a permission granted for one exchange spent on another. A
+   * question with no conversation is shown nowhere in one, because there is
+   * nowhere in one to carry it on.
+   */
+  const pendingIn = (conversationId: string | null | undefined): ConsentEvent | null =>
+    conversationId && pending.value?.conversation_id === conversationId ? pending.value : null;
 
   /**
    * Answer, put the card away, and say whether the work should carry on.
@@ -81,7 +112,7 @@ export function useSynConsent(vaultPath: () => string) {
     }
   };
 
-  return { pending, error, answer };
+  return { pending, pendingIn, error, answer };
 }
 
 /**

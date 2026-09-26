@@ -463,6 +463,11 @@ export interface AuditEntry {
   reversal?: string | null;
   /** Where the run was asked from. Older lines read back as `app`. */
   surface: RunSurface;
+  /**
+   * What exactly, when the capability does not say: for `browse`, the address
+   * or search it was about to make. Absent on older lines.
+   */
+  detail?: string | null;
 }
 
 /**

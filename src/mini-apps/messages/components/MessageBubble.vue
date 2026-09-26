@@ -878,7 +878,7 @@ const copyContent = async () => {
                    hover:text-gray-700 dark:hover:text-gray-300 transition-colors cursor-pointer"
           >
             <Wrench class="w-3 h-3" />
-            <span>{{ message.tool_calls_log.length }} tool call{{ message.tool_calls_log.length > 1 ? 's' : '' }}</span>
+            <span>{{ $t('syn.tool_calls_count', { n: message.tool_calls_log.length }, message.tool_calls_log.length) }}</span>
             <ChevronDown v-if="showTools" class="w-3 h-3" />
             <ChevronRight v-else class="w-3 h-3" />
           </button>
@@ -990,13 +990,19 @@ const copyContent = async () => {
         </div>
       </div>
 
-      <!-- Hover action bar -->
-      <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150
+      <!-- Action bar. Shown on hover, and also whenever focus is inside the
+           message — a keyboard user tabbing onto an invisible button has no way
+           to know it is there — and always on a touch screen, where there is
+           no hover to reveal it and the first tap would otherwise be spent
+           finding it. -->
+      <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100
+                  transition-opacity duration-150
                   flex items-center gap-0.5 bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-100 dark:border-gray-700/50 px-1 py-0.5">
         <button
           @click="copyContent"
           class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           :title="copied ? $t('syn.copied') : $t('syn.copy')"
+          :aria-label="copied ? $t('syn.copied') : $t('syn.copy')"
         >
           <Check v-if="copied" class="w-3.5 h-3.5 text-green-500" />
           <Clipboard v-else class="w-3.5 h-3.5" />
@@ -1006,6 +1012,7 @@ const copyContent = async () => {
           @click="$emit('regenerate')"
           class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           :title="$t('syn.regenerate')"
+          :aria-label="$t('syn.regenerate')"
         >
           <RefreshCw class="w-3.5 h-3.5" />
         </button>
@@ -1013,7 +1020,7 @@ const copyContent = async () => {
 
       <!-- Metadata row -->
       <div
-        class="flex items-center gap-2 mt-1 px-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        class="flex items-center gap-2 mt-1 px-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity duration-150"
         :class="message.role === 'user' ? 'flex-row-reverse' : ''"
       >
         <span class="text-[11px] text-gray-400 dark:text-gray-500">

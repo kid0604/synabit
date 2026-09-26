@@ -104,7 +104,8 @@ export function useSynChat() {
     model?: string,
     temperature?: number,
     images?: string[],
-    resumeRun?: string
+    resumeRun?: string,
+    replacing?: string
   ): Promise<SynMessage | null> => {
     error.value = null;
     isStreaming.value = true;
@@ -126,6 +127,7 @@ export function useSynChat() {
           temperature: temperature || undefined,
           images: images?.length ? images : undefined,
           resume_run: resumeRun || undefined,
+          replacing: replacing || undefined,
         },
       });
       return response;

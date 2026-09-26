@@ -28,6 +28,7 @@ import { useSynChoice } from './composables/useSynChoice';
 import { useSynModels } from './composables/useSynModels';
 import { useThreads, type ThreadState } from '../../shared/syn/useThreads';
 import { useSynEnabled } from '../../shared/syn/useSynEnabled';
+import { tidyComposerText } from '../../shared/syn/composerText';
 import { useNodeService } from '../../composables/useNodeService';
 import type { ConsentAnswer, SynConversation, SynConversationFull, SynMessage } from './types';
 
@@ -42,8 +43,18 @@ import type { ConsentAnswer, SynConversation, SynConversationFull, SynMessage } 
  */
 const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
 
-/** The question Syn stopped on, if it has. Shown in the conversation. */
-const { pending: consentPending, answer: answerConsent } = useSynConsent(() => props.vaultPath);
+/**
+ * The question Syn stopped on, if it has — shown only in the conversation
+ * whose run stopped. The store is app-wide, because the ask bar has to see it
+ * too; which conversation it belongs to is in the question. See
+ * `useSynConsent`.
+ */
+const {
+  pending: consentPending,
+  pendingIn: consentPendingIn,
+  answer: answerConsent,
+} = useSynConsent(() => props.vaultPath);
+const consentHere = computed(() => consentPendingIn(activeConversationId.value));
 
 /**
  * Answer the permission question, then carry on with what was already asked.
@@ -61,19 +72,30 @@ const { pending: consentPending, answer: answerConsent } = useSynConsent(() => p
  */
 const onConsent = async (choice: ConsentAnswer) => {
   // Read before answering: the composable clears the card, and with it the id
-  // of the run whose pending call the resume has to pick up.
+  // of the run whose pending call the resume has to pick up — and the
+  // conversation that run belongs to.
+  //
+  // That conversation, not whichever one is open. They are the same today,
+  // because the card is only drawn in its own conversation, but the resume
+  // used to go to `activeConversationId` on the assumption that they always
+  // would be — and a card shown in the wrong place then carried the work on in
+  // the wrong place too.
   const stopped = consentPending.value?.run_id;
+  const id = consentPending.value?.conversation_id;
   const wasAsked = await answerConsent(choice);
   if (!wasAsked || !stopped) return;
-
-  const id = activeConversationId.value;
   if (!id) return;
+
+  // Whether the answer lands on screen. Somebody may have moved to another
+  // conversation while the answer was being recorded; the work carries on in
+  // its own either way, and is there when they go back to it.
+  const onScreen = () => activeConversationId.value === id;
 
   // The stopped run left an assistant turn with no words in it. The backend
   // drops its copy; this drops the one on screen, so the answer replaces it
   // rather than appearing under it.
   const last = activeMessages.value[activeMessages.value.length - 1];
-  if (last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
+  if (onScreen() && last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
 
   const response = await sendMessage(
     props.vaultPath,
@@ -84,7 +106,7 @@ const onConsent = async (choice: ConsentAnswer) => {
     undefined,
     stopped,
   );
-  if (response) {
+  if (response && onScreen()) {
     activeMessages.value.push(response);
     clearStreaming();
   }
@@ -96,14 +118,19 @@ const onConsent = async (choice: ConsentAnswer) => {
  * composer rather than starting anything, so saying *go on* stays the person's
  * move.
  */
-const { pending: choicePending, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
 
+// Both sentences come from the locale. They are written into the person's own
+// box, as though they had typed them, so they have to be in the language they
+// type in — and in a neutral voice, since whatever register they use with Syn
+// is theirs to choose, not the app's.
 const onChoice = async (nodeId: string) => {
   const named = await answerChoice(nodeId);
-  if (named) chatPanel.value?.prefill(`Cái "${named}".`);
+  if (named) chatPanel.value?.prefill(t('syn.prefill_choice', { title: named }));
 };
 const trySkill = (name: string) => {
-  chatPanel.value?.prefill(`Dùng skill \`${name}\` giúp tao.`);
+  chatPanel.value?.prefill(t('syn.prefill_skill', { name }));
 };
 
 const props = defineProps<{
@@ -391,19 +418,15 @@ const reallyDeleteConversation = async (id: string) => {
 };
 
 // Send message
-const handleSendMessage = async (text: string, images?: string[]) => {
+const handleSendMessage = async (text: string, images?: string[], replacing?: string) => {
   // Typing into an empty screen starts a conversation rather than refusing.
   let id = activeConversationId.value;
   if (!id) id = await createConversation();
   if (!id) return;
 
-  const cleanText = text
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .split('\n')
-    .map(l => l.trim().replace(/\s+/g, ' '))
-    .filter(l => l.length > 0)
-    .filter((line, i, arr) => i === 0 || line.normalize('NFC').toLowerCase() !== arr[i - 1].normalize('NFC').toLowerCase())
-    .join('\n');
+  // Indentation, blank lines and repeated lines are kept: they are what makes
+  // pasted code, YAML or a nested list mean anything. See `composerText.ts`.
+  const cleanText = tidyComposerText(text);
 
   if (!cleanText && !images?.length) return;
 
@@ -422,7 +445,9 @@ const handleSendMessage = async (text: string, images?: string[]) => {
     cleanText,
     selectedModel.value || undefined,
     undefined,
-    images
+    images,
+    undefined,
+    replacing
   );
 
   if (response) {
@@ -523,6 +548,21 @@ const refresh = async () => {
   await fetchNotifications();
 };
 
+/**
+ * Ask the same question again.
+ *
+ * Both halves of the exchange come off the screen, not only the answer:
+ * `handleSendMessage` puts the question back, as the newest turn, which is
+ * where the backend writes it too. Taking only the answer away left the
+ * question on screen twice, one above the other.
+ *
+ * The file does the same: `replacing` names the answer being redone, and the
+ * backend drops that exchange and everything after it before writing the
+ * question again. Without it the stored conversation kept both, so the
+ * question showed twice after a reload and the model was sent the answer it
+ * was asked to replace. Everything after the pair goes here too, so the
+ * screen and the file agree.
+ */
 const handleRegenerate = async (messageId: string) => {
   if (!activeConversationId.value) return;
   const msgIndex = activeMessages.value.findIndex(m => m.id === messageId);
@@ -530,8 +570,8 @@ const handleRegenerate = async (messageId: string) => {
   const userMsg = activeMessages.value[msgIndex - 1];
   if (userMsg.role !== 'user') return;
 
-  activeMessages.value.splice(msgIndex, 1);
-  await handleSendMessage(userMsg.content, userMsg.images);
+  activeMessages.value.splice(msgIndex - 1);
+  await handleSendMessage(userMsg.content, userMsg.images, messageId);
 };
 
 const handleExportConversation = async () => {
@@ -1017,6 +1057,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @click="handleExportConversation"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
                   :title="$t('syn.export')"
+                  :aria-label="$t('syn.export')"
                 >
                   <Download class="w-4 h-4" />
                 </button>
@@ -1033,6 +1074,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10'
                     : 'text-gray-500 dark:text-gray-400'"
                   :title="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
+                  :aria-label="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
                 >
                   <Globe class="w-4 h-4" />
                 </button>
@@ -1041,6 +1083,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @click="showInspector = !showInspector"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
                   :title="$t('syn.inspector')"
+                  :aria-label="$t('syn.inspector')"
                 >
                   <ScrollText class="w-4 h-4" />
                 </button>
@@ -1048,7 +1091,8 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 <button
                   @click="showSettings = !showSettings"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
-                  title="Syn AI Settings"
+                  :title="t('syn.settings')"
+                  :aria-label="t('syn.settings')"
                 >
                   <Settings class="w-4 h-4" />
                 </button>
@@ -1097,8 +1141,8 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :vault-path="vaultPath"
                   :connection-lost="!status.connected"
                   :chat-error="chatError"
-                  :consent-ask="consentPending?.ask ?? null"
-                  :choice-ask="choicePending?.choice ?? null"
+                  :consent-ask="consentHere?.ask ?? null"
+                  :choice-ask="choiceHere?.choice ?? null"
                   @send="handleSendMessage"
                   @stop="stopGeneration"
                   @open-source="handleOpenSource"
