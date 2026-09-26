@@ -615,6 +615,30 @@ Syn không nên đuổi theo agent đa năng kiểu OpenClaw. Lợi thế của 
 4. MCP stdio chỉ trên desktop, dùng `tokio::process`, không dùng `tauri-plugin-shell`.
 5. `NetWrite` sau cùng. Cân nhắc dừng ở "soạn nháp vào vault" cho email và tin nhắn.
 
+> **Trạng thái 2026-09-27: đã làm và đã commit.** 2.658 test Rust và 2.042 test frontend qua.
+>
+> - **F1 Nạp tool theo nhu cầu** (`syn/toolset.rs`): mỗi lượt chỉ gửi bộ lõi, khoảng 9.000 ký tự / 2,2k token thay vì 20,3k. Các nhóm tool được bật theo từ ngữ của câu hỏi (tiếng Việt so theo chữ có dấu); model tự nạp thêm được bằng `find_tools`; gọi tool theo tên thì nhóm của nó tự được nạp.
+> - **F2 Spreadsheet và tài chính:**
+>   - `read_spreadsheet` và `write_spreadsheet` (chỉ tạo file mới; không ghi công thức), cùng `update_transaction` và `delete_transaction` (khôi phục được).
+>   - Crate đọc/ghi Excel chỉ có trên desktop; Android đọc được CSV.
+>   - Đã sửa một lỗi cũ: `create_transaction` làm mất `financeSchema`, khiến Finance nhân số tiền lên 100 lần.
+> - **F3/F4 MCP client** (`syn/mcp/`): tự viết, không thêm crate.
+>   - Hỗ trợ HTTP/SSE và stdio (stdio chỉ trên desktop, không qua shell).
+>   - Tool chỉ-đọc cần quyền `NetRead` một lần cho mỗi server; tool khác cần `NetWrite` cho từng tool.
+>   - Kết quả được bọc ranh giới có nonce và đánh dấu run đã đọc nội dung ngoài; sau đó mọi lời gọi MCP bị từ chối.
+>   - Mỗi thiết bị phải tự tin cậy server, nên `mcp.json` đồng bộ sang máy khác không tự chạy được chương trình.
+>   - Bí mật lưu trong keychain.
+>   - Chỉ dùng được trong app (không qua Telegram hay routine).
+> - **F5 `NetWrite`:** vẫn cho chọn "Luôn cho phép" theo từng tool, hết hạn sau 90 ngày và thu hồi được. Chưa làm chế độ "chỉ soạn nháp vào vault".
+>
+> **Chưa làm:**
+> - OAuth cho server từ xa; resources, prompts và sampling của MCP.
+> - Tự làm mới khi server báo danh sách tool thay đổi.
+> - Chưa build thử cho Android.
+> - Mô tả tool do server viết vẫn đến model mỗi lượt mà không có ranh giới (chỉ bị giới hạn độ dài và có tiền tố tên server).
+>
+> **Gate F chưa đo.**
+
 **Gate F:** một việc thật chạm dịch vụ ngoài (ví dụ "lấy các issue Jira của tôi tuần này, viết note tổng kết"), với audit log đọc hiểu được từ đầu tới cuối bởi người không viết code, và kịch bản tấn công Phase A vẫn bị chặn khi dữ liệu đến từ MCP.
 
 ### Vẫn hoãn
