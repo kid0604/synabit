@@ -237,6 +237,15 @@ pub fn all(db: &DbBridge) -> AppResult<Vec<Memory>> {
         .iter()
         .map(Memory::from_node)
         .collect();
+
+    // A memory another one replaced is not something Syn knows any more. It is
+    // retired to the trash when the replacement is written, but a replacement
+    // written before that was done — or one whose retirement failed — left both
+    // riding in every prompt, the old claim beside the one that corrected it.
+    let replaced: std::collections::HashSet<String> =
+        memories.iter().filter_map(|m| m.supersedes.clone()).collect();
+    memories.retain(|m| !replaced.contains(&m.id));
+
     memories.sort_by(|a, b| b.last_confirmed.cmp(&a.last_confirmed));
     Ok(memories)
 }
@@ -613,6 +622,7 @@ mod through_the_tools {
                 vault_path: &self.vault,
                 app: &self.app,
                 run_id: Some("run-under-test"),
+                model: None,
             };
             let out = crate::syn::tools::execute_tool(&ctx, tool, &args).expect("the tool runs");
             serde_json::from_str(&out).expect("the tool returns JSON")
@@ -623,6 +633,49 @@ mod through_the_tools {
             let db = state.lock().expect("lock");
             all(&db).expect("read memories")
         }
+    }
+
+    /// Corrected, the old claim stops being something Syn knows. It used to
+    /// keep riding in every prompt beside the memory that replaced it.
+    #[test]
+    fn a_replaced_memory_leaves_the_prompt_and_goes_to_the_trash() {
+        let h = harness();
+        let old = h.call(
+            "remember",
+            serde_json::json!({ "body": "Minh làm ở FPT.", "kind": "fact", "subject": "Minh" }),
+        );
+        let old_id = old["id"].as_str().expect("an id").to_string();
+
+        let new = h.call(
+            "remember",
+            serde_json::json!({
+                "body": "Minh đã chuyển sang VPB.",
+                "kind": "fact",
+                "subject": "Minh",
+                "supersedes": old_id,
+            }),
+        );
+        assert_eq!(new["success"], true, "{new}");
+
+        let bodies: Vec<String> = h.memories().into_iter().map(|m| m.body).collect();
+        assert_eq!(bodies, vec!["Minh đã chuyển sang VPB.".to_string()]);
+        assert!(!std::path::Path::new(&h.vault).join(&old_id).exists(), "retired to the trash");
+    }
+
+    /// `supersedes` trashes what it names, so it may only name a memory.
+    #[test]
+    fn supersedes_cannot_name_a_note() {
+        let h = harness();
+        let note = h.call("create_node", serde_json::json!({ "node_type": "note", "title": "Giữ lại" }));
+        let note_id = note["id"].as_str().expect("an id").to_string();
+
+        let out = h.call(
+            "remember",
+            serde_json::json!({ "body": "x", "supersedes": note_id }),
+        );
+        assert!(out["error"].as_str().is_some_and(|e| e.contains("supersedes")), "{out}");
+        assert!(std::path::Path::new(&h.vault).join(&note_id).exists(), "the note is untouched");
+        assert!(h.memories().is_empty(), "and nothing was remembered");
     }
 
     #[test]
@@ -1437,6 +1490,7 @@ mod does_memory_reach_the_model {
             vault_path: vault,
             app: handle,
             run_id: Some("eval"),
+            model: None,
         };
         crate::syn::tools::execute_tool(
             &ctx,
@@ -1490,6 +1544,7 @@ mod does_memory_reach_the_model {
                 vault_path: &vault,
                 app: &handle,
                 run_id: None,
+                model: None,
             };
             let out = crate::syn::tools::execute_tool(
                 &ctx,
@@ -1570,6 +1625,7 @@ mod does_memory_reach_the_model {
             vault_path: &vault,
             app: &handle,
             run_id: None,
+            model: None,
         };
         let out = crate::syn::tools::execute_tool(
             &ctx,
@@ -1725,6 +1781,7 @@ mod memory_changes_the_answer {
                     vault_path: &vault,
                     app: &handle,
                     run_id: Some("eval"),
+                    model: None,
                 };
                 crate::syn::tools::execute_tool(
                     &ctx,

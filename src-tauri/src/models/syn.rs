@@ -166,6 +166,15 @@ pub struct SynChatRequest {
     /// See `run::Run::pending_call`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_run: Option<String>,
+    /// The answer this message is asked again in place of — regenerate.
+    ///
+    /// The turn it answered, and everything after it, is dropped from the file
+    /// before the question goes in again. Without it the saved conversation
+    /// kept the old question and answer as well as the new pair: the screen
+    /// showed the question once, a reload showed it twice, and the model was
+    /// sent the answer it had been asked to replace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacing: Option<String>,
 }
 
 /// Pull model progress event — emitted while downloading a model.

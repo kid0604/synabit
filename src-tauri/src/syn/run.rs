@@ -525,6 +525,15 @@ pub struct Run {
     /// nobody can trust.
     #[serde(default)]
     pub plan_only: bool,
+    /// Whether this run read something written outside the vault — a page, a
+    /// feed article, a file, a forwarded message. See `syn::taint`.
+    ///
+    /// On the record rather than only in the engine because a run that stops
+    /// for permission is carried on by a new run, and that one has to start
+    /// where this one was: the stranger's words shaped the call it is carrying
+    /// on with, whether or not they are in its history.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_untrusted: bool,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -588,6 +597,7 @@ impl Run {
             unclaimed: None,
             error: None,
             plan_only: false,
+            read_untrusted: false,
             pending_consent: None,
             pending_call: None,
             pending_choice: None,

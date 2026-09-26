@@ -957,12 +957,8 @@ pub fn retrieve_context(
     }
 
 
-    // Step 7: Sort by relevance score (descending) and truncate to max context chars
-    all_chunks.sort_by(|a, b| {
-        b.relevance_score
-            .partial_cmp(&a.relevance_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Step 7: Rank, then truncate to max context chars
+    rank_chunks(&mut all_chunks);
 
     let mut total_chars = 0usize;
     let mut final_chunks: Vec<ContextChunk> = Vec::new();
@@ -1226,6 +1222,39 @@ fn parse_metadata(metadata: &Option<String>) -> HashMap<String, String> {
 // ═══════════════════════════════════════════════════════════════
 //  TESTS
 // ═══════════════════════════════════════════════════════════════
+
+/// How far a chunk stands from the question, before its score is looked at.
+///
+/// A vault hit found by the question, then a feed article or a transaction
+/// found by its words, then a note found only because it links to a hit.
+fn standing(chunk: &ContextChunk) -> u8 {
+    if chunk.metadata.as_deref().is_some_and(|m| m.starts_with("related_to:")) {
+        2
+    } else if matches!(chunk.source_type.as_str(), "feed_article" | "finance") {
+        1
+    } else {
+        0
+    }
+}
+
+/// Order chunks for the budget, the ones to keep first.
+///
+/// By standing, then by score within it — never by score alone. Feed and
+/// finance chunks carry a fixed 3.0 and graph neighbours a fixed 2.0, and
+/// those were sorted in with real BM25 scores from the vault. The comments
+/// beside them said *lower, to prioritise vault content*; but a vault hit
+/// scores on its own scale, and one scoring 1.34 — the right answer to
+/// "disagreed", measured above — ranked below every feed article and every
+/// neighbour, and was the first thing cut when the budget ran out.
+fn rank_chunks(chunks: &mut [ContextChunk]) {
+    chunks.sort_by(|a, b| {
+        standing(a).cmp(&standing(b)).then_with(|| {
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+}
 
 #[cfg(test)]
 mod tests {
@@ -1542,6 +1571,30 @@ mod tests {
             sources: Vec::new(),
         };
         assert!(format_context(&result).is_empty());
+    }
+
+    /// A vault hit with a low BM25 score still outranks the fixed scores the
+    /// feed, finance and graph chunks carry.
+    #[test]
+    fn a_weak_vault_hit_is_kept_before_a_feed_article() {
+        let chunk = |id: &str, source_type: &str, score: f64, metadata: Option<&str>| ContextChunk {
+            source_id: id.to_string(),
+            source_type: source_type.to_string(),
+            title: id.to_string(),
+            content: String::new(),
+            relevance_score: score,
+            metadata: metadata.map(str::to_string),
+        };
+        let mut chunks = vec![
+            chunk("neighbour", "note", 2.0, Some("related_to:Notes/a.md")),
+            chunk("feed", "feed_article", 3.0, Some("published_at:2026-09-01")),
+            chunk("weak", "note", 1.34, None),
+            chunk("money", "finance", 3.0, None),
+            chunk("strong", "note", 9.0, None),
+        ];
+        rank_chunks(&mut chunks);
+        let order: Vec<&str> = chunks.iter().map(|c| c.source_id.as_str()).collect();
+        assert_eq!(order, vec!["strong", "weak", "feed", "money", "neighbour"]);
     }
 
     #[test]
@@ -2306,6 +2359,7 @@ mod rag_vs_agentic {
             vault_path: dir.path().to_str().expect("utf8"),
             app: &app,
             run_id: None,
+            model: None,
         };
 
         let ask = |query: &str| -> (u64, bool) {
@@ -2385,6 +2439,7 @@ mod rag_vs_agentic {
             vault_path: dir.path().to_str().expect("utf8"),
             app: &app,
             run_id: None,
+            model: None,
         };
 
         eprintln!("\n── widening, on questions the vault cannot answer ──");

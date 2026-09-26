@@ -131,6 +131,9 @@ pub struct RunContext<'a, R: tauri::Runtime> {
     /// Where the run was asked from, which narrows what it is offered. See
     /// `syn::surface`.
     pub surface: crate::syn::surface::Surface,
+    /// Whether this run has read something written outside the vault. See
+    /// `syn::taint`.
+    pub taint: &'a crate::syn::taint::Taint,
 }
 
 impl<R: tauri::Runtime> RunContext<'_, R> {
@@ -141,6 +144,7 @@ impl<R: tauri::Runtime> RunContext<'_, R> {
             vault_path: self.vault_path,
             app: self.app,
             run_id: Some(self.run_id),
+            model: Some(self.taint),
         }
     }
 }
@@ -863,6 +867,7 @@ mod tests {
             .expect("mock app");
         let registry = Registry::for_chat();
 
+        let taint = crate::syn::taint::Taint::new();
         let offered = |surface| -> Vec<String> {
             let ctx = RunContext {
                 run_id: "run-1",
@@ -870,6 +875,7 @@ mod tests {
                 vault_path: vault,
                 app: app.handle(),
                 surface,
+                taint: &taint,
             };
             registry.definitions(&ctx).into_iter().map(|d| d.function.name).collect()
         };

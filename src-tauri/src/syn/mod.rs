@@ -25,6 +25,7 @@ pub mod registry;
 pub mod run;
 pub mod settings;
 pub mod surface;
+pub mod taint;
 pub mod telegram;
 pub mod thread;
 pub mod web;

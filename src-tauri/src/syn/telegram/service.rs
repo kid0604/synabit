@@ -839,6 +839,7 @@ async fn answer(
         images: (show_images && !prepared.images.is_empty()).then(|| prepared.images.clone()),
         focus: None,
         resume_run: job.entries.first().and_then(|e| e.resume_run.clone()),
+        replacing: None,
     };
     let mut result = crate::commands::syn::send_message_inner(&app, &job.vault, ask(true), Surface::Telegram).await;
 

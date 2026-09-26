@@ -73,7 +73,20 @@ pub struct Entry {
     /// written before there was anywhere else read back as the app.
     #[serde(default)]
     pub surface: crate::syn::surface::Surface,
+    /// What exactly, when the capability alone does not say: for `browse`,
+    /// the address or search it was about to make.
+    ///
+    /// "Use the browser" answers whether Syn went out. It does not answer
+    /// *where*, which is the question somebody reading this after the fact
+    /// actually has — a line that cannot say which site was opened cannot show
+    /// that nothing was carried out to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
+
+/// How much of a detail is kept. An address long enough to pass this is itself
+/// worth noticing, and the start of it says where it went.
+const DETAIL_CHARS: usize = 300;
 
 fn path(vault_path: &str) -> AppResult<std::path::PathBuf> {
     let dir = std::path::Path::new(vault_path).join(".synabit");
@@ -122,6 +135,19 @@ pub fn record(
     outcome: Outcome,
     surface: crate::syn::surface::Surface,
 ) -> AppResult<()> {
+    record_detailed(vault_path, run_id, tool, capability, outcome, surface, None)
+}
+
+/// `record`, saying what exactly. See `Entry::detail`.
+pub fn record_detailed(
+    vault_path: &str,
+    run_id: &str,
+    tool: &str,
+    capability: &Capability,
+    outcome: Outcome,
+    surface: crate::syn::surface::Surface,
+    detail: Option<&str>,
+) -> AppResult<()> {
     if !worth_recording(capability) {
         return Ok(());
     }
@@ -146,6 +172,10 @@ pub fn record(
             outcome,
             reversal,
             surface,
+            detail: detail
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(|d| d.chars().take(DETAIL_CHARS).collect()),
         },
     );
     entries.truncate(KEEP_ENTRIES);
@@ -168,7 +198,20 @@ pub fn record_best_effort(
     outcome: Outcome,
     surface: crate::syn::surface::Surface,
 ) {
-    if let Err(e) = record(vault_path, run_id, tool, capability, outcome, surface) {
+    record_best_effort_detailed(vault_path, run_id, tool, capability, outcome, surface, None);
+}
+
+/// `record_best_effort`, saying what exactly. See `Entry::detail`.
+pub fn record_best_effort_detailed(
+    vault_path: &str,
+    run_id: &str,
+    tool: &str,
+    capability: &Capability,
+    outcome: Outcome,
+    surface: crate::syn::surface::Surface,
+    detail: Option<&str>,
+) {
+    if let Err(e) = record_detailed(vault_path, run_id, tool, capability, outcome, surface, detail) {
         log::warn!("[Syn] Could not write to the audit log: {e}");
     }
 }
@@ -285,6 +328,7 @@ mod tests {
                 outcome: Outcome::Done,
                 reversal: None,
                 surface: Surface::App,
+                detail: None,
             })
             .collect();
         entries.truncate(KEEP_ENTRIES + 20);

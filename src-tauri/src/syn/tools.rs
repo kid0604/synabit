@@ -248,6 +248,15 @@ pub struct ToolContext<'a, R: tauri::Runtime> {
     /// check. `None` for a call made outside a run — the Nexus screen has one —
     /// which is honest rather than a made-up id.
     pub run_id: Option<&'a str>,
+    /// Present when a model is the caller — through the registry, or through
+    /// a recipe it ran — and what that run has read. `None` for the app's own
+    /// code calling a tool on the user's behalf, which is the user acting.
+    ///
+    /// Two rules hang on it, and both are enforced in `execute_tool` so that a
+    /// recipe's steps meet them too: a run that has read something written
+    /// outside the vault may only read and create (`syn::taint`), and a model
+    /// may never create Syn's own kinds with `create_node`.
+    pub model: Option<&'a crate::syn::taint::Taint>,
 }
 
 /// The database, for the length of one tool call.
@@ -1165,6 +1174,18 @@ pub fn execute_tool<R: tauri::Runtime>(
 ) -> AppResult<String> {
     log::info!("[Syn Tools] Executing tool: {} with args: {}", name, args);
 
+    // A model that has read something nobody here wrote may only read and
+    // create. Checked here rather than only in the engine because a recipe's
+    // steps arrive here too, and a recipe that trashes a note after a web read
+    // is the same attack one level down. An error rather than a refusal so that
+    // the recipe runner stops at it. See `syn::taint`.
+    if let Some(taint) = ctx.model {
+        if taint.is_set() && !crate::syn::taint::allowed_after_reading(name) {
+            log::warn!("[Syn Tools] Refused `{name}`: this run has read untrusted content");
+            return Ok(serde_json::json!({ "error": crate::syn::taint::refusal(name) }).to_string());
+        }
+    }
+
     let result = match name {
         // Generic — these reach every type in the vault, including ones this
         // app has never heard of.
@@ -1226,6 +1247,14 @@ pub fn execute_tool<R: tauri::Runtime>(
 
         _ => return Err(AppError::General(format!("Unknown tool: {}", name))),
     };
+
+    // Whatever a stranger wrote is now in the run, and it stays there. Set on
+    // an answer only: a read that failed brought nothing back to believe.
+    if let (Some(taint), Ok(_)) = (ctx.model, &result) {
+        if crate::syn::taint::UNTRUSTED_READS.contains(&name) {
+            taint.set();
+        }
+    }
 
     // Ensure the result is truncated to the size limit
     match result {
@@ -1490,7 +1519,7 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         .get("pinned")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+    let supersedes = args.get("supersedes").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
     let source_nodes: Vec<String> = args
         .get("source_nodes")
         .and_then(|v| v.as_array())
@@ -1503,6 +1532,19 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         .unwrap_or_default();
 
     let existing = memory::all(&*lock(ctx)?)?;
+
+    // Only a memory can be replaced by one. Checked, because the id is what the
+    // old one is trashed by below, and `supersedes` naming a note would
+    // otherwise be a way to trash a note that `trash_node`'s rules never saw.
+    if let Some(old) = supersedes {
+        if !existing.iter().any(|m| m.id == old) {
+            return Err(AppError::General(format!(
+                "`supersedes` must be the id of one of your memories, and `{old}` is not. Call \
+                 `recall` to find the id of the memory this replaces, or leave it out."
+            )));
+        }
+    }
+
     let clashes: Vec<Value> = memory::conflicting(&existing, &kind, subject)
         .into_iter()
         .filter(|m| Some(m.id.as_str()) != supersedes)
@@ -1533,6 +1575,16 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         body,
         props,
     )?;
+
+    // The old one goes to the trash once its replacement is safely written —
+    // the same as accepting a proposal does, and for the same reason: left in
+    // place, both went into every prompt. Trashed rather than deleted, so
+    // `restore_node` is the way back if the correction was the mistake.
+    if let Some(old) = supersedes {
+        if let Err(e) = tool_trash_node(ctx, &serde_json::json!({ "node_id": old })) {
+            log::warn!("[Syn] Superseded memory {old} could not be retired: {e}");
+        }
+    }
 
     Ok(serde_json::json!({
         "success": true,
@@ -3180,6 +3232,19 @@ fn tool_create_node<R: tauri::Runtime>(
         return Err(AppError::General("node_type cannot be empty".into()));
     }
 
+    // Syn's own kinds each have their own door, and the rule for each lives at
+    // that door: a memory written here could be pinned, a skill written here
+    // could be enabled. The app's own code still comes through here to write a
+    // suggested skill, which is why this is about the caller. See
+    // `taint::reserved_type`.
+    if ctx.model.is_some() && crate::syn::taint::reserved_type(&node_type) {
+        return Err(AppError::General(format!(
+            "`{node_type}` cannot be created with create_node. Memories are kept with `remember`, \
+             skills are written by the user in the Skills screen, and threads are opened by the \
+             user. For anything else, use a kind without a dot, slash or `syn_` prefix."
+        )));
+    }
+
     let title = args
         .get("title")
         .and_then(|v| v.as_str())
@@ -3257,6 +3322,28 @@ fn tool_create_node<R: tauri::Runtime>(
 /// happens when a writer decides a node's type for itself: a task opened in
 /// the note editor was saved as a note on the first autosave and the task was
 /// gone. Here the type comes from the node on disk and nowhere else.
+/// Why a model may not make this change to a skill, if it may not.
+fn skill_patch_problem(node: &crate::models::node::NodeMetadata, patch: &Value) -> Option<String> {
+    let fields = patch.as_object()?;
+    for guarded in ["author", "trial_at"] {
+        if fields.contains_key(guarded) {
+            return Some(format!(
+                "A skill's `{guarded}` is not something to change. It records who wrote the skill \
+                 and whether it has been tried."
+            ));
+        }
+    }
+    let turning_on = fields.get("enabled").is_some_and(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"));
+    if turning_on && !crate::syn::skill::Skill::from_node(node).may_be_enabled() {
+        return Some(
+            "This skill was written by Syn and has not been tried yet, so it cannot be turned on. \
+             The user can try it and turn it on in the Skills screen."
+                .to_string(),
+        );
+    }
+    None
+}
+
 fn tool_update_node<R: tauri::Runtime>(
     ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     use crate::commands::nodes::{
@@ -3278,6 +3365,17 @@ fn tool_update_node<R: tauri::Runtime>(
             serde_json::json!({ "error": "Node not found", "node_id": node_id }).to_string(),
         );
     };
+
+    // A skill Syn wrote has to be tried before it is turned on, and a model may
+    // not turn one on by editing the file instead. `Skill::may_be_enabled` used
+    // to be read by the screen only — which held for the screen and for nothing
+    // else. Who wrote it and when it was tried are not the model's to rewrite
+    // either, or the first rule is one edit away.
+    if ctx.model.is_some() && node.node_type == crate::syn::skill::SKILL_TYPE {
+        if let Some(problem) = skill_patch_problem(&node, &patch) {
+            return Ok(serde_json::json!({ "error": problem, "node_id": node_id }).to_string());
+        }
+    }
 
     let full_path = std::path::Path::new(ctx.vault_path).join(&node.id);
     let ext = full_path
@@ -3483,15 +3581,100 @@ fn tool_update_node<R: tauri::Runtime>(
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-/// Truncate a JSON result string to `MAX_RESULT_CHARS`.
-/// If truncated, appends a marker so the LLM knows the data was cut off.
+/// Fit a result to `MAX_RESULT_CHARS`, and keep it JSON while doing it.
+///
+/// It used to cut the string at the limit and append `... (truncated)`, which
+/// left half a JSON document: the model was handed something that no longer
+/// parsed, `tool_succeeded` could not read an `error` out of it, and a list
+/// ended mid-item with no way to tell how many were lost.
+///
+/// Now the biggest part is shrunk until it fits — the tail of a long list, or
+/// the end of a long text — and the result says it was cut. Text that was
+/// never JSON is still cut as text, because there is no structure to keep.
 fn truncate_result(s: &str) -> String {
     if s.chars().count() <= MAX_RESULT_CHARS {
         return s.to_string();
     }
 
-    let truncated: String = s.chars().take(MAX_RESULT_CHARS).collect();
-    format!("{}... (truncated)", truncated)
+    let Ok(mut value) = serde_json::from_str::<Value>(s) else {
+        let truncated: String = s.chars().take(MAX_RESULT_CHARS).collect();
+        return format!("{}... (truncated)", truncated);
+    };
+
+    // Room for the note saying so.
+    let budget = MAX_RESULT_CHARS - 300;
+    loop {
+        let size = value.to_string().chars().count();
+        if size <= budget || !shrink_once(&mut value, size - budget) {
+            break;
+        }
+    }
+
+    let note = Value::String(
+        "This result was too long and has been cut to fit: the end of the longest list or text \
+         is missing. Ask for less — a narrower query, or one item at a time — if what is \
+         missing matters."
+            .to_string(),
+    );
+    match value {
+        Value::Object(mut map) => {
+            map.insert("truncated".to_string(), note);
+            Value::Object(map).to_string()
+        }
+        other => serde_json::json!({ "truncated": note, "result": other }).to_string(),
+    }
+}
+
+fn chars_in(value: &Value) -> usize {
+    value.to_string().chars().count()
+}
+
+/// Make the biggest part of `value` smaller by about `excess` characters.
+/// `false` when there is nothing left that can be made smaller.
+fn shrink_once(value: &mut Value, excess: usize) -> bool {
+    match value {
+        Value::String(text) => {
+            let n = text.chars().count();
+            let keep = n.saturating_sub(excess + 8);
+            if keep >= n || n <= 1 {
+                return false;
+            }
+            *text = text.chars().take(keep).collect::<String>() + "…";
+            true
+        }
+        Value::Array(items) => {
+            if items.is_empty() {
+                return false;
+            }
+            let sizes: Vec<usize> = items.iter().map(chars_in).collect();
+            let total: usize = sizes.iter().sum();
+            let (biggest, &largest) = sizes
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, s)| **s)
+                .expect("not empty");
+
+            // One item that is most of the list — a single long note — is
+            // shortened itself, rather than losing every item after it.
+            if items.len() == 1 || largest * 2 > total {
+                return shrink_once(&mut items[biggest], excess);
+            }
+            // Otherwise the tail goes, as many items as the excess is worth.
+            let average = (total / items.len()).max(1);
+            let drop = excess.div_ceil(average).clamp(1, items.len() - 1);
+            items.truncate(items.len() - drop);
+            true
+        }
+        Value::Object(map) => {
+            let mut fields: Vec<(String, usize)> =
+                map.iter().map(|(k, v)| (k.clone(), chars_in(v))).collect();
+            fields.sort_by(|a, b| b.1.cmp(&a.1));
+            fields
+                .into_iter()
+                .any(|(key, _)| map.get_mut(&key).is_some_and(|v| shrink_once(v, excess)))
+        }
+        _ => false,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4740,7 +4923,7 @@ mod tests {
         //
         // It is the entry with a real cost attached, and the cost is not
         // tokens: a page can try to act through the model that read it. The
-        // answer is not this description — `syn::web::REFUSED_AFTER_READING`
+        // answer is not this description — `syn::taint`
         // takes the tools that alter or destroy existing work away for the
         // rest of any run that fetched, which holds whatever the page says.
         // `web_search` was the first tool that was not always sent: without
@@ -5022,7 +5205,7 @@ mod tests {
 
         let call = |tool: &str, args: serde_json::Value| -> String {
             let state = handle.state::<crate::db::DbState>();
-            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None };
+            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None, model: None };
             execute_tool(&ctx, tool, &args).expect("the tool runs")
         };
 
@@ -5117,6 +5300,7 @@ mod tests {
                 vault_path: &vault_path,
                 app: &handle,
                 run_id: None,
+                model: None,
             };
             serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs"))
                 .expect("JSON")
@@ -5218,6 +5402,7 @@ mod tests {
                 vault_path: &vault_path,
                 app: &handle,
                 run_id: None,
+                model: None,
             };
             serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs"))
                 .expect("JSON")
@@ -5316,6 +5501,7 @@ mod tests {
             vault_path: &vault_path,
             app: &handle,
             run_id: None,
+            model: None,
         };
 
         // An edit that says nothing about the dates — which is what the
@@ -5494,6 +5680,7 @@ mod tests {
             vault_path: &vault_path,
             app: &handle,
             run_id: None,
+            model: None,
         };
         let still_there = || {
             (1..=3).all(|n| {
@@ -5706,6 +5893,39 @@ mod tests {
         let result = truncate_result(&long);
         assert!(result.chars().count() < MAX_RESULT_CHARS + 1000);
         assert!(result.ends_with("... (truncated)"));
+    }
+
+    /// A long list loses its tail and stays a list the model can read.
+    #[test]
+    fn a_long_json_result_is_cut_and_still_json() {
+        let rows: Vec<Value> = (0..2_000)
+            .map(|i| serde_json::json!({ "id": format!("Notes/{i}.md"), "title": "một ghi chú khá dài ".repeat(3) }))
+            .collect();
+        let whole = serde_json::json!({ "results": rows, "count": 2_000 }).to_string();
+        assert!(whole.chars().count() > MAX_RESULT_CHARS);
+
+        let cut = truncate_result(&whole);
+        assert!(cut.chars().count() <= MAX_RESULT_CHARS);
+        let parsed: Value = serde_json::from_str(&cut).expect("still JSON");
+        assert_eq!(parsed["count"], 2_000, "what was small is untouched");
+        let kept = parsed["results"].as_array().expect("still a list").len();
+        assert!(kept > 100 && kept < 2_000, "{kept}");
+        assert!(parsed["truncated"].is_string());
+    }
+
+    /// One long note in a result is shortened itself.
+    #[test]
+    fn one_long_text_is_shortened_not_dropped() {
+        let whole = serde_json::json!({
+            "id": "Notes/long.md",
+            "content": "chữ ".repeat(MAX_RESULT_CHARS),
+        })
+        .to_string();
+        let cut = truncate_result(&whole);
+        assert!(cut.chars().count() <= MAX_RESULT_CHARS);
+        let parsed: Value = serde_json::from_str(&cut).expect("still JSON");
+        assert_eq!(parsed["id"], "Notes/long.md");
+        assert!(parsed["content"].as_str().expect("text").ends_with('…'));
     }
 
     #[test]

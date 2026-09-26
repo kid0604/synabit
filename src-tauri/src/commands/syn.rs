@@ -422,6 +422,17 @@ pub async fn send_message_inner(
         };
         asked.content.clone()
     } else {
+        // Asked again: the old pair goes, so it is neither shown twice nor sent
+        // back as the thing to improve on. An id that is not an answer in this
+        // conversation is ignored rather than refused — the question still
+        // deserves one. See `SynChatRequest::replacing`.
+        if let Some(answer) = request.replacing.as_deref() {
+            if let Some(at) = conv.messages.iter().position(|m| m.id == answer && m.role == "assistant") {
+                let from = conv.messages[..at].iter().rposition(|m| m.role == "user").unwrap_or(at);
+                conv.messages.truncate(from);
+            }
+        }
+
         let user_message = SynMessage {
             id: uuid::Uuid::new_v4().to_string(),
             role: "user".to_string(),
@@ -649,9 +660,8 @@ pub async fn send_message_inner(
     // What the stopped run was about to do, which is the thing the user just
     // gave permission for. Read off that run rather than worked out again — see
     // `run::Run::pending_call` for the transcript that made this necessary.
-    let resume_call = carrying_on
-        .and_then(|id| crate::syn::run::get_run(vault_path, id).ok())
-        .and_then(|stopped| stopped.pending_call);
+    let stopped = carrying_on.and_then(|id| crate::syn::run::get_run(vault_path, id).ok());
+    let resume_call = stopped.as_ref().and_then(|s| s.pending_call.clone());
 
     let mut run = Run::new(
         question.clone(),
@@ -665,6 +675,9 @@ pub async fn send_message_inner(
     };
     // Before `drive`, which is where it narrows the tools. See `syn::surface`.
     run.surface = surface;
+    // Carrying on from a run that had read something is carrying on as one.
+    // See `syn::taint`.
+    run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);
 
     // Said before the work starts, not after: somebody who is about to wait
     // should know they are about to wait.
@@ -1050,6 +1063,7 @@ fn write_suggested_skill(
         vault_path,
         app,
         run_id: None,
+        model: None,
     };
 
     let mut properties = crate::syn::skill::frontmatter(
@@ -1105,6 +1119,7 @@ fn stage_revision(
         vault_path,
         app,
         run_id: None,
+        model: None,
     };
     crate::syn::tools::execute_tool(
         &ctx,
@@ -1199,6 +1214,7 @@ pub async fn syn_create_skill(
         vault_path: &vault_path,
         app: &app,
         run_id: None,
+        model: None,
     };
     let out = crate::syn::tools::execute_tool(
         &ctx,
@@ -1363,6 +1379,7 @@ pub async fn syn_skill_trial(
             vault_path: &vault_path,
             app: &app,
             run_id: None,
+            model: None,
         };
         crate::syn::tools::execute_tool(
             &ctx,
@@ -2061,6 +2078,7 @@ pub async fn syn_accept_proposal(
         vault_path: &vault_path,
         app: &app,
         run_id: Some(&p.source_run),
+        model: None,
     };
     crate::syn::tools::execute_tool(
         &ctx,
@@ -2237,6 +2255,7 @@ pub async fn syn_open_thread(
         vault_path: &vault_path,
         app: &app,
         run_id: None,
+        model: None,
     };
 
     let result = crate::syn::tools::execute_tool(
@@ -2286,6 +2305,7 @@ pub async fn syn_move_thread(
         vault_path: &vault_path,
         app: &app,
         run_id: None,
+        model: None,
     };
     crate::syn::tools::execute_tool(
         &ctx,

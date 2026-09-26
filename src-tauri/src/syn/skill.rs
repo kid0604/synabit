@@ -1116,6 +1116,7 @@ mod through_the_tools {
                 vault_path: &self.vault,
                 app: &self.app,
                 run_id: Some("run-under-test"),
+                model: None,
             };
             let out = crate::syn::tools::execute_tool(&ctx, tool, &args).expect("the tool runs");
             serde_json::from_str(&out).expect("the tool returns JSON")

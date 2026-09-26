@@ -238,7 +238,7 @@ pub async fn answer_done(app: &AppHandle, api: &Api, words: &Words, pressed: &Pr
 
     let said = {
         let db = app.state::<crate::db::DbState>();
-        let ctx = crate::syn::tools::ToolContext { db: db.inner(), vault_path: &vault, app, run_id: None };
+        let ctx = crate::syn::tools::ToolContext { db: db.inner(), vault_path: &vault, app, run_id: None, model: None };
         crate::syn::tools::execute_tool(
             &ctx,
             "update_node",

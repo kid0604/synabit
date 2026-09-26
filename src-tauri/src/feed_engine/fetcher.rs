@@ -113,11 +113,11 @@ pub enum FetchResult {
 /// localhost:8080/admin" or the cloud metadata address are worth refusing
 /// before they are dialled.
 ///
-/// This checks the host as written. It is not a defence against DNS rebinding
-/// or a public name that resolves to a private address; stopping those means
-/// resolving the name here and pinning the result, which reqwest does not let
-/// us hand back. What it does stop is the whole class of mistakes people
-/// actually make, and it costs one parse.
+/// This checks the host as written. A public name that resolves to a private
+/// address, or one rebound to it between check and connect, is stopped by
+/// `PublicOnly` instead — which only a client that installs it gets. Syn's web
+/// client does; the feed client does not yet, because a feed somebody keeps on
+/// their own network by name is a real thing this would break.
 pub fn guard_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("Not a usable URL: {}", e))?;
 
@@ -130,15 +130,8 @@ pub fn guard_url(url: &str) -> Result<(), String> {
     };
 
     let private = match host {
-        url::Host::Ipv4(ip) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_broadcast()
-                || ip.is_multicast()
-        }
-        url::Host::Ipv6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_multicast(),
+        url::Host::Ipv4(ip) => is_private_ip(std::net::IpAddr::V4(ip)),
+        url::Host::Ipv6(ip) => is_private_ip(std::net::IpAddr::V6(ip)),
         url::Host::Domain(name) => {
             let name = name.to_ascii_lowercase();
             name == "localhost"
@@ -156,6 +149,84 @@ pub fn guard_url(url: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Whether an address is on this machine, its network, or nowhere public.
+///
+/// Wider than the standard library's checks, each addition for a way the
+/// narrower one was walked around:
+///
+/// * `100.64.0.0/10`, carrier-grade NAT — and Tailscale, which is where a
+///   person's other machines live.
+/// * IPv6 unique-local (`fc00::/7`) and link-local (`fe80::/10`), the IPv6
+///   spellings of a private network.
+/// * An IPv4 address written as IPv6 — `[::ffff:127.0.0.1]`, or NAT64's
+///   `64:ff9b::/96` — which is judged as the IPv4 address it is.
+pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 192 && b == 0 && v4.octets()[2] == 0)
+                || (a == 198 && (b == 18 || b == 19))
+                || a >= 240
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ip(IpAddr::V4(v4));
+            }
+            let segments = v6.segments();
+            if segments[0] == 0x64 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
+                let [a, b] = segments[6].to_be_bytes();
+                let [c, d] = segments[7].to_be_bytes();
+                return is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// A resolver that answers only with public addresses.
+///
+/// `guard_url` looks at the host as written, so `127.0.0.1.nip.io` — a public
+/// name for this machine — passed it, and so did any name whose owner pointed
+/// it somewhere private after it was checked. Resolving here and handing the
+/// client only what survives closes both: the client connects to exactly the
+/// addresses this returns, so there is no second lookup to rebind.
+///
+/// A name with some private answers and some public keeps the public ones. One
+/// with none is refused, and says why.
+pub struct PublicOnly;
+
+impl reqwest::dns::Resolve for PublicOnly {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let found: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let public: Vec<std::net::SocketAddr> =
+                found.into_iter().filter(|a| !is_private_ip(a.ip())).collect();
+            if public.is_empty() {
+                return Err(format!(
+                    "{host} resolves only to addresses on this machine or its private network"
+                )
+                .into());
+            }
+            Ok(Box::new(public.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 /// How long a server asked us to wait, from a `Retry-After` header.
@@ -289,6 +360,32 @@ mod tests {
         ] {
             assert!(guard_url(url).is_err(), "{url} should be refused");
         }
+    }
+
+    /// The spellings the narrower check let through.
+    #[test]
+    fn private_addresses_in_other_spellings_are_refused() {
+        for url in [
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:a9fe:a9fe]/latest/meta-data/",
+            "http://[64:ff9b::7f00:1]/",
+            "http://[fd12:3456::1]/",
+            "http://[fe80::1]/",
+            "http://100.100.100.100/",
+            "http://240.0.0.1/",
+        ] {
+            assert!(guard_url(url).is_err(), "{url} should be refused");
+        }
+        assert!(guard_url("http://[2606:4700::1111]/").is_ok(), "a public IPv6 address is fine");
+        assert!(guard_url("http://100.128.0.1/").is_ok(), "just past the CGNAT range is public");
+    }
+
+    /// A public-looking name for this machine is refused where it is dialled.
+    #[tokio::test]
+    async fn a_name_that_leads_here_does_not_resolve() {
+        use reqwest::dns::Resolve;
+        let name: reqwest::dns::Name = "localhost".parse().expect("a name");
+        assert!(PublicOnly.resolve(name).await.is_err());
     }
 
     #[test]

@@ -663,6 +663,7 @@ mod things_gate {
             app: &handle,
             // Not part of a run: this is a screen calling a tool directly.
             run_id: None,
+            model: None,
         };
 
         crate::syn::tools::execute_tool(
