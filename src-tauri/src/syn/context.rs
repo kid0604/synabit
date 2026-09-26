@@ -20,11 +20,10 @@
 //!
 //! # What this does, cheapest first
 //!
-//! 1. **Measure.** Characters, converted to tokens at a rate calibrated from
-//!    what the provider reports it was actually sent (`Usage::input`). The rate
-//!    starts at four characters a token and moves toward what this model and
-//!    this language really cost — Vietnamese with its diacritics usually costs
-//!    more than English.
+//! 1. **Measure.** Characters, converted to tokens at a rate learned from what
+//!    the provider reports it was actually sent (`Usage::input`) and kept per
+//!    model in `syn::calibration`. It starts at four characters a token and
+//!    moves toward what this model and this language really cost.
 //! 2. **Shorten old tool results.** A result the model has already answered
 //!    from, two rounds ago, is replaced by its opening and a note saying how to
 //!    get it back. The newest round is never touched: the model has not read
@@ -44,9 +43,6 @@ use crate::syn::provider::ChatMessage;
 /// enough for a long answer on an 8,192-token local model and is barely a
 /// constraint on a hosted one.
 pub const FILL: f64 = 0.70;
-
-/// Where the characters-per-token estimate starts, before anything is measured.
-pub const DEFAULT_CHARS_PER_TOKEN: f64 = 4.0;
 
 /// A tool result at or under this size is left alone however old it is. A
 /// stub would not be much shorter.
@@ -81,20 +77,6 @@ pub fn chars_in(messages: &[ChatMessage]) -> usize {
 /// Tokens, estimated from characters at `chars_per_token`.
 pub fn estimate_tokens(chars: usize, chars_per_token: f64) -> u64 {
     (chars as f64 / chars_per_token.max(0.5)).ceil() as u64
-}
-
-/// A better rate, having been told what `chars` actually cost.
-///
-/// Moved most of the way toward the measurement rather than all of it: one
-/// request with a picture in it, or a provider that counts its own wrapping,
-/// should not swing the next estimate by half. Clamped because a rate outside
-/// this range is a measurement of something other than text.
-pub fn calibrate(current: f64, chars: usize, input_tokens: u64) -> f64 {
-    if chars == 0 || input_tokens == 0 {
-        return current;
-    }
-    let measured = (chars as f64 / input_tokens as f64).clamp(1.5, 6.0);
-    (current * 0.3 + measured * 0.7).clamp(1.5, 6.0)
 }
 
 /// Tokens this history may take for the next request.
@@ -250,14 +232,6 @@ mod tests {
 
     fn result(content: &str) -> ChatMessage {
         ChatMessage { role: "tool".into(), content: content.into(), tool_calls: None, tool_call_id: Some("c".into()), images: None }
-    }
-
-    #[test]
-    fn the_rate_moves_toward_what_was_measured_and_stays_sane() {
-        let rate = calibrate(4.0, 3_000, 1_500);
-        assert!(rate > 2.0 && rate < 4.0, "{rate}");
-        assert_eq!(calibrate(4.0, 0, 100), 4.0, "nothing measured, nothing learned");
-        assert_eq!(calibrate(4.0, 100_000, 1), 6.0 * 0.7 + 4.0 * 0.3, "a nonsense measurement is clamped");
     }
 
     /// Old results give back their room; the newest round, unread, keeps all of it.

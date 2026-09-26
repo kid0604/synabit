@@ -471,8 +471,17 @@ impl SynEngine {
         // How big the model's window is, and what a character costs in it —
         // learned from what the provider says each request actually was. See
         // `syn::context`.
+        //
+        // The rate is remembered per vault, provider and model across runs, so a
+        // run starts from what the last one learned. It counts everything
+        // `usage.input` counts — messages and the tool declarations — and is
+        // not learned from a request carrying a picture, whose tokens are not
+        // characters. See `syn::calibration`.
         let window = self.window_tokens(req);
-        let mut chars_per_token = crate::syn::context::DEFAULT_CHARS_PER_TOKEN;
+        let provider_id = self.provider.id();
+        let mut chars_per_token =
+            crate::syn::calibration::load(req.vault_path, &provider_id, req.model).chars_per_token;
+        let tools_chars = serde_json::to_string(&tools).map(|s| s.len()).unwrap_or(0);
 
         let ended: LoopEnd = 'drive: loop {
             run.spent.wall_ms = started.elapsed().as_millis() as u64;
@@ -488,7 +497,8 @@ impl SynEngine {
             if resuming.is_none() {
                 self.keep_inside(run, req, &mut working, window, chars_per_token, iteration).await;
             }
-            let chars_sent = crate::syn::context::chars_in(&working);
+            let chars_sent = crate::syn::context::chars_in(&working) + tools_chars;
+            let has_pictures = working.iter().any(|m| m.images.as_ref().is_some_and(|i| !i.is_empty()));
 
             let request = || ChatRequest {
                 model: req.model,
@@ -534,11 +544,18 @@ impl SynEngine {
                 };
                 self.provider.chat_streaming(request(), &sink).await?
             } else {
-                self.provider.chat(request()).await?
+                // Stoppable: on Ollama this is every tool-using turn, and a
+                // local model can take minutes over one. Stop used to wait it
+                // out. A stopped request comes back empty, which is read below
+                // as the cancel it is.
+                self.provider.chat_stoppable(request(), &stop_check).await?
             };
             let turn_ms = turn_started.elapsed().as_millis() as u64;
-            if let Some(input) = reply.usage.input {
-                chars_per_token = crate::syn::context::calibrate(chars_per_token, chars_sent, input);
+            if let (Some(input), false) = (reply.usage.input, has_pictures) {
+                match crate::syn::calibration::record(req.vault_path, &provider_id, req.model, chars_sent, input) {
+                    Ok(learned) => chars_per_token = learned.chars_per_token,
+                    Err(e) => log::warn!("[Syn] Could not keep what a token costs: {e}"),
+                }
             }
 
             // Stop is checked here, after the turn, whoever the provider is.
@@ -962,13 +979,14 @@ impl SynEngine {
     ///
     /// On a local model it is what Ollama is asked for, `num_ctx`, because that
     /// is exactly where it cuts. A hosted model's window is not something this
-    /// app sets, and until the capability table says per model, it is taken as
-    /// a size every current hosted model this app speaks to exceeds.
+    /// app sets: it is what the capability table knows of the model by name,
+    /// or its conservative guess for a name it does not know. See
+    /// `provider::capability`.
     fn window_tokens<R: tauri::Runtime>(&self, req: &DriveRequest<'_, R>) -> u32 {
         if self.provider.id().is_local() {
             req.num_ctx.max(2_048)
         } else {
-            HOSTED_WINDOW_TOKENS
+            crate::syn::provider::capability::of(req.model, true).context_window_tokens
         }
     }
 
@@ -1114,12 +1132,6 @@ impl SynEngine {
     }
 
 }
-
-/// A hosted model's window, until the capability table says per model.
-///
-/// Deliberately the small end of what current hosted models offer, so the
-/// estimate errs toward condensing early rather than being cut off.
-const HOSTED_WINDOW_TOKENS: u32 = 128_000;
 
 /// How much text may pile up before it is sent on.
 ///
